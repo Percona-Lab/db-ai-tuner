@@ -1,4 +1,5 @@
 """Local agent state: JSON document + SQLite metric buffer."""
+import fcntl
 import json
 import os
 import sqlite3
@@ -26,10 +27,12 @@ class State:
         return self
 
     def save(self):
-        tmp = self.path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(self.data, f, indent=1, default=str)
-        os.replace(tmp, self.path)
+        tmp = f"{self.path}.{os.getpid()}.tmp"
+        with open(self.path + ".lock", "w") as lk:
+            fcntl.flock(lk, fcntl.LOCK_EX)
+            with open(tmp, "w") as f:
+                json.dump(self.data, f, indent=1, default=str)
+            os.replace(tmp, self.path)
 
     def __getitem__(self, k):
         return self.data.get(k)

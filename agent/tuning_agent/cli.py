@@ -98,7 +98,8 @@ class Ctx:
         f = self.facts()
         r = self.client.post("/hello", {"agent_uid": self.state["agent_uid"], "name": self.cfg.get("name") or f["hardware"]["hostname"],
                                         "agent_version": __version__, "facts": f})
-        self.state.set("environment_id", r["environment_id"])
+        if self.state.get("environment_id") != r["environment_id"]:
+            self.state.set("environment_id", r["environment_id"])
         return r, f
 
     def env_id(self):
