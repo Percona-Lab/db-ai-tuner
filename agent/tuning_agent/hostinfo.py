@@ -113,6 +113,31 @@ def hardware(datadir="/var/lib/mysql"):
     }
 
 
+PSI_RES = ("cpu", "memory", "io")
+
+
+def read_psi(base):
+    """Cumulative stall time (microseconds) from a PSI file set: {('cpu','some'): total, ...}."""
+    out = {}
+    for res in PSI_RES:
+        for line in _read(f"{base}/{res}.pressure" if base != "/proc/pressure" else f"{base}/{res}").splitlines():
+            parts = line.split()
+            if parts and parts[0] in ("some", "full"):
+                for kv in parts[1:]:
+                    if kv.startswith("total="):
+                        out[f"{res}_{parts[0]}"] = int(kv[6:])
+    return out
+
+
+def cgroup_dir(pid):
+    for line in _read(f"/proc/{pid}/cgroup").splitlines():
+        if line.startswith("0::"):
+            path = "/sys/fs/cgroup" + line[3:].strip()
+            if os.path.exists(path + "/cpu.pressure"):
+                return path
+    return None
+
+
 def mysqld_pid():
     for name in ("mysqld", "mariadbd"):
         for pid in os.listdir("/proc"):
@@ -144,6 +169,10 @@ class OSCounters:
                 s["procs_blocked"] = int(line.split()[1])
         if not self.pid or not os.path.exists(f"/proc/{self.pid}"):
             self.pid = mysqld_pid()
+            self.cgroup = cgroup_dir(self.pid) if self.pid else None
+        s["psi"] = read_psi("/proc/pressure")
+        if getattr(self, "cgroup", None):
+            s["psi_mysqld"] = read_psi(self.cgroup)
         if self.pid:
             st = _read(f"/proc/{self.pid}/stat")
             if st:
@@ -196,6 +225,12 @@ class OSCounters:
             out["mysqld_cpu_pct"] = round(100.0 * (b["mysqld"][1] - a["mysqld"][1]) / ticks / dt / (os.cpu_count() or 1), 2)
         if "mysqld_rss" in b:
             out["mysqld_rss_mb"] = round(b["mysqld_rss"] / 2 ** 20, 1)
+        # pressure stall information: % of wall time some (or all) tasks were stalled on the resource
+        for key, prefix in (("psi", "psi_"), ("psi_mysqld", "mysqld_psi_")):
+            pa, pb = a.get(key) or {}, b.get(key) or {}
+            for k, v in pb.items():
+                if k in pa and v >= pa[k] and k != "cpu_full":
+                    out[prefix + k] = round(min(100.0, (v - pa[k]) / dt / 1e4), 2)
         if "ctxt" in a:
             out["ctx_switches"] = round((b["ctxt"] - a["ctxt"]) / dt, 1)
         out["procs_running"] = b.get("procs_running", 0)

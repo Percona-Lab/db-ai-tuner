@@ -54,7 +54,27 @@ def diagnose(ctx):
         add("cpu", "medium", f"CPU fairly busy ({busy:.0f}%).", {"cpu_busy": busy})
     if steal >= 5:
         add("steal", "medium", f"Hypervisor steal {steal:.1f}%: noisy neighbour; results will be noisy.", {"cpu_steal": steal})
-    if iow >= 15 or (s.get("disk_util", 0) >= 90 and s.get("disk_await_ms", 0) >= 2):
+    # pressure stall information (Linux 4.20+): prefer mysqld's own cgroup numbers, fall back to host-wide
+    def psi(res):
+        v = s.get(f"mysqld_psi_{res}")
+        return (v, "mysqld cgroup") if v is not None else (s.get(f"psi_{res}"), "host")
+    cpu_some, src = psi("cpu_some")
+    if cpu_some is not None and cpu_some >= 20:
+        add("cpu-pressure", "high" if cpu_some >= 50 else "medium",
+            f"CPU pressure: runnable {src} tasks waited for a CPU {cpu_some:.0f}% of the time (PSI cpu some).",
+            {"psi_cpu_some": cpu_some, "source": src, "psi_cpu_some_host": s.get("psi_cpu_some")})
+    mem_some, src = psi("memory_some")
+    if mem_some is not None and mem_some >= 5:
+        add("memory-pressure", "high" if mem_some >= 20 else "medium",
+            f"Memory pressure: {src} tasks stalled on memory (reclaim/swap/refaults) {mem_some:.1f}% of the time (PSI memory some).",
+            {"psi_memory_some": mem_some, "psi_memory_full": s.get("psi_memory_full"), "source": src})
+    io_full, src = psi("io_full")
+    io_some, _ = psi("io_some")
+    if io_some is not None and ((io_full or 0) >= 10 or io_some >= 40):
+        add("io", "high" if (io_full or 0) >= 25 else "medium",
+            f"I/O pressure: {src} tasks stalled on I/O {io_some:.0f}% of the time, all non-idle tasks stalled {io_full or 0:.0f}% (PSI io).",
+            {"psi_io_some": io_some, "psi_io_full": io_full, "source": src, "disk_await_ms": s.get("disk_await_ms"), "disk_util": s.get("disk_util")})
+    elif io_some is None and (iow >= 15 or (s.get("disk_util", 0) >= 90 and s.get("disk_await_ms", 0) >= 2)):
         add("io", "high", f"I/O bound (iowait {iow:.0f}%, disk util {s.get('disk_util', 0):.0f}%, "
             f"await {s.get('disk_await_ms', 0):.1f} ms).",
             {k: s.get(k) for k in ("cpu_iowait", "disk_util", "disk_await_ms", "disk_r_iops", "disk_w_iops")})
@@ -140,14 +160,15 @@ def recommend(ctx):
     data_bytes = inp.get("data_bytes") or 0
     max_conn = _int(v, "max_connections", 151)
     mem_avail = (s.get("mem_available_mb") or 0) * MiB
-    swapping = (s.get("swap_in", 0) or 0) + (s.get("swap_out", 0) or 0) > 10
+    mem_psi = s.get("psi_memory_some") or 0
+    swapping = (s.get("swap_in", 0) or 0) + (s.get("swap_out", 0) or 0) > 10 or mem_psi >= 10
 
     # ---------------- memory -----------------------------------------------------
     if swapping and bp > 512 * MiB:
         new = int(bp * 0.85) // (128 * MiB) * (128 * MiB)
-        b.add("bp-shrink", "Shrink the buffer pool: host is swapping", [("innodb_buffer_pool_size", fmt_size(new))],
-              "Swap activity makes every page access unpredictable; giving memory back to the OS is the first fix.",
-              {"swap_in": s.get("swap_in"), "swap_out": s.get("swap_out"), "innodb_buffer_pool_size": human_size(bp)}, impact=3, confidence=3)
+        b.add("bp-shrink", "Shrink the buffer pool: host is under memory pressure", [("innodb_buffer_pool_size", fmt_size(new))],
+              "Swapping / memory reclaim stalls make every page access unpredictable; giving memory back to the OS is the first fix.",
+              {"swap_in": s.get("swap_in"), "swap_out": s.get("swap_out"), "psi_memory_some": mem_psi, "innodb_buffer_pool_size": human_size(bp)}, impact=3, confidence=3)
     elif have_run and s.get("bp_hit_pct", 100) < 99.5 and (s.get("bp_disk_reads") or 0) > 20:
         headroom = mem_avail - max(512 * MiB, int(ram * 0.05))
         want = min(data_bytes * 1.1 if data_bytes else bp * 2, bp + headroom, ram * 0.85)
