@@ -51,6 +51,9 @@ def own_run(run_id, user_id):
     return dict(r)
 
 
+FLAVOR_NAMES = {"percona": "Percona Server", "mysql": "MySQL", "mariadb": "MariaDB", "pxc": "Percona XtraDB Cluster"}
+
+
 def env_brief(e):
     f = store.uj(e["facts"], {}) or {}
     hw, db = f.get("hardware", {}), f.get("db", {})
@@ -58,6 +61,7 @@ def env_brief(e):
         "id": e["id"], "name": e["name"], "hostname": e["hostname"], "agent_version": e["agent_version"],
         "created": e["created"], "last_seen": e["last_seen"], "online": bool(e["last_seen"] and now() - e["last_seen"] < ONLINE_S),
         "db": f"{db.get('version_comment', '')} {db.get('version', '')}".strip(), "flavor": db.get("flavor"),
+        "db_short": f"{FLAVOR_NAMES.get(db.get('flavor'), db.get('flavor') or '')} {str(db.get('version', '')).split('-log')[0]}".strip(),
         "cpus": hw.get("cpus"), "ram_bytes": hw.get("ram_bytes"), "disk": "HDD" if hw.get("disk_rotational") else "SSD",
         "data_bytes": db.get("data_bytes"),
     }
@@ -215,7 +219,7 @@ def revoke_key(key_id: int, request: Request):
 def environments(request: Request):
     u = auth.current_user(request)
     out = []
-    for e in store.q("SELECT * FROM environments WHERE user_id=? ORDER BY last_seen DESC", (u["id"],)):
+    for e in store.q("SELECT * FROM environments WHERE user_id=? ORDER BY name COLLATE NOCASE, id", (u["id"],)):
         b = env_brief(e)
         s = store.q1("SELECT COUNT(*) n, MAX(created) last FROM tsessions WHERE env_id=?", (e["id"],))
         b["sessions"] = s["n"]

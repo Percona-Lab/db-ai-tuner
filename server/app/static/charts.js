@@ -22,6 +22,7 @@
   }
   function fmtNum(v) {
     if (v == null || !isFinite(v)) return "–";
+    if (v === 0) return "0";
     const a = Math.abs(v);
     if (a >= 1e6) return (v / 1e6).toFixed(a >= 1e7 ? 0 : 1) + "M";
     if (a >= 1e4) return (v / 1e3).toFixed(a >= 1e5 ? 0 : 1) + "k";

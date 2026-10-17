@@ -106,22 +106,39 @@ async function envList() {
     <div class="card"><h3>No environment connected yet</h3><p>Install the agent on the database host to see it here.</p><a class="btn primary" href="#/connect">Connect an agent</a></div>`;
     return;
   }
-  $view.innerHTML = `<div class="row"><div><h1>Environments</h1><p class="sub">Database servers with a connected tuning-agent.</p></div><span class="spacer"></span><a class="btn" href="#/connect">Connect another</a></div>
-  <div class="grid g3" id="cards"></div>`;
-  const cards = document.getElementById("cards");
-  d.environments.forEach(e => {
-    const l = (e.latest && e.latest.db) || {}, o = (e.latest && e.latest.os) || {};
-    const a = document.createElement("a");
-    a.className = "card"; a.href = "#/env/" + e.id; a.style.color = "inherit";
-    a.innerHTML = `<div class="row"><b style="font-size:15px">${esc(e.name)}</b><span class="spacer"></span>${e.online ? '<span class="badge good">online</span>' : `<span class="badge plain">offline · ${ago(e.last_seen)}</span>`}</div>
-     <div class="muted" style="margin:4px 0 10px">${esc(e.db)}<br>${e.cpus || "?"} CPUs · ${bytes(e.ram_bytes)} RAM · ${e.disk} · data ${bytes(e.data_bytes)}</div>
-     <div class="row" style="gap:18px"><div><div class="muted" style="font-size:12px">TPS</div><b>${e.online ? num(l.tps) : "–"}</b></div>
-     <div><div class="muted" style="font-size:12px">Avg latency</div><b>${e.online && l.avg_latency_ms != null ? num(l.avg_latency_ms) + " ms" : "–"}</b></div>
-     <div><div class="muted" style="font-size:12px">CPU busy</div><b>${e.online && o.cpu_busy != null ? Math.round(o.cpu_busy) + "%" : "–"}</b></div>
-     <div><div class="muted" style="font-size:12px">Sessions</div><b>${e.sessions}</b></div></div>
-     ${e.active_session ? `<div style="margin-top:10px"><span class="badge info">active: ${esc(e.active_session.name)}</span></div>` : ""}`;
-    cards.appendChild(a);
-  });
+  const envs = d.environments.slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+  let mode = "list";
+  try { mode = localStorage.getItem("envView") || "list"; } catch (e) { }
+  $view.innerHTML = `<div class="row"><div><h1>Environments</h1><p class="sub">Database servers with a connected tuning-agent.</p></div><span class="spacer"></span>
+    <div class="seg" role="group" aria-label="View"><button data-v="list">List</button><button data-v="cards">Cards</button></div><a class="btn" href="#/connect">Connect another</a></div><div id="envs"></div>`;
+  const box = document.getElementById("envs");
+  const metrics = e => { const l = (e.latest && e.latest.db) || {}, o = (e.latest && e.latest.os) || {};
+    return { tps: e.online ? num(l.tps) : "–", lat: e.online && l.avg_latency_ms != null ? num(l.avg_latency_ms) + " ms" : "–", cpu: e.online && o.cpu_busy != null ? Math.round(o.cpu_busy) + "%" : "–" }; };
+  const status = e => e.online ? '<span class="badge good">online</span>' : `<span class="badge plain">offline · ${ago(e.last_seen)}</span>`;
+  const draw = () => {
+    box.parentElement.querySelectorAll(".seg button").forEach(b => b.classList.toggle("on", b.dataset.v === mode));
+    if (mode === "list") {
+      box.innerHTML = `<div class="card tablewrap"><table><thead><tr><th>Name</th><th>Status</th><th>Database</th><th>Hardware</th><th class="num">Data</th><th class="num">TPS</th><th class="num">Avg latency</th><th class="num">CPU</th><th>Active session</th><th class="num">Sessions</th></tr></thead><tbody>${envs.map(e => {
+        const m = metrics(e);
+        return `<tr class="click" data-href="#/env/${e.id}"><td><a href="#/env/${e.id}"><b>${esc(e.name)}</b></a></td><td>${status(e)}</td><td>${esc(e.db_short || e.db)}</td><td>${e.cpus || "?"} CPU · ${bytes(e.ram_bytes)} · ${e.disk}</td><td class="num">${bytes(e.data_bytes)}</td>
+          <td class="num">${m.tps}</td><td class="num">${m.lat}</td><td class="num">${m.cpu}</td><td>${e.active_session ? `<a href="#/session/${e.active_session.id}">${esc(e.active_session.name)}</a>` : '<span class="muted">–</span>'}</td><td class="num">${e.sessions}</td></tr>`; }).join("")}</tbody></table></div>`;
+      box.querySelectorAll("tr[data-href]").forEach(tr => tr.onclick = ev => { if (!ev.target.closest("a")) location.hash = tr.dataset.href; });
+    } else {
+      box.innerHTML = `<div class="grid g3">${envs.map(e => { const m = metrics(e);
+        return `<a class="card" href="#/env/${e.id}" style="color:inherit;text-decoration:none"><div class="row"><b style="font-size:15px">${esc(e.name)}</b><span class="spacer"></span>${status(e)}</div>
+          <div class="muted" style="margin:4px 0 10px">${esc(e.db_short || e.db)}<br>${e.cpus || "?"} CPUs · ${bytes(e.ram_bytes)} RAM · ${e.disk} · data ${bytes(e.data_bytes)}</div>
+          <div class="row" style="gap:18px"><div><div class="muted" style="font-size:12px">TPS</div><b>${m.tps}</b></div><div><div class="muted" style="font-size:12px">Avg latency</div><b>${m.lat}</b></div>
+          <div><div class="muted" style="font-size:12px">CPU busy</div><b>${m.cpu}</b></div><div><div class="muted" style="font-size:12px">Sessions</div><b>${e.sessions}</b></div></div>
+          ${e.active_session ? `<div style="margin-top:10px"><span class="badge info">active: ${esc(e.active_session.name)}</span></div>` : ""}</a>`; }).join("")}</div>`;
+    }
+  };
+  box.parentElement.querySelectorAll(".seg button").forEach(b => b.onclick = () => { mode = b.dataset.v; try { localStorage.setItem("envView", mode); } catch (e) { } draw(); });
+  draw();
+  timers.push(setInterval(async () => {
+    if (!document.getElementById("envs")) return;
+    const d2 = await api("/api/environments"); const byId = Object.fromEntries(d2.environments.map(e => [e.id, e]));
+    envs.forEach((e, i) => { if (byId[e.id]) envs[i] = byId[e.id]; }); draw();
+  }, 15000));
 }
 
 async function connectPage() {
@@ -239,7 +256,7 @@ async function envPage(id) {
   $view.innerHTML = `<div class="crumbs"><a href="#/">Environments</a> /</div>
   <div class="row"><h1>${esc(e.name)}</h1>${e.online ? '<span class="badge good">agent online</span>' : `<span class="badge plain">agent offline · last seen ${ago(e.last_seen)}</span>`}<span class="spacer"></span>
   <button class="ghost" id="rename">Rename</button><button class="ghost danger" id="del">Delete</button></div>
-  <p class="sub">${esc(e.db)} · ${esc(hw.hostname || "")} · agent ${esc(e.agent_version || "")}</p>
+  <p class="sub">${esc(e.db_short || e.db)} · ${esc(hw.hostname || "")} · agent ${esc(e.agent_version || "")}</p>
   <div class="grid g2"><div class="card"><h3 style="margin-top:0">Hardware &amp; OS</h3><div class="kv">
    <div>CPU</div><div>${hw.cpus} × ${esc(hw.cpu_model)}</div><div>Memory</div><div>${bytes(hw.ram_bytes)} (swap ${bytes(hw.swap_bytes)})</div>
    <div>Data disk</div><div>${esc(hw.data_device)} · ${hw.disk_rotational ? "rotational" : "SSD/NVMe"} · ${esc(hw.filesystem)} · scheduler ${esc(hw.disk_scheduler)}</div>
