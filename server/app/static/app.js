@@ -3,6 +3,8 @@ const $view = document.getElementById("view");
 const C = window.Charts;
 let ME = null, SERVER = location.origin, timers = [];
 
+const WORKLOAD = { "oltp-write": "OLTP, write-heavy", "oltp-read": "OLTP, read-mostly", olap: "Analytical", mixed: "Mixed", idle: "Idle" };
+const PHASE = { safe: "production-safe experiments", "trade-offs": "trade-off experiments", done: "no further experiments" };
 function kvText(o) { return Object.entries(o || {}).map(([k, v]) => `${k.replace(/_/g, " ")}: ${typeof v === "object" ? JSON.stringify(v) : v}`).join(" · "); }
 function info(text) { return ` <span class="info" tabindex="0" role="note" aria-label="${esc(text)}" data-tip="${esc(text)}">i</span>`; }
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
@@ -399,7 +401,7 @@ function renderRecs(el, rec, runs) {
   const run = runs && runs.find(r => r.id === rec.run_id);
   let h = `<div class="muted" style="margin-bottom:6px">Generated ${fmtTime(rec.created)}${run ? ` from run #${run.seq} <a href="#/run/${run.id}">${esc(run.label)}</a>` : " without a measured run"} · goal ${esc(rec.goal)} · policy ${esc(rec.policy)}${rec.next ? ` · suggested next: <code>${esc(rec.next)}</code>` : ""}</div>`;
   (rec.diagnosis || []).forEach(dg => { h += `<div class="diag">${sevBadge(dg.severity)} <b>${esc(dg.type)}</b> — ${esc(dg.text)}</div>`; });
-  if (rec.workload && rec.workload.type) h += `<div class="diag"><span class="badge info">workload</span> <b>${esc(rec.workload.type)}</b>${info(kvText(rec.workload.evidence))}${rec.phase ? ` · phase: <b>${esc(rec.phase)}</b>` : ""}</div>`;
+  if (rec.workload && rec.workload.type) h += `<p style="margin:4px 0 8px">Workload: <b>${esc(WORKLOAD[rec.workload.type] || rec.workload.type)}</b>${info(kvText(rec.workload.evidence))}${rec.phase ? ` · Phase: <b>${esc(PHASE[rec.phase] || rec.phase)}</b>` : ""}</p>`;
   const items = rec.items || [];
   const safe = items.filter(i => (i.safety || "safe") !== "trade-off"), trade = items.filter(i => i.safety === "trade-off");
   const section = (title, list, note) => list.length ? `<h3>${title}${note ? info(note) : ""}</h3>` + list.map(recItem).join("") : "";
@@ -504,7 +506,7 @@ function renderDiff(el, r) {
 function renderInputs(el, r) {
   const inp = r.inputs || {};
   let h = "";
-  if (inp.workload && inp.workload.type) h += `<h3>Workload</h3><div class="diag"><b>${esc(inp.workload.type)}</b>${info(kvText(inp.workload.evidence))}</div>`;
+  if (inp.workload && inp.workload.type) h += `<p>Workload: <b>${esc(WORKLOAD[inp.workload.type] || inp.workload.type)}</b>${info(kvText(inp.workload.evidence))}</p>`;
   if (inp.bench) {
     const b = inp.bench;
     h += `<h3>Benchmark: ${esc(b.name)}</h3><div class="kv"><div>Run command</div><div class="mono">${esc(b.run)}</div>${b.reset ? `<div>Reset</div><div class="mono">${esc(b.reset)}</div>` : ""}<div>Warm-up / measured</div><div>${esc(b.warmup)} s / ${b.duration ? esc(b.duration) + " s" : "until finished"}</div><div>Exit code</div><div>${esc(b.exit_code)}</div>
