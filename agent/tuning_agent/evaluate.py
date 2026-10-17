@@ -98,8 +98,13 @@ def calibrate(runs):
     return out
 
 
-def config_means(runs, key):
+RECENT = 3  # parent configuration = mean of its most recent runs (protects against slow drift)
+
+
+def config_means(runs, key, recent=None):
     sel = [r for r in runs if config_key(r.get("managed")) == key and r.get("goal_value") is not None]
+    if recent:
+        sel = sel[-recent:]
     if not sel:
         return None
     out = {"n": len(sel), "seqs": [r["seq"] for r in sel], "goal": _mean([r["goal_value"] for r in sel])}
@@ -140,7 +145,7 @@ def verdict(run, history, goal, noise):
     if not history:
         return "reference", {}
     key = config_key(run.get("managed"))
-    same = config_means(history, key)
+    same = config_means(history, key, recent=RECENT)
     if same:  # this configuration was measured before: a repeat, and a drift check
         goal_noise = (noise or {}).get("noise_pct") or DEFAULT_GOAL_NOISE
         dev = improvement(goal, run.get("goal_value"), same["goal"])
@@ -157,12 +162,14 @@ def verdict(run, history, goal, noise):
         if config_key(r.get("managed")) != key:
             parent = config_key(r.get("managed"))
             break
-    pm = config_means(history, parent)
+    pm = config_means(history, parent, recent=RECENT)
     if not pm:
         return "neutral", {}
     goal_noise = (noise or {}).get("noise_pct") or DEFAULT_GOAL_NOISE
     d_goal = improvement(goal, run.get("goal_value"), pm["goal"])
+    last_parent = max(pm["seqs"])
     details = {"parent_runs": pm["seqs"], "parent_goal_mean": round(pm["goal"], 4), "goal_delta_pct": d_goal,
+               "runs_since_parent_measured": len([r for r in history if r["seq"] > last_parent]),
                "goal_noise_pct": goal_noise, "calibrated": bool(noise and noise.get("runs")), "efficiency": {}}
     s = run.get("summary") or {}
     parent_runs = [r for r in history if config_key(r.get("managed")) == parent]

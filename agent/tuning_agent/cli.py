@@ -878,6 +878,16 @@ def cmd_autotune(a):
         if item.get("safety") == "trade-off" and not a.tradeoffs:
             log(f"== safe experiments exhausted; next would be trade-off {nxt} (re-run with --tradeoffs to continue)")
             break
+        if a.recheck_every and item["kind"] != "revert":
+            cur = evaluate.config_key({k: v["value"] for k, v in c.state.get("managed", {}).items()})
+            mine = [r for r in sess["runs"] if evaluate.config_key(r.get("managed")) == cur]
+            since = len([r for r in sess["runs"] if r["seq"] > max([r["seq"] for r in mine] or [0])])
+            if mine and since >= a.recheck_every and not c.state.get("pending_changes"):
+                log(f"== re-check: measuring the current configuration again ({since} runs since it was last measured) to control drift")
+                run, _ = _bench_run(c, prof, f"re-check (run {mine[-1]['seq']} config)")
+                log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}"
+                    + (" (DRIFT)" if (run.get('evaluation') or {}).get('drift') else ""))
+                continue
         log(f"== experiment: {nxt} ({item['title']}) [{item.get('safety')}]")
         changes = [{"variable": ch["variable"], "value": None if ch.get("unset") else ch["proposed"], "reason": item["rationale"],
                     "source": f"rec:{nxt}"} for ch in item["changes"]]
@@ -1151,6 +1161,8 @@ def main(argv=None):
     s.add_argument("--max-runs", type=int, default=10, help="maximum experiment runs (calibration not counted)")
     s.add_argument("--tradeoffs", action="store_true", help="after safe experiments, continue with trade-offs (policy=benchmark)")
     s.add_argument("--no-confirm", dest="confirm", action="store_false", help="skip the confirmation run of the best config")
+    s.add_argument("--recheck-every", type=int, default=3,
+                   help="re-measure the current configuration before an experiment when it was last measured this many runs ago (0 = off)")
     s.set_defaults(fn=cmd_autotune)
 
     sp.add_parser("reevaluate", help="recompute verdicts of all runs (e.g. after calibration)").set_defaults(fn=cmd_reevaluate)
