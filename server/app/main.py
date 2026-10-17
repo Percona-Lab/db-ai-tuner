@@ -74,6 +74,7 @@ def run_brief(r):
     d["external"] = store.uj(r["external"], {})
     d["managed"] = store.uj(r["managed"], {})
     d["evaluation"] = store.uj(r["evaluation"], {})
+    d["tradeoffs"] = store.uj(r["tradeoffs"], []) or []
     return d
 
 
@@ -293,7 +294,7 @@ def session(sid: int, request: Request):
     s["calibration"] = store.uj(s.get("calibration"))
     e = own_env(s["env_id"], u["id"])
     runs = [run_brief(r) for r in store.q("SELECT * FROM runs WHERE session_id=? ORDER BY seq, id", (sid,))]
-    recs = [store.row(r, ("items", "diagnosis")) for r in store.q("SELECT * FROM recommendations WHERE session_id=? ORDER BY id DESC", (sid,))]
+    recs = [store.row(r, ("items", "diagnosis", "workload")) for r in store.q("SELECT * FROM recommendations WHERE session_id=? ORDER BY id DESC", (sid,))]
     events = [store.row(r, ("data",)) for r in store.q("SELECT * FROM events WHERE session_id=? ORDER BY ts DESC LIMIT 200", (sid,))]
     return {"session": s, "environment": env_brief(e), "runs": runs, "recommendations": recs, "events": events}
 
@@ -325,7 +326,7 @@ def run_detail(run_id: int, request: Request, vs: int = None):
     cfg = store.uj(r["config"], {})
     changes = store.uj(r["changes"], [])
     diff = config_diff(store.uj(prev["config"], {}) if prev else {}, cfg, changes) if prev else []
-    recs = [store.row(x, ("items", "diagnosis")) for x in store.q("SELECT * FROM recommendations WHERE run_id=? ORDER BY id", (run_id,))]
+    recs = [store.row(x, ("items", "diagnosis", "workload")) for x in store.q("SELECT * FROM recommendations WHERE run_id=? ORDER BY id", (run_id,))]
     siblings = [{"id": x["id"], "seq": x["seq"], "label": x["label"]} for x in store.q("SELECT id, seq, label FROM runs WHERE session_id=? AND status<>'aborted' ORDER BY seq", (r["session_id"],))]
     out = run_brief(r)
     out.update({
@@ -343,7 +344,7 @@ def run_detail(run_id: int, request: Request, vs: int = None):
 def run_config(run_id: int, request: Request):
     u = auth.current_user(request)
     r = own_run(run_id, u["id"])
-    return {"config": store.uj(r["config"], {}), "managed": store.uj(r["managed"], {})}
+    return {"config": store.uj(r["config"], {}), "managed": store.uj(r["managed"], {}), "meta": store.uj(r["config_meta"], {}) or {}}
 
 
 @app.get("/api/runs/{run_id}/metrics")
@@ -464,9 +465,11 @@ def agent_session_update(sid: int, body: dict = Body(...), key=Depends(auth.agen
 @app.post("/api/v1/agent/runs")
 def agent_run_create(body: dict = Body(...), key=Depends(auth.agent_key)):
     s = agent_session(body.get("session_id"), key)
-    rid = store.ex("INSERT INTO runs(session_id, seq, label, notes, status, started, config, managed, changes) VALUES (?,?,?,?,?,?,?,?,?)",
+    rid = store.ex("INSERT INTO runs(session_id, seq, label, notes, status, started, config, managed, changes, config_meta, tradeoffs) "
+                   "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                    (s["id"], body.get("seq"), (body.get("label") or "")[:120], body.get("notes"), "measuring", body.get("started") or now(),
-                    store.j(body.get("config")), store.j(body.get("managed")), store.j(body.get("changes"))))
+                    store.j(body.get("config")), store.j(body.get("managed")), store.j(body.get("changes")),
+                    store.j(body.get("config_meta")), store.j(body.get("tradeoffs") or [])))
     return {"run_id": rid, "url": f"{PUBLIC_URL}/#/run/{rid}"}
 
 
@@ -500,9 +503,10 @@ def agent_recommendation(body: dict = Body(...), key=Depends(auth.agent_key)):
     s = agent_session(body.get("session_id"), key)
     if body.get("run_id"):
         agent_run(body["run_id"], key)
-    rid = store.ex("INSERT INTO recommendations(session_id, run_id, created, goal, policy, items, diagnosis, next) VALUES (?,?,?,?,?,?,?,?)",
+    rid = store.ex("INSERT INTO recommendations(session_id, run_id, created, goal, policy, items, diagnosis, next, workload, phase) "
+                   "VALUES (?,?,?,?,?,?,?,?,?,?)",
                    (s["id"], body.get("run_id"), now(), body.get("goal"), body.get("policy"), store.j(body.get("items")),
-                    store.j(body.get("diagnosis")), body.get("next")))
+                    store.j(body.get("diagnosis")), body.get("next"), store.j(body.get("workload")), body.get("phase")))
     store.ex("INSERT INTO events(env_id, session_id, ts, type, message, data) VALUES (?,?,?,?,?,?)",
              (s["env_id"], s["id"], now(), "recommend", f"{len(body.get('items') or [])} recommendation(s); next: {body.get('next') or '-'}",
               store.j({"recommendation_id": rid})))
@@ -544,6 +548,19 @@ def install_script():
 def agent_guide():
     with open(os.path.join(APP_DIR, "..", "..", "docs", "claude-code-skill", "SKILL.md")) as f:
         return PlainTextResponse(f.read().replace("__SERVER__", PUBLIC_URL), media_type="text/markdown")
+
+
+def _knowledge():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("ta_knowledge", os.path.join(AGENT_DIR, "tuning_agent", "knowledge.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@app.get("/api/policies")
+def policies():
+    return _knowledge().policy_rules()
 
 
 @app.get("/healthz")

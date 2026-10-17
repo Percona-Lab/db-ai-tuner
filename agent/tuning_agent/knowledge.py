@@ -177,3 +177,105 @@ def normalize(name, value):
 
 def same_value(name, a, b):
     return normalize(name, a) == normalize(name, b)
+
+
+# ---- trade-offs ("benchmark cheats") --------------------------------------------------
+# A setting is a trade-off when its VALUE gives up a guarantee production systems normally rely on.
+# category: durability | observability | replication | semantics
+def _neq(x):
+    return lambda v: str(v).strip().upper() != x
+
+
+TRADEOFFS = {
+    "innodb_flush_log_at_trx_commit": (_neq("1"), "durability",
+        "Committed transactions from the last ~1 s are lost on an OS crash or power loss (value 0: also on a mysqld crash).", "value is not 1"),
+    "sync_binlog": (_neq("1"), "durability",
+        "Binary log events can be lost on an OS crash: replicas and point-in-time recovery diverge from the data.", "value is not 1 (with the binary log enabled)"),
+    "innodb_doublewrite": (lambda v: str(v).upper() in ("OFF", "0", "DETECT_ONLY"), "durability",
+        "Torn (partially written) pages after a crash can no longer be repaired: possible unrecoverable corruption.", "OFF or DETECT_ONLY"),
+    "skip_log_bin": (lambda v: True, "replication",
+        "No binary log: no replication and no point-in-time recovery.", "option present"),
+    "disable_log_bin": (lambda v: True, "replication",
+        "No binary log: no replication and no point-in-time recovery.", "option present"),
+    "performance_schema": (_neq("ON"), "observability",
+        "No statement latency / wait instrumentation: diagnostics and query analysis are lost.", "OFF"),
+    "binlog_row_image": (lambda v: str(v).upper() != "FULL", "replication",
+        "Row events no longer carry full before/after images; some CDC / audit consumers break.", "MINIMAL or NOBLOB"),
+    "transaction_isolation": (lambda v: str(v).upper() not in ("REPEATABLE-READ", "SERIALIZABLE"), "semantics",
+        "Weaker isolation changes what concurrent transactions see; application correctness must be re-validated.", "READ-COMMITTED or READ-UNCOMMITTED"),
+    "innodb_checksum_algorithm": (lambda v: str(v).lower().startswith("none"), "durability",
+        "Page corruption is no longer detected.", "none / strict_none"),
+}
+
+# option-file switches that are not visible as variables in SHOW VARIABLES
+OPTIONS = {
+    "skip_log_bin": "log_bin",
+    "disable_log_bin": "log_bin",
+}
+KB["skip_log_bin"] = dict(kind="str", dynamic=False, risk="durability", cat="replication",
+                          desc="Start without the binary log (option-file switch).")
+KB["disable_log_bin"] = dict(kind="str", dynamic=False, risk="durability", cat="replication",
+                             desc="Start without the binary log (option-file switch).")
+KB["transaction_isolation"] = dict(kind="enum", dynamic=True, risk="semantics", cat="semantics",
+                                   desc="Default transaction isolation level.")
+KB["innodb_parallel_read_threads"] = dict(kind="int", dynamic=True, risk="none", cat="concurrency",
+                                          desc="Threads for parallel clustered index reads (COUNT(*), CHECK TABLE).")
+KB["temptable_max_ram"] = dict(kind="size", dynamic=True, risk="low", cat="memory",
+                               desc="RAM the TempTable engine may use before spilling to mmap/disk.")
+KB["read_rnd_buffer_size"] = dict(kind="size", dynamic=True, risk="low", cat="memory",
+                                  desc="Buffer for multi-range reads / sorted row reads.")
+KB["innodb_read_ahead_threshold"] = dict(kind="int", dynamic=True, risk="none", cat="io",
+                                         desc="Sequential pages accessed in an extent that trigger linear read-ahead.")
+KB["innodb_random_read_ahead"] = dict(kind="bool", dynamic=True, risk="none", cat="io",
+                                      desc="Random read-ahead of whole extents.")
+KB["innodb_stats_persistent_sample_pages"] = dict(kind="int", dynamic=True, risk="none", cat="optimizer",
+                                                  desc="Pages sampled for persistent index statistics.")
+KB["innodb_deadlock_detect"] = dict(kind="bool", dynamic=True, risk="low", cat="concurrency",
+                                    desc="Deadlock detection.")
+KB["binlog_cache_size"] = dict(kind="size", dynamic=True, risk="none", cat="memory",
+                               desc="Per-session binlog cache.")
+
+
+def tradeoff_of(name, value):
+    """None for a production-safe value, else {variable, value, category, lost}."""
+    t = TRADEOFFS.get(name)
+    if not t or value is None:
+        return None
+    pred, cat, lost = t[:3]
+    try:
+        if pred(value):
+            return {"variable": name, "value": str(value), "category": cat, "lost": lost}
+    except Exception:
+        return None
+    return None
+
+
+def tradeoffs_in(managed):
+    out = []
+    for k, v in (managed or {}).items():
+        t = tradeoff_of(k, v)
+        if t:
+            out.append(t)
+    return out
+
+
+def policy_rules():
+    """Machine- and human-readable description of the policies (served by the web app)."""
+    return {
+        "policies": {
+            "safe": "Only production-safe changes are applied. Trade-off settings are shown as advice and never applied.",
+            "benchmark": "Production-safe experiments first; when they are exhausted, trade-off settings may be applied. "
+                         "Runs with trade-offs are flagged and their results are reported separately from production-safe results.",
+        },
+        "tradeoffs": [{"variable": k, "when": t[3] if len(t) > 3 else "", "category": t[1], "lost": t[2]} for k, t in TRADEOFFS.items()],
+        "safe_definition": "A change is production-safe when it does not weaken durability, replication / point-in-time recovery, "
+                           "observability or transaction semantics. Safe changes can still make performance worse - every experiment "
+                           "is measured and reverted unless it beats the noise threshold or measurably reduces CPU / I/O per transaction.",
+        "guards": [
+            "Memory: buffer pool and per-session buffers are sized against free RAM; the buffer pool is shrunk when the host swaps or shows memory pressure.",
+            "Restarts: only when the agent was installed without --no-restart; if mysqld fails to start, the previous option file is restored automatically.",
+            "One experiment at a time; neutral and efficiency-loss changes are reverted to the parent configuration.",
+            "Changes already tried in the session without benefit are not proposed again.",
+        ],
+        "variables": {k: {"desc": v.get("desc"), "dynamic": v.get("dynamic"), "category": v.get("cat")} for k, v in KB.items()},
+    }

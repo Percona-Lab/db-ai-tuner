@@ -12,7 +12,7 @@ Inputs (ctx):
 
 Every recommendation carries the evidence it was derived from so the decision can be audited.
 """
-from .knowledge import KB, fmt_size, human_size, normalize, parse_size
+from .knowledge import KB, fmt_size, human_size, normalize, parse_size, tradeoff_of
 
 GiB = 1024 ** 3
 MiB = 1024 ** 2
@@ -31,6 +31,36 @@ def _int(vars_, name, default=0):
 
 def _on(vars_, name):
     return str(vars_.get(name, "")).upper() in ("ON", "1")
+
+
+def classify_workload(summary, inputs):
+    """oltp-write | oltp-read | olap | mixed, with the evidence used."""
+    s, rates = summary or {}, (inputs or {}).get("status_rates", {})
+    stmts = s.get("statements_per_s") or s.get("qps") or 0
+    if not stmts:
+        return {"type": "idle", "evidence": {}}
+    writes = sum(rates.get(k, 0) for k in ("Com_insert", "Com_update", "Com_delete", "Com_replace", "Com_insert_select",
+                                             "Com_update_multi", "Com_delete_multi"))
+    reads = rates.get("Com_select", 0)
+    calls = rates.get("Com_call_procedure", 0)
+    rows_read = rates.get("Innodb_rows_read", 0)
+    rows_per_stmt = rows_read / max(stmts, 1e-9)
+    lat = s.get("avg_latency_ms") or 0
+    ev = {"statements_per_s": round(stmts, 1), "avg_latency_ms": lat, "rows_read_per_statement": round(rows_per_stmt, 1),
+          "write_share_pct": round(100 * writes / max(writes + reads, 1e-9), 1), "procedure_calls_per_s": round(calls, 1),
+          "sort_merge_passes_per_s": rates.get("Sort_merge_passes", 0), "tmp_disk_tables_per_s": rates.get("Created_tmp_disk_tables", 0),
+          "full_joins_per_s": rates.get("Select_full_join", 0)}
+    if lat >= 50 or rows_per_stmt >= 5000:
+        kind = "olap"
+    elif writes + reads == 0 and calls > 0:
+        kind = "oltp-write"  # stored-procedure OLTP (e.g. HammerDB): statements run inside procedures
+    elif writes / max(writes + reads, 1e-9) >= 0.15:
+        kind = "oltp-write"
+    elif lat >= 10 or rows_per_stmt >= 500:
+        kind = "mixed"
+    else:
+        kind = "oltp-read"
+    return {"type": kind, "evidence": ev}
 
 
 def diagnose(ctx):
@@ -120,9 +150,9 @@ class Builder:
         order = ["none", "low", "compat", "observability", "durability"]
         restart = False
         for var, val in changes:
-            if var not in self.v:
+            if var not in self.v and var not in ("skip_log_bin", "disable_log_bin"):
                 continue
-            if normalize(var, self.v.get(var)) == normalize(var, val):
+            if var in self.v and normalize(var, self.v.get(var)) == normalize(var, val):
                 continue
             meta = KB.get(var, {})
             r = meta.get("risk", "low")
@@ -133,8 +163,10 @@ class Builder:
             ch.append({"variable": var, "current": self.v.get(var), "proposed": val})
         if kind == "config" and not ch:
             return
+        trade = [t for t in (tradeoff_of(c["variable"], c["proposed"]) for c in ch) if t]
         self.items.append({
             "id": id, "title": title, "kind": kind, "changes": ch, "rationale": rationale,
+            "safety": "trade-off" if trade else "safe", "tradeoffs": trade,
             "evidence": {k: v for k, v in evidence.items() if v is not None},
             "impact": impact, "confidence": confidence, "risk": risk, "restart": restart,
             "goals": list(goals),
@@ -314,6 +346,18 @@ def recommend(ctx):
             b.add("sync-binlog", "Relax binlog fsync (DURABILITY TRADE-OFF)", [("sync_binlog", "1000")],
                   "Binary log fsync at every commit group. Relaxing can lose binlog events on OS crash (replicas/PITR diverge).",
                   {"data_fsyncs": s.get("data_fsyncs"), "tps": s.get("tps")}, impact=2, confidence=2, kind=dur_kind)
+    page_writes = rates.get("Innodb_pages_written", 0) or rates.get("Innodb_dblwr_pages_written", 0)
+    if have_run and wtype in ("oltp-write", "mixed") and "innodb_doublewrite" in v and str(v.get("innodb_doublewrite")).upper() == "ON" \
+            and rates.get("Innodb_dblwr_pages_written", 0) > 50:
+        b.add("doublewrite-off", "Disable the doublewrite buffer (DURABILITY TRADE-OFF)", [("innodb_doublewrite", "OFF")],
+              f"{rates.get('Innodb_dblwr_pages_written', 0):.0f} pages/s are written twice. Without doublewrite a crash during a page write "
+              "can leave a torn page that InnoDB cannot repair.", {"Innodb_dblwr_pages_written_per_s": rates.get("Innodb_dblwr_pages_written")},
+              impact=2, confidence=2, kind="config" if policy == "benchmark" else "advice")
+    if have_run and v.get("log_bin") == "ON" and wtype in ("oltp-write", "mixed") and commit_bound:
+        b.add("binlog-off", "Run without the binary log (REPLICATION / PITR TRADE-OFF)", [("disable_log_bin", "")],
+              "Every commit is a two-phase commit between the binlog and InnoDB with its own fsync. Without the binlog there is no replication "
+              "and no point-in-time recovery.", {"fsyncs_per_trx": s.get("fsyncs_per_trx"), "log_bin": v.get("log_bin")},
+              impact=3, confidence=2, kind="config" if policy == "benchmark" else "advice")
     if policy == "benchmark" and have_run and goal == "tps" and busy >= 80 and _on(v, "performance_schema"):
         b.add("ps-off", "Disable Performance Schema (OBSERVABILITY TRADE-OFF)", [("performance_schema", "OFF")],
               "On a CPU-bound server instrumentation costs a few percent of CPU. You lose statement latency measurement "
@@ -322,6 +366,73 @@ def recommend(ctx):
         b.add("binlog-minimal", "Log minimal row images", [("binlog_row_image", "MINIMAL")],
               "Smaller binlog writes for update-heavy workloads; downstream consumers needing full images (CDC) break.",
               {"redo_mbs": redo_mbs}, impact=1, confidence=1)
+
+    # ---------------- workload-specific rules ---------------------------------------
+    wl = ctx.get("workload") or {}
+    wtype = wl.get("type")
+    conc = max(1.0, s.get("threads_running_avg") or 1)
+    if have_run and wtype in ("olap", "mixed"):
+        mem_budget = ram * 0.10  # per-query buffers may use up to ~10% of RAM across concurrently running queries
+        if rates.get("Select_full_join", 0) > 0 or rates.get("Select_scan", 0) > 0.2:
+            jb = _int(v, "join_buffer_size", 256 * 1024)
+            want = int(min(64 * MiB, max(jb * 8, 8 * MiB), mem_budget / conc))
+            if want > jb * 1.5:
+                b.add("join-buffer", "Larger join buffer for analytical joins", [("join_buffer_size", fmt_size(want // MiB * MiB or want))],
+                      f"Analytical workload: {rates.get('Select_full_join', 0):.2f} joins/s without usable indexes (hash joins in MySQL 8.0+ "
+                      "use join_buffer_size; when the build side does not fit, the join spills to disk in chunks). "
+                      f"Sized for ~{conc:.0f} concurrent queries within 10% of RAM.",
+                      {"Select_full_join_per_s": rates.get("Select_full_join"), "Select_scan_per_s": rates.get("Select_scan"),
+                       "threads_running_avg": conc, "join_buffer_size": jb}, impact=2, confidence=2)
+        if rates.get("Sort_merge_passes", 0) > 0.05:
+            sb = _int(v, "sort_buffer_size", 256 * 1024)
+            want = int(min(32 * MiB, max(sb * 8, 4 * MiB), mem_budget / conc))
+            if want > sb * 1.5:
+                b.add("sort-buffer-olap", "Larger sort buffer for analytical sorts", [("sort_buffer_size", fmt_size(want // MiB * MiB or want))],
+                      f"Sorts spill to merge passes ({rates['Sort_merge_passes']:.2f}/s) in an analytical workload with ~{conc:.0f} concurrent queries.",
+                      {"Sort_merge_passes_per_s": rates.get("Sort_merge_passes"), "sort_buffer_size": sb}, impact=2, confidence=2)
+        tmpd, tmpa = rates.get("Created_tmp_disk_tables", 0), rates.get("Created_tmp_tables", 0)
+        if tmpd > 0 and tmpa and tmpd / tmpa > 0.02:
+            cur = min(_int(v, "tmp_table_size", 16 * MiB), _int(v, "max_heap_table_size", 16 * MiB))
+            want = int(min(512 * MiB, max(cur * 4, 128 * MiB), mem_budget / conc))
+            ch = [("tmp_table_size", fmt_size(want // MiB * MiB)), ("max_heap_table_size", fmt_size(want // MiB * MiB))]
+            if "temptable_max_ram" in v and _int(v, "temptable_max_ram") < want * conc:
+                ch.append(("temptable_max_ram", fmt_size(int(min(ram * 0.15, max(want * conc, GiB))) // MiB * MiB)))
+            if want > cur * 1.5:
+                b.add("tmp-olap", "Keep analytical temporary tables in memory", ch,
+                      f"{100 * tmpd / tmpa:.0f}% of internal temporary tables go to disk ({tmpd:.2f}/s) for GROUP BY / DISTINCT / derived tables.",
+                      {"tmp_disk_per_s": tmpd, "tmp_per_s": tmpa, "tmp_table_size": cur}, impact=2, confidence=2)
+        if (s.get("bp_disk_reads") or 0) > 100 and "innodb_read_ahead_threshold" in v and _int(v, "innodb_read_ahead_threshold", 56) > 32 and \
+                rates.get("Handler_read_rnd_next", 0) > 10 * max(rates.get("Handler_read_key", 0), 1):
+            b.add("read-ahead", "Earlier linear read-ahead for scans", [("innodb_read_ahead_threshold", "32")],
+                  "Scan-heavy analytical reads from disk: triggering linear read-ahead earlier turns more random page reads into larger sequential ones. Experiment.",
+                  {"bp_disk_reads": s.get("bp_disk_reads"), "Handler_read_rnd_next_per_s": rates.get("Handler_read_rnd_next")}, impact=1, confidence=1)
+        top = (inp.get("top_statements") or [])
+        if top and "innodb_stats_persistent_sample_pages" in v and _int(v, "innodb_stats_persistent_sample_pages", 20) <= 20 and \
+                any(q.get("pct_time", 0) > 10 and q.get("rows_examined_avg", 0) > 100000 for q in top):
+            b.add("stats-sample", "More accurate optimizer statistics", [("innodb_stats_persistent_sample_pages", "128")],
+                  "Long analytical queries examine millions of rows: better index statistics give the optimizer better join orders "
+                  "(takes effect after ANALYZE TABLE). Consider histograms on filtered non-indexed columns too.",
+                  {"top_statement_rows_examined": max(q.get("rows_examined_avg", 0) for q in top)}, impact=1, confidence=1)
+    if have_run and wtype in ("oltp-write", "mixed"):
+        if v.get("log_bin") == "ON" and "binlog_group_commit_sync_delay" in v and _int(v, "binlog_group_commit_sync_delay") == 0 \
+                and (s.get("fsyncs_per_trx") or 0) > 0.8 and (s.get("threads_running_avg") or 0) >= 4:
+            b.add("group-commit-delay", "Grow binlog commit groups", [("binlog_group_commit_sync_delay", "200"),
+                                                                       ("binlog_group_commit_sync_no_delay_count", "16")],
+                  f"{s.get('fsyncs_per_trx'):.2f} fsyncs per transaction with {s.get('threads_running_avg'):.0f} running threads: waiting up to 200 µs "
+                  "lets more transactions share one binlog fsync. Durability unchanged; may add latency at low concurrency. Experiment.",
+                  {"fsyncs_per_trx": s.get("fsyncs_per_trx"), "threads_running_avg": s.get("threads_running_avg")}, impact=2, confidence=1)
+        if "innodb_change_buffering" in v and v.get("innodb_change_buffering") == "none" and (s.get("bp_hit_pct") or 100) < 99 and writes > 50:
+            b.add("change-buffer", "Buffer secondary index changes", [("innodb_change_buffering", "all")],
+                  "Write-heavy workload whose secondary-index pages are often not in memory: the change buffer defers those reads. "
+                  "MySQL 8.4 disables it by default (helps little on SSD, can slow crash recovery). Experiment.",
+                  {"bp_hit_pct": s.get("bp_hit_pct"), "writes_per_s": round(writes, 1)}, impact=1, confidence=1)
+        lw = s.get("row_lock_waits") or 0
+        if lw > 1 and (s.get("tps") or 0) > 0:
+            hot = [q for q in (inp.get("top_statements") or []) if q.get("lock_ms_avg", 0) > 1][:3]
+            b.add("row-locks", "Row lock contention is a workload property", [],
+                  f"{lw:.1f} row lock waits/s (avg {s.get('row_lock_wait_avg_ms') or 0:.1f} ms). Configuration cannot remove hot-row contention "
+                  "(e.g. TPC-C district/warehouse rows); shorter transactions, consistent lock order or fewer concurrent clients on the same rows can.",
+                  {"row_lock_waits_per_s": lw, "hot_statements": [q["query"][:80] for q in hot]}, impact=1, confidence=2, kind="advice")
 
     # ---------------- query advice -------------------------------------------------
     for q in (inp.get("top_statements") or [])[:10]:
@@ -348,13 +459,17 @@ def score(item, goal):
 def apply_history(items, history):
     """Mark/skip items already tried."""
     tried = {}
+    tried_ids = {}
     for run in history:
         for c in run.get("changes") or []:
             tried[(c["variable"], normalize(c["variable"], c.get("new")))] = run
+            src = c.get("source") or ""
+            if src.startswith("rec:"):
+                tried_ids[src[4:]] = run
     out = []
     for it in items:
         prior = [tried.get((c["variable"], normalize(c["variable"], c["proposed"]))) for c in it["changes"]]
-        prior = [p for p in prior if p]
+        prior = [p for p in prior if p] or ([tried_ids[it["id"]]] if it["id"] in tried_ids and it["kind"] == "config" else [])
         if prior:
             p = prior[-1]
             it["tried_in_run"] = p.get("seq")
@@ -459,18 +574,26 @@ def _revert_item(id_, title, managed, target, variables, rationale, evidence, pr
 
 def run_engine(ctx):
     ctx = dict(ctx)
+    ctx["workload"] = classify_workload(ctx.get("summary"), ctx.get("inputs")) if ctx.get("summary") else {"type": None}
     ctx["diagnosis"] = diagnose(ctx) if ctx.get("summary") else []
     items = recommend(ctx)
     items = apply_history(items, ctx.get("history") or [])
     items = revert_suggestions(ctx.get("history") or [], ctx["variables"], ctx.get("goal", "tps"),
                                float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0), ctx.get("managed")) + items
-    allowed_durability = ctx.get("policy") == "benchmark"
+    benchmark = ctx.get("policy") == "benchmark"
     for it in items:
-        if it["risk"] == "durability" and not allowed_durability and it["kind"] == "config":
+        it.setdefault("safety", "safe")
+        it.setdefault("tradeoffs", [])
+        if it["safety"] == "trade-off" and it["kind"] == "config" and not benchmark:
             it["kind"] = "advice"
+            it["note"] = (it.get("note", "") + " Trade-off: not applied under policy=safe.").strip()
         it["score"] = 100 if it.get("priority") else score(it, ctx.get("goal", "tps")) + (2 if it["kind"] == "revert" else 0)
-    items.sort(key=lambda i: -i["score"])
+    items.sort(key=lambda i: (i["safety"] == "trade-off" and i["kind"] != "revert", -i["score"]))
     for n, it in enumerate(items, 1):
         it["rank"] = n
-    nxt = next((i for i in items if i["kind"] in ("config", "revert") and i["confidence"] > 0), None)
-    return {"diagnosis": ctx["diagnosis"], "items": items, "next": nxt["id"] if nxt else None}
+    actionable = [i for i in items if i["kind"] in ("config", "revert") and i["confidence"] > 0]
+    safe_next = next((i for i in actionable if i["safety"] == "safe"), None)
+    trade_next = next((i for i in actionable if i["safety"] == "trade-off"), None)
+    nxt = safe_next or (trade_next if benchmark else None)
+    return {"workload": ctx["workload"], "diagnosis": ctx["diagnosis"], "items": items, "next": nxt["id"] if nxt else None,
+            "phase": "safe" if safe_next else ("trade-offs" if nxt else "done")}

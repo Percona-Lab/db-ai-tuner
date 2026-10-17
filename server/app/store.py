@@ -55,6 +55,10 @@ def conn():
 MIGRATIONS = [
     ("runs", "evaluation", "TEXT"),
     ("tsessions", "calibration", "TEXT"),
+    ("runs", "config_meta", "TEXT"),
+    ("runs", "tradeoffs", "TEXT"),
+    ("recommendations", "workload", "TEXT"),
+    ("recommendations", "phase", "TEXT"),
 ]
 
 

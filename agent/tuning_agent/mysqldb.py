@@ -152,6 +152,23 @@ class DB:
         except pymysql.MySQLError:
             return {}
 
+    def variables_meta(self):
+        """{name: {source, path}} - where each global value came from."""
+        out = {}
+        try:
+            for name, src, path in self.rows("SELECT VARIABLE_NAME, VARIABLE_SOURCE, VARIABLE_PATH FROM performance_schema.variables_info"):
+                out[name.lower()] = {"source": src, "path": path or None}
+            return out
+        except pymysql.MySQLError:
+            pass
+        try:  # MariaDB
+            for name, origin, path, default in self.rows(
+                    "SELECT VARIABLE_NAME, GLOBAL_VALUE_ORIGIN, GLOBAL_VALUE_PATH, DEFAULT_VALUE FROM information_schema.SYSTEM_VARIABLES"):
+                out[name.lower()] = {"source": origin, "path": path or None, "default": default}
+        except pymysql.MySQLError:
+            pass
+        return out
+
     def table_sizes(self):
         try:
             r = self.rows(
@@ -208,6 +225,34 @@ def section(text, title, maxlen=4000):
         return ""
     m = re.search(r"-+\n" + re.escape(title) + r"\n-+\n(.*?)(?:\n-{3,}\n[A-Z ]+\n-{3,}|\Z)", text, re.S)
     return m.group(1)[:maxlen].strip() if m else ""
+
+
+def compiled_defaults(binary_candidates=("/usr/sbin/mysqld", "/usr/sbin/mariadbd", "/usr/libexec/mysqld", "/usr/bin/mysqld")):
+    """Compiled-in defaults from `mysqld --no-defaults --verbose --help` (no server start)."""
+    import os
+    import subprocess
+    for b in binary_candidates:
+        if not os.path.exists(b):
+            continue
+        try:
+            r = subprocess.run([b, "--no-defaults", "--verbose", "--help"], capture_output=True, text=True, timeout=60)
+        except Exception:
+            continue
+        out, started = {}, False
+        for line in r.stdout.splitlines():
+            if line.startswith("Variables (--variable-name=value)"):
+                started = True
+                continue
+            if not started or line.startswith("---") or not line.strip():
+                continue
+            parts = line.split(None, 1)
+            if len(parts) == 2:
+                out[parts[0].replace("-", "_").lower()] = parts[1].strip()
+            elif len(parts) == 1:
+                out[parts[0].replace("-", "_").lower()] = ""
+        if out:
+            return out
+    return {}
 
 
 def redo_capacity(variables):

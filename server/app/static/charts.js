@@ -158,6 +158,7 @@
       const d = `M${x},${Y(0)} V${y + r} Q${x},${y} ${x + r},${y} H${x + bw - r} Q${x + bw},${y} ${x + bw},${y + r} V${Y(0)} Z`;
       const p = el("path", { d, fill: b.highlight ? "var(--s1)" : "var(--axis)" }, svg);
       if (b.highlight === "best") p.setAttribute("fill", "var(--s3)");
+      if (b.highlight === "trade") p.setAttribute("fill", "var(--s2)");
       const lab = el("text", { x: cx, y: H - 18, "text-anchor": "middle", "font-size": 11, fill: "var(--ink-2)" }, svg);
       const maxc = Math.max(4, Math.floor((slot - 6) / 6.3));
       lab.textContent = b.label.length > maxc ? b.label.slice(0, maxc - 1) + "…" : b.label;

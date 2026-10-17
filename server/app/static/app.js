@@ -41,7 +41,7 @@ function setNav(active) {
   const nav = document.getElementById("nav");
   if (!ME) { nav.innerHTML = `<a class="right" href="#/login">Log in</a><a href="#/register">Create account</a>`; return; }
   nav.innerHTML = `<a href="#/" class="${active === "envs" ? "on" : ""}">Environments</a><a href="#/connect" class="${active === "connect" ? "on" : ""}">Connect agent</a>` +
-    `<a href="#/account" class="${active === "account" ? "on" : ""}">Account</a><span class="right">${esc(ME.email)}</span><a href="#" id="logout">Log out</a>`;
+    `<a href="#/policies" class="${active === "policies" ? "on" : ""}">Policies</a><a href="#/account" class="${active === "account" ? "on" : ""}">Account</a><span class="right">${esc(ME.email)}</span><a href="#" id="logout">Log out</a>`;
   document.getElementById("logout").onclick = async e => { e.preventDefault(); await api("/api/auth/logout", { method: "POST", body: {} }); ME = null; location.hash = "#/"; };
 }
 
@@ -156,6 +156,21 @@ tuning-agent session stop</code></pre>
     sessionStorage.setItem("newkey", r.api_key); connectPage();
   };
   window.addEventListener("hashchange", () => sessionStorage.removeItem("newkey"), { once: true });
+}
+
+async function policiesPage() {
+  setNav("policies");
+  const p = await api("/api/policies");
+  const vars = Object.entries(p.variables).sort();
+  $view.innerHTML = `<h1>Tuning policies</h1><p class="sub">How the agent decides what it may change. Generated from the agent's own rule table.</p>
+  <div class="grid g2">${Object.entries(p.policies).map(([k, v]) => `<div class="card"><h3 style="margin-top:0">${esc(k)}</h3><p style="margin:0">${esc(v)}</p></div>`).join("")}</div>
+  <h2>What “production-safe” means</h2><p>${esc(p.safe_definition)}</p>
+  <h2>Trade-off settings</h2><p class="muted">A change is a trade-off when the variable gets one of these values. Under <b>safe</b> they are advice only; under <b>benchmark</b> they are tried after the safe experiments, and runs that use them are flagged and reported separately.</p>
+  <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Trade-off when</th><th>Category</th><th>What is given up</th></tr></thead><tbody>
+  ${p.tradeoffs.map(t => `<tr><td class="mono">${esc(t.variable)}</td><td>${esc(t.when)}</td><td><span class="badge bad">${esc(t.category)}</span></td><td>${esc(t.lost)}</td></tr>`).join("")}</tbody></table></div>
+  <h2>Guards that apply under every policy</h2><ul>${p.guards.map(g => `<li>${esc(g)}</li>`).join("")}</ul>
+  <h2>Variables the agent knows</h2><div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Area</th><th>Changed online</th><th>Description</th></tr></thead><tbody>
+  ${vars.map(([k, v]) => `<tr><td class="mono">${esc(k)}</td><td>${esc(v.category)}</td><td>${v.dynamic ? "yes" : "restart"}</td><td>${esc(v.desc)}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
 async function accountPage() {
@@ -279,17 +294,19 @@ async function sessionPage(id) {
     tied.sort((a, b) => (b.kept - a.kept) || (b.runs.length - a.runs.length) || (lower ? a.mean - b.mean : b.mean - a.mean));
     cfgs.splice(cfgs.indexOf(tied[0]), 1); cfgs.unshift(tied[0]);
   }
+  const safeCfgs = cfgs.filter(c => !(c.runs[0].tradeoffs || []).length);
+  const bestSafe = safeCfgs[0], bestTrade = cfgs.find(c => (c.runs[0].tradeoffs || []).length);
   const bestCfg = cfgs[0], best = bestCfg ? bestCfg.runs[bestCfg.runs.length - 1] : null;
   const firstCfg = first ? cfgs.find(c => c.runs.includes(first)) : null;
   const gain = firstCfg && bestCfg && firstCfg.mean ? (lower ? (firstCfg.mean - bestCfg.mean) : (bestCfg.mean - firstCfg.mean)) / firstCfg.mean * 100 : null;
   $view.innerHTML = `<div class="crumbs"><a href="#/">Environments</a> / <a href="#/env/${d.environment.id}">${esc(d.environment.name)}</a> /</div>
   <div class="row"><h1>${esc(s.name)}</h1>${statusBadge(s.status)}<span class="spacer"></span><button class="ghost" id="rename">Rename</button><button class="ghost danger" id="del">Delete</button></div>
-  <p class="sub">Goal: <b>${goalName(s.goal)}</b> · policy <b>${esc(s.policy)}</b>${s.policy === "benchmark" ? " (durability / observability trade-offs allowed)" : " (production-safe changes only)"} · noise threshold ±${s.noise_pct}% · started ${fmtTime(s.created)}${s.workload ? " · workload: " + esc(s.workload) : ""}</p>
+  <p class="sub">Goal: <b>${goalName(s.goal)}</b> · policy <a href="#/policies"><b>${esc(s.policy)}</b></a>${s.policy === "benchmark" ? " (trade-offs allowed after safe experiments)" : " (production-safe changes only)"} · noise threshold ±${s.noise_pct}% · started ${fmtTime(s.created)}${s.workload ? " · workload: " + esc(s.workload) : ""}</p>
   ${calibrationNote(s)}
   <div class="tiles"><div class="tile"><div class="k">Runs measured</div><div class="v">${done.length}</div></div>
    <div class="tile"><div class="k">First run (${goalUnit(s.goal)})</div><div class="v">${first ? num(first.goal_value) : "–"}</div><div class="d">${first ? esc(first.label) : ""}</div></div>
-   <div class="tile"><div class="k">Best configuration (${goalUnit(s.goal)})</div><div class="v">${bestCfg ? num(bestCfg.mean) : "–"}</div><div class="d">${bestCfg ? (bestCfg.runs.length > 1 ? "mean of runs " : "run ") + bestCfg.runs.map(r => "#" + r.seq).join(", ") : ""}</div></div>
-   <div class="tile"><div class="k">Best vs first configuration</div><div class="v ${deltaCls(gain)}">${pct(gain)}</div><div class="d">${lower ? "lower latency is better" : "higher throughput is better"}</div></div></div>
+   ${cfgTile("Best production-safe configuration", bestSafe, firstCfg, lower, s.goal)}
+   ${bestTrade ? cfgTile("Best with trade-offs", bestTrade, firstCfg, lower, s.goal, true) : ""}</div>
   <div class="card" style="margin-top:14px" id="bars"></div>
   <h2>Runs</h2><div class="card tablewrap"><table><thead><tr><th>#</th><th>Label</th><th>Status</th><th>Changes vs previous run</th><th class="num">${goalUnit(s.goal) === "ms" ? "Avg ms" : "Goal"}</th><th class="num">vs prev</th><th class="num">vs first</th><th>Verdict</th>
    <th class="num">vs parent cfg</th><th class="num">TPS</th><th class="num">Avg lat ms</th><th class="num">mysqld CPU ms/trx</th><th class="num">Disk IOs/trx</th><th class="num">CPU %</th><th>Duration</th></tr></thead><tbody id="runs"></tbody></table></div>
@@ -297,19 +314,19 @@ async function sessionPage(id) {
   <h2>Notes</h2><div class="card"><textarea id="notes" rows="3" placeholder="Notes about this session (workload, hypotheses, conclusions)">${esc(s.notes || "")}</textarea><div class="row" style="margin-top:6px"><button id="savenotes">Save notes</button><span id="saved" class="muted"></span></div></div>
   <h2>Activity</h2><div class="card" id="events"></div>`;
   C.barChart(document.getElementById("bars"), {
-    title: goalName(s.goal) + " per run (" + goalUnit(s.goal) + ") — green: runs of the best configuration", unit: goalUnit(s.goal), metric: s.goal === "latency" ? "avg latency" : "goal value",
+    title: goalName(s.goal) + " per run (" + goalUnit(s.goal) + ") — green: best production-safe configuration · orange: runs with trade-offs", unit: goalUnit(s.goal), metric: s.goal === "latency" ? "avg latency" : "goal value",
     ref: first ? first.goal_value : null,
     bars: done.map(r => ({ label: "#" + r.seq + " " + r.label, value: r.goal_value, sub: r.delta_vs_first_pct != null ? pct(r.delta_vs_first_pct) : "", href: "#/run/" + r.id,
-      highlight: bestCfg && bestCfg.runs.includes(r) ? "best" : false,
+      highlight: (r.tradeoffs || []).length ? "trade" : bestSafe && bestSafe.runs.includes(r) ? "best" : false,
       tip: `<div>vs previous<b>${pct(r.delta_pct)}</b></div><div>verdict<b>${esc(r.verdict || "")}</b></div>` })),
   });
   const tb = document.getElementById("runs");
   if (!d.runs.length) tb.innerHTML = `<tr><td colspan="15" class="muted">No runs yet: <code>tuning-agent measure start</code> … <code>measure stop</code>.</td></tr>`;
   d.runs.forEach(r => {
     const sm = r.summary || {};
-    const ch = (r.changes || []).map(c => `<span class="mono">${esc(c.variable)}</span>=${esc(val(c.variable, c.new))}`).join(", ");
+    const ch = r.seq === 1 ? `<a href="#/run/${r.id}">starting configuration</a>` : (r.changes || []).map(c => `<span class="mono">${esc(c.variable)}</span>=${esc(val(c.variable, c.new))}`).join(", ");
     const tr = document.createElement("tr"); tr.className = "click"; tr.onclick = () => location.hash = "#/run/" + r.id;
-    tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a></td><td>${statusBadge(r.status)}</td><td style="max-width:320px">${ch || '<span class="muted">none</span>'}</td>
+    tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${tradeBadge(r.tradeoffs)}</td><td>${statusBadge(r.status)}</td><td style="max-width:320px">${ch || '<span class="muted">none</span>'}</td>
      <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaCls(r.delta_pct)}">${pct(r.delta_pct)}</td><td class="num ${deltaCls(r.delta_vs_first_pct)}">${pct(r.delta_vs_first_pct)}</td><td>${verdictBadge(r.verdict)}${(r.evaluation || {}).drift ? ' <span class="badge warn">drift</span>' : ""}</td>
      <td class="num ${deltaCls((r.evaluation || {}).goal_delta_pct)}" title="vs mean of runs ${esc(((r.evaluation || {}).parent_runs || []).join(", "))}">${pct((r.evaluation || {}).goal_delta_pct)}</td>
      <td class="num">${num(sm.tps)}</td><td class="num">${num(sm.avg_latency_ms)}</td><td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td><td class="num">${num(sm.cpu_busy)}</td><td>${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}</td>`;
@@ -326,12 +343,52 @@ async function sessionPage(id) {
   }, 10000));
 }
 
+function cfgTile(title, cfg, firstCfg, lower, goal, trade) {
+  if (!cfg) return "";
+  const g = firstCfg && firstCfg.mean ? (lower ? (firstCfg.mean - cfg.mean) : (cfg.mean - firstCfg.mean)) / firstCfg.mean * 100 : null;
+  return `<div class="tile"><div class="k">${title} (${goalUnit(goal)})</div><div class="v">${num(cfg.mean)} <span class="${deltaCls(g)}" style="font-size:14px">${pct(g)}</span></div>
+   <div class="d">${cfg.runs.length > 1 ? "mean of runs " : "run "}${cfg.runs.map(r => "#" + r.seq).join(", ")} · vs first configuration${trade ? `<br>${esc((cfg.runs[0].tradeoffs || []).map(t => t.variable + "=" + t.value).join(", "))}` : ""}</div></div>`;
+}
+
+function tradeBadge(t) {
+  if (!t || !t.length) return "";
+  return ` <span class="badge bad" title="${esc(t.map(x => x.variable + "=" + x.value + ": " + x.lost).join("\n"))}">trade-off</span>`;
+}
+
 function calibrationNote(s) {
   const c = s.calibration;
   if (!c) return `<div class="note" style="margin-bottom:12px">Noise not calibrated: verdicts use a fixed ±${s.noise_pct || 2}% threshold. Standard protocol: <code>tuning-agent calibrate --runs 3</code> on the starting configuration.</div>`;
   const eff = Object.entries(c.efficiency || {}).filter(([k]) => EFF_LABELS[k]).map(([k, e]) => `${EFF_LABELS[k]} ±${e.noise_pct}%`).join(" · ");
   return `<div class="note" style="margin-bottom:12px"><b>Noise calibrated</b> from runs ${c.runs.map(x => "#" + x).join(", ")}: goal mean ${num(c.goal_mean)}, run-to-run CV ${c.goal_cv_pct}% (range ${c.goal_range_pct}%) → changes within <b>±${c.noise_pct}%</b> are treated as noise. Efficiency thresholds: ${eff}.</div>`;
 }
+const KEY_VARS = ["innodb_buffer_pool_size", "innodb_buffer_pool_instances", "innodb_redo_log_capacity", "innodb_log_file_size", "innodb_log_buffer_size",
+  "innodb_flush_log_at_trx_commit", "sync_binlog", "log_bin", "innodb_doublewrite", "innodb_flush_method", "innodb_io_capacity", "innodb_io_capacity_max",
+  "innodb_flush_neighbors", "innodb_use_fdatasync", "innodb_read_io_threads", "innodb_write_io_threads", "innodb_page_cleaners", "innodb_lru_scan_depth",
+  "innodb_log_writer_threads", "innodb_adaptive_hash_index", "innodb_change_buffering", "innodb_sync_spin_loops", "innodb_spin_wait_delay",
+  "innodb_thread_concurrency", "thread_handling", "thread_pool_size", "max_connections", "thread_cache_size", "table_open_cache", "table_open_cache_instances",
+  "table_definition_cache", "tmp_table_size", "max_heap_table_size", "temptable_max_ram", "sort_buffer_size", "join_buffer_size", "read_rnd_buffer_size",
+  "binlog_format", "binlog_row_image", "binlog_group_commit_sync_delay", "transaction_isolation", "performance_schema", "innodb_dedicated_server",
+  "innodb_read_ahead_threshold", "innodb_stats_persistent_sample_pages", "innodb_page_size"];
+function sourceText(m) {
+  if (!m || !m.source) return "";
+  const src = { COMPILED: "compiled default", EXPLICIT: "option file", GLOBAL: "option file", DYNAMIC: "SET GLOBAL at runtime", PERSISTED: "SET PERSIST",
+    COMMAND_LINE: "command line", LOGIN: "login", CLIENT: "client", SERVER: "server-adjusted", "AUTO-CONFIGURED": "auto-sized", CONFIG: "option file", "SQL": "SET GLOBAL" }[m.source] || m.source.toLowerCase();
+  return src + (m.path ? " · " + m.path : "");
+}
+function isDefault(m) { return m && (m.source === "COMPILED" || m.source === "COMPILE-TIME"); }
+async function renderKeySettings(el, runId) {
+  const c = await api(`/api/runs/${runId}/config`);
+  const meta = c.meta || {};
+  if (!Object.keys(meta).length) { el.innerHTML = ""; return; }
+  const rows = KEY_VARS.filter(k => k in c.config).map(k => {
+    const m = meta[k] || {}, def = isDefault(m);
+    return `<tr><td class="mono">${esc(k)}</td><td class="mono ${def ? "" : "diff-new"}">${esc(val(k, c.config[k]))}</td><td class="mono muted">${m.default != null ? esc(val(k, m.default)) : ""}</td><td>${def ? '<span class="muted">compiled default</span>' : esc(sourceText(m))}</td></tr>`;
+  }).join("");
+  const nonDef = Object.entries(meta).filter(([k, m]) => !isDefault(m) && !KEY_VARS.includes(k)).length;
+  el.innerHTML = `<h3>Key settings of this run</h3><p class="muted">Value in effect, the server's compiled default and where the value comes from (option files, <code>SET PERSIST</code>, runtime changes). Bold = not the compiled default. ${nonDef} more non-default variables are listed in the Full configuration tab.</p>
+   <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Value</th><th>Compiled default</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
 const EFF_LABELS = { mysqld_cpu_ms_per_trx: "mysqld CPU ms/trx", host_cpu_ms_per_trx: "host CPU ms/trx", disk_ios_per_trx: "disk IOs/trx", disk_kb_per_trx: "disk KiB/trx", fsyncs_per_trx: "fsyncs/trx", redo_kb_per_trx: "redo KiB/trx", rows_read_per_trx: "rows read/trx" };
 
 function renderRecs(el, rec, runs) {
@@ -339,14 +396,21 @@ function renderRecs(el, rec, runs) {
   const run = runs && runs.find(r => r.id === rec.run_id);
   let h = `<div class="muted" style="margin-bottom:6px">Generated ${fmtTime(rec.created)}${run ? ` from run #${run.seq} <a href="#/run/${run.id}">${esc(run.label)}</a>` : " without a measured run"} · goal ${esc(rec.goal)} · policy ${esc(rec.policy)}${rec.next ? ` · suggested next: <code>${esc(rec.next)}</code>` : ""}</div>`;
   (rec.diagnosis || []).forEach(dg => { h += `<div class="diag">${sevBadge(dg.severity)} <b>${esc(dg.type)}</b> — ${esc(dg.text)}</div>`; });
-  (rec.items || []).forEach(it => {
-    h += `<div class="rec"><div class="h"><b>${it.rank}. ${esc(it.title)}</b><span class="id">${esc(it.id)}</span>${it.kind === "advice" ? '<span class="badge plain">advice only</span>' : it.kind === "revert" ? '<span class="badge warn">revert</span>' : ""}
+  if (rec.workload && rec.workload.type) h += `<div class="diag"><span class="badge info">workload</span> <b>${esc(rec.workload.type)}</b> <span class="mono muted" style="font-size:11.5px">${esc(JSON.stringify(rec.workload.evidence || {}))}</span>${rec.phase ? ` · phase: <b>${esc(rec.phase)}</b>` : ""}</div>`;
+  const items = rec.items || [];
+  const safe = items.filter(i => (i.safety || "safe") !== "trade-off"), trade = items.filter(i => i.safety === "trade-off");
+  const section = (title, list, note) => list.length ? `<h3>${title}</h3>${note ? `<p class="muted" style="margin:0 0 4px">${note}</p>` : ""}` + list.map(recItem).join("") : "";
+  h += section("Production-safe", safe) + section("Trade-offs (benchmark only)", trade, "These give up durability, replication, observability or semantics. Results with them are not production-equivalent; they are reported separately.");
+  el.innerHTML = h;
+  return;
+  function recItem(it) {
+    return `<div class="rec"><div class="h"><b>${it.rank}. ${esc(it.title)}</b><span class="id">${esc(it.id)}</span>${it.kind === "advice" ? '<span class="badge plain">advice only</span>' : it.kind === "revert" ? '<span class="badge warn">revert</span>' : ""}
      ${riskBadge(it.risk)}${it.restart ? '<span class="badge plain">restart</span>' : ""}<span class="badge plain">impact ${it.impact}/3</span><span class="badge plain">confidence ${it.confidence}/3</span>${it.id === rec.next ? '<span class="badge info">next</span>' : ""}</div>
      ${it.changes.length ? `<div class="mono" style="margin:4px 0">${it.changes.map(c => `${esc(c.variable)}: <span class="diff-old">${esc(val(c.variable, c.current))}</span> → <span class="diff-new">${c.unset ? "(server default)" : esc(val(c.variable, c.proposed))}</span>`).join("<br>")}</div>` : ""}
      <div class="reason">${esc(it.rationale)}${it.note ? " <b>" + esc(it.note) + "</b>" : ""}</div>
+     ${(it.tradeoffs || []).map(t => `<div class="reason"><span class="badge bad">${esc(t.category)}</span> ${esc(t.lost)}</div>`).join("")}
      ${Object.keys(it.evidence || {}).length ? `<details><summary>Evidence</summary><div class="kv">${Object.entries(it.evidence).map(([k, v]) => `<div class="mono">${esc(k)}</div><div class="mono">${esc(typeof v === "object" ? JSON.stringify(v) : v)}</div>`).join("")}</div></details>` : ""}</div>`;
-  });
-  el.innerHTML = h;
+  }
 }
 
 async function runPage(id, tab) {
@@ -356,6 +420,7 @@ async function runPage(id, tab) {
   const s = r.session, sm = r.summary || {}, prev = r.compared_with;
   const ps = (prev && prev.summary) || {};
   const tile = (k, v, unit, pv, lowerBetter) => {
+    if (v == null) return "";
     let d = "";
     if (pv != null && v != null && pv !== 0) { const ch = (v - pv) / Math.abs(pv) * 100; const good = lowerBetter ? ch < 0 : ch > 0; d = `<div class="d ${Math.abs(ch) < 0.05 ? "" : good ? "up" : "down"}">${ch > 0 ? "+" : ""}${ch.toFixed(1)}% vs prev</div>`; }
     return `<div class="tile"><div class="k">${k}</div><div class="v">${num(v)}<span style="font-size:13px;color:var(--ink-2)"> ${unit}</span></div>${d}</div>`;
@@ -374,12 +439,12 @@ async function runPage(id, tab) {
   ${Object.keys(r.external || {}).length ? `<h3>Benchmark-reported values</h3><div class="row">${Object.entries(r.external).map(([k, v]) => `<span class="badge plain">${esc(k)} = ${esc(v)}</span>`).join("")}</div>` : ""}
   <div class="tabs" id="tabs"></div><div id="tab"></div>`;
   document.getElementById("vs").onchange = e => { location.hash = "#/run/" + id + (e.target.value ? "?vs=" + e.target.value : ""); };
-  const tabs = [["changes", "Configuration changes"], ["graphs", "Graphs"], ["inputs", "Diagnosis & inputs"], ["recs", "Recommendations"], ["config", "Full configuration"]];
+  const tabs = [["changes", "Configuration"], ["graphs", "Graphs"], ["inputs", "Diagnosis & inputs"], ["recs", "Recommendations"], ["config", "Full configuration"]];
   const tabsEl = document.getElementById("tabs"), tabEl = document.getElementById("tab");
   const show = async name => {
     tabsEl.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.t === name));
     clearTimers();
-    if (name === "changes") renderDiff(tabEl, r);
+    if (name === "changes") { renderDiff(tabEl, r); const ks = document.createElement("div"); tabEl.appendChild(ks); renderKeySettings(ks, id); }
     else if (name === "graphs") {
       tabEl.innerHTML = `<p class="muted">Shaded area = measurement window (±60 s shown around it).</p><div class="grid g3" id="rc"></div>`;
       const m = await api(`/api/runs/${id}/metrics?points=300`);
@@ -390,13 +455,18 @@ async function runPage(id, tab) {
     else if (name === "recs") { tabEl.innerHTML = ""; if (!r.recommendations.length) tabEl.innerHTML = '<p class="muted">No recommendation was generated from this run.</p>'; r.recommendations.forEach(rec => { const c = document.createElement("div"); c.className = "card"; c.style.marginBottom = "12px"; tabEl.appendChild(c); renderRecs(c, rec); }); }
     else if (name === "config") {
       const c = await api(`/api/runs/${id}/config`);
-      const managed = c.managed || {};
-      tabEl.innerHTML = `<div class="row"><input id="flt" placeholder="filter variables" style="max-width:300px"><span class="muted">${Object.keys(c.config).length} variables at measurement start; <b>bold</b> = managed by the agent</span></div><div class="card tablewrap" style="margin-top:10px"><table><tbody id="cfg"></tbody></table></div>`;
+      const managed = c.managed || {}, meta = c.meta || {};
+      const hasMeta = Object.keys(meta).length > 0;
+      tabEl.innerHTML = `<div class="row"><input id="flt" placeholder="filter variables" style="max-width:300px">${hasMeta ? '<label style="margin:0;display:flex;gap:6px;align-items:center;width:auto"><input type="checkbox" id="nondef" style="width:auto"> only non-default</label>' : ""}<span class="muted">${Object.keys(c.config).length} variables at measurement start; <b>bold</b> = managed by the agent</span></div>
+        <div class="card tablewrap" style="margin-top:10px"><table><thead><tr><th>Variable</th><th>Value</th>${hasMeta ? "<th>Compiled default</th><th>Source</th>" : ""}</tr></thead><tbody id="cfg"></tbody></table></div>`;
       const draw = () => {
-        const q = document.getElementById("flt").value.toLowerCase();
-        document.getElementById("cfg").innerHTML = Object.entries(c.config).filter(([k]) => k.includes(q)).map(([k, v]) => `<tr><td class="mono">${managed[k] != null ? "<b>" + esc(k) + "</b>" : esc(k)}</td><td class="mono" style="word-break:break-all">${esc(v)}</td></tr>`).join("");
+        const q = document.getElementById("flt").value.toLowerCase(), nd = hasMeta && document.getElementById("nondef").checked;
+        document.getElementById("cfg").innerHTML = Object.entries(c.config).filter(([k]) => k.includes(q) && (!nd || !isDefault(meta[k]))).map(([k, v]) => {
+          const m = meta[k] || {};
+          return `<tr><td class="mono">${managed[k] != null ? "<b>" + esc(k) + "</b>" : esc(k)}</td><td class="mono" style="word-break:break-all">${esc(val(k, v))}</td>${hasMeta ? `<td class="mono muted" style="word-break:break-all">${m.default != null ? esc(val(k, m.default)) : ""}</td><td>${isDefault(m) ? '<span class="muted">compiled default</span>' : esc(sourceText(m))}</td>` : ""}</tr>`;
+        }).join("");
       };
-      document.getElementById("flt").oninput = draw; draw();
+      document.getElementById("flt").oninput = draw; if (hasMeta) document.getElementById("nondef").onchange = draw; draw();
     }
     history.replaceState(null, "", "#/run/" + id + "/" + name + (vs ? "?vs=" + vs : ""));
   };
@@ -418,9 +488,10 @@ function renderEvaluation(r) {
 function renderDiff(el, r) {
   const prev = r.compared_with;
   let h = renderEvaluation(r);
-  if (!prev) h += '<p class="muted">This is the first run of the environment: nothing to compare with. The full configuration is in the last tab.</p>';
-  else if (!r.diff.length) h += `<p>No configuration differences with run #${prev.seq} <b>${esc(prev.label)}</b>.</p>`;
-  else h += `<p class="muted">${r.diff.length} variable(s) differ from run #${prev.seq} ${esc(prev.label)}. Source and reasoning come from the agent; “outside the agent” means the value changed some other way (manual edit, server default after restart, automatic sizing).</p>
+  if (r.seq === 1) h += `<p class="muted">First run of the session: it measures the session's <b>starting configuration</b>, shown below with the server's compiled defaults and the source of every value.${prev ? ` The differences from the last run before this session (run #${prev.seq} ${esc(prev.label)}) are listed for reference.` : ""}</p>`;
+  if (!prev) {}
+  else if (!r.diff.length && r.seq !== 1) h += `<p>No configuration differences with run #${prev.seq} <b>${esc(prev.label)}</b>.</p>`;
+  else if (r.diff.length) h += `<p class="muted">${r.diff.length} variable(s) differ from run #${prev.seq} ${esc(prev.label)}. Source and reasoning come from the agent; “outside the agent” means the value changed some other way (manual edit, server default after restart, automatic sizing).</p>
    <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Run #${prev.seq}</th><th>This run</th><th>Source</th><th>Reason</th></tr></thead><tbody>${r.diff.map(d => `<tr><td class="mono">${esc(d.variable)}</td><td class="mono diff-old" style="word-break:break-all">${esc(val(d.variable, d.before))}</td><td class="mono diff-new" style="word-break:break-all">${esc(val(d.variable, d.after))}</td><td>${esc(d.source)}</td><td class="reason">${esc(d.reason || "")}</td></tr>`).join("")}</tbody></table></div>`;
   const managed = r.managed || {};
   if (Object.keys(managed).length) h += `<h3>Settings managed by the agent for this run</h3><pre><code>[mysqld]\n${Object.entries(managed).map(([k, v]) => esc(k) + " = " + esc(v)).join("\n")}</code></pre>`;
@@ -430,6 +501,12 @@ function renderDiff(el, r) {
 function renderInputs(el, r) {
   const inp = r.inputs || {};
   let h = "";
+  if (inp.workload && inp.workload.type) h += `<h3>Workload</h3><div class="diag"><b>${esc(inp.workload.type)}</b> <span class="mono muted" style="font-size:11.5px">${esc(JSON.stringify(inp.workload.evidence || {}))}</span></div>`;
+  if (inp.bench) {
+    const b = inp.bench;
+    h += `<h3>Benchmark: ${esc(b.name)}</h3><div class="kv"><div>Run command</div><div class="mono">${esc(b.run)}</div>${b.reset ? `<div>Reset</div><div class="mono">${esc(b.reset)}</div>` : ""}<div>Warm-up / measured</div><div>${esc(b.warmup)} s / ${b.duration ? esc(b.duration) + " s" : "until finished"}</div><div>Exit code</div><div>${esc(b.exit_code)}</div>
+      ${Object.entries(b.metrics || {}).map(([k, v]) => `<div class="mono">${esc(k)}</div><div class="mono"><b>${esc(v)}</b></div>`).join("")}</div><details><summary>Benchmark output (tail)</summary><pre>${esc(b.log_tail || "")}</pre></details>`;
+  }
   h += "<h3>Diagnosis</h3>" + ((r.diagnosis || []).map(dg => `<div class="diag">${sevBadge(dg.severity)} <b>${esc(dg.type)}</b> — ${esc(dg.text)}<div class="mono muted" style="font-size:11.5px;margin-top:3px">${esc(JSON.stringify(dg.evidence))}</div></div>`).join("") || '<p class="muted">none</p>');
   if (inp.top_statements && inp.top_statements.length) {
     h += `<h3>Top statements in the window</h3><p class="muted">From performance_schema digests and server-side prepared statements (marked <span class="badge plain">prepared</span>); the agent's own monitoring queries are excluded.</p><div class="card tablewrap"><table><thead><tr><th>Statement</th><th class="num">% time</th><th class="num">per s</th><th class="num">avg ms</th><th class="num">rows exam.</th><th class="num">rows sent</th><th class="num">no index</th><th class="num">tmp disk</th></tr></thead><tbody>` +
@@ -470,6 +547,7 @@ async function route() {
     if (!parts.length) return await envList();
     if (parts[0] === "connect") return await connectPage();
     if (parts[0] === "account") return await accountPage();
+    if (parts[0] === "policies") return await policiesPage();
     if (parts[0] === "env") return await envPage(+parts[1]);
     if (parts[0] === "session") return await sessionPage(+parts[1]);
     if (parts[0] === "run") return await runPage(+parts[1], parts[2]);

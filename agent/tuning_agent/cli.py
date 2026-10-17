@@ -12,7 +12,8 @@ import sys
 import time
 import uuid
 
-from . import __version__, baseline, collector, engine, evaluate, hostinfo, mysqldb
+from . import __version__, baseline, bench, collector, engine, evaluate, hostinfo, mysqldb
+from .knowledge import tradeoffs_in
 from .applier import Applier
 from .client import APIError, Client
 from .knowledge import human_size, normalize
@@ -292,6 +293,9 @@ def cmd_session(a):
             raise Fail(f"session #{old['id']} is still active: `tuning-agent session stop` it or pass --force")
         r = c.client.post("/sessions", {"environment_id": c.env_id(), "name": a.name, "goal": a.goal, "policy": a.policy,
                                         "noise_pct": a.noise_pct, "notes": a.notes, "workload": a.workload})
+        if c.state.get("pending_changes"):
+            log("note: changes applied before this session are part of its starting configuration")
+            c.state.data["pending_changes"] = []
         sess = {"id": r["session_id"], "name": a.name or r.get("name"), "goal": a.goal, "policy": a.policy,
                 "noise_pct": a.noise_pct, "started": time.time(), "runs": [], "best": None}
         c.state.set("session", sess)
@@ -348,7 +352,8 @@ def _measure_start(c, label=None, notes=None, warmed=False):
     managed = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
     label = label or ("initial" if seq == 1 and not managed else f"run-{seq}")
     r = c.client.post("/runs", {"session_id": sess["id"], "seq": seq, "label": label, "notes": notes,
-                                "started": snap["t"], "config": snap["variables"], "managed": managed, "changes": pending})
+                                "started": snap["t"], "config": snap["variables"], "managed": managed, "changes": pending,
+                                "config_meta": _config_meta(c, snap["variables"]), "tradeoffs": tradeoffs_in(managed)})
     snap_path = os.path.join(c.state.dir, "measure_start.json")
     with open(snap_path, "w") as f:
         json.dump(snap, f, default=str)
@@ -358,6 +363,28 @@ def _measure_start(c, label=None, notes=None, warmed=False):
     c.state.save()
     c.event("measure_start", f"measurement started: run {seq} '{label}'", {"run_id": r["run_id"]})
     return m, warn, r.get("url")
+
+
+def _config_meta(c, variables):
+    """Per variable: compiled default and where the current value comes from."""
+    try:
+        meta = c.db.variables_meta()
+    except Exception:
+        meta = {}
+    ver = variables.get("version", "")
+    cache = c.state.get("compiled_defaults") or {}
+    if cache.get("version") != ver:
+        cache = {"version": ver, "defaults": mysqldb.compiled_defaults()}
+        c.state.set("compiled_defaults", cache)
+    defaults = cache.get("defaults") or {}
+    out = {}
+    for k in variables:
+        m = dict(meta.get(k) or {})
+        if "default" not in m and k in defaults:
+            m["default"] = defaults[k]
+        if m:
+            out[k] = m
+    return out
 
 
 def _goal_value(goal, summary, external, explicit):
@@ -389,15 +416,20 @@ def _improvement(goal, new, old):
     return round(100.0 * (new - old) / old, 2)
 
 
-def _measure_stop(c, external=None, goal_value=None, notes=None):
+def _end_snapshot(c):
+    c.refresh()
+    return collector.full_snapshot(c.db, hostinfo.device_for_path(c.datadir()))
+
+
+def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, extra_inputs=None, goal_source=None):
     sess = c.session()
     m = c.state.get("measurement")
     if not m:
         raise Fail("no measurement in progress")
-    c.refresh()
     with open(os.path.join(c.state.dir, "measure_start.json")) as f:
         a_snap = json.load(f)
-    b_snap = collector.full_snapshot(c.db, hostinfo.device_for_path(c.datadir()))
+    if b_snap is None:
+        b_snap = _end_snapshot(c)
     if a_snap.get("hist"):
         a_snap["hist"] = [tuple(x) for x in a_snap["hist"]]
     a_snap["stmt"] = tuple(a_snap["stmt"]) if a_snap.get("stmt") else None
@@ -408,8 +440,13 @@ def _measure_stop(c, external=None, goal_value=None, notes=None):
         raise Fail("the server restarted during the measurement window; counters are not comparable. "
                    "Run `tuning-agent measure abort` and measure again.")
     summary, inputs = collector.analyze_window(a_snap, b_snap, samples)
+    if extra_inputs:
+        inputs.update(extra_inputs)
+    summary["tradeoffs"] = tradeoffs_in(m["managed"])
     external = external or {}
     gv, src = _goal_value(sess["goal"], summary, external, goal_value)
+    if goal_source and goal_value is not None:
+        src = goal_source
     summary["goal_value"] = gv
     summary["goal_source"] = src
     runs = sess["runs"]
@@ -422,6 +459,7 @@ def _measure_stop(c, external=None, goal_value=None, notes=None):
     ctx = {"goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "variables": b_snap["variables"],
            "summary": summary, "inputs": inputs}
     diagnosis = engine.diagnose(ctx)
+    inputs["workload"] = engine.classify_workload(summary, inputs)
     run = {"id": m["run_id"], "seq": m["seq"], "label": m["label"], "started": m["started"], "ended": b_snap["t"],
            "changes": m["changes"], "managed": m["managed"], "goal_value": gv, "delta_pct": d_prev, "delta_vs_first_pct": d_first,
            "verdict": verdict, "evaluation": evaluation, "summary": summary}
@@ -430,10 +468,7 @@ def _measure_stop(c, external=None, goal_value=None, notes=None):
         "goal_value": gv, "goal_source": src, "delta_pct": d_prev, "delta_vs_first_pct": d_first, "verdict": verdict,
         "evaluation": evaluation, "notes": notes})
     runs.append(run)
-    b = engine.best_config(runs, sess["goal"], float((sess.get("noise") or {}).get("noise_pct") or sess.get("noise_pct") or 2.0))
-    if b:
-        sess["best"] = {"seq": b["seqs"][-1], "runs": b["seqs"], "label": b["label"], "goal_value": round(b["mean"], 4),
-                        "mean_of_runs": b["n"]}
+    _update_best(sess)
     sess["last_inputs_path"] = os.path.join(c.state.dir, f"run{run['seq']}_inputs.json")
     with open(sess["last_inputs_path"], "w") as f:
         json.dump({"summary": summary, "inputs": inputs, "variables": b_snap["variables"], "diagnosis": diagnosis}, f, default=str)
@@ -443,6 +478,16 @@ def _measure_stop(c, external=None, goal_value=None, notes=None):
     c.state.save()
     c.event("measure_stop", f"run {run['seq']} '{run['label']}' finished: goal={gv} ({verdict})", {"run_id": m["run_id"]})
     return run, diagnosis
+
+
+def _update_best(sess):
+    noise = float((sess.get("noise") or {}).get("noise_pct") or sess.get("noise_pct") or 2.0)
+    runs = sess["runs"]
+    for key, sel in (("best", runs), ("best_safe", [r for r in runs if not tradeoffs_in(r.get("managed"))])):
+        b = engine.best_config(sel, sess["goal"], noise)
+        if b:
+            sess[key] = {"seq": b["seqs"][-1], "runs": b["seqs"], "label": b["label"], "goal_value": round(b["mean"], 4),
+                         "mean_of_runs": b["n"], "tradeoffs": tradeoffs_in(b["managed"])}
 
 
 def _fmt_run(run, diagnosis, goal):
@@ -504,6 +549,71 @@ def _warmup(c, spec):
             return round(el)
 
 
+def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
+    """reset -> start benchmark -> warm-up -> measure -> wait for exit -> parse metrics -> finish run."""
+    sess = c.session()
+    logdir = os.path.join(c.state.dir, "bench")
+    os.makedirs(logdir, exist_ok=True)
+    seq = len(sess["runs"]) + 1
+    logfile = os.path.join(logdir, f"s{sess['id']}-run{seq}.log")
+    if prof.reset:
+        log(f"reset: {prof.reset}")
+        c.db.close()
+        rc, out = bench.run_shell(prof.reset, timeout=3600, log=logfile + ".reset")
+        if rc != 0:
+            raise Fail(f"reset command failed ({rc}): {out[-500:]}")
+        c.db.connect(retries=30, delay=2)
+    log(f"benchmark: {prof.name}")
+    r = bench.Running(prof.run, logfile)
+    try:
+        warm = warmup_override if warmup_override is not None else prof.warmup
+        if str(warm) == "auto":
+            waited = _warmup(c, "auto")
+        else:
+            waited = int(warm or 0)
+            if waited:
+                log(f"warm-up {waited}s ...")
+                deadline = time.time() + waited
+                while time.time() < deadline and r.alive():
+                    time.sleep(1)
+        if not r.alive():
+            raise Fail(f"benchmark exited during warm-up (code {r.p.returncode}); tail:\n{r.output()[-1500:]}")
+        m, warn, url = _measure_start(c, label, notes, warmed=True)
+        if prof.duration > 0:
+            log(f"measuring run {m['seq']} for {prof.duration}s ...")
+            deadline = time.time() + prof.duration
+            while time.time() < deadline and r.alive():
+                time.sleep(1)
+        else:
+            log(f"measuring run {m['seq']} until the benchmark finishes ...")
+            deadline = time.time() + prof.timeout
+            while time.time() < deadline and r.alive():
+                time.sleep(2)
+        b_snap = _end_snapshot(c)
+        rc = r.wait(max(10, prof.timeout - (time.time() - r.t0)))
+    except BaseException:
+        r.kill()
+        if c.state.get("measurement"):
+            try:
+                c.client.post(f"/runs/{c.state['measurement']['run_id']}/abort", {})
+            except Exception:
+                pass
+            c.state.data["measurement"] = None
+            c.state.save()
+        raise
+    text = r.output()
+    metrics = prof.parse(text)
+    goal_value = goal_src = None
+    if prof.goal_metric:
+        if prof.goal_metric not in metrics:
+            log(f"WARNING: goal metric {prof.goal_metric!r} not found in benchmark output; using server-side measurement")
+        else:
+            goal_value = metrics[prof.goal_metric] * prof.goal_scale
+            goal_src = f"benchmark:{prof.goal_metric}" + (f" x{prof.goal_scale:g}" if prof.goal_scale != 1 else "")
+    extra = {"bench": {**prof.describe(), "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:]}}
+    return _measure_stop(c, metrics, goal_value, notes, b_snap=b_snap, extra_inputs=extra, goal_source=goal_src)
+
+
 def cmd_measure(a):
     c = Ctx()
     if a.action == "start":
@@ -523,6 +633,9 @@ def cmd_measure(a):
         c.state.save()
         c.event("measure_abort", f"measurement of run {m['seq']} aborted", {})
         emit({"ok": True, "aborted": m["run_id"]}, f"Measurement of run {m['seq']} aborted.")
+    elif a.action == "run" and a.bench:
+        run, diag = _bench_run(c, bench.Profile(a.bench), a.label, a.notes, a.warmup)
+        emit({"ok": True, "run": run, "diagnosis": diag}, _fmt_run(run, diag, c.session()["goal"]))
     elif a.action == "run":
         warm = a.warmup
         if warm is None:
@@ -573,7 +686,14 @@ def cmd_calibrate(a):
             log("note: calibrating the current configuration, which has unmeasured changes")
         runs = []
         label = a.label or ("baseline" if not sess["runs"] else "calibration")
+        prof = bench.Profile(a.bench) if a.bench else None
         for i in range(a.runs):
+            if prof:
+                run, diag = _bench_run(c, prof, f"{label} ({i + 1}/{a.runs})", a.notes)
+                log(f"  goal = {run['goal_value']}")
+                runs.append(run)
+                sess = c.session()
+                continue
             if a.warmup and (i == 0 or a.warmup_each):
                 _warmup(c, a.warmup)
             m, warn, url = _measure_start(c, f"{label} ({i + 1}/{a.runs})", a.notes, warmed=bool(a.warmup) or i > 0)
@@ -584,6 +704,9 @@ def cmd_calibrate(a):
             runs.append(run)
             sess = c.session()
     cal = evaluate.calibrate(runs)
+    if not cal:
+        raise Fail("calibration needs at least 2 runs with a goal value")
+    sess = c.session()
     _set_calibration(c, sess, cal)
     changed = _reevaluate(c, c.session())
     emit({"ok": True, "calibration": cal, "reevaluated": changed},
@@ -599,6 +722,7 @@ def _reevaluate(c, sess):
             changed.append((r["seq"], r.get("verdict"), v))
             r["verdict"], r["evaluation"] = v, ev
             c.client.post(f"/runs/{r['id']}/evaluation", {"verdict": v, "evaluation": ev})
+    _update_best(sess)
     c.state.set("session", sess)
     return changed
 
@@ -625,6 +749,19 @@ def _engine_ctx(c, sess):
             "managed": {k: v["value"] for k, v in c.state.get("managed", {}).items()}}
 
 
+def _recommend(c, sess):
+    c.refresh()
+    ctx = _engine_ctx(c, sess)
+    res = engine.run_engine(ctx)
+    run_id = sess["runs"][-1]["id"] if sess["runs"] else None
+    r = c.client.post("/recommendations", {"session_id": sess["id"], "run_id": run_id, "goal": sess["goal"], "policy": sess["policy"],
+                                           "items": res["items"], "diagnosis": res["diagnosis"], "next": res["next"],
+                                           "workload": res.get("workload"), "phase": res.get("phase")})
+    sess["last_recommendation"] = {"id": r.get("recommendation_id"), "items": res["items"], "next": res["next"]}
+    c.state.set("session", sess)
+    return res
+
+
 def cmd_recommend(a):
     c = Ctx()
     sess = c.session()
@@ -632,19 +769,14 @@ def cmd_recommend(a):
         log("note: there are applied changes that have not been measured yet")
     if not sess.get("noise"):
         log("note: noise is not calibrated; run `tuning-agent calibrate --runs 3` (or --from-runs) so verdicts use measured noise")
-    ctx = _engine_ctx(c, sess)
-    res = engine.run_engine(ctx)
-    run_id = sess["runs"][-1]["id"] if sess["runs"] else None
-    r = c.client.post("/recommendations", {"session_id": sess["id"], "run_id": run_id, "goal": sess["goal"], "policy": sess["policy"],
-                                           "items": res["items"], "diagnosis": res["diagnosis"], "next": res["next"]})
-    sess["last_recommendation"] = {"id": r.get("recommendation_id"), "items": res["items"], "next": res["next"]}
-    c.state.set("session", sess)
-    lines = [f"Recommendations (goal={sess['goal']}, policy={sess['policy']}) based on run {sess['runs'][-1]['seq'] if sess['runs'] else '-'}:"]
+    res = _recommend(c, sess)
+    lines = [f"Recommendations (goal={sess['goal']}, policy={sess['policy']}, workload={(res.get('workload') or {}).get('type')}, "
+             f"phase={res.get('phase')}) based on run {sess['runs'][-1]['seq'] if sess['runs'] else '-'}:"]
     for d in res["diagnosis"]:
         lines.append(f"  diagnosis [{d['severity']}] {d['type']}: {d['text']}")
     for it in res["items"]:
         ch = ", ".join(f"{x['variable']}: {x['current']} -> {'(server default)' if x.get('unset') else x['proposed']}" for x in it["changes"]) or "(no config change)"
-        flag = "" if it["kind"] != "advice" else " [advice]"
+        flag = ("" if it["kind"] != "advice" else " [advice]") + (" [TRADE-OFF: " + ", ".join(t["category"] for t in it.get("tradeoffs", [])) + "]" if it.get("safety") == "trade-off" else "")
         lines.append(f"  {it['rank']:>2}. {it['id']:<26} {it['title']}{flag}\n      {ch}\n      risk={it['risk']} restart={it['restart']} "
                      f"impact={it['impact']} confidence={it['confidence']}{' — ' + it['note'] if it.get('note') else ''}\n      why: {it['rationale']}")
     if res["next"]:
@@ -699,6 +831,86 @@ def cmd_apply(a):
         raise Fail("apply failed and was rolled back")
 
 
+def cmd_autotune(a):
+    """Unattended loop: calibrate (if needed) -> recommend -> apply next -> measure (bench) ... -> best config confirmation."""
+    c = Ctx()
+    sess = c.session()
+    prof = bench.Profile(a.bench)
+    if a.tradeoffs and sess["policy"] != "benchmark":
+        raise Fail("--tradeoffs needs a session with --policy benchmark")
+    if not sess.get("noise"):
+        log(f"== calibration: {a.calibrate} runs of the current configuration")
+        runs = []
+        for i in range(a.calibrate):
+            run, _ = _bench_run(c, prof, f"baseline ({i + 1}/{a.calibrate})")
+            log(f"   run {run['seq']}: goal {run['goal_value']}")
+            runs.append(run)
+        sess = c.session()
+        cal = evaluate.calibrate(runs)
+        _set_calibration(c, sess, cal)
+        _reevaluate(c, c.session())
+        log(_fmt_cal(cal))
+    measured = iterations = 0
+    while measured < a.max_runs and iterations < a.max_runs * 3:
+        iterations += 1
+        sess = c.session()
+        res = _recommend(c, sess)
+        nxt = res.get("next")
+        if nxt in (sess.get("failed_recs") or []):
+            log(f"== {nxt} failed to apply before; stopping")
+            break
+        item = next((i for i in res["items"] if i["id"] == nxt), None)
+        if not item:
+            log("== no further experiments suggested")
+            break
+        if item.get("safety") == "trade-off" and not a.tradeoffs:
+            log(f"== safe experiments exhausted; next would be trade-off {nxt} (re-run with --tradeoffs to continue)")
+            break
+        log(f"== experiment: {nxt} ({item['title']}) [{item.get('safety')}]")
+        changes = [{"variable": ch["variable"], "value": None if ch.get("unset") else ch["proposed"], "reason": item["rationale"],
+                    "source": f"rec:{nxt}"} for ch in item["changes"]]
+        resa = _apply_and_record(c, changes, "autotune")
+        if resa.get("rolled_back"):
+            log(f"   apply failed and was rolled back: {resa.get('errors')}")
+            sess = c.session()
+            sess.setdefault("failed_recs", []).append(nxt)
+            c.state.set("session", sess)
+            continue
+        sess = c.session()
+        if sess.get("last_recommendation"):
+            sess["last_recommendation"]["applied"] = True
+            c.state.set("session", sess)
+        if _known_config(c, sess):
+            log("   configuration already measured: no new run needed")
+            continue
+        run, _ = _bench_run(c, prof, f"{nxt}")
+        measured += 1
+        log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
+    sess = c.session()
+    target = sess.get("best") if a.tradeoffs else sess.get("best_safe")
+    if target:
+        run = next(r for r in sess["runs"] if r["seq"] == target["seq"])
+        cur = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
+        if evaluate.config_key(cur) != evaluate.config_key(run.get("managed")):
+            log(f"== returning to the best configuration (run {target['seq']})")
+            changes = [{"variable": k, "value": (run["managed"] or {}).get(k), "reason": "autotune: best configuration", "source": "rollback"}
+                       for k in set(cur) | set(run.get("managed") or {})
+                       if normalize(k, cur.get(k)) != normalize(k, (run.get("managed") or {}).get(k))]
+            _apply_and_record(c, changes, "rollback")
+        if a.confirm:
+            log("== confirmation run of the best configuration")
+            _bench_run(c, prof, "best config, confirmation")
+    sess = c.session()
+    out = {"ok": True, "best": sess.get("best"), "best_safe": sess.get("best_safe"),
+           "runs": [{k: r.get(k) for k in ("seq", "label", "goal_value", "verdict")} for r in sess["runs"]]}
+    lines = [f"Autotune finished: {len(sess['runs'])} runs."]
+    for r in sess["runs"]:
+        lines.append(f"  run {r['seq']:>2} {r['label']:<34} {r.get('goal_value')!s:>12}  {r.get('verdict')}")
+    lines.append(f"Best safe configuration: {sess.get('best_safe')}")
+    lines.append(f"Best overall configuration: {sess.get('best')}")
+    emit(out, "\n".join(lines))
+
+
 def _known_config(c, sess):
     if not sess:
         return None
@@ -729,8 +941,8 @@ def cmd_rollback(a):
         what = "server defaults + original option files (no managed settings)"
     else:
         runs = (sess or {}).get("runs", [])
-        if a.best:
-            b = (sess or {}).get("best")
+        if a.best or a.best_safe:
+            b = (sess or {}).get("best_safe" if a.best_safe else "best")
             if not b:
                 raise Fail("no best run yet")
             seq = b["seq"]
@@ -900,6 +1112,7 @@ def main(argv=None):
     s.add_argument("--external", action="append", help="KEY=VALUE reported by the benchmark (repeatable)")
     s.add_argument("--goal-value", type=float)
     s.add_argument("--duration", type=int, default=300)
+    s.add_argument("--bench", help="benchmark profile (INI): the agent resets, runs and parses the benchmark itself")
     s.add_argument("--warmup", help="seconds, or 'auto' (buffer pool loaded + stable throughput). "
                                      "Default: auto if mysqld restarted in the last 10 min, else none")
     s.set_defaults(fn=cmd_measure)
@@ -912,7 +1125,16 @@ def main(argv=None):
     s.add_argument("--label")
     s.add_argument("--notes")
     s.add_argument("--from-runs", help="calibrate from existing runs of one configuration, e.g. 2,5,7")
+    s.add_argument("--bench", help="benchmark profile to run for each calibration run")
     s.set_defaults(fn=cmd_calibrate)
+
+    s = sp.add_parser("autotune", help="unattended tuning loop driven by a benchmark profile")
+    s.add_argument("--bench", required=True)
+    s.add_argument("--calibrate", type=int, default=3, help="calibration runs if the session is not calibrated yet")
+    s.add_argument("--max-runs", type=int, default=10, help="maximum experiment runs (calibration not counted)")
+    s.add_argument("--tradeoffs", action="store_true", help="after safe experiments, continue with trade-offs (policy=benchmark)")
+    s.add_argument("--no-confirm", dest="confirm", action="store_false", help="skip the confirmation run of the best config")
+    s.set_defaults(fn=cmd_autotune)
 
     sp.add_parser("reevaluate", help="recompute verdicts of all runs (e.g. after calibration)").set_defaults(fn=cmd_reevaluate)
     sp.add_parser("recommend", help="analyse the last run and recommend changes").set_defaults(fn=cmd_recommend)
@@ -930,7 +1152,8 @@ def main(argv=None):
     s = sp.add_parser("rollback", help="return to an earlier configuration")
     g = s.add_mutually_exclusive_group(required=True)
     g.add_argument("--to-run", type=int)
-    g.add_argument("--best", action="store_true")
+    g.add_argument("--best", action="store_true", help="best configuration (may include trade-offs)")
+    g.add_argument("--best-safe", action="store_true", help="best configuration without trade-offs")
     g.add_argument("--reset", action="store_true", help="remove all managed settings")
     s.set_defaults(fn=cmd_rollback)
 

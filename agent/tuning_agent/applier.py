@@ -5,7 +5,7 @@ import time
 
 import pymysql
 
-from .knowledge import KB, normalize, parse_size
+from .knowledge import KB, OPTIONS, normalize, parse_size
 
 HEADER = """# Managed by tuning-agent. Do not edit by hand: changes are overwritten.
 # Use `tuning-agent apply --set var=value` / `tuning-agent rollback` instead.
@@ -35,7 +35,7 @@ def render(managed):
         m = managed[var]
         if m.get("reason"):
             lines.append(f"# {m.get('source', 'manual')}: {m['reason'][:200]}".replace("\n", " "))
-        lines.append(f"{var} = {m['value']}")
+        lines.append(var if var in OPTIONS else f"{var} = {m['value']}")
     return "\n".join(lines) + "\n"
 
 
@@ -99,14 +99,14 @@ class Applier:
         for c in changes:
             var = c["variable"].lower().replace("-", "_")
             c["variable"] = var
-            if var not in before_vars:
+            if var not in before_vars and var not in OPTIONS:
                 result["errors"].append(f"{var}: unknown to this server, skipped")
                 continue
             if c.get("value") is None:
                 managed.pop(var, None)
             else:
                 managed[var] = {"value": str(c["value"]), "reason": c.get("reason", ""), "source": c.get("source", "manual")}
-            c["old"] = before_vars.get(var)
+            c["old"] = before_vars.get(var) if var not in OPTIONS else ("OFF" if var in old_managed else "")
         changes = [c for c in changes if "old" in c]
         if not changes:
             return result
@@ -117,7 +117,7 @@ class Applier:
             if val is not None and normalize(var, before_vars.get(var)) == normalize(var, val):
                 continue
             meta = KB.get(var)
-            if meta is not None and not meta.get("dynamic"):
+            if var in OPTIONS or (meta is not None and not meta.get("dynamic")):
                 need_restart.append(var)
                 continue
             try:
@@ -156,6 +156,12 @@ class Applier:
         after = self.db.variables()
         for c in changes:
             var = c["variable"]
+            if var in OPTIONS:  # verify via the variable the option controls
+                shown = after.get(OPTIONS[var])
+                entry = {"variable": var, "old": c["old"] or "", "new": "" if c.get("value") is None else "ON",
+                         "reason": c.get("reason", ""), "source": c.get("source", "manual"), "effect": f"{OPTIONS[var]}={shown}"}
+                result["applied"].append(entry)
+                continue
             entry = {"variable": var, "old": c["old"], "new": after.get(var), "reason": c.get("reason", ""), "source": c.get("source", "manual")}
             if c.get("value") is not None and normalize(var, after.get(var)) != normalize(var, c["value"]) and var not in result["needs_restart"]:
                 result["mismatches"].append({"variable": var, "wanted": c["value"], "actual": after.get(var)})
