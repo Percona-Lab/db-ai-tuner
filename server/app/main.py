@@ -1,0 +1,543 @@
+"""AI DB Tuner web service."""
+import io
+import os
+import re
+import tarfile
+import time
+
+from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+
+from . import auth, store
+
+APP_DIR = os.path.dirname(__file__)
+AGENT_DIR = os.environ.get("TUNER_AGENT_DIR", os.path.join(APP_DIR, "..", "..", "agent"))
+PUBLIC_URL = os.environ.get("TUNER_PUBLIC_URL", "http://localhost:8000").rstrip("/")
+ONLINE_S = 60
+
+app = FastAPI(title="AI DB Tuner", docs_url=None, redoc_url=None)
+store.init()
+
+VOLATILE = {"gtid_executed", "gtid_purged", "timestamp", "pseudo_thread_id", "rand_seed1", "rand_seed2", "last_insert_id",
+            "insert_id", "identity", "warning_count", "error_count", "gtid_owned", "innodb_buffer_pool_resize_status"}
+
+
+def now():
+    return time.time()
+
+
+# ---------------------------------------------------------------------------- helpers
+
+def own_env(env_id, user_id):
+    e = store.q1("SELECT * FROM environments WHERE id=? AND user_id=?", (env_id, user_id))
+    if not e:
+        raise HTTPException(404, "environment not found")
+    return dict(e)
+
+
+def own_session(session_id, user_id):
+    s = store.q1("SELECT s.* FROM tsessions s JOIN environments e ON e.id=s.env_id WHERE s.id=? AND e.user_id=?", (session_id, user_id))
+    if not s:
+        raise HTTPException(404, "session not found")
+    return dict(s)
+
+
+def own_run(run_id, user_id):
+    r = store.q1("SELECT r.* FROM runs r JOIN tsessions s ON s.id=r.session_id JOIN environments e ON e.id=s.env_id "
+                 "WHERE r.id=? AND e.user_id=?", (run_id, user_id))
+    if not r:
+        raise HTTPException(404, "run not found")
+    return dict(r)
+
+
+def env_brief(e):
+    f = store.uj(e["facts"], {}) or {}
+    hw, db = f.get("hardware", {}), f.get("db", {})
+    return {
+        "id": e["id"], "name": e["name"], "hostname": e["hostname"], "agent_version": e["agent_version"],
+        "created": e["created"], "last_seen": e["last_seen"], "online": bool(e["last_seen"] and now() - e["last_seen"] < ONLINE_S),
+        "db": f"{db.get('version_comment', '')} {db.get('version', '')}".strip(), "flavor": db.get("flavor"),
+        "cpus": hw.get("cpus"), "ram_bytes": hw.get("ram_bytes"), "disk": "HDD" if hw.get("disk_rotational") else "SSD",
+        "data_bytes": db.get("data_bytes"),
+    }
+
+
+RUN_LIST_FIELDS = ("id", "session_id", "seq", "label", "notes", "status", "started", "ended", "goal_value", "goal_source",
+                   "delta_pct", "delta_vs_first_pct", "verdict")
+
+
+def run_brief(r):
+    d = {k: r[k] for k in RUN_LIST_FIELDS}
+    d["summary"] = store.uj(r["summary"], {})
+    d["changes"] = store.uj(r["changes"], [])
+    d["external"] = store.uj(r["external"], {})
+    return d
+
+
+def config_diff(before, after, changes):
+    before, after = before or {}, after or {}
+    reasons = {c["variable"]: c for c in (changes or [])}
+    out = []
+    for k in sorted(set(before) | set(after)):
+        if k in VOLATILE:
+            continue
+        a, b = before.get(k), after.get(k)
+        if a != b:
+            c = reasons.get(k)
+            out.append({"variable": k, "before": a, "after": b, "reason": (c or {}).get("reason"),
+                        "source": (c or {}).get("source") or "outside the agent"})
+    return out
+
+
+def previous_run(r):
+    p = store.q1("SELECT * FROM runs WHERE session_id=? AND seq<? AND status<>'aborted' ORDER BY seq DESC LIMIT 1", (r["session_id"], r["seq"]))
+    if p:
+        return dict(p)
+    s = store.q1("SELECT env_id FROM tsessions WHERE id=?", (r["session_id"],))
+    p = store.q1("SELECT r.* FROM runs r JOIN tsessions s ON s.id=r.session_id WHERE s.env_id=? AND r.started<? AND r.status='done' "
+                 "ORDER BY r.started DESC LIMIT 1", (s["env_id"], r["started"] or 0))
+    return dict(p) if p else None
+
+
+def metrics_window(env_id, t0, t1, points=400):
+    rows = store.q("SELECT ts, data FROM metrics WHERE env_id=? AND ts>=? AND ts<=? ORDER BY ts", (env_id, t0, t1))
+    if not rows:
+        return {"ts": [], "db": {}, "os": {}, "gaps": []}
+    samples = [(r["ts"], store.uj(r["data"], {})) for r in rows]
+    span = max(t1 - t0, 1)
+    bucket = max(span / points, 1)
+    buckets = {}
+    for ts, d in samples:
+        b = int((ts - t0) // bucket)
+        buckets.setdefault(b, []).append(d)
+    out = {"ts": [], "db": {}, "os": {}, "down": []}
+    keys = {"db": set(), "os": set()}
+    for _, d in samples:
+        for g in ("db", "os"):
+            keys[g].update(k for k, v in (d.get(g) or {}).items() if isinstance(v, (int, float)))
+    for i, b in enumerate(sorted(buckets)):
+        group = buckets[b]
+        out["ts"].append(round(t0 + (b + 0.5) * bucket, 1))
+        out["down"].append(any(not d.get("db_up", True) for d in group))
+        for g in ("db", "os"):
+            for k in keys[g]:
+                vals = [d[g][k] for d in group if isinstance((d.get(g) or {}).get(k), (int, float))]
+                out[g].setdefault(k, []).append(round(sum(vals) / len(vals), 4) if vals else None)
+    return out
+
+
+# ---------------------------------------------------------------------------- account API
+
+@app.post("/api/auth/register")
+def register(response: Response, body: dict = Body(...)):
+    email = (body.get("email") or "").strip().lower()
+    pw = body.get("password") or ""
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(400, "enter a valid email address")
+    if len(pw) < 8:
+        raise HTTPException(400, "password must be at least 8 characters")
+    if store.q1("SELECT 1 FROM users WHERE email=?", (email,)):
+        raise HTTPException(409, "an account with this email already exists")
+    uid = store.ex("INSERT INTO users(email, name, pw_hash, created) VALUES (?,?,?,?)",
+                   (email, (body.get("name") or "").strip()[:80], auth.hash_password(pw), now()))
+    key = auth.new_api_key(uid, "default")
+    token = auth.new_login(uid)
+    response.set_cookie(auth.COOKIE, token, max_age=auth.LOGIN_TTL, httponly=True, samesite="lax", secure=PUBLIC_URL.startswith("https"))
+    return {"ok": True, "api_key": key}
+
+
+@app.post("/api/auth/login")
+def login(response: Response, body: dict = Body(...)):
+    email = (body.get("email") or "").strip().lower()
+    u = store.q1("SELECT * FROM users WHERE email=?", (email,))
+    if not u or not auth.check_password(body.get("password") or "", u["pw_hash"]):
+        time.sleep(0.5)
+        raise HTTPException(401, "wrong email or password")
+    token = auth.new_login(u["id"])
+    response.set_cookie(auth.COOKIE, token, max_age=auth.LOGIN_TTL, httponly=True, samesite="lax", secure=PUBLIC_URL.startswith("https"))
+    return {"ok": True}
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response):
+    auth.end_login(request.cookies.get(auth.COOKIE))
+    response.delete_cookie(auth.COOKIE)
+    return {"ok": True}
+
+
+@app.get("/api/me")
+def me(request: Request):
+    u = auth.current_user(request, required=False)
+    if not u:
+        return {"user": None}
+    return {"user": {"id": u["id"], "email": u["email"], "name": u["name"]}, "server": PUBLIC_URL}
+
+
+@app.post("/api/auth/password")
+def change_password(request: Request, body: dict = Body(...)):
+    u = auth.current_user(request)
+    if not auth.check_password(body.get("old") or "", u["pw_hash"]):
+        raise HTTPException(400, "current password is wrong")
+    if len(body.get("new") or "") < 8:
+        raise HTTPException(400, "password must be at least 8 characters")
+    store.ex("UPDATE users SET pw_hash=? WHERE id=?", (auth.hash_password(body["new"]), u["id"]))
+    return {"ok": True}
+
+
+@app.get("/api/keys")
+def list_keys(request: Request):
+    u = auth.current_user(request)
+    rows = store.q("SELECT id, name, prefix, created, last_used, revoked FROM api_keys WHERE user_id=? ORDER BY id", (u["id"],))
+    return {"keys": [dict(r) for r in rows]}
+
+
+@app.post("/api/keys")
+def create_key(request: Request, body: dict = Body(default={})):
+    u = auth.current_user(request)
+    key = auth.new_api_key(u["id"], (body.get("name") or "agent key")[:60])
+    return {"api_key": key}
+
+
+@app.delete("/api/keys/{key_id}")
+def revoke_key(key_id: int, request: Request):
+    u = auth.current_user(request)
+    store.ex("UPDATE api_keys SET revoked=? WHERE id=? AND user_id=? AND revoked IS NULL", (now(), key_id, u["id"]))
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------- UI data API
+
+@app.get("/api/environments")
+def environments(request: Request):
+    u = auth.current_user(request)
+    out = []
+    for e in store.q("SELECT * FROM environments WHERE user_id=? ORDER BY last_seen DESC", (u["id"],)):
+        b = env_brief(e)
+        s = store.q1("SELECT COUNT(*) n, MAX(created) last FROM tsessions WHERE env_id=?", (e["id"],))
+        b["sessions"] = s["n"]
+        act = store.q1("SELECT id, name, goal FROM tsessions WHERE env_id=? AND status='active' ORDER BY id DESC LIMIT 1", (e["id"],))
+        b["active_session"] = dict(act) if act else None
+        m = store.q1("SELECT data FROM metrics WHERE env_id=? ORDER BY ts DESC LIMIT 1", (e["id"],))
+        b["latest"] = store.uj(m["data"]) if m else None
+        out.append(b)
+    return {"environments": out}
+
+
+@app.get("/api/environments/{env_id}")
+def environment(env_id: int, request: Request):
+    u = auth.current_user(request)
+    e = own_env(env_id, u["id"])
+    sessions = []
+    for s in store.q("SELECT * FROM tsessions WHERE env_id=? ORDER BY id DESC", (env_id,)):
+        d = dict(s)
+        d["summary"] = store.uj(d["summary"])
+        runs = [dict(r) for r in store.q("SELECT seq, label, goal_value, status, verdict, started, ended FROM runs WHERE session_id=? AND status<>'aborted' ORDER BY seq", (s["id"],))]
+        d["runs"] = len(runs)
+        done = [r for r in runs if r["goal_value"] is not None]
+        if done:
+            first = done[0]["goal_value"]
+            best = (min if s["goal"] == "latency" else max)(r["goal_value"] for r in done)
+            d["first_value"], d["best_value"] = first, best
+            if first:
+                d["best_gain_pct"] = round(100 * ((first - best) / first if s["goal"] == "latency" else (best - first) / first), 2)
+        sessions.append(d)
+    events = [store.row(r, ("data",)) for r in store.q("SELECT * FROM events WHERE env_id=? ORDER BY ts DESC LIMIT 50", (env_id,))]
+    return {"environment": env_brief(e), "facts": store.uj(e["facts"], {}), "sessions": sessions, "events": events}
+
+
+@app.patch("/api/environments/{env_id}")
+def rename_environment(env_id: int, request: Request, body: dict = Body(...)):
+    u = auth.current_user(request)
+    own_env(env_id, u["id"])
+    if body.get("name"):
+        store.ex("UPDATE environments SET name=? WHERE id=?", (body["name"][:80], env_id))
+    return {"ok": True}
+
+
+@app.delete("/api/environments/{env_id}")
+def delete_environment(env_id: int, request: Request):
+    u = auth.current_user(request)
+    own_env(env_id, u["id"])
+    for s in store.q("SELECT id FROM tsessions WHERE env_id=?", (env_id,)):
+        _delete_session(s["id"])
+    store.ex("DELETE FROM metrics WHERE env_id=?", (env_id,))
+    store.ex("DELETE FROM events WHERE env_id=?", (env_id,))
+    store.ex("DELETE FROM environments WHERE id=?", (env_id,))
+    return {"ok": True}
+
+
+@app.get("/api/environments/{env_id}/metrics")
+def env_metrics(env_id: int, request: Request, start: float = None, end: float = None, points: int = 400):
+    u = auth.current_user(request)
+    own_env(env_id, u["id"])
+    end = end or now()
+    start = start or end - 3600
+    return metrics_window(env_id, start, end, min(max(points, 20), 2000))
+
+
+def _delete_session(sid):
+    store.ex("DELETE FROM runs WHERE session_id=?", (sid,))
+    store.ex("DELETE FROM recommendations WHERE session_id=?", (sid,))
+    store.ex("DELETE FROM events WHERE session_id=?", (sid,))
+    store.ex("DELETE FROM tsessions WHERE id=?", (sid,))
+
+
+@app.get("/api/sessions/{sid}")
+def session(sid: int, request: Request):
+    u = auth.current_user(request)
+    s = own_session(sid, u["id"])
+    s["summary"] = store.uj(s["summary"])
+    e = own_env(s["env_id"], u["id"])
+    runs = [run_brief(r) for r in store.q("SELECT * FROM runs WHERE session_id=? ORDER BY seq, id", (sid,))]
+    recs = [store.row(r, ("items", "diagnosis")) for r in store.q("SELECT * FROM recommendations WHERE session_id=? ORDER BY id DESC", (sid,))]
+    events = [store.row(r, ("data",)) for r in store.q("SELECT * FROM events WHERE session_id=? ORDER BY ts DESC LIMIT 200", (sid,))]
+    return {"session": s, "environment": env_brief(e), "runs": runs, "recommendations": recs, "events": events}
+
+
+@app.patch("/api/sessions/{sid}")
+def update_session(sid: int, request: Request, body: dict = Body(...)):
+    u = auth.current_user(request)
+    own_session(sid, u["id"])
+    for f in ("name", "notes"):
+        if f in body:
+            store.ex(f"UPDATE tsessions SET {f}=? WHERE id=?", ((body[f] or "")[:4000], sid))
+    return {"ok": True}
+
+
+@app.delete("/api/sessions/{sid}")
+def delete_session(sid: int, request: Request):
+    u = auth.current_user(request)
+    own_session(sid, u["id"])
+    _delete_session(sid)
+    return {"ok": True}
+
+
+@app.get("/api/runs/{run_id}")
+def run_detail(run_id: int, request: Request, vs: int = None):
+    u = auth.current_user(request)
+    r = own_run(run_id, u["id"])
+    s = own_session(r["session_id"], u["id"])
+    prev = own_run(vs, u["id"]) if vs else previous_run(r)
+    cfg = store.uj(r["config"], {})
+    changes = store.uj(r["changes"], [])
+    diff = config_diff(store.uj(prev["config"], {}) if prev else {}, cfg, changes) if prev else []
+    recs = [store.row(x, ("items", "diagnosis")) for x in store.q("SELECT * FROM recommendations WHERE run_id=? ORDER BY id", (run_id,))]
+    siblings = [{"id": x["id"], "seq": x["seq"], "label": x["label"]} for x in store.q("SELECT id, seq, label FROM runs WHERE session_id=? AND status<>'aborted' ORDER BY seq", (r["session_id"],))]
+    out = run_brief(r)
+    out.update({
+        "inputs": store.uj(r["inputs"], {}), "diagnosis": store.uj(r["diagnosis"], []), "managed": store.uj(r["managed"], {}),
+        "config_count": len(cfg), "diff": diff, "compared_with": run_brief(prev) if prev else None,
+        "session": {k: s[k] for k in ("id", "name", "goal", "policy", "noise_pct", "env_id", "status")},
+        "recommendations": recs, "runs": siblings,
+    })
+    return out
+
+
+@app.get("/api/runs/{run_id}/config")
+def run_config(run_id: int, request: Request):
+    u = auth.current_user(request)
+    r = own_run(run_id, u["id"])
+    return {"config": store.uj(r["config"], {}), "managed": store.uj(r["managed"], {})}
+
+
+@app.get("/api/runs/{run_id}/metrics")
+def run_metrics(run_id: int, request: Request, pad: float = 60, points: int = 400):
+    u = auth.current_user(request)
+    r = own_run(run_id, u["id"])
+    s = own_session(r["session_id"], u["id"])
+    t0 = (r["started"] or now()) - pad
+    t1 = (r["ended"] or now()) + (pad if r["ended"] else 0)
+    m = metrics_window(s["env_id"], t0, t1, points)
+    m["window"] = [r["started"], r["ended"]]
+    return m
+
+
+# ---------------------------------------------------------------------------- agent API
+
+def agent_env(env_id, key):
+    e = store.q1("SELECT * FROM environments WHERE id=? AND user_id=?", (env_id, key["user_id"]))
+    if not e:
+        raise HTTPException(404, "environment not found for this API key")
+    return dict(e)
+
+
+def agent_session(sid, key):
+    s = store.q1("SELECT s.* FROM tsessions s JOIN environments e ON e.id=s.env_id WHERE s.id=? AND e.user_id=?", (sid, key["user_id"]))
+    if not s:
+        raise HTTPException(404, "session not found for this API key")
+    return dict(s)
+
+
+def agent_run(rid, key):
+    r = store.q1("SELECT r.*, s.env_id FROM runs r JOIN tsessions s ON s.id=r.session_id JOIN environments e ON e.id=s.env_id "
+                 "WHERE r.id=? AND e.user_id=?", (rid, key["user_id"]))
+    if not r:
+        raise HTTPException(404, "run not found for this API key")
+    return dict(r)
+
+
+@app.post("/api/v1/agent/hello")
+def agent_hello(body: dict = Body(...), key=Depends(auth.agent_key)):
+    uid = (body.get("agent_uid") or "")[:64]
+    if not uid:
+        raise HTTPException(400, "agent_uid required")
+    facts = body.get("facts") or {}
+    host = (facts.get("hardware") or {}).get("hostname")
+    e = store.q1("SELECT id FROM environments WHERE user_id=? AND agent_uid=?", (key["user_id"], uid))
+    if e:
+        store.ex("UPDATE environments SET hostname=?, agent_version=?, facts=?, last_seen=?, api_key_id=? WHERE id=?",
+                 (host, body.get("agent_version"), store.j(facts), now(), key["id"], e["id"]))
+        eid = e["id"]
+    else:
+        eid = store.ex("INSERT INTO environments(user_id, agent_uid, name, hostname, agent_version, facts, created, last_seen, api_key_id) "
+                       "VALUES (?,?,?,?,?,?,?,?,?)", (key["user_id"], uid, (body.get("name") or host or "environment")[:80], host,
+                                                       body.get("agent_version"), store.j(facts), now(), now(), key["id"]))
+        store.ex("INSERT INTO events(env_id, ts, type, message) VALUES (?,?,?,?)", (eid, now(), "agent", "environment registered"))
+    return {"environment_id": eid, "url": f"{PUBLIC_URL}/#/env/{eid}"}
+
+
+@app.post("/api/v1/agent/metrics")
+def agent_metrics(body: dict = Body(...), key=Depends(auth.agent_key)):
+    e = agent_env(body.get("environment_id"), key)
+    rows = []
+    for s in (body.get("samples") or [])[:2000]:
+        if isinstance(s, dict) and isinstance(s.get("ts"), (int, float)):
+            rows.append((e["id"], float(s["ts"]), store.j({k: s.get(k) for k in ("os", "db", "db_up", "db_error", "session_id", "run_id")})))
+    c = store.conn()
+    c.execute("BEGIN")
+    c.executemany("INSERT OR REPLACE INTO metrics(env_id, ts, data) VALUES (?,?,?)", rows)
+    c.execute("UPDATE environments SET last_seen=? WHERE id=?", (now(), e["id"]))
+    c.execute("COMMIT")
+    return {"ok": True, "stored": len(rows)}
+
+
+@app.post("/api/v1/agent/events")
+def agent_event(body: dict = Body(...), key=Depends(auth.agent_key)):
+    e = agent_env(body.get("environment_id"), key)
+    sid = body.get("session_id")
+    if sid:
+        agent_session(sid, key)
+    store.ex("INSERT INTO events(env_id, session_id, ts, type, message, data) VALUES (?,?,?,?,?,?)",
+             (e["id"], sid, now(), (body.get("type") or "event")[:40], (body.get("message") or "")[:500], store.j(body.get("data"))))
+    store.ex("UPDATE environments SET last_seen=? WHERE id=?", (now(), e["id"]))
+    return {"ok": True}
+
+
+@app.post("/api/v1/agent/sessions")
+def agent_session_start(body: dict = Body(...), key=Depends(auth.agent_key)):
+    e = agent_env(body.get("environment_id"), key)
+    goal = body.get("goal") if body.get("goal") in ("tps", "latency") else "tps"
+    store.ex("UPDATE tsessions SET status='abandoned', ended=? WHERE env_id=? AND status='active'", (now(), e["id"]))
+    n = store.q1("SELECT COUNT(*) n FROM tsessions WHERE env_id=?", (e["id"],))["n"] + 1
+    name = (body.get("name") or f"Session {n} ({'TPS' if goal == 'tps' else 'latency'})")[:120]
+    sid = store.ex("INSERT INTO tsessions(env_id, name, goal, policy, noise_pct, workload, notes, created) VALUES (?,?,?,?,?,?,?,?)",
+                   (e["id"], name, goal, body.get("policy") or "safe", body.get("noise_pct") or 2.0, body.get("workload"), body.get("notes"), now()))
+    store.ex("INSERT INTO events(env_id, session_id, ts, type, message, data) VALUES (?,?,?,?,?,?)",
+             (e["id"], sid, now(), "session", f"session started: goal={goal}, policy={body.get('policy') or 'safe'}", store.j(body)))
+    return {"session_id": sid, "name": name, "url": f"{PUBLIC_URL}/#/session/{sid}"}
+
+
+@app.post("/api/v1/agent/sessions/{sid}/close")
+def agent_session_close(sid: int, body: dict = Body(default={}), key=Depends(auth.agent_key)):
+    s = agent_session(sid, key)
+    store.ex("UPDATE tsessions SET status='closed', ended=?, summary=? WHERE id=?", (now(), store.j(body.get("summary")), sid))
+    store.ex("INSERT INTO events(env_id, session_id, ts, type, message) VALUES (?,?,?,?,?)", (s["env_id"], sid, now(), "session", "session closed"))
+    return {"ok": True}
+
+
+@app.post("/api/v1/agent/runs")
+def agent_run_create(body: dict = Body(...), key=Depends(auth.agent_key)):
+    s = agent_session(body.get("session_id"), key)
+    rid = store.ex("INSERT INTO runs(session_id, seq, label, notes, status, started, config, managed, changes) VALUES (?,?,?,?,?,?,?,?,?)",
+                   (s["id"], body.get("seq"), (body.get("label") or "")[:120], body.get("notes"), "measuring", body.get("started") or now(),
+                    store.j(body.get("config")), store.j(body.get("managed")), store.j(body.get("changes"))))
+    return {"run_id": rid, "url": f"{PUBLIC_URL}/#/run/{rid}"}
+
+
+@app.post("/api/v1/agent/runs/{rid}/finish")
+def agent_run_finish(rid: int, body: dict = Body(...), key=Depends(auth.agent_key)):
+    agent_run(rid, key)
+    store.ex("UPDATE runs SET status='done', ended=?, summary=?, external=?, inputs=?, diagnosis=?, goal_value=?, goal_source=?, "
+             "delta_pct=?, delta_vs_first_pct=?, verdict=?, notes=COALESCE(?, notes) WHERE id=?",
+             (body.get("ended") or now(), store.j(body.get("summary")), store.j(body.get("external")), store.j(body.get("inputs")),
+              store.j(body.get("diagnosis")), body.get("goal_value"), body.get("goal_source"), body.get("delta_pct"),
+              body.get("delta_vs_first_pct"), body.get("verdict"), body.get("notes"), rid))
+    return {"ok": True}
+
+
+@app.post("/api/v1/agent/runs/{rid}/abort")
+def agent_run_abort(rid: int, key=Depends(auth.agent_key)):
+    agent_run(rid, key)
+    store.ex("UPDATE runs SET status='aborted', ended=? WHERE id=?", (now(), rid))
+    return {"ok": True}
+
+
+@app.post("/api/v1/agent/recommendations")
+def agent_recommendation(body: dict = Body(...), key=Depends(auth.agent_key)):
+    s = agent_session(body.get("session_id"), key)
+    if body.get("run_id"):
+        agent_run(body["run_id"], key)
+    rid = store.ex("INSERT INTO recommendations(session_id, run_id, created, goal, policy, items, diagnosis, next) VALUES (?,?,?,?,?,?,?,?)",
+                   (s["id"], body.get("run_id"), now(), body.get("goal"), body.get("policy"), store.j(body.get("items")),
+                    store.j(body.get("diagnosis")), body.get("next")))
+    store.ex("INSERT INTO events(env_id, session_id, ts, type, message, data) VALUES (?,?,?,?,?,?)",
+             (s["env_id"], s["id"], now(), "recommend", f"{len(body.get('items') or [])} recommendation(s); next: {body.get('next') or '-'}",
+              store.j({"recommendation_id": rid})))
+    return {"recommendation_id": rid}
+
+
+# ---------------------------------------------------------------------------- agent install
+
+_tar_cache = {}
+
+
+def agent_tarball():
+    mtime = max(os.path.getmtime(os.path.join(dp, f)) for dp, _, fs in os.walk(AGENT_DIR) for f in fs)
+    if _tar_cache.get("mtime") != mtime:
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as t:
+            for dp, dns, fs in os.walk(AGENT_DIR):
+                dns[:] = [d for d in dns if d not in ("__pycache__", ".git", "build") and not d.endswith(".egg-info")]
+                for f in fs:
+                    full = os.path.join(dp, f)
+                    t.add(full, arcname=os.path.join("tuning-agent", os.path.relpath(full, AGENT_DIR)))
+        _tar_cache.update(mtime=mtime, data=buf.getvalue())
+    return _tar_cache["data"]
+
+
+@app.get("/download/tuning-agent.tar.gz")
+def download_agent():
+    return Response(agent_tarball(), media_type="application/gzip",
+                    headers={"Content-Disposition": "attachment; filename=tuning-agent.tar.gz"})
+
+
+@app.get("/install.sh")
+def install_script():
+    with open(os.path.join(APP_DIR, "install.sh")) as f:
+        return PlainTextResponse(f.read().replace("__SERVER__", PUBLIC_URL), media_type="text/x-shellscript")
+
+
+@app.get("/agent-guide.md")
+def agent_guide():
+    with open(os.path.join(APP_DIR, "..", "..", "docs", "claude-code-skill", "SKILL.md")) as f:
+        return PlainTextResponse(f.read().replace("__SERVER__", PUBLIC_URL), media_type="text/markdown")
+
+
+@app.get("/healthz")
+def healthz():
+    store.q1("SELECT 1")
+    return {"ok": True}
+
+
+@app.exception_handler(HTTPException)
+def http_error(request, exc):
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+
+@app.get("/")
+def index():
+    return FileResponse(os.path.join(APP_DIR, "static", "index.html"), headers={"Cache-Control": "no-cache"})
+
+
+app.mount("/static", StaticFiles(directory=os.path.join(APP_DIR, "static")), name="static")

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tuning-agent"
+version = "0.1.0"
+description = "AI database tuning agent for MySQL-family servers"
+requires-python = ">=3.8"
+dependencies = ["PyMySQL>=1.0"]
+
+[project.scripts]
+tuning-agent = "tuning_agent.cli:main"
+
+[tool.setuptools]
+packages = ["tuning_agent"]

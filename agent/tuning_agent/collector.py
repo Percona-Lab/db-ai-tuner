@@ -1,0 +1,346 @@
+"""Metric sampling and measurement-window analysis."""
+import time
+
+from . import mysqldb
+from .hostinfo import OSCounters
+
+# per-second rates computed from SHOW GLOBAL STATUS counters
+RATE_COUNTERS = {
+    "qps": ["Questions"],
+    "commits": ["Com_commit"],
+    "rollbacks": ["Com_rollback"],
+    "handler_commits": ["Handler_commit"],
+    "selects": ["Com_select"],
+    "inserts": ["Com_insert", "Com_insert_select"],
+    "updates": ["Com_update", "Com_update_multi"],
+    "deletes": ["Com_delete", "Com_delete_multi"],
+    "calls": ["Com_call_procedure"],
+    "bp_read_requests": ["Innodb_buffer_pool_read_requests"],
+    "bp_disk_reads": ["Innodb_buffer_pool_reads"],
+    "bp_pages_flushed": ["Innodb_buffer_pool_pages_flushed"],
+    "bp_wait_free": ["Innodb_buffer_pool_wait_free"],
+    "data_reads": ["Innodb_data_reads"],
+    "data_writes": ["Innodb_data_writes"],
+    "data_fsyncs": ["Innodb_data_fsyncs"],
+    "log_fsyncs": ["Innodb_os_log_fsyncs"],
+    "log_waits": ["Innodb_log_waits"],
+    "row_lock_waits": ["Innodb_row_lock_waits"],
+    "rows_read": ["Innodb_rows_read"],
+    "rows_changed": ["Innodb_rows_inserted", "Innodb_rows_updated", "Innodb_rows_deleted"],
+    "tmp_tables": ["Created_tmp_tables"],
+    "tmp_disk_tables": ["Created_tmp_disk_tables"],
+    "sort_merge_passes": ["Sort_merge_passes"],
+    "select_full_join": ["Select_full_join"],
+    "select_scan": ["Select_scan"],
+    "opened_tables": ["Opened_tables"],
+    "opened_table_defs": ["Opened_table_definitions"],
+    "threads_created": ["Threads_created"],
+    "aborted_connects": ["Aborted_connects"],
+    "slow_queries": ["Slow_queries"],
+    "binlog_cache_disk_use": ["Binlog_cache_disk_use"],
+    "handler_read_rnd_next": ["Handler_read_rnd_next"],
+}
+GAUGES = {
+    "threads_running": "Threads_running",
+    "threads_connected": "Threads_connected",
+    "row_lock_current_waits": "Innodb_row_lock_current_waits",
+}
+
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+class DBSampler:
+    """Cheap per-interval sample of the database."""
+
+    def __init__(self, db):
+        self.db = db
+        self.variables = None
+        self.ps = None
+
+    def snapshot(self):
+        if self.variables is None:
+            self.variables = self.db.variables()
+            self.ps = self.db.ps_enabled()
+        s = {"t": time.time(), "status": self.db.status()}
+        if self.ps:
+            s["stmt"] = self.db.statement_totals()
+        s["innodb"] = mysqldb.parse_innodb_status(self.db.innodb_status_text())
+        return s
+
+    def rates(self, a, b):
+        dt = max(b["t"] - a["t"], 1e-6)
+        sa, sb = a["status"], b["status"]
+        out = {}
+        for name, keys in RATE_COUNTERS.items():
+            tot = 0.0
+            seen = False
+            for k in keys:
+                x, y = _num(sa.get(k)), _num(sb.get(k))
+                if x is not None and y is not None:
+                    tot += y - x
+                    seen = True
+            if seen:
+                out[name] = round(max(tot, 0) / dt, 2)
+        out["tps"] = round(out.get("commits", 0) + out.get("rollbacks", 0), 2)
+        for name, k in GAUGES.items():
+            v = _num(sb.get(k))
+            if v is not None:
+                out[name] = v
+        req, rd = out.get("bp_read_requests"), out.get("bp_disk_reads")
+        if req:
+            out["bp_hit_pct"] = round(100.0 * (1 - (rd or 0) / req), 3)
+        tot = _num(sb.get("Innodb_buffer_pool_pages_total"))
+        if tot:
+            out["bp_dirty_pct"] = round(100.0 * (_num(sb.get("Innodb_buffer_pool_pages_dirty")) or 0) / tot, 2)
+            out["bp_free_pct"] = round(100.0 * (_num(sb.get("Innodb_buffer_pool_pages_free")) or 0) / tot, 2)
+        x, y = _num(sa.get("Innodb_os_log_written")), _num(sb.get("Innodb_os_log_written"))
+        if x is not None and y is not None:
+            out["redo_mbs"] = round((y - x) / dt / 2 ** 20, 3)
+        x, y = _num(sa.get("Innodb_row_lock_time")), _num(sb.get("Innodb_row_lock_time"))
+        w = (_num(sb.get("Innodb_row_lock_waits")) or 0) - (_num(sa.get("Innodb_row_lock_waits")) or 0)
+        if x is not None and w > 0:
+            out["row_lock_wait_avg_ms"] = round((y - x) / w, 2)
+        for k in ("Bytes_received", "Bytes_sent"):
+            x, y = _num(sa.get(k)), _num(sb.get(k))
+            if x is not None:
+                out[k.lower().replace("bytes_", "net_") + "_mbs"] = round((y - x) / dt / 2 ** 20, 3)
+        if a.get("stmt") and b.get("stmt"):
+            dc = b["stmt"][0] - a["stmt"][0]
+            dw = b["stmt"][1] - a["stmt"][1]
+            if dc > 0:
+                out["avg_latency_ms"] = round(dw / dc / 1e9, 4)
+                out["statements"] = round(dc / dt, 2)
+        ib = b.get("innodb", {})
+        if "lsn" in ib and "checkpoint_lsn" in ib:
+            age = ib["lsn"] - ib["checkpoint_lsn"]
+            out["checkpoint_age_mb"] = round(age / 2 ** 20, 2)
+            cap = mysqldb.redo_capacity(self.variables or {})
+            if cap:
+                out["checkpoint_age_pct"] = round(100.0 * age / cap, 2)
+        if "history_list_length" in ib:
+            out["history_list_length"] = ib["history_list_length"]
+        if "os_wait_reservations" in ib and "os_wait_reservations" in a.get("innodb", {}):
+            out["innodb_os_waits"] = round((ib["os_wait_reservations"] - a["innodb"]["os_wait_reservations"]) / dt, 1)
+        return out
+
+
+class Sampler:
+    """OS + DB sampler producing one merged metrics dict per call."""
+
+    def __init__(self, db, device):
+        self.dbs = DBSampler(db)
+        self.oss = OSCounters(device)
+        self.prev_db = None
+        self.prev_os = None
+
+    def reset_db(self):
+        self.prev_db = None
+        self.dbs.variables = None
+
+    def sample(self):
+        now_os = self.oss.snapshot()
+        out = {"ts": round(now_os["t"], 3), "os": {}, "db": {}, "db_up": True}
+        if self.prev_os:
+            out["os"] = OSCounters.rates(self.prev_os, now_os)
+        self.prev_os = now_os
+        try:
+            now_db = self.dbs.snapshot()
+            if self.prev_db:
+                out["db"] = self.dbs.rates(self.prev_db, now_db)
+            self.prev_db = now_db
+        except Exception as e:  # database down / restarting
+            out["db_up"] = False
+            out["db_error"] = str(e)[:200]
+            self.reset_db()
+            try:
+                self.dbs.db.close()
+            except Exception:
+                pass
+        return out
+
+
+# ---- measurement windows -------------------------------------------------------
+
+def full_snapshot(db, device):
+    """Everything the analysis needs at the boundary of a measurement window."""
+    ps = db.ps_enabled()
+    snap = {
+        "t": time.time(),
+        "variables": db.variables(),
+        "status": db.status(),
+        "innodb_metrics": db.innodb_metrics(),
+        "innodb_text": db.innodb_status_text(),
+        "os": OSCounters(device).snapshot(),
+        "ps": ps,
+    }
+    if ps:
+        snap["stmt"] = db.statement_totals()
+        snap["hist"] = db.statement_histogram()
+        snap["digests"] = db.digests()
+        snap["waits"] = db.waits()
+    snap["data_bytes"], snap["tables"] = db.table_sizes()
+    return snap
+
+
+def _percentile_from_hist(hist_a, hist_b, q):
+    if not hist_a or not hist_b or len(hist_a) != len(hist_b):
+        return None
+    counts = [(hb[0], hb[1] - ha[1]) for ha, hb in zip(hist_a, hist_b)]
+    total = sum(c for _, c in counts)
+    if total <= 0:
+        return None
+    need = q * total
+    acc = 0
+    for high, c in counts:
+        acc += c
+        if acc >= need:
+            return round(high / 1e9, 4)  # ps -> ms
+    return None
+
+
+def analyze_window(a, b, samples):
+    """Summary + decision inputs for a measurement window between snapshots a and b."""
+    dt = max(b["t"] - a["t"], 1e-6)
+    sa, sb = a["status"], b["status"]
+    deltas = {}
+    for k, v in sb.items():
+        x, y = _num(sa.get(k)), _num(v)
+        if x is not None and y is not None and y != x:
+            deltas[k] = y - x
+    rates = DBSampler(None)
+    rates.variables = b["variables"]
+    db_rates = rates.rates({"t": a["t"], "status": sa, "stmt": a.get("stmt"), "innodb": mysqldb.parse_innodb_status(a.get("innodb_text"))},
+                           {"t": b["t"], "status": sb, "stmt": b.get("stmt"), "innodb": mysqldb.parse_innodb_status(b.get("innodb_text"))})
+    os_rates = OSCounters.rates(a["os"], b["os"])
+
+    def avg(group, key):
+        vals = [s[group][key] for s in samples if key in s.get(group, {})]
+        return round(sum(vals) / len(vals), 3) if vals else None
+
+    def mx(group, key):
+        vals = [s[group][key] for s in samples if key in s.get(group, {})]
+        return max(vals) if vals else None
+
+    def stdev_pct(group, key):
+        vals = [s[group][key] for s in samples if key in s.get(group, {})]
+        if len(vals) < 3:
+            return None
+        m = sum(vals) / len(vals)
+        if not m:
+            return None
+        var = sum((v - m) ** 2 for v in vals) / (len(vals) - 1)
+        return round(100.0 * var ** 0.5 / m, 2)
+
+    summary = {
+        "duration_s": round(dt, 1),
+        "tps": db_rates.get("tps"),
+        "qps": db_rates.get("qps"),
+        "handler_commits": db_rates.get("handler_commits"),
+        "statements_per_s": db_rates.get("statements"),
+        "avg_latency_ms": db_rates.get("avg_latency_ms"),
+        "p95_latency_ms": _percentile_from_hist(a.get("hist"), b.get("hist"), 0.95),
+        "p99_latency_ms": _percentile_from_hist(a.get("hist"), b.get("hist"), 0.99),
+        "bp_hit_pct": db_rates.get("bp_hit_pct"),
+        "bp_disk_reads": db_rates.get("bp_disk_reads"),
+        "redo_mbs": db_rates.get("redo_mbs"),
+        "data_fsyncs": db_rates.get("data_fsyncs"),
+        "row_lock_waits": db_rates.get("row_lock_waits"),
+        "row_lock_wait_avg_ms": db_rates.get("row_lock_wait_avg_ms"),
+        "tmp_disk_tables": db_rates.get("tmp_disk_tables"),
+        "threads_running_avg": avg("db", "threads_running"),
+        "threads_connected_avg": avg("db", "threads_connected"),
+        "checkpoint_age_pct_max": mx("db", "checkpoint_age_pct"),
+        "bp_dirty_pct_avg": avg("db", "bp_dirty_pct"),
+        "history_list_length_max": mx("db", "history_list_length"),
+        "tps_cv_pct": stdev_pct("db", "tps"),
+        "cpu_busy": os_rates.get("cpu_busy"),
+        "cpu_user": os_rates.get("cpu_user"),
+        "cpu_sys": os_rates.get("cpu_sys"),
+        "cpu_iowait": os_rates.get("cpu_iowait"),
+        "cpu_steal": os_rates.get("cpu_steal"),
+        "load1_avg": avg("os", "load1"),
+        "disk_r_iops": os_rates.get("disk_r_iops"),
+        "disk_w_iops": os_rates.get("disk_w_iops"),
+        "disk_r_mbs": os_rates.get("disk_r_mbs"),
+        "disk_w_mbs": os_rates.get("disk_w_mbs"),
+        "disk_util": os_rates.get("disk_util"),
+        "disk_await_ms": os_rates.get("disk_await_ms"),
+        "swap_in": os_rates.get("swap_in"),
+        "swap_out": os_rates.get("swap_out"),
+        "mem_used_pct": os_rates.get("mem_used_pct"),
+        "mem_available_mb": os_rates.get("mem_available_mb"),
+        "samples": len(samples),
+    }
+    if not summary["tps"] and summary["qps"]:
+        summary["tps_source"] = "none"
+    summary = {k: v for k, v in summary.items() if v is not None}
+
+    inputs = {
+        "status_rates": {k: round(v / dt, 3) for k, v in sorted(deltas.items())},
+        "db_rates": db_rates,
+        "os_rates": os_rates,
+        "data_bytes": b.get("data_bytes"),
+        "tables": b.get("tables"),
+        "ps_enabled": b.get("ps"),
+    }
+    # top waits in window
+    if a.get("waits") and b.get("waits"):
+        wd = []
+        for name, (cnt, tm) in b["waits"].items():
+            c0, t0 = a["waits"].get(name, (0, 0))
+            if tm - t0 > 0:
+                wd.append({"event": name, "count": cnt - c0, "time_s": round((tm - t0) / 1e12, 3)})
+        wd.sort(key=lambda r: -r["time_s"])
+        inputs["top_waits"] = wd[:25]
+    # top statements in window
+    if a.get("digests") is not None and b.get("digests"):
+        prev = {(d["SCHEMA_NAME"], d["DIGEST"]): d for d in a["digests"]}
+        top = []
+        for d in b["digests"]:
+            p = prev.get((d["SCHEMA_NAME"], d["DIGEST"]), {})
+            cnt = int(d["COUNT_STAR"]) - int(p.get("COUNT_STAR", 0))
+            if cnt <= 0:
+                continue
+            tm = int(d["SUM_TIMER_WAIT"]) - int(p.get("SUM_TIMER_WAIT", 0))
+
+            def dd(k):
+                return int(d[k] or 0) - int(p.get(k, 0) or 0)
+
+            top.append({
+                "schema": d["SCHEMA_NAME"], "digest": d["DIGEST"], "query": d["DIGEST_TEXT"],
+                "count": cnt, "per_s": round(cnt / dt, 2), "total_s": round(tm / 1e12, 3),
+                "avg_ms": round(tm / cnt / 1e9, 3), "lock_ms_avg": round(dd("SUM_LOCK_TIME") / cnt / 1e9, 3),
+                "rows_examined_avg": round(dd("SUM_ROWS_EXAMINED") / cnt, 1),
+                "rows_sent_avg": round(dd("SUM_ROWS_SENT") / cnt, 1),
+                "rows_affected_avg": round(dd("SUM_ROWS_AFFECTED") / cnt, 1),
+                "tmp_disk_tables": dd("SUM_CREATED_TMP_DISK_TABLES"),
+                "sort_merge_passes": dd("SUM_SORT_MERGE_PASSES"),
+                "no_index_used": dd("SUM_NO_INDEX_USED"),
+                "full_joins": dd("SUM_SELECT_FULL_JOIN"),
+            })
+        top.sort(key=lambda r: -r["total_s"])
+        tot = sum(r["total_s"] for r in top) or 1
+        for r in top:
+            r["pct_time"] = round(100.0 * r["total_s"] / tot, 1)
+        inputs["top_statements"] = top[:20]
+    # innodb metrics deltas
+    im = []
+    for k, v in (b.get("innodb_metrics") or {}).items():
+        d = v - (a.get("innodb_metrics") or {}).get(k, 0)
+        if d:
+            im.append((k, round(d / dt, 3)))
+    inputs["innodb_metrics_rates"] = dict(sorted(im))
+    txt = b.get("innodb_text", "")
+    inputs["innodb_status"] = {
+        "semaphores": mysqldb.section(txt, "SEMAPHORES", 3000),
+        "log": mysqldb.section(txt, "LOG", 1500),
+        "buffer_pool": mysqldb.section(txt, "BUFFER POOL AND MEMORY", 2000),
+        "row_operations": mysqldb.section(txt, "ROW OPERATIONS", 1500),
+        "transactions_head": mysqldb.section(txt, "TRANSACTIONS", 1500),
+    }
+    return summary, inputs

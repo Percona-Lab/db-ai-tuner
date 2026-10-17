@@ -1,0 +1,12 @@
+[Unit]
+Description=AI DB Tuner agent (metrics collector)
+After=network-online.target mysql.service mysqld.service mariadb.service
+
+[Service]
+ExecStart=/opt/tuning-agent/venv/bin/tuning-agent daemon
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

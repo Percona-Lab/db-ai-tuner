@@ -1,0 +1,6 @@
+ops/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+*.db
