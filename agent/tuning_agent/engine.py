@@ -366,11 +366,35 @@ def apply_history(items, history):
     return out
 
 
-def revert_suggestions(history, variables):
-    """If the newest measured run regressed, suggest reverting its changes."""
+def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
+    """Suggest reverting when the current configuration measures worse than the best one."""
     if len(history) < 2:
         return []
     last = history[-1]
+    best = None
+    for r in history:
+        if r.get("goal_value") is None:
+            continue
+        if best is None or (r["goal_value"] < best["goal_value"] if goal == "latency" else r["goal_value"] > best["goal_value"]):
+            best = r
+    if best and best is not last and last.get("goal_value") is not None and best.get("goal_value"):
+        gap = (best["goal_value"] - last["goal_value"]) / best["goal_value"] * 100 * (-1 if goal == "latency" else 1)
+        target = best.get("managed") or {}
+        cur = managed or {}
+        ch = []
+        for k in sorted(set(cur) | set(target)):
+            if normalize(k, cur.get(k)) != normalize(k, target.get(k)) and k in variables:
+                ch.append({"variable": k, "current": variables.get(k), "proposed": target.get(k), "unset": k not in target})
+        if gap > noise and ch:
+            return [{
+                "id": f"rollback-to-run-{best['seq']}", "title": f"Return to the best configuration (run #{best['seq']} '{best.get('label')}')",
+                "kind": "revert", "changes": ch,
+                "rationale": f"The latest run is {gap:.1f}% worse on the goal than run #{best['seq']} (noise threshold {noise}%). "
+                             f"Undo the changes made since then; `tuning-agent rollback --to-run {best['seq']}` does the same.",
+                "evidence": {"best_goal_value": best["goal_value"], "latest_goal_value": last["goal_value"], "gap_pct": round(gap, 2)},
+                "impact": 3, "confidence": 3, "risk": "none",
+                "restart": any(not KB.get(c["variable"], {}).get("dynamic", False) for c in ch), "goals": ["tps", "latency"],
+            }]
     if last.get("verdict") != "regressed" or not last.get("changes"):
         return []
     ch = []
@@ -392,7 +416,8 @@ def run_engine(ctx):
     ctx["diagnosis"] = diagnose(ctx) if ctx.get("summary") else []
     items = recommend(ctx)
     items = apply_history(items, ctx.get("history") or [])
-    items = revert_suggestions(ctx.get("history") or [], ctx["variables"]) + items
+    items = revert_suggestions(ctx.get("history") or [], ctx["variables"], ctx.get("goal", "tps"),
+                               float(ctx.get("noise_pct") or 2.0), ctx.get("managed")) + items
     allowed_durability = ctx.get("policy") == "benchmark"
     for it in items:
         if it["risk"] == "durability" and not allowed_durability and it["kind"] == "config":

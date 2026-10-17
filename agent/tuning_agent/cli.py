@@ -496,7 +496,8 @@ def _engine_ctx(c, sess):
     flavor, vt, ver, _ = mysqldb.flavor_of(c.variables)
     return {"goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
             "variables": c.variables, "summary": last.get("summary"), "inputs": last.get("inputs"),
-            "history": sess["runs"]}
+            "history": sess["runs"], "noise_pct": sess.get("noise_pct"),
+            "managed": {k: v["value"] for k, v in c.state.get("managed", {}).items()}}
 
 
 def cmd_recommend(a):
@@ -549,7 +550,7 @@ def cmd_apply(a):
             if it["kind"] == "advice" and not a.force:
                 raise Fail(f"{rid} is advice only (risk {it['risk']}); pass --force to apply anyway")
             for ch in it["changes"]:
-                changes.append({"variable": ch["variable"], "value": ch["proposed"], "reason": a.reason or it["rationale"],
+                changes.append({"variable": ch["variable"], "value": None if ch.get("unset") else ch["proposed"], "reason": a.reason or it["rationale"],
                                 "source": f"rec:{rid}"})
     for k, v in _parse_kv_str(a.set).items():
         changes.append({"variable": k, "value": v, "reason": a.reason or "", "source": "manual"})
