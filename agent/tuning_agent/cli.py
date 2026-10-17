@@ -86,7 +86,9 @@ class Ctx:
                    "datadir": self.datadir(), "data_bytes": data_bytes, "tables": tables,
                    "key_variables": {k: v[k] for k in keys if k in v}},
             "agent": {"version": __version__, "cnf_path": Applier(self.cfg, self.state, self.db).cnf_path,
-                      "service": self.cfg.get("service_name") or None},
+                      "service": self.cfg.get("service_name") or None,
+                      "managed": {k: v["value"] for k, v in self.state.get("managed", {}).items()},
+                      "allow_restart": self.cfg.get("allow_restart", "true") == "true"},
         }
 
     def hello(self):
@@ -220,6 +222,11 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
                 by[e["variable"]] = e
         pend = [p for p in by.values() if normalize(p["variable"], p["old"]) != normalize(p["variable"], p["new"])]
         c.state.set("pending_changes", pend)
+    try:
+        c.refresh()
+        c.hello()
+    except Exception as e:  # noqa
+        log(f"warning: could not refresh environment facts: {e}")
     c.event("apply", f"{source}: applied {len(res['applied'])} change(s)" + (" with restart" if res["restarted"] else ""),
             {"result": res, "requested": changes})
     return res
