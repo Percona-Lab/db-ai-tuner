@@ -159,7 +159,8 @@
       const p = el("path", { d, fill: b.highlight ? "var(--s1)" : "var(--axis)" }, svg);
       if (b.highlight === "best") p.setAttribute("fill", "var(--s3)");
       const lab = el("text", { x: cx, y: H - 18, "text-anchor": "middle", "font-size": 11, fill: "var(--ink-2)" }, svg);
-      lab.textContent = b.label.length > 12 && slot < 80 ? b.label.slice(0, 10) + "…" : b.label;
+      const maxc = Math.max(4, Math.floor((slot - 6) / 6.3));
+      lab.textContent = b.label.length > maxc ? b.label.slice(0, maxc - 1) + "…" : b.label;
       if (b.sub) { const s2 = el("text", { x: cx, y: H - 5, "text-anchor": "middle", "font-size": 10.5, fill: "var(--muted)" }, svg); s2.textContent = b.sub; }
       if (b.highlight && slot > 40) { const v = el("text", { x: cx, y: y - 4, "text-anchor": "middle", "font-size": 11, fill: "var(--ink)" }, svg); v.textContent = fmtNum(b.value); }
       const hit = el("rect", { x: cx - slot / 2, y: m.t, width: slot, height: H - m.t, fill: "transparent", style: b.href ? "cursor:pointer" : "" }, svg);
