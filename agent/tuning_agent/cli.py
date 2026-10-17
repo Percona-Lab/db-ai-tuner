@@ -338,6 +338,11 @@ def _measure_start(c, label=None, notes=None):
         log("WARNING: " + warn)
     c.refresh()
     snap = collector.full_snapshot(c.db, hostinfo.device_for_path(c.datadir()))
+    up = int(float(snap["status"].get("Uptime", 1e9)))
+    if up < 300:
+        w2 = f"mysqld restarted {up}s ago: caches may still be cold (use `measure run --warmup auto`)"
+        log("WARNING: " + w2)
+        warn = (warn + "; " if warn else "") + w2
     seq = len(sess["runs"]) + 1
     pending = c.state.get("pending_changes") or []
     managed = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
@@ -462,6 +467,43 @@ def _fmt_run(run, diagnosis, goal):
     return "\n".join(lines)
 
 
+def _warmup(c, spec):
+    """spec: seconds, or 'auto' = until the buffer pool load finished and throughput is stable."""
+    if spec in (None, "", "0", 0):
+        return 0
+    if str(spec) != "auto":
+        log(f"warm-up {int(spec)}s ...")
+        time.sleep(int(spec))
+        return int(spec)
+    t0 = time.time()
+    store = SampleStore(c.state.dir)
+    min_s, max_s, window = 60, 900, 60
+    log("warm-up auto: waiting for buffer pool load and stable throughput (60-900 s) ...")
+    while True:
+        time.sleep(10)
+        el = time.time() - t0
+        try:
+            st = c.db.status()
+        except Exception:
+            continue
+        load = str(st.get("Innodb_buffer_pool_load_status", ""))
+        loading = "completed" not in load.lower() and "not started" not in load.lower() and load != ""
+        samples = [x for x in store.window(time.time() - window, time.time()) if x.get("db", {}).get("tps") is not None]
+        vals = [x["db"]["tps"] or x["db"].get("qps", 0) for x in samples]
+        stable = False
+        if len(vals) >= 5 and sum(vals) > 0:
+            m = sum(vals) / len(vals)
+            sd = (sum((v - m) ** 2 for v in vals) / (len(vals) - 1)) ** 0.5
+            first, last = sum(vals[:len(vals) // 2]) / (len(vals) // 2), sum(vals[len(vals) // 2:]) / (len(vals) - len(vals) // 2)
+            stable = sd / m < 0.05 and abs(last - first) / m < 0.03
+        if el >= min_s and not loading and stable:
+            log(f"warm-up done after {el:.0f}s")
+            return round(el)
+        if el >= max_s:
+            log(f"warm-up stopped at the {max_s}s limit (load status: {load or '-'}; throughput stable: {stable})")
+            return round(el)
+
+
 def cmd_measure(a):
     c = Ctx()
     if a.action == "start":
@@ -482,9 +524,13 @@ def cmd_measure(a):
         c.event("measure_abort", f"measurement of run {m['seq']} aborted", {})
         emit({"ok": True, "aborted": m["run_id"]}, f"Measurement of run {m['seq']} aborted.")
     elif a.action == "run":
-        if a.warmup:
-            log(f"warm-up {a.warmup}s ...")
-            time.sleep(a.warmup)
+        warm = a.warmup
+        if warm is None:
+            uptime = int(float(c.db.status().get("Uptime", 1e9)))
+            warm = "auto" if uptime < 600 else 0
+            if warm:
+                log(f"server up only {uptime}s (restarted?): using --warmup auto")
+        _warmup(c, warm)
         m, warn, url = _measure_start(c, a.label, a.notes)
         log(f"measuring run {m['seq']} for {a.duration}s ...")
         interrupted = False
@@ -529,8 +575,7 @@ def cmd_calibrate(a):
         label = a.label or ("baseline" if not sess["runs"] else "calibration")
         for i in range(a.runs):
             if a.warmup and (i == 0 or a.warmup_each):
-                log(f"warm-up {a.warmup}s ...")
-                time.sleep(a.warmup)
+                _warmup(c, a.warmup)
             m, warn, url = _measure_start(c, f"{label} ({i + 1}/{a.runs})", a.notes)
             log(f"measuring run {m['seq']} ({i + 1}/{a.runs}) for {a.duration}s ...")
             time.sleep(a.duration)
@@ -855,13 +900,14 @@ def main(argv=None):
     s.add_argument("--external", action="append", help="KEY=VALUE reported by the benchmark (repeatable)")
     s.add_argument("--goal-value", type=float)
     s.add_argument("--duration", type=int, default=300)
-    s.add_argument("--warmup", type=int, default=0)
+    s.add_argument("--warmup", help="seconds, or 'auto' (buffer pool loaded + stable throughput). "
+                                     "Default: auto if mysqld restarted in the last 10 min, else none")
     s.set_defaults(fn=cmd_measure)
 
     s = sp.add_parser("calibrate", help="measure the current configuration N times to calibrate the noise threshold")
     s.add_argument("--runs", type=int, default=3)
     s.add_argument("--duration", type=int, default=300)
-    s.add_argument("--warmup", type=int, default=0, help="warm-up before the first run")
+    s.add_argument("--warmup", default=0, help="warm-up before the first run: seconds or 'auto'")
     s.add_argument("--warmup-each", action="store_true", help="warm up before every run")
     s.add_argument("--label")
     s.add_argument("--notes")

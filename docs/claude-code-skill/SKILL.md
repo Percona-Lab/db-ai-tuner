@@ -29,7 +29,7 @@ error (message in `error`), 3 = server/API error.
    * `benchmark`: may apply them (innodb_flush_log_at_trx_commit=2, sync_binlog, performance_schema=OFF, ...).
      Say so explicitly in any report: such results are not production-equivalent.
 5. Start the workload. Warm up (caches, buffer pool) before measuring.
-6. **Calibrate noise (standard protocol):** `tuning-agent calibrate --runs 3 --warmup 120 --duration 300`
+6. **Calibrate noise (standard protocol):** `tuning-agent calibrate --runs 3 --warmup auto --duration 300`
    measures the starting configuration three times. The run-to-run variation sets the session's noise
    thresholds for the goal (2.5 x CV, at least 1%) and for each work-per-transaction metric.
    Afterwards measure each experiment once: `tuning-agent measure run --warmup 60 --duration 300`
@@ -72,7 +72,9 @@ a multi-GB buffer pool can take a minute.
 * One change (or one coherent group) per run; identical duration, concurrency and data set.
 * If the benchmark modifies data (TPC-C, sysbench write), restore the data set or accept drift;
   never compare a run on a grown database with one on a fresh one without saying so.
-* A restart empties the buffer pool: warm up again before measuring.
+* A restart empties the buffer pool: warm up again before measuring. `--warmup auto` waits (60-900 s) until the
+  buffer pool load has completed and throughput is stable; `measure run` uses it automatically if mysqld restarted
+  in the last 10 minutes.
 * Differences below ~2-3% are usually noise on cloud VMs; repeat runs before claiming a win.
 * Do not run `measure` while applying changes; `apply` refuses during a measurement.
 * The server restarting during a window invalidates it (`measure stop` fails; use `measure abort`).
