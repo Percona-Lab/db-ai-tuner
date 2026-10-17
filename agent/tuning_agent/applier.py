@@ -144,6 +144,7 @@ class Applier:
         need_restart = []
         osa = None
         originals = self.state.data.setdefault("os_original", {})
+        applied_os = []
         for c in [c for c in changes if c["variable"].startswith("os:")]:
             var, val = c["variable"], c.get("value")
             osa = osa or self._os()
@@ -152,8 +153,17 @@ class Applier:
             target = originals.get(var) if val is None else val
             if target is None or normalize(var, before_vars.get(var)) == normalize(var, target):
                 continue
-            if osa.apply_live(var, target):
-                need_restart.append(var)
+            try:
+                if osa.apply_live(var, target):
+                    need_restart.append(var)
+                applied_os.append(var)
+            except Exception:
+                for done in reversed(applied_os):  # undo this batch's live OS changes
+                    try:
+                        osa.apply_live(done, before_vars.get(done))
+                    except Exception:
+                        pass
+                raise
         if osa or any(k.startswith("os:") for k in old_managed):
             (osa or self._os()).persist(managed)
             self.state.save()

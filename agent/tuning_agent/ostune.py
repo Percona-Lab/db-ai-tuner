@@ -138,10 +138,24 @@ class OSApplier:
                 raise RuntimeError(f"remount {m[1]} with {opt} failed: {r.stderr.strip()}")
             return False
         if name == "os:hugepages":
-            _write("/proc/sys/vm/nr_hugepages", value)
+            want = int(value)
+            if want == 0:
+                _write("/proc/sys/vm/nr_hugepages", 0)
+                return True
+            # reserve with mysqld stopped and memory compacted, otherwise fragmentation leaves us short
+            self.log("stopping mysqld to reserve huge pages ...")
+            subprocess.run(["systemctl", "stop", self.service], capture_output=True)
+            subprocess.run(["sync"])
+            _write("/proc/sys/vm/drop_caches", 3)
+            if os.path.exists("/proc/sys/vm/compact_memory"):
+                _write("/proc/sys/vm/compact_memory", 1)
+            _write("/proc/sys/vm/nr_hugepages", want)
             got = int(_read("/proc/sys/vm/nr_hugepages") or 0)
-            if got < int(value):
-                self.log(f"warning: only {got} of {value} huge pages could be reserved (memory fragmentation)")
+            if got < want:
+                _write("/proc/sys/vm/nr_hugepages", 0)
+                subprocess.run(["systemctl", "start", self.service], capture_output=True)
+                raise RuntimeError(f"only {got} of {want} huge pages could be reserved (not enough contiguous memory); "
+                                   "huge pages not enabled")
             return True
         if name == "os:malloc":
             if value == "jemalloc" and not any(os.path.exists(p) for p in JEMALLOC_CANDIDATES):
