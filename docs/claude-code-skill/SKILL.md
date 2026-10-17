@@ -43,6 +43,21 @@ error (message in `error`), 3 = server/API error.
 11. Finish: `tuning-agent rollback --best`, re-measure the best and the first configuration once more
     to confirm the gain is above noise, then `tuning-agent session stop`.
 
+## Long-running commands
+
+`measure run` blocks for warm-up + duration. Coding-agent shell tools usually time out after a few
+minutes, so either run it in the background (and wait for completion), or use
+`measure start`, wait with your own timer while the benchmark runs, then `measure stop`.
+`baseline --apply` / `apply` may restart mysqld (buffer pool resize, read-only variables); a restart of
+a multi-GB buffer pool can take a minute.
+
+## Reading the results
+
+* `diagnosis` classifies the bottleneck: cpu, cpu-pressure, io, memory, memory-pressure, redo, commit,
+  locks, swap, concurrency. Pressure-stall numbers (PSI, `% of time stalled`) come from mysqld's own cgroup
+  when available, so a co-located benchmark client does not distort them.
+* Run summaries include host CPU and `mysqld_cpu_pct` (mysqld's share of the host).
+
 ## Benchmark hygiene (important)
 
 * One change (or one coherent group) per run; identical duration, concurrency and data set.
