@@ -27,11 +27,28 @@ Releem, OtterTune and DBtune. Version 1 focuses on two use cases:
 | Run | One configuration measured over one window. Stores the full `SHOW GLOBAL VARIABLES`, the changes since the previous run (with source and reason), summary metrics, decision inputs (status-counter rates, top waits, top statement digests, InnoDB status), diagnosis and verdict. |
 | Recommendation | Ranked list of changes produced from the last run: rationale, evidence, risk, restart need, impact/confidence, plus history awareness (already-tried changes, revert of regressions). |
 
+## Measurement protocol
+
+1. **Baseline** – `tuning-agent baseline --apply` (hardware + version based).
+2. **Calibrate** – `tuning-agent calibrate --runs 3 --warmup auto` measures the starting configuration three
+   times; the run-to-run variation sets the noise threshold for the goal (2.5 × CV, ≥ 1%) and for every
+   work-per-transaction metric (mysqld/host CPU ms, disk I/Os and KiB, fsyncs, redo KiB, rows read).
+3. **Experiment** – one recommendation at a time, one `measure run` each. A run is compared with the **mean of
+   its parent configuration**:
+   `improved` / `regressed` (goal beyond noise), `efficiency-gain` / `efficiency-loss` (goal within noise, but CPU
+   or I/O per transaction measurably lower / higher – I/O only counts when I/O is under pressure, CPU only when
+   busy), `neutral`, or `repeat` (configuration measured before; deviation beyond noise is flagged as **drift**).
+4. **Decide** – neutral and efficiency-loss experiments are reverted to their parent (no re-measurement needed:
+   that configuration is already known); the best configuration is only displaced by a result beyond noise.
+5. **Warm-up** – `--warmup auto` waits for the buffer-pool load and stable throughput; it is used automatically
+   after a restart.
+
 ## Repository layout
 
 * `agent/` – `tuning-agent` Python package (only dependency: PyMySQL)
+  * `evaluate.py` – efficiency per transaction, noise calibration, verdicts
   * `baseline.py` – hardware + version based starting configuration
-  * `collector.py` – OS (`/proc`) and DB sampling, measurement-window analysis
+  * `collector.py` – OS (`/proc`, PSI host + mysqld cgroup) and DB sampling, measurement-window analysis
   * `engine.py` – diagnosis (CPU / IO / memory / redo / commit / locks / swap / concurrency) and rules
   * `applier.py` – managed option file (`zz-tuning-agent.cnf`), `SET GLOBAL`, restart, verification, automatic rollback when the server fails to start
   * `cli.py` – commands
@@ -46,7 +63,9 @@ tuning-agent facts | status | config | guide
 tuning-agent baseline [--apply] [--reserve-mem 1G] [--max-connections N]
 tuning-agent session start --goal tps|latency [--policy safe|benchmark] [--name N] [--workload W] [--noise-pct 2]
 tuning-agent measure start|stop|abort [--label L] [--external key=value ...] [--goal-value X]
-tuning-agent measure run --duration 300 [--warmup 60] [--label L]
+tuning-agent measure run --duration 300 [--warmup auto|SECONDS] [--label L]
+tuning-agent calibrate --runs 3 [--warmup auto] [--duration 300] | --from-runs 1,2,3
+tuning-agent reevaluate
 tuning-agent recommend
 tuning-agent apply --next | --rec ID ... | --set var=value ... | --unset var  [--reason "..."] [--no-restart]
 tuning-agent rollback --best | --to-run N | --reset
