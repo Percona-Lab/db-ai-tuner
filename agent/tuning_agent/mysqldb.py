@@ -247,7 +247,9 @@ def compiled_defaults(binary_candidates=("/usr/sbin/mysqld", "/usr/sbin/mariadbd
                 continue
             parts = line.split(None, 1)
             if len(parts) == 2:
-                out[parts[0].replace("-", "_").lower()] = parts[1].strip()
+                v = parts[1].strip()
+                v = {"TRUE": "ON", "FALSE": "OFF", "(No default value)": ""}.get(v, v)
+                out[parts[0].replace("-", "_").lower()] = v
             elif len(parts) == 1:
                 out[parts[0].replace("-", "_").lower()] = ""
         if out:
