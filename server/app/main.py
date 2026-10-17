@@ -481,6 +481,13 @@ def agent_run_finish(rid: int, body: dict = Body(...), key=Depends(auth.agent_ke
     return {"ok": True}
 
 
+@app.post("/api/v1/agent/runs/{rid}/evaluation")
+def agent_run_evaluation(rid: int, body: dict = Body(...), key=Depends(auth.agent_key)):
+    agent_run(rid, key)
+    store.ex("UPDATE runs SET verdict=?, evaluation=? WHERE id=?", (body.get("verdict"), store.j(body.get("evaluation")), rid))
+    return {"ok": True}
+
+
 @app.post("/api/v1/agent/runs/{rid}/abort")
 def agent_run_abort(rid: int, key=Depends(auth.agent_key)):
     agent_run(rid, key)

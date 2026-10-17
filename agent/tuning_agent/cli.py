@@ -541,7 +541,30 @@ def cmd_calibrate(a):
             sess = c.session()
     cal = evaluate.calibrate(runs)
     _set_calibration(c, sess, cal)
-    emit({"ok": True, "calibration": cal}, _fmt_cal(cal))
+    changed = _reevaluate(c, c.session())
+    emit({"ok": True, "calibration": cal, "reevaluated": changed},
+         _fmt_cal(cal) + ("\nRe-evaluated: " + ", ".join(f"run {s} {o}->{n}" for s, o, n in changed) if changed else ""))
+
+
+def _reevaluate(c, sess):
+    noise = sess.get("noise") or ({"noise_pct": sess["noise_pct"]} if sess.get("noise_pct") else None)
+    changed = []
+    for i, r in enumerate(sess["runs"]):
+        v, ev = evaluate.verdict(r, sess["runs"][:i], sess["goal"], noise)
+        if v != r.get("verdict") or ev != r.get("evaluation"):
+            changed.append((r["seq"], r.get("verdict"), v))
+            r["verdict"], r["evaluation"] = v, ev
+            c.client.post(f"/runs/{r['id']}/evaluation", {"verdict": v, "evaluation": ev})
+    c.state.set("session", sess)
+    return changed
+
+
+def cmd_reevaluate(a):
+    c = Ctx()
+    sess = c.session()
+    changed = _reevaluate(c, sess)
+    emit({"ok": True, "changed": changed},
+         "\n".join(f"  run {s}: {o} -> {n}" for s, o, n in changed) or "All verdicts unchanged.")
 
 
 def _engine_ctx(c, sess):
@@ -846,6 +869,7 @@ def main(argv=None):
     s.add_argument("--from-runs", help="calibrate from existing runs of one configuration, e.g. 2,5,7")
     s.set_defaults(fn=cmd_calibrate)
 
+    sp.add_parser("reevaluate", help="recompute verdicts of all runs (e.g. after calibration)").set_defaults(fn=cmd_reevaluate)
     sp.add_parser("recommend", help="analyse the last run and recommend changes").set_defaults(fn=cmd_recommend)
 
     s = sp.add_parser("apply", help="apply recommendations or explicit settings")
