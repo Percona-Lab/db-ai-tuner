@@ -326,7 +326,7 @@ def _parse_kv(items):
     return out
 
 
-def _measure_start(c, label=None, notes=None):
+def _measure_start(c, label=None, notes=None, warmed=False):
     sess = c.session()
     if c.state.get("measurement"):
         raise Fail("measurement already in progress (run `tuning-agent measure stop`)")
@@ -339,7 +339,7 @@ def _measure_start(c, label=None, notes=None):
     c.refresh()
     snap = collector.full_snapshot(c.db, hostinfo.device_for_path(c.datadir()))
     up = int(float(snap["status"].get("Uptime", 1e9)))
-    if up < 300:
+    if up < 300 and not warmed:
         w2 = f"mysqld restarted {up}s ago: caches may still be cold (use `measure run --warmup auto`)"
         log("WARNING: " + w2)
         warn = (warn + "; " if warn else "") + w2
@@ -530,8 +530,8 @@ def cmd_measure(a):
             warm = "auto" if uptime < 600 else 0
             if warm:
                 log(f"server up only {uptime}s (restarted?): using --warmup auto")
-        _warmup(c, warm)
-        m, warn, url = _measure_start(c, a.label, a.notes)
+        waited = _warmup(c, warm)
+        m, warn, url = _measure_start(c, a.label, a.notes, warmed=bool(waited))
         log(f"measuring run {m['seq']} for {a.duration}s ...")
         interrupted = False
         try:
@@ -576,7 +576,7 @@ def cmd_calibrate(a):
         for i in range(a.runs):
             if a.warmup and (i == 0 or a.warmup_each):
                 _warmup(c, a.warmup)
-            m, warn, url = _measure_start(c, f"{label} ({i + 1}/{a.runs})", a.notes)
+            m, warn, url = _measure_start(c, f"{label} ({i + 1}/{a.runs})", a.notes, warmed=bool(a.warmup) or i > 0)
             log(f"measuring run {m['seq']} ({i + 1}/{a.runs}) for {a.duration}s ...")
             time.sleep(a.duration)
             run, diag = _measure_stop(c, None, None, a.notes)
