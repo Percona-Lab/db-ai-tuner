@@ -52,8 +52,22 @@ def conn():
     return c
 
 
+MIGRATIONS = [
+    ("runs", "evaluation", "TEXT"),
+    ("tsessions", "calibration", "TEXT"),
+]
+
+
 def init():
-    conn().executescript(SCHEMA)
+    c = conn()
+    c.executescript(SCHEMA)
+    for table, col, typ in MIGRATIONS:
+        cols = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
+        if col not in cols:
+            try:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError:  # another worker migrated first
+                pass
 
 
 def q(sql, args=()):

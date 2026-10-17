@@ -73,6 +73,7 @@ def run_brief(r):
     d["changes"] = store.uj(r["changes"], [])
     d["external"] = store.uj(r["external"], {})
     d["managed"] = store.uj(r["managed"], {})
+    d["evaluation"] = store.uj(r["evaluation"], {})
     return d
 
 
@@ -289,6 +290,7 @@ def session(sid: int, request: Request):
     u = auth.current_user(request)
     s = own_session(sid, u["id"])
     s["summary"] = store.uj(s["summary"])
+    s["calibration"] = store.uj(s.get("calibration"))
     e = own_env(s["env_id"], u["id"])
     runs = [run_brief(r) for r in store.q("SELECT * FROM runs WHERE session_id=? ORDER BY seq, id", (sid,))]
     recs = [store.row(r, ("items", "diagnosis")) for r in store.q("SELECT * FROM recommendations WHERE session_id=? ORDER BY id DESC", (sid,))]
@@ -330,6 +332,7 @@ def run_detail(run_id: int, request: Request, vs: int = None):
         "inputs": store.uj(r["inputs"], {}), "diagnosis": store.uj(r["diagnosis"], []), "managed": store.uj(r["managed"], {}),
         "config_count": len(cfg), "diff": diff, "compared_with": run_brief(prev) if prev else None,
         "session": {k: s[k] for k in ("id", "name", "goal", "policy", "noise_pct", "env_id", "status")},
+        "evaluation": store.uj(r["evaluation"], {}),
         "recommendations": recs, "runs": siblings,
         "environment": {"id": s["env_id"], "name": (store.q1("SELECT name FROM environments WHERE id=?", (s["env_id"],)) or {"name": ""})["name"]},
     })
@@ -448,6 +451,16 @@ def agent_session_close(sid: int, body: dict = Body(default={}), key=Depends(aut
     return {"ok": True}
 
 
+@app.post("/api/v1/agent/sessions/{sid}/update")
+def agent_session_update(sid: int, body: dict = Body(...), key=Depends(auth.agent_key)):
+    agent_session(sid, key)
+    if body.get("noise_pct") is not None:
+        store.ex("UPDATE tsessions SET noise_pct=? WHERE id=?", (float(body["noise_pct"]), sid))
+    if "calibration" in body:
+        store.ex("UPDATE tsessions SET calibration=? WHERE id=?", (store.j(body["calibration"]), sid))
+    return {"ok": True}
+
+
 @app.post("/api/v1/agent/runs")
 def agent_run_create(body: dict = Body(...), key=Depends(auth.agent_key)):
     s = agent_session(body.get("session_id"), key)
@@ -461,10 +474,10 @@ def agent_run_create(body: dict = Body(...), key=Depends(auth.agent_key)):
 def agent_run_finish(rid: int, body: dict = Body(...), key=Depends(auth.agent_key)):
     agent_run(rid, key)
     store.ex("UPDATE runs SET status='done', ended=?, summary=?, external=?, inputs=?, diagnosis=?, goal_value=?, goal_source=?, "
-             "delta_pct=?, delta_vs_first_pct=?, verdict=?, notes=COALESCE(?, notes) WHERE id=?",
+             "delta_pct=?, delta_vs_first_pct=?, verdict=?, evaluation=?, notes=COALESCE(?, notes) WHERE id=?",
              (body.get("ended") or now(), store.j(body.get("summary")), store.j(body.get("external")), store.j(body.get("inputs")),
               store.j(body.get("diagnosis")), body.get("goal_value"), body.get("goal_source"), body.get("delta_pct"),
-              body.get("delta_vs_first_pct"), body.get("verdict"), body.get("notes"), rid))
+              body.get("delta_vs_first_pct"), body.get("verdict"), store.j(body.get("evaluation")), body.get("notes"), rid))
     return {"ok": True}
 
 

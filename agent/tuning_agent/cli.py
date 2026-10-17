@@ -12,7 +12,7 @@ import sys
 import time
 import uuid
 
-from . import __version__, baseline, collector, engine, hostinfo, mysqldb
+from . import __version__, baseline, collector, engine, evaluate, hostinfo, mysqldb
 from .applier import Applier
 from .client import APIError, Client
 from .knowledge import human_size, normalize
@@ -410,28 +410,20 @@ def _measure_stop(c, external=None, goal_value=None, notes=None):
     runs = sess["runs"]
     prev = runs[-1] if runs else None
     first = runs[0] if runs else None
-    best = sess.get("best")
     d_prev = _improvement(sess["goal"], gv, prev.get("goal_value")) if prev else None
     d_first = _improvement(sess["goal"], gv, first.get("goal_value")) if first else None
-    d_best = _improvement(sess["goal"], gv, best.get("goal_value")) if best else None
-    noise = float(sess.get("noise_pct") or 2.0)
-    if d_prev is None:
-        verdict = "reference"
-    elif d_prev > noise:
-        verdict = "improved"
-    elif d_prev < -noise:
-        verdict = "regressed"
-    else:
-        verdict = "neutral"
+    verdict, evaluation = evaluate.verdict({"managed": m["managed"], "goal_value": gv, "summary": summary}, runs, sess["goal"],
+        sess.get("noise") or ({"noise_pct": sess["noise_pct"]} if sess.get("noise_pct") else None))
     ctx = {"goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "variables": b_snap["variables"],
            "summary": summary, "inputs": inputs}
     diagnosis = engine.diagnose(ctx)
     run = {"id": m["run_id"], "seq": m["seq"], "label": m["label"], "started": m["started"], "ended": b_snap["t"],
            "changes": m["changes"], "managed": m["managed"], "goal_value": gv, "delta_pct": d_prev, "delta_vs_first_pct": d_first,
-           "delta_vs_best_pct": d_best, "verdict": verdict, "summary": summary}
+           "verdict": verdict, "evaluation": evaluation, "summary": summary}
     c.client.post(f"/runs/{m['run_id']}/finish", {
         "ended": b_snap["t"], "summary": summary, "external": external, "inputs": inputs, "diagnosis": diagnosis,
-        "goal_value": gv, "goal_source": src, "delta_pct": d_prev, "delta_vs_first_pct": d_first, "verdict": verdict, "notes": notes})
+        "goal_value": gv, "goal_source": src, "delta_pct": d_prev, "delta_vs_first_pct": d_first, "verdict": verdict,
+        "evaluation": evaluation, "notes": notes})
     runs.append(run)
     scores = engine.config_scores(runs, sess["goal"])
     if scores:
@@ -453,8 +445,15 @@ def _fmt_run(run, diagnosis, goal):
     s = run["summary"]
     unit = "ms" if goal == "latency" else "/s"
     lines = [f"Run {run['seq']} '{run['label']}': goal {goal} = {run['goal_value']} {unit} ({s.get('goal_source')})  verdict: {run['verdict']}"]
+    ev = run.get("evaluation") or {}
+    if ev.get("goal_delta_pct") is not None:
+        lines.append(f"  vs parent configuration (mean of runs {ev['parent_runs']}) {ev['goal_delta_pct']:+.2f}% "
+                     f"(noise threshold {ev['goal_noise_pct']}%{'' if ev.get('calibrated') else ', NOT calibrated: run `tuning-agent calibrate`'})")
+        for k, e in (ev.get("efficiency") or {}).items():
+            if k in evaluate.KEY_EFFICIENCY:
+                lines.append(f"    {e['label']}: {e['parent']:.4g} -> {e['now']:.4g} ({e['improvement_pct']:+.1f}% less work, noise {e['noise_pct']}%)")
     if run.get("delta_pct") is not None:
-        lines.append(f"  vs previous {run['delta_pct']:+.2f}%   vs first {run['delta_vs_first_pct']:+.2f}%   (positive = better)")
+        lines.append(f"  vs previous run {run['delta_pct']:+.2f}%   vs first run {run['delta_vs_first_pct']:+.2f}%   (positive = better)")
     lines.append(f"  tps {s.get('tps')}  qps {s.get('qps')}  avg latency {s.get('avg_latency_ms')} ms  p95 {s.get('p95_latency_ms')} ms  "
                  f"cpu {s.get('cpu_busy')}% iowait {s.get('cpu_iowait')}%  bp hit {s.get('bp_hit_pct')}%  ckpt age max {s.get('checkpoint_age_pct_max')}%")
     for d in diagnosis:
@@ -496,6 +495,53 @@ def cmd_measure(a):
         emit({"ok": True, "run": run, "diagnosis": diag, "interrupted": interrupted}, _fmt_run(run, diag, c.session()["goal"]))
 
 
+def _set_calibration(c, sess, cal):
+    sess["noise"] = cal
+    sess["noise_pct"] = cal["noise_pct"]
+    c.state.set("session", sess)
+    c.client.post(f"/sessions/{sess['id']}/update", {"noise_pct": cal["noise_pct"], "calibration": cal})
+    c.event("calibrate", f"noise calibrated from runs {cal['runs']}: goal CV {cal['goal_cv_pct']}% -> threshold ±{cal['noise_pct']}%", cal)
+
+
+def _fmt_cal(cal):
+    lines = [f"Calibration from runs {cal['runs']}: goal mean {cal['goal_mean']:.4g}, CV {cal['goal_cv_pct']}%, range {cal['goal_range_pct']}%",
+             f"  goal noise threshold: ±{cal['noise_pct']}% ({cal['k']} x CV, min {evaluate.MIN_GOAL_NOISE}%)"]
+    for k, e in cal["efficiency"].items():
+        lines.append(f"  {evaluate.EFFICIENCY[k]}: mean {e['mean']:.4g}, CV {e['cv_pct']}% -> threshold ±{e['noise_pct']}%")
+    return "\n".join(lines)
+
+
+def cmd_calibrate(a):
+    c = Ctx()
+    sess = c.session()
+    if a.from_runs:
+        seqs = [int(x) for x in a.from_runs.split(",")]
+        runs = [r for r in sess["runs"] if r["seq"] in seqs]
+        if len(runs) < 2:
+            raise Fail("need at least 2 existing runs")
+        if len({evaluate.config_key(r.get("managed")) for r in runs}) > 1:
+            raise Fail("calibration runs must share one configuration")
+    else:
+        if c.state.get("pending_changes") and sess["runs"]:
+            log("note: calibrating the current configuration, which has unmeasured changes")
+        runs = []
+        label = a.label or ("baseline" if not sess["runs"] else "calibration")
+        for i in range(a.runs):
+            if a.warmup and (i == 0 or a.warmup_each):
+                log(f"warm-up {a.warmup}s ...")
+                time.sleep(a.warmup)
+            m, warn, url = _measure_start(c, f"{label} ({i + 1}/{a.runs})", a.notes)
+            log(f"measuring run {m['seq']} ({i + 1}/{a.runs}) for {a.duration}s ...")
+            time.sleep(a.duration)
+            run, diag = _measure_stop(c, None, None, a.notes)
+            log(f"  goal = {run['goal_value']}")
+            runs.append(run)
+            sess = c.session()
+    cal = evaluate.calibrate(runs)
+    _set_calibration(c, sess, cal)
+    emit({"ok": True, "calibration": cal}, _fmt_cal(cal))
+
+
 def _engine_ctx(c, sess):
     path = sess.get("last_inputs_path")
     if not sess["runs"] or not path or not os.path.exists(path):
@@ -506,7 +552,7 @@ def _engine_ctx(c, sess):
     flavor, vt, ver, _ = mysqldb.flavor_of(c.variables)
     return {"goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
             "variables": c.variables, "summary": last.get("summary"), "inputs": last.get("inputs"),
-            "history": sess["runs"], "noise_pct": sess.get("noise_pct"),
+            "history": sess["runs"], "noise_pct": sess.get("noise_pct"), "noise": sess.get("noise"),
             "managed": {k: v["value"] for k, v in c.state.get("managed", {}).items()}}
 
 
@@ -515,6 +561,8 @@ def cmd_recommend(a):
     sess = c.session()
     if c.state.get("pending_changes"):
         log("note: there are applied changes that have not been measured yet")
+    if not sess.get("noise"):
+        log("note: noise is not calibrated; run `tuning-agent calibrate --runs 3` (or --from-runs) so verdicts use measured noise")
     ctx = _engine_ctx(c, sess)
     res = engine.run_engine(ctx)
     run_id = sess["runs"][-1]["id"] if sess["runs"] else None
@@ -687,11 +735,13 @@ GUIDE = """tuning-agent workflow (for people and coding agents)
   2. tuning-agent baseline [--apply]         # hardware+version based starting config
   3. tuning-agent session start --goal tps|latency [--policy safe|benchmark] [--name NAME] [--noise-pct 2]
   4. start the workload (benchmark) and let it warm up
-  5. tuning-agent measure start --label baseline ... tuning-agent measure stop [--external tps=1234]
-     or: tuning-agent measure run --warmup 60 --duration 300 --label baseline
+  5. tuning-agent calibrate --runs 3 --warmup 120 --duration 300     # measure the start config 3x -> noise
+     (single runs: tuning-agent measure run --duration 300, or measure start ... measure stop [--external tps=1234])
   6. tuning-agent recommend                  # ranked recommendations with evidence
   7. tuning-agent apply --next | --rec ID [--rec ID2] | --set var=value [--reason "why"]
-  8. measure again (step 5); the run is compared with the previous one (verdict improved/neutral/regressed)
+  8. measure again (measure run); the run is compared with the mean of its parent configuration:
+     improved / regressed (goal beyond noise), efficiency-gain / efficiency-loss (goal within noise but CPU or
+     I/O per transaction measurably lower / higher), neutral, repeat
   9. repeat 6-8; tuning-agent rollback --best | --to-run N | --reset
  10. tuning-agent session stop
 
@@ -755,7 +805,7 @@ def main(argv=None):
     s.add_argument("--name")
     s.add_argument("--workload", help="description of the workload/benchmark")
     s.add_argument("--notes")
-    s.add_argument("--noise-pct", type=float, default=2.0)
+    s.add_argument("--noise-pct", type=float, default=None, help="fixed noise threshold (default: 2%% until calibrated)")
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_session)
 
@@ -768,6 +818,16 @@ def main(argv=None):
     s.add_argument("--duration", type=int, default=300)
     s.add_argument("--warmup", type=int, default=0)
     s.set_defaults(fn=cmd_measure)
+
+    s = sp.add_parser("calibrate", help="measure the current configuration N times to calibrate the noise threshold")
+    s.add_argument("--runs", type=int, default=3)
+    s.add_argument("--duration", type=int, default=300)
+    s.add_argument("--warmup", type=int, default=0, help="warm-up before the first run")
+    s.add_argument("--warmup-each", action="store_true", help="warm up before every run")
+    s.add_argument("--label")
+    s.add_argument("--notes")
+    s.add_argument("--from-runs", help="calibrate from existing runs of one configuration, e.g. 2,5,7")
+    s.set_defaults(fn=cmd_calibrate)
 
     sp.add_parser("recommend", help="analyse the last run and recommend changes").set_defaults(fn=cmd_recommend)
 

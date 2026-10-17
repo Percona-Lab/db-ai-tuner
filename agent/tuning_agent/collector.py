@@ -297,6 +297,8 @@ def analyze_window(a, b, samples):
     if not summary["tps"] and summary["qps"]:
         summary["tps_source"] = "none"
     summary = {k: v for k, v in summary.items() if v is not None}
+    from .evaluate import add_efficiency
+    add_efficiency(summary, db_rates)
 
     inputs = {
         "status_rates": {k: round(v / dt, 3) for k, v in sorted(deltas.items())},

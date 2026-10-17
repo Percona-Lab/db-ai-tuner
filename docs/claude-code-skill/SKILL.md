@@ -29,7 +29,10 @@ error (message in `error`), 3 = server/API error.
    * `benchmark`: may apply them (innodb_flush_log_at_trx_commit=2, sync_binlog, performance_schema=OFF, ...).
      Say so explicitly in any report: such results are not production-equivalent.
 5. Start the workload. Warm up (caches, buffer pool) before measuring.
-6. Measure: `tuning-agent measure run --warmup 60 --duration 300 --label NAME`
+6. **Calibrate noise (standard protocol):** `tuning-agent calibrate --runs 3 --warmup 120 --duration 300`
+   measures the starting configuration three times. The run-to-run variation sets the session's noise
+   thresholds for the goal (2.5 x CV, at least 1%) and for each work-per-transaction metric.
+   Afterwards measure each experiment once: `tuning-agent measure run --warmup 60 --duration 300`
    or `measure start` ... `measure stop [--external tps=1234 --external p95_ms=12]`.
    If the benchmark prints its own throughput/latency, pass it with `--external`; a key named like
    the goal (`tps`, `nopm`, `latency`) becomes the goal value.
@@ -37,8 +40,14 @@ error (message in `error`), 3 = server/API error.
    `evidence`, `risk`, `restart`, `impact`, `confidence`) and `next` (suggested experiment).
 8. `tuning-agent apply --next` or `--rec ID` or `--set var=value --reason "why"` (your own idea;
    always give a reason, it is shown in the web UI). `--unset var` stops managing a variable.
-9. Measure again with the same duration and load. Look at `verdict` (improved / neutral / regressed vs
-   the previous run, using the session noise threshold) and `delta_vs_first_pct`.
+9. Measure again with the same duration and load. The run is compared with the MEAN of its parent
+   configuration's runs. `verdict`:
+   * `improved` / `regressed` — goal changed by more than the noise threshold;
+   * `efficiency-gain` — goal within noise but mysqld/host CPU per transaction or disk I/O per transaction
+     is measurably lower (keep it: same speed, less work, more headroom);
+   * `efficiency-loss` — goal within noise but more work per transaction (revert);
+   * `neutral` — nothing measurable (the engine will suggest reverting it); `repeat` — same config again.
+   If a result is borderline, measure the same configuration again (`measure run`): repeats are averaged.
 10. If regressed: `tuning-agent rollback --to-run N` (or apply the `revert-run-N` recommendation).
 11. Finish: `tuning-agent rollback --best`, re-measure the best and the first configuration once more
     to confirm the gain is above noise, then `tuning-agent session stop`.

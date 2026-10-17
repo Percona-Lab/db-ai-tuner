@@ -30,7 +30,7 @@ function deltaCls(v) { return v == null ? "" : v > 0 ? "up" : v < 0 ? "down" : "
 function goalName(g) { return g === "latency" ? "Avg query response time" : "Throughput (TPS)"; }
 function goalUnit(g) { return g === "latency" ? "ms" : "tps"; }
 function verdictBadge(v) {
-  const m = { improved: "good", regressed: "bad", neutral: "plain", reference: "info" };
+  const m = { improved: "good", "efficiency-gain": "good", regressed: "bad", "efficiency-loss": "warn", neutral: "plain", reference: "info", repeat: "plain" };
   return v ? `<span class="badge ${m[v] || "plain"}">${esc(v)}</span>` : "";
 }
 function statusBadge(s) { const m = { active: "good", measuring: "info", done: "plain", closed: "plain", abandoned: "warn", aborted: "warn" }; return `<span class="badge ${m[s] || "plain"}">${esc(s)}</span>`; }
@@ -275,13 +275,14 @@ async function sessionPage(id) {
   $view.innerHTML = `<div class="crumbs"><a href="#/">Environments</a> / <a href="#/env/${d.environment.id}">${esc(d.environment.name)}</a> /</div>
   <div class="row"><h1>${esc(s.name)}</h1>${statusBadge(s.status)}<span class="spacer"></span><button class="ghost" id="rename">Rename</button><button class="ghost danger" id="del">Delete</button></div>
   <p class="sub">Goal: <b>${goalName(s.goal)}</b> · policy <b>${esc(s.policy)}</b>${s.policy === "benchmark" ? " (durability / observability trade-offs allowed)" : " (production-safe changes only)"} · noise threshold ±${s.noise_pct}% · started ${fmtTime(s.created)}${s.workload ? " · workload: " + esc(s.workload) : ""}</p>
+  ${calibrationNote(s)}
   <div class="tiles"><div class="tile"><div class="k">Runs measured</div><div class="v">${done.length}</div></div>
    <div class="tile"><div class="k">First run (${goalUnit(s.goal)})</div><div class="v">${first ? num(first.goal_value) : "–"}</div><div class="d">${first ? esc(first.label) : ""}</div></div>
    <div class="tile"><div class="k">Best configuration (${goalUnit(s.goal)})</div><div class="v">${bestCfg ? num(bestCfg.mean) : "–"}</div><div class="d">${bestCfg ? (bestCfg.runs.length > 1 ? "mean of runs " : "run ") + bestCfg.runs.map(r => "#" + r.seq).join(", ") : ""}</div></div>
    <div class="tile"><div class="k">Best vs first configuration</div><div class="v ${deltaCls(gain)}">${pct(gain)}</div><div class="d">${lower ? "lower latency is better" : "higher throughput is better"}</div></div></div>
   <div class="card" style="margin-top:14px" id="bars"></div>
   <h2>Runs</h2><div class="card tablewrap"><table><thead><tr><th>#</th><th>Label</th><th>Status</th><th>Changes vs previous run</th><th class="num">${goalUnit(s.goal) === "ms" ? "Avg ms" : "Goal"}</th><th class="num">vs prev</th><th class="num">vs first</th><th>Verdict</th>
-   <th class="num">TPS</th><th class="num">Avg lat ms</th><th class="num">p95 ms</th><th class="num">CPU %</th><th class="num">IO wait %</th><th>Duration</th></tr></thead><tbody id="runs"></tbody></table></div>
+   <th class="num">vs parent cfg</th><th class="num">TPS</th><th class="num">Avg lat ms</th><th class="num">mysqld CPU ms/trx</th><th class="num">Disk IOs/trx</th><th class="num">CPU %</th><th>Duration</th></tr></thead><tbody id="runs"></tbody></table></div>
   <h2>Latest recommendations</h2><div class="card" id="recs"></div>
   <h2>Notes</h2><div class="card"><textarea id="notes" rows="3" placeholder="Notes about this session (workload, hypotheses, conclusions)">${esc(s.notes || "")}</textarea><div class="row" style="margin-top:6px"><button id="savenotes">Save notes</button><span id="saved" class="muted"></span></div></div>
   <h2>Activity</h2><div class="card" id="events"></div>`;
@@ -293,14 +294,15 @@ async function sessionPage(id) {
       tip: `<div>vs previous<b>${pct(r.delta_pct)}</b></div><div>verdict<b>${esc(r.verdict || "")}</b></div>` })),
   });
   const tb = document.getElementById("runs");
-  if (!d.runs.length) tb.innerHTML = `<tr><td colspan="14" class="muted">No runs yet: <code>tuning-agent measure start</code> … <code>measure stop</code>.</td></tr>`;
+  if (!d.runs.length) tb.innerHTML = `<tr><td colspan="15" class="muted">No runs yet: <code>tuning-agent measure start</code> … <code>measure stop</code>.</td></tr>`;
   d.runs.forEach(r => {
     const sm = r.summary || {};
     const ch = (r.changes || []).map(c => `<span class="mono">${esc(c.variable)}</span>=${esc(val(c.variable, c.new))}`).join(", ");
     const tr = document.createElement("tr"); tr.className = "click"; tr.onclick = () => location.hash = "#/run/" + r.id;
     tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a></td><td>${statusBadge(r.status)}</td><td style="max-width:320px">${ch || '<span class="muted">none</span>'}</td>
      <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaCls(r.delta_pct)}">${pct(r.delta_pct)}</td><td class="num ${deltaCls(r.delta_vs_first_pct)}">${pct(r.delta_vs_first_pct)}</td><td>${verdictBadge(r.verdict)}</td>
-     <td class="num">${num(sm.tps)}</td><td class="num">${num(sm.avg_latency_ms)}</td><td class="num">${num(sm.p95_latency_ms)}</td><td class="num">${num(sm.cpu_busy)}</td><td class="num">${num(sm.cpu_iowait)}</td><td>${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}</td>`;
+     <td class="num ${deltaCls((r.evaluation || {}).goal_delta_pct)}" title="vs mean of runs ${esc(((r.evaluation || {}).parent_runs || []).join(", "))}">${pct((r.evaluation || {}).goal_delta_pct)}</td>
+     <td class="num">${num(sm.tps)}</td><td class="num">${num(sm.avg_latency_ms)}</td><td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td><td class="num">${num(sm.cpu_busy)}</td><td>${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}</td>`;
     tb.appendChild(tr);
   });
   renderRecs(document.getElementById("recs"), d.recommendations[0], runs);
@@ -313,6 +315,14 @@ async function sessionPage(id) {
     if (JSON.stringify(d2.runs.map(r => [r.id, r.status])) !== JSON.stringify(d.runs.map(r => [r.id, r.status])) || d2.recommendations.length !== d.recommendations.length) { clearTimers(); sessionPage(id); }
   }, 10000));
 }
+
+function calibrationNote(s) {
+  const c = s.calibration;
+  if (!c) return `<div class="note" style="margin-bottom:12px">Noise not calibrated: verdicts use a fixed ±${s.noise_pct || 2}% threshold. Standard protocol: <code>tuning-agent calibrate --runs 3</code> on the starting configuration.</div>`;
+  const eff = Object.entries(c.efficiency || {}).filter(([k]) => EFF_LABELS[k]).map(([k, e]) => `${EFF_LABELS[k]} ±${e.noise_pct}%`).join(" · ");
+  return `<div class="note" style="margin-bottom:12px"><b>Noise calibrated</b> from runs ${c.runs.map(x => "#" + x).join(", ")}: goal mean ${num(c.goal_mean)}, run-to-run CV ${c.goal_cv_pct}% (range ${c.goal_range_pct}%) → changes within <b>±${c.noise_pct}%</b> are treated as noise. Efficiency thresholds: ${eff}.</div>`;
+}
+const EFF_LABELS = { mysqld_cpu_ms_per_trx: "mysqld CPU ms/trx", host_cpu_ms_per_trx: "host CPU ms/trx", disk_ios_per_trx: "disk IOs/trx", disk_kb_per_trx: "disk KiB/trx", fsyncs_per_trx: "fsyncs/trx", redo_kb_per_trx: "redo KiB/trx", rows_read_per_trx: "rows read/trx" };
 
 function renderRecs(el, rec, runs) {
   if (!rec) { el.innerHTML = '<span class="muted">No recommendations yet: run <code>tuning-agent recommend</code> after a measured run.</span>'; return; }
@@ -349,6 +359,7 @@ async function runPage(id, tab) {
   <div class="tiles">${tile("TPS", sm.tps, "/s", ps.tps)}${tile("QPS", sm.qps, "/s", ps.qps)}${tile("Avg statement latency", sm.avg_latency_ms, "ms", ps.avg_latency_ms, true)}${tile("p95 statement latency", sm.p95_latency_ms, "ms", ps.p95_latency_ms, true)}
    ${tile("CPU busy (host)", sm.cpu_busy, "%", ps.cpu_busy, true)}${tile("mysqld CPU", sm.mysqld_cpu_pct, "% of host", ps.mysqld_cpu_pct, true)}${tile("IO wait", sm.cpu_iowait, "%", ps.cpu_iowait, true)}${tile("BP hit ratio", sm.bp_hit_pct, "%", ps.bp_hit_pct)}${tile("Disk IOPS", (sm.disk_r_iops || 0) + (sm.disk_w_iops || 0), "/s", ps.disk_r_iops != null ? (ps.disk_r_iops || 0) + (ps.disk_w_iops || 0) : null, true)}
    ${tile("CPU pressure", sm.mysqld_psi_cpu_some != null ? sm.mysqld_psi_cpu_some : sm.psi_cpu_some, "% stalled", ps.mysqld_psi_cpu_some != null ? ps.mysqld_psi_cpu_some : ps.psi_cpu_some, true)}${tile("I/O pressure", sm.mysqld_psi_io_some != null ? sm.mysqld_psi_io_some : sm.psi_io_some, "% stalled", ps.mysqld_psi_io_some != null ? ps.mysqld_psi_io_some : ps.psi_io_some, true)}${tile("Memory pressure", sm.psi_memory_some, "% stalled", ps.psi_memory_some, true)}
+   ${tile("mysqld CPU / trx", sm.mysqld_cpu_ms_per_trx, "ms", ps.mysqld_cpu_ms_per_trx, true)}${tile("Disk IOs / trx", sm.disk_ios_per_trx, "", ps.disk_ios_per_trx, true)}
    ${tile("Redo written", sm.redo_mbs, "MiB/s", ps.redo_mbs)}${tile("Ckpt age max", sm.checkpoint_age_pct_max, "%", ps.checkpoint_age_pct_max, true)}${tile("Threads running", sm.threads_running_avg, "avg", ps.threads_running_avg, true)}${tile("TPS variation", sm.tps_cv_pct, "% CV", ps.tps_cv_pct, true)}</div>
   ${Object.keys(r.external || {}).length ? `<h3>Benchmark-reported values</h3><div class="row">${Object.entries(r.external).map(([k, v]) => `<span class="badge plain">${esc(k)} = ${esc(v)}</span>`).join("")}</div>` : ""}
   <div class="tabs" id="tabs"></div><div id="tab"></div>`;
@@ -383,9 +394,19 @@ async function runPage(id, tab) {
   show(tabs.some(t => t[0] === tab) ? tab : "changes");
 }
 
+function renderEvaluation(r) {
+  const ev = r.evaluation || {};
+  if (!ev.parent_runs) return r.verdict === "repeat" ? `<div class="note" style="margin-bottom:12px">Repeat of the previous configuration: averaged into its mean.</div>` : "";
+  const rows = Object.entries(ev.efficiency || {}).map(([k, e]) => `<tr><td>${esc(EFF_LABELS[k] || e.label)}</td><td class="num">${num(e.parent)}</td><td class="num">${num(e.now)}</td><td class="num ${Math.abs(e.improvement_pct) > e.noise_pct ? (e.improvement_pct > 0 ? "up" : "down") : ""}">${e.improvement_pct > 0 ? "−" : "+"}${Math.abs(e.improvement_pct).toFixed(1)}%</td><td class="num muted">±${e.noise_pct}%</td></tr>`).join("");
+  return `<div class="card" style="margin-bottom:14px"><h3 style="margin-top:0">Evaluation ${verdictBadge(r.verdict)}</h3>
+   <p style="margin:0 0 8px">Goal vs the parent configuration (mean of runs ${ev.parent_runs.map(x => "#" + x).join(", ")} = ${num(ev.parent_goal_mean)}): <b class="${deltaCls(ev.goal_delta_pct)}">${pct(ev.goal_delta_pct)}</b>, noise threshold ±${ev.goal_noise_pct}%${ev.calibrated ? " (calibrated)" : " (not calibrated)"}.
+   ${r.verdict === "efficiency-gain" ? " Within noise on the goal, but the server does measurably less work per transaction: keep." : r.verdict === "efficiency-loss" ? " Within noise on the goal, but measurably more work per transaction: revert." : ""}</p>
+   ${rows ? `<div class="tablewrap"><table><thead><tr><th>Work per transaction</th><th class="num">Parent mean</th><th class="num">This run</th><th class="num">Change</th><th class="num">Noise</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}</div>`;
+}
+
 function renderDiff(el, r) {
   const prev = r.compared_with;
-  let h = "";
+  let h = renderEvaluation(r);
   if (!prev) h += '<p class="muted">This is the first run of the environment: nothing to compare with. The full configuration is in the last tab.</p>';
   else if (!r.diff.length) h += `<p>No configuration differences with run #${prev.seq} <b>${esc(prev.label)}</b>.</p>`;
   else h += `<p class="muted">${r.diff.length} variable(s) differ from run #${prev.seq} ${esc(prev.label)}. Source and reasoning come from the agent; “outside the agent” means the value changed some other way (manual edit, server default after restart, automatic sizing).</p>

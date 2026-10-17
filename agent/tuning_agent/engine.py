@@ -359,7 +359,7 @@ def apply_history(items, history):
             p = prior[-1]
             it["tried_in_run"] = p.get("seq")
             it["tried_verdict"] = p.get("verdict")
-            if p.get("verdict") in ("regressed", "neutral"):
+            if p.get("verdict") in ("regressed", "neutral", "efficiency-loss"):
                 it["confidence"] = 0
                 it["note"] = f"Already tried in run #{p.get('seq')} ({p.get('verdict')})."
         out.append(it)
@@ -405,7 +405,9 @@ def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
         for k in sorted(set(managed or {}) | set(target)):
             if normalize(k, (managed or {}).get(k)) != normalize(k, target.get(k)) and k in variables:
                 ch.append({"variable": k, "current": variables.get(k), "proposed": target.get(k), "unset": k not in target})
-        if ch:
+        cur_runs = [r for r in history if config_key(r.get("managed")) == cur_key]
+        kept = any(r.get("verdict") in ("improved", "efficiency-gain") for r in cur_runs)
+        if ch and not (kept and gap <= noise):
             seq = best["seqs"][-1]
             regressed = gap > noise
             items.append({
@@ -435,7 +437,7 @@ def run_engine(ctx):
     items = recommend(ctx)
     items = apply_history(items, ctx.get("history") or [])
     items = revert_suggestions(ctx.get("history") or [], ctx["variables"], ctx.get("goal", "tps"),
-                               float(ctx.get("noise_pct") or 2.0), ctx.get("managed")) + items
+                               float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0), ctx.get("managed")) + items
     allowed_durability = ctx.get("policy") == "benchmark"
     for it in items:
         if it["risk"] == "durability" and not allowed_durability and it["kind"] == "config":
