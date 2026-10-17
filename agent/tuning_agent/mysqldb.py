@@ -130,6 +130,20 @@ class DB:
         except pymysql.MySQLError:
             return []
 
+    def prepared(self):
+        """Server-side prepared statements aggregated by text (not visible in the digest table)."""
+        try:
+            return self.dict_rows(
+                "SELECT LEFT(SQL_TEXT, 400) AS DIGEST_TEXT, SUM(COUNT_EXECUTE) AS COUNT_STAR, SUM(SUM_TIMER_EXECUTE) AS SUM_TIMER_WAIT, "
+                "SUM(SUM_LOCK_TIME) AS SUM_LOCK_TIME, SUM(SUM_ROWS_EXAMINED) AS SUM_ROWS_EXAMINED, SUM(SUM_ROWS_SENT) AS SUM_ROWS_SENT, "
+                "SUM(SUM_ROWS_AFFECTED) AS SUM_ROWS_AFFECTED, SUM(SUM_CREATED_TMP_DISK_TABLES) AS SUM_CREATED_TMP_DISK_TABLES, "
+                "SUM(SUM_CREATED_TMP_TABLES) AS SUM_CREATED_TMP_TABLES, SUM(SUM_SORT_MERGE_PASSES) AS SUM_SORT_MERGE_PASSES, "
+                "SUM(SUM_NO_INDEX_USED) AS SUM_NO_INDEX_USED, SUM(SUM_SELECT_FULL_JOIN) AS SUM_SELECT_FULL_JOIN, "
+                "MIN(OWNER_OBJECT_SCHEMA) AS SCHEMA_NAME FROM performance_schema.prepared_statements_instances "
+                "GROUP BY LEFT(SQL_TEXT, 400) ORDER BY SUM(SUM_TIMER_EXECUTE) DESC LIMIT 200")
+        except pymysql.MySQLError:
+            return []
+
     def waits(self, limit=300):
         try:
             return {r[0]: (int(r[1]), int(r[2])) for r in self.rows(

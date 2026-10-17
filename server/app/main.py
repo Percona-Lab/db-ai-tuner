@@ -330,6 +330,7 @@ def run_detail(run_id: int, request: Request, vs: int = None):
         "config_count": len(cfg), "diff": diff, "compared_with": run_brief(prev) if prev else None,
         "session": {k: s[k] for k in ("id", "name", "goal", "policy", "noise_pct", "env_id", "status")},
         "recommendations": recs, "runs": siblings,
+        "environment": {"id": s["env_id"], "name": (store.q1("SELECT name FROM environments WHERE id=?", (s["env_id"],)) or {"name": ""})["name"]},
     })
     return out
 

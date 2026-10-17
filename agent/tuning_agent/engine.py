@@ -307,7 +307,7 @@ def recommend(ctx):
         if q["pct_time"] < 5:
             continue
         if q["no_index_used"] > 0 or (q["rows_examined_avg"] > 1000 and q["rows_examined_avg"] > 50 * max(q["rows_sent_avg"], 1)):
-            b.add(f"query-{q['digest'][:8]}", f"Query consumes {q['pct_time']:.0f}% of time with poor index use", [],
+            b.add(f"query-{q['digest'].split(':')[-1][:8]}", f"Query consumes {q['pct_time']:.0f}% of time with poor index use", [],
                   f"Examines {q['rows_examined_avg']:.0f} rows to return {q['rows_sent_avg']:.0f}"
                   f"{' and runs without an index' if q['no_index_used'] else ''}: {q['query'][:200]}",
                   {"avg_ms": q["avg_ms"], "per_s": q["per_s"], "pct_time": q["pct_time"]}, impact=2, confidence=2, kind="advice")

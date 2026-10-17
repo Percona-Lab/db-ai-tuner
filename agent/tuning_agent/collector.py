@@ -1,4 +1,5 @@
 """Metric sampling and measurement-window analysis."""
+import hashlib
 import time
 
 from . import mysqldb
@@ -181,10 +182,21 @@ def full_snapshot(db, device):
     if ps:
         snap["stmt"] = db.statement_totals()
         snap["hist"] = db.statement_histogram()
-        snap["digests"] = db.digests()
+        snap["digests"] = [d for d in db.digests() if not _own_query(d.get("DIGEST_TEXT"))]
+        for d in db.prepared():
+            d["DIGEST"] = "prepared:" + hashlib.md5((d["DIGEST_TEXT"] or "").encode()).hexdigest()[:16]
+            d["SCHEMA_NAME"] = d.get("SCHEMA_NAME") or ""
+            snap["digests"].append(d)
         snap["waits"] = db.waits()
     snap["data_bytes"], snap["tables"] = db.table_sizes()
     return snap
+
+
+def _own_query(text):
+    """Monitoring statements issued by the agent itself."""
+    t = (text or "").upper()
+    return (t.startswith("SHOW ") or t.startswith("SELECT @@") or "PERFORMANCE_SCHEMA" in t
+            or "INFORMATION_SCHEMA" in t or t.startswith("SET GLOBAL"))
 
 
 def _percentile_from_hist(hist_a, hist_b, q):
@@ -304,16 +316,18 @@ def analyze_window(a, b, samples):
         top = []
         for d in b["digests"]:
             p = prev.get((d["SCHEMA_NAME"], d["DIGEST"]), {})
-            cnt = int(d["COUNT_STAR"]) - int(p.get("COUNT_STAR", 0))
+            if int(d["COUNT_STAR"] or 0) < int(p.get("COUNT_STAR", 0) or 0):
+                p = {}  # counters reset (connection closed / table truncated)
+            cnt = int(d["COUNT_STAR"] or 0) - int(p.get("COUNT_STAR", 0) or 0)
             if cnt <= 0:
                 continue
-            tm = int(d["SUM_TIMER_WAIT"]) - int(p.get("SUM_TIMER_WAIT", 0))
+            tm = int(d["SUM_TIMER_WAIT"] or 0) - int(p.get("SUM_TIMER_WAIT", 0) or 0)
 
             def dd(k):
                 return int(d[k] or 0) - int(p.get(k, 0) or 0)
 
             top.append({
-                "schema": d["SCHEMA_NAME"], "digest": d["DIGEST"], "query": d["DIGEST_TEXT"],
+                "schema": d["SCHEMA_NAME"], "digest": d["DIGEST"], "prepared": d["DIGEST"].startswith("prepared:"), "query": d["DIGEST_TEXT"],
                 "count": cnt, "per_s": round(cnt / dt, 2), "total_s": round(tm / 1e12, 3),
                 "avg_ms": round(tm / cnt / 1e9, 3), "lock_ms_avg": round(dd("SUM_LOCK_TIME") / cnt / 1e9, 3),
                 "rows_examined_avg": round(dd("SUM_ROWS_EXAMINED") / cnt, 1),

@@ -318,14 +318,14 @@ async function runPage(id, tab) {
     if (pv != null && v != null && pv !== 0) { const ch = (v - pv) / Math.abs(pv) * 100; const good = lowerBetter ? ch < 0 : ch > 0; d = `<div class="d ${Math.abs(ch) < 0.05 ? "" : good ? "up" : "down"}">${ch > 0 ? "+" : ""}${ch.toFixed(1)}% vs prev</div>`; }
     return `<div class="tile"><div class="k">${k}</div><div class="v">${num(v)}<span style="font-size:13px;color:var(--ink-2)"> ${unit}</span></div>${d}</div>`;
   };
-  $view.innerHTML = `<div class="crumbs"><a href="#/">Environments</a> / <a href="#/env/${s.env_id}">environment</a> / <a href="#/session/${s.id}">${esc(s.name)}</a> /</div>
+  $view.innerHTML = `<div class="crumbs"><a href="#/">Environments</a> / <a href="#/env/${s.env_id}">${esc(r.environment.name)}</a> / <a href="#/session/${s.id}">${esc(s.name)}</a> /</div>
   <div class="row"><h1>Run #${r.seq} · ${esc(r.label)}</h1>${statusBadge(r.status)}${verdictBadge(r.verdict)}<span class="spacer"></span>
    <label style="margin:0">Compare with</label><select id="vs" style="width:auto"><option value="">previous run</option>${r.runs.filter(x => x.id !== r.id).map(x => `<option value="${x.id}" ${String(x.id) === vs ? "selected" : ""}>#${x.seq} ${esc(x.label)}</option>`).join("")}</select></div>
   <p class="sub">${fmtTime(r.started)} – ${r.ended ? fmtTime(r.ended) : "measuring…"} (${dur(sm.duration_s)}) · goal ${goalName(s.goal)} = <b>${num(r.goal_value)} ${goalUnit(s.goal)}</b>${r.goal_source ? ` <span class="muted">(${esc(r.goal_source)})</span>` : ""}
    ${r.delta_pct != null ? ` · <span class="${deltaCls(r.delta_pct)}">${pct(r.delta_pct)}</span> vs previous, <span class="${deltaCls(r.delta_vs_first_pct)}">${pct(r.delta_vs_first_pct)}</span> vs first` : ""}${prev ? ` · compared with run #${prev.seq} ${esc(prev.label)}` : ""}</p>
   ${r.notes ? `<div class="note" style="margin-bottom:12px">${esc(r.notes)}</div>` : ""}
-  <div class="tiles">${tile("TPS", sm.tps, "/s", ps.tps)}${tile("QPS", sm.qps, "/s", ps.qps)}${tile("Avg latency", sm.avg_latency_ms, "ms", ps.avg_latency_ms, true)}${tile("p95 latency", sm.p95_latency_ms, "ms", ps.p95_latency_ms, true)}
-   ${tile("CPU busy", sm.cpu_busy, "%", ps.cpu_busy, true)}${tile("IO wait", sm.cpu_iowait, "%", ps.cpu_iowait, true)}${tile("BP hit ratio", sm.bp_hit_pct, "%", ps.bp_hit_pct)}${tile("Disk IOPS", (sm.disk_r_iops || 0) + (sm.disk_w_iops || 0), "/s", ps.disk_r_iops != null ? (ps.disk_r_iops || 0) + (ps.disk_w_iops || 0) : null, true)}
+  <div class="tiles">${tile("TPS", sm.tps, "/s", ps.tps)}${tile("QPS", sm.qps, "/s", ps.qps)}${tile("Avg statement latency", sm.avg_latency_ms, "ms", ps.avg_latency_ms, true)}${tile("p95 statement latency", sm.p95_latency_ms, "ms", ps.p95_latency_ms, true)}
+   ${tile("CPU busy (host)", sm.cpu_busy, "%", ps.cpu_busy, true)}${tile("mysqld CPU", sm.mysqld_cpu_pct, "% of host", ps.mysqld_cpu_pct, true)}${tile("IO wait", sm.cpu_iowait, "%", ps.cpu_iowait, true)}${tile("BP hit ratio", sm.bp_hit_pct, "%", ps.bp_hit_pct)}${tile("Disk IOPS", (sm.disk_r_iops || 0) + (sm.disk_w_iops || 0), "/s", ps.disk_r_iops != null ? (ps.disk_r_iops || 0) + (ps.disk_w_iops || 0) : null, true)}
    ${tile("Redo written", sm.redo_mbs, "MiB/s", ps.redo_mbs)}${tile("Ckpt age max", sm.checkpoint_age_pct_max, "%", ps.checkpoint_age_pct_max, true)}${tile("Threads running", sm.threads_running_avg, "avg", ps.threads_running_avg, true)}${tile("TPS variation", sm.tps_cv_pct, "% CV", ps.tps_cv_pct, true)}</div>
   ${Object.keys(r.external || {}).length ? `<h3>Benchmark-reported values</h3><div class="row">${Object.entries(r.external).map(([k, v]) => `<span class="badge plain">${esc(k)} = ${esc(v)}</span>`).join("")}</div>` : ""}
   <div class="tabs" id="tabs"></div><div id="tab"></div>`;
@@ -363,7 +363,7 @@ async function runPage(id, tab) {
 function renderDiff(el, r) {
   const prev = r.compared_with;
   let h = "";
-  if (!prev) h += '<p class="muted">This is the first run of the environment: nothing to compare with.</p>';
+  if (!prev) h += '<p class="muted">This is the first run of the environment: nothing to compare with. The full configuration is in the last tab.</p>';
   else if (!r.diff.length) h += `<p>No configuration differences with run #${prev.seq} <b>${esc(prev.label)}</b>.</p>`;
   else h += `<p class="muted">${r.diff.length} variable(s) differ from run #${prev.seq} ${esc(prev.label)}. Source and reasoning come from the agent; “outside the agent” means the value changed some other way (manual edit, server default after restart, automatic sizing).</p>
    <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Run #${prev.seq}</th><th>This run</th><th>Source</th><th>Reason</th></tr></thead><tbody>${r.diff.map(d => `<tr><td class="mono">${esc(d.variable)}</td><td class="mono diff-old" style="word-break:break-all">${esc(d.before)}</td><td class="mono diff-new" style="word-break:break-all">${esc(d.after)}</td><td>${esc(d.source)}</td><td class="reason">${esc(d.reason || "")}</td></tr>`).join("")}</tbody></table></div>`;
@@ -377,8 +377,8 @@ function renderInputs(el, r) {
   let h = "";
   h += "<h3>Diagnosis</h3>" + ((r.diagnosis || []).map(dg => `<div class="diag">${sevBadge(dg.severity)} <b>${esc(dg.type)}</b> — ${esc(dg.text)}<div class="mono muted" style="font-size:11.5px;margin-top:3px">${esc(JSON.stringify(dg.evidence))}</div></div>`).join("") || '<p class="muted">none</p>');
   if (inp.top_statements && inp.top_statements.length) {
-    h += `<h3>Top statements in the window (performance_schema digests)</h3><div class="card tablewrap"><table><thead><tr><th>Statement</th><th class="num">% time</th><th class="num">per s</th><th class="num">avg ms</th><th class="num">rows exam.</th><th class="num">rows sent</th><th class="num">no index</th><th class="num">tmp disk</th></tr></thead><tbody>` +
-      inp.top_statements.map(q => `<tr><td class="mono" style="max-width:520px;word-break:break-all">${esc(q.query)}</td><td class="num">${q.pct_time}</td><td class="num">${num(q.per_s)}</td><td class="num">${num(q.avg_ms)}</td><td class="num">${num(q.rows_examined_avg)}</td><td class="num">${num(q.rows_sent_avg)}</td><td class="num">${q.no_index_used}</td><td class="num">${q.tmp_disk_tables}</td></tr>`).join("") + "</tbody></table></div>";
+    h += `<h3>Top statements in the window</h3><p class="muted">From performance_schema digests and server-side prepared statements (marked <span class="badge plain">prepared</span>); the agent's own monitoring queries are excluded.</p><div class="card tablewrap"><table><thead><tr><th>Statement</th><th class="num">% time</th><th class="num">per s</th><th class="num">avg ms</th><th class="num">rows exam.</th><th class="num">rows sent</th><th class="num">no index</th><th class="num">tmp disk</th></tr></thead><tbody>` +
+      inp.top_statements.map(q => `<tr><td class="mono" style="max-width:520px;word-break:break-all">${q.prepared ? '<span class="badge plain">prepared</span> ' : ""}${esc(q.query)}</td><td class="num">${q.pct_time}</td><td class="num">${num(q.per_s)}</td><td class="num">${num(q.avg_ms)}</td><td class="num">${num(q.rows_examined_avg)}</td><td class="num">${num(q.rows_sent_avg)}</td><td class="num">${q.no_index_used}</td><td class="num">${q.tmp_disk_tables}</td></tr>`).join("") + "</tbody></table></div>";
   }
   if (inp.top_waits && inp.top_waits.length) {
     h += `<h3>Top wait events in the window</h3><div class="card tablewrap"><table><thead><tr><th>Event</th><th class="num">count</th><th class="num">total s</th></tr></thead><tbody>` +
