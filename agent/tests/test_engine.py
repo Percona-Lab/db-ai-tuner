@@ -14,7 +14,7 @@ VARS = {
     "max_connections": "151", "table_open_cache": "4000", "table_definition_cache": "2000", "thread_cache_size": "9",
     "tmp_table_size": str(16 * 2 ** 20), "max_heap_table_size": str(16 * 2 ** 20), "temptable_max_ram": str(GiB),
     "sort_buffer_size": "262144", "join_buffer_size": "262144", "innodb_read_ahead_threshold": "56",
-    "innodb_stats_persistent_sample_pages": "20", "optimizer_switch": "index_merge=on,subquery_to_derived=off",
+    "innodb_stats_persistent_sample_pages": "20", "optimizer_switch": "index_merge=on,mrr_cost_based=on,batched_key_access=off,subquery_to_derived=off",
     "innodb_flush_log_at_trx_commit": "1", "sync_binlog": "1", "log_bin": "ON", "binlog_row_image": "FULL",
     "innodb_doublewrite": "ON", "performance_schema": "ON", "binlog_group_commit_sync_delay": "0",
     "binlog_group_commit_sync_no_delay_count": "0", "innodb_change_buffering": "none", "innodb_lru_scan_depth": "1024",
@@ -34,7 +34,7 @@ OLAP = ({"tps": 0.1, "qps": 0.1, "statements_per_s": 0.07, "avg_latency_ms": 150
          "bp_disk_reads": 200, "threads_running_avg": 1, "duration_s": 335, "mem_available_mb": 900},
         {"status_rates": {"Com_select": 0.07, "Select_full_join": 0.05, "Select_scan": 0.5, "Sort_merge_passes": 0.2,
                           "Created_tmp_tables": 0.1, "Created_tmp_disk_tables": 0.05, "Handler_read_rnd_next": 200000,
-                          "Handler_read_key": 100, "Innodb_rows_read": 2000000, "Max_execution_time_exceeded": 0.006},
+                          "Handler_read_key": 5000, "Innodb_rows_read": 2000000, "Max_execution_time_exceeded": 0.006},
          "data_bytes": 2 * GiB,
          "top_statements": [{"digest": "q17", "query": "SELECT SUM(l_extendedprice) FROM lineitem, part WHERE p_partkey = l_partkey "
                              "AND l_quantity < (SELECT 0.2 * AVG(l_quantity) FROM lineitem WHERE l_partkey = p_partkey)",
@@ -79,7 +79,7 @@ def test_olap_rules():
     res = run(*OLAP, policy="benchmark", goal="latency")
     it = ids(res)
     assert res["workload"]["type"] == "olap"
-    for k in ("join-buffer", "sort-buffer-olap", "tmp-olap", "subquery-to-derived"):
+    for k in ("join-buffer", "sort-buffer-olap", "tmp-olap", "subquery-to-derived", "bka-mrr", "stats-histograms"):
         assert k in it, (k, list(it))
     assert it["subquery-to-derived"]["changes"][0]["proposed"] == "subquery_to_derived=on"
 

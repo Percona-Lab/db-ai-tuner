@@ -419,12 +419,24 @@ def recommend(ctx):
                   "re-running the subquery per outer row. Same results; off by default in MySQL 8.0/8.4. Experiment.",
                   {"statements_with_subqueries": [q["query"][:100] for q in sub[:3]], "Max_execution_time_exceeded_per_s": timeouts},
                   impact=3, confidence=2)
-        if top and "innodb_stats_persistent_sample_pages" in v and _int(v, "innodb_stats_persistent_sample_pages", 20) <= 20 and \
-                any(q.get("pct_time", 0) > 10 and q.get("rows_examined_avg", 0) > 100000 for q in top):
-            b.add("stats-sample", "More accurate optimizer statistics", [("innodb_stats_persistent_sample_pages", "128")],
-                  "Long analytical queries examine millions of rows: better index statistics give the optimizer better join orders "
-                  "(takes effect after ANALYZE TABLE). Consider histograms on filtered non-indexed columns too.",
-                  {"top_statement_rows_examined": max(q.get("rows_examined_avg", 0) for q in top)}, impact=1, confidence=1)
+        if top and any(q.get("pct_time", 0) > 10 and q.get("rows_examined_avg", 0) > 100000 for q in top):
+            b.add("stats-histograms", "Refresh optimizer statistics for the big tables", [],
+                  "Long analytical queries examine millions of rows; join order depends on index statistics. Run ANALYZE TABLE on the "
+                  "large tables (optionally with innodb_stats_persistent_sample_pages=128 first) and add histograms on filtered "
+                  "non-indexed columns (ANALYZE TABLE t UPDATE HISTOGRAM ON col). A config change alone has no effect until "
+                  "statistics are recalculated.",
+                  {"top_statement_rows_examined": max(q.get("rows_examined_avg", 0) for q in top)}, impact=1, confidence=2, kind="advice")
+        key_reads = rates.get("Handler_read_key", 0)
+        osw = str(v.get("optimizer_switch", ""))
+        if "batched_key_access=off" in osw and key_reads > 1000 and (rates.get("Select_full_join", 0) > 0 or rates.get("Select_scan", 0) > 0):
+            ch = [("optimizer_switch", "batched_key_access=on,mrr_cost_based=off")]
+            if _int(v, "read_rnd_buffer_size", 262144) < 4 * MiB:
+                ch.append(("read_rnd_buffer_size", "4M"))
+            b.add("bka-mrr", "Batched Key Access joins with Multi-Range Read", ch,
+                  f"{key_reads:.0f} index lookups/s in an analytical workload: BKA collects join keys in the join buffer and MRR fetches "
+                  "the matching rows in primary-key order (fewer random page accesses). Off by default because the cost model is "
+                  "conservative. Same results. Experiment.",
+                  {"Handler_read_key_per_s": key_reads, "Select_full_join_per_s": rates.get("Select_full_join")}, impact=2, confidence=1)
     if have_run and wtype in ("oltp-write", "mixed"):
         if v.get("log_bin") == "ON" and "binlog_group_commit_sync_delay" in v and _int(v, "binlog_group_commit_sync_delay") == 0 \
                 and (s.get("fsyncs_per_trx") or 0) > 0.8 and (s.get("threads_running_avg") or 0) >= 4:
