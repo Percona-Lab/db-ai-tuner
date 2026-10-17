@@ -105,7 +105,7 @@ details summary { cursor: pointer; color: var(--ink-2); margin: 6px 0; }
 .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--ink-2); padding: 8px 12px; }
 .tabs button.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
 .diag { padding: 8px 10px; border-radius: 8px; background: var(--surface-2); margin: 6px 0; }
-.kv { display: grid; grid-template-columns: 180px 1fr; gap: 4px 12px; font-size: 13px; }
+.kv { display: grid; grid-template-columns: minmax(150px, max-content) 1fr; gap: 4px 12px; font-size: 13px; }
 .kv div:nth-child(odd) { color: var(--ink-2); }
 .note { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; color: var(--ink-2); }
 .key { font-family: ui-monospace, monospace; background: var(--code); padding: 8px 10px; border-radius: 8px; word-break: break-all; }

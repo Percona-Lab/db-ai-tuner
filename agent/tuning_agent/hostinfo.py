@@ -113,11 +113,20 @@ def hardware(datadir="/var/lib/mysql"):
     }
 
 
+def mysqld_pid():
+    for name in ("mysqld", "mariadbd"):
+        for pid in os.listdir("/proc"):
+            if pid.isdigit() and _read(f"/proc/{pid}/comm").strip() == name:
+                return int(pid)
+    return None
+
+
 class OSCounters:
     """Takes raw counters; rates computed between two snapshots."""
 
     def __init__(self, device=None):
         self.device = device
+        self.pid = None
 
     def snapshot(self):
         s = {"t": time.time()}
@@ -133,6 +142,14 @@ class OSCounters:
                 s["procs_running"] = int(line.split()[1])
             elif line.startswith("procs_blocked"):
                 s["procs_blocked"] = int(line.split()[1])
+        if not self.pid or not os.path.exists(f"/proc/{self.pid}"):
+            self.pid = mysqld_pid()
+        if self.pid:
+            st = _read(f"/proc/{self.pid}/stat")
+            if st:
+                f = st.rsplit(")", 1)[1].split()
+                s["mysqld"] = (self.pid, int(f[11]) + int(f[12]))  # utime + stime (ticks)
+                s["mysqld_rss"] = int(f[21]) * os.sysconf("SC_PAGE_SIZE")
         la = _read("/proc/loadavg").split()
         s["load1"] = float(la[0]) if la else 0.0
         vm = {}
@@ -174,6 +191,11 @@ class OSCounters:
             out["cpu_steal"] = round(100.0 * d[7] / tot, 2)
             out["cpu_idle"] = round(100.0 * d[3] / tot, 2)
             out["cpu_busy"] = round(100.0 - out["cpu_idle"] - out["cpu_iowait"], 2)
+        if "mysqld" in a and "mysqld" in b and a["mysqld"][0] == b["mysqld"][0]:
+            ticks = os.sysconf("SC_CLK_TCK")
+            out["mysqld_cpu_pct"] = round(100.0 * (b["mysqld"][1] - a["mysqld"][1]) / ticks / dt / (os.cpu_count() or 1), 2)
+        if "mysqld_rss" in b:
+            out["mysqld_rss_mb"] = round(b["mysqld_rss"] / 2 ** 20, 1)
         if "ctxt" in a:
             out["ctx_switches"] = round((b["ctxt"] - a["ctxt"]) / dt, 1)
         out["procs_running"] = b.get("procs_running", 0)

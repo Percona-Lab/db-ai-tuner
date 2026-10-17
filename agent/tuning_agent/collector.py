@@ -262,6 +262,7 @@ def analyze_window(a, b, samples):
         "cpu_user": os_rates.get("cpu_user"),
         "cpu_sys": os_rates.get("cpu_sys"),
         "cpu_iowait": os_rates.get("cpu_iowait"),
+        "mysqld_cpu_pct": os_rates.get("mysqld_cpu_pct"),
         "cpu_steal": os_rates.get("cpu_steal"),
         "load1_avg": avg("os", "load1"),
         "disk_r_iops": os_rates.get("disk_r_iops"),

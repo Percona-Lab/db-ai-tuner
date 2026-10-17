@@ -104,8 +104,9 @@ class DB:
         """Top-level statement count and total latency (picoseconds) from P_S."""
         try:
             r = self.rows(
-                "SELECT SUM(COUNT_STAR), SUM(SUM_TIMER_WAIT) FROM performance_schema.events_statements_summary_global_by_event_type "
-                "WHERE EVENT_NAME LIKE 'statement/sql/%' OR EVENT_NAME LIKE 'statement/com/Execute%'")
+                "SELECT SUM(COUNT_STAR), SUM(SUM_TIMER_WAIT) FROM performance_schema.events_statements_summary_global_by_event_name "
+                "WHERE (EVENT_NAME LIKE 'statement/sql/%' AND EVENT_NAME NOT LIKE 'statement/sql/show%') "
+                "OR EVENT_NAME LIKE 'statement/com/Execute%'")
             if r and r[0][0] is not None:
                 return int(r[0][0]), int(r[0][1])
         except pymysql.MySQLError:

@@ -45,14 +45,16 @@ def diagnose(ctx):
         out.append({"type": kind, "severity": severity, "text": text, "evidence": evidence})
 
     busy, iow, steal = s.get("cpu_busy", 0), s.get("cpu_iowait", 0), s.get("cpu_steal", 0)
+    my = s.get("mysqld_cpu_pct")
+    other = f" mysqld uses {my:.0f}% of the host CPU; the rest is other processes (e.g. a co-located benchmark client)." if my is not None else ""
     if busy >= 85:
-        add("cpu", "high", f"CPU saturated ({busy:.0f}% busy). Gains must come from doing less work per transaction "
-            "or reducing contention, not from more I/O capacity.", {"cpu_busy": busy, "cpus": cpus})
+        add("cpu", "high", f"CPU saturated ({busy:.0f}% busy).{other} Gains must come from doing less work per transaction "
+            "or reducing contention, not from more I/O capacity.", {"cpu_busy": busy, "mysqld_cpu_pct": my, "cpus": cpus})
     elif busy >= 65:
         add("cpu", "medium", f"CPU fairly busy ({busy:.0f}%).", {"cpu_busy": busy})
     if steal >= 5:
         add("steal", "medium", f"Hypervisor steal {steal:.1f}%: noisy neighbour; results will be noisy.", {"cpu_steal": steal})
-    if iow >= 15 or s.get("disk_util", 0) >= 80:
+    if iow >= 15 or (s.get("disk_util", 0) >= 90 and s.get("disk_await_ms", 0) >= 2):
         add("io", "high", f"I/O bound (iowait {iow:.0f}%, disk util {s.get('disk_util', 0):.0f}%, "
             f"await {s.get('disk_await_ms', 0):.1f} ms).",
             {k: s.get(k) for k in ("cpu_iowait", "disk_util", "disk_await_ms", "disk_r_iops", "disk_w_iops")})
