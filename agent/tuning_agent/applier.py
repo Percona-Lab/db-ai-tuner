@@ -148,6 +148,7 @@ class Applier:
         for c in [c for c in changes if c["variable"].startswith("os:")]:
             var, val = c["variable"], c.get("value")
             osa = osa or self._os()
+            osa.originals = originals
             if var not in originals:
                 originals[var] = before_vars.get(var)
             target = originals.get(var) if val is None else val
@@ -163,6 +164,7 @@ class Applier:
                         osa.apply_live(done, before_vars.get(done))
                     except Exception:
                         pass
+                osa.ensure_mysqld()
                 raise
         if osa or any(k.startswith("os:") for k in old_managed):
             (osa or self._os()).persist(managed)

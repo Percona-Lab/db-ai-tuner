@@ -14,12 +14,14 @@ UDEV_FILE = "/etc/udev/rules.d/99-tuning-agent.rules"
 BOOT_UNIT = "/etc/systemd/system/tuning-agent-os.service"
 JEMALLOC_CANDIDATES = ["/usr/lib/x86_64-linux-gnu/libjemalloc.so.2", "/usr/lib64/libjemalloc.so.2", "/usr/lib/aarch64-linux-gnu/libjemalloc.so.2"]
 
-SYSCTLS = ["vm.swappiness", "vm.dirty_background_bytes", "vm.dirty_bytes", "vm.dirty_expire_centisecs", "vm.dirty_writeback_centisecs",
+SYSCTLS = ["vm.swappiness", "vm.dirty_background_bytes", "vm.dirty_bytes", "vm.dirty_ratio", "vm.dirty_background_ratio", "vm.dirty_expire_centisecs", "vm.dirty_writeback_centisecs",
            "kernel.numa_balancing", "kernel.sched_autogroup_enabled", "fs.aio-max-nr"]
 
 # name -> (description, needs mysqld restart, category)
 OS_KB = {
     "os:vm.swappiness": ("Kernel preference for swapping anonymous memory (1 = only under real pressure).", False, "memory"),
+    "os:vm.dirty_ratio": ("Dirty page cache (% of memory) at which writers are throttled (used when dirty_bytes is 0).", False, "io"),
+    "os:vm.dirty_background_ratio": ("Dirty page cache (% of memory) that starts background writeback (used when dirty_background_bytes is 0).", False, "io"),
     "os:vm.dirty_expire_centisecs": ("Age at which dirty page cache must be written back.", False, "io"),
     "os:vm.dirty_writeback_centisecs": ("Interval of the background writeback thread.", False, "io"),
     "os:kernel.numa_balancing": ("Automatic NUMA page migration (multi-socket hosts).", False, "cpu"),
@@ -106,12 +108,23 @@ def facts(datadir, device, service):
 
 
 class OSApplier:
-    def __init__(self, datadir, device, service, log=print):
+    def __init__(self, datadir, device, service, log=print, originals=None):
         self.datadir, self.device, self.service, self.log = datadir, device, service, log
+        self.originals = originals or {}
+
+    def ensure_mysqld(self):
+        subprocess.run(["systemctl", "start", self.service], capture_output=True)
 
     # -- live changes ------------------------------------------------------------
     def apply_live(self, name, value):
         """Apply one setting now. Returns True when mysqld must be restarted for it to take effect."""
+        if name in ("os:vm.dirty_bytes", "os:vm.dirty_background_bytes") and str(value) in ("0", ""):
+            # 0 is not writable: returning to ratio mode means writing the ratio (which resets the bytes value to 0)
+            ratio = "os:vm.dirty_ratio" if name == "os:vm.dirty_bytes" else "os:vm.dirty_background_ratio"
+            default = "20" if name == "os:vm.dirty_bytes" else "10"
+            r = self.originals.get(ratio)
+            _write("/proc/sys/" + ratio[3:].replace(".", "/"), r if r not in (None, "", "0") else default)
+            return False
         if name[3:] in SYSCTLS:
             _write("/proc/sys/" + name[3:].replace(".", "/"), value)
             return False
@@ -150,6 +163,7 @@ class OSApplier:
             if os.path.exists("/proc/sys/vm/compact_memory"):
                 _write("/proc/sys/vm/compact_memory", 1)
             _write("/proc/sys/vm/nr_hugepages", want)
+            _write("/proc/sys/vm/hugetlb_shm_group", self.mysql_gid())
             got = int(_read("/proc/sys/vm/nr_hugepages") or 0)
             if got < want:
                 _write("/proc/sys/vm/nr_hugepages", 0)
@@ -172,6 +186,16 @@ class OSApplier:
             return False
         raise RuntimeError(f"unknown OS setting {name}")
 
+    @staticmethod
+    def mysql_gid():
+        import grp
+        for g in ("mysql", "mariadb"):
+            try:
+                return grp.getgrnam(g).gr_gid
+            except KeyError:
+                pass
+        return 0
+
     # -- persistence ---------------------------------------------------------------
     def persist(self, managed):
         """Write boot-time configuration for every managed os:* setting (and remove what is no longer managed)."""
@@ -180,6 +204,8 @@ class OSApplier:
         sysctl = [f"{k[3:]} = {v}" for k, v in osm.items() if k[3:] in SYSCTLS]
         if "os:hugepages" in osm:
             sysctl.append(f"vm.nr_hugepages = {osm['os:hugepages']}")
+            if int(osm["os:hugepages"] or 0) > 0:
+                sysctl.append(f"vm.hugetlb_shm_group = {self.mysql_gid()}")
         self._file(SYSCTL_FILE, "# Managed by tuning-agent\n" + "\n".join(sysctl) + "\n" if sysctl else None)
         # udev: scheduler / read-ahead for the data device
         rules = []
