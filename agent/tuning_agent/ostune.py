@@ -144,7 +144,7 @@ class OSApplier:
             m = _mount_of(self.datadir)
             if not m:
                 raise RuntimeError("cannot find the data directory mount")
-            opt = {"os:mount_noatime": {"ON": "noatime", "OFF": "atime"},
+            opt = {"os:mount_noatime": {"ON": "noatime", "OFF": "relatime"},
                    "os:mount_barrier": {"ON": "barrier=1", "OFF": "barrier=0"}}[name][value]
             r = subprocess.run(["mount", "-o", f"remount,{opt}", m[1]], capture_output=True, text=True)
             if r.returncode != 0:
@@ -239,8 +239,12 @@ class OSApplier:
             lines.append("LimitMEMLOCK=infinity")
         self._file(service_dropin(self.service), "# Managed by tuning-agent\n[Service]\n" + "\n".join(lines) + "\n" if lines else None)
         subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
-        # fstab mount options for the data directory filesystem
-        self._fstab(osm)
+        # fstab mount options for the data directory filesystem; settings no longer managed go back to their originals
+        fs = dict(osm)
+        for k in ("os:mount_noatime", "os:mount_barrier"):
+            if k not in fs and self.originals.get(k) is not None:
+                fs[k] = self.originals[k]
+        self._fstab(fs)
 
     def _file(self, path, content):
         if content is None:
