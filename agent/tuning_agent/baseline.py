@@ -57,7 +57,7 @@ def generate(hw, variables, flavor, version, opts=None):
 
     # -- I/O
     if ssd:
-        add("innodb_io_capacity", "2000", "SSD/NVMe storage: allow ~2000 IOPS of background flushing.")
+        add("innodb_io_capacity", "2000", "SSD/cloud block storage: ~2000 IOPS of background flushing (MySQL 8.4's default 10000 assumes high-end local NVMe and can flush far more than needed).")
         add("innodb_io_capacity_max", "4000", "Twice innodb_io_capacity for catch-up flushing.")
         add("innodb_flush_neighbors", "0", "Neighbour flushing only helps rotating disks.")
     else:
@@ -81,9 +81,7 @@ def generate(hw, variables, flavor, version, opts=None):
     tmp = "64M" if ram >= 8 * GiB else "32M"
     add("tmp_table_size", tmp, "In-memory temporary table limit scaled to RAM.")
     add("max_heap_table_size", tmp, "Matches tmp_table_size (the lower of the two applies).")
-    toc = 4000 if ram >= 4 * GiB else 2000
-    add("table_open_cache", str(toc), "Enough open table handles for typical schemas.")
-    if "table_open_cache_instances" in variables:
-        add("table_open_cache_instances", "16" if cpus >= 8 else "8", "Partition the table cache for concurrency.")
+    if int(variables.get("table_open_cache", 0) or 0) < 4000:
+        add("table_open_cache", "4000", "Enough open table handles for typical schemas.")
     add("performance_schema", "ON", "Required for statement latency measurement.")
     return out, {"buffer_pool": bp, "redo": redo, "max_connections": max_conn, "reserve": reserve}
