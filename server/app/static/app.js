@@ -300,7 +300,7 @@ async function sessionPage(id) {
     const ch = (r.changes || []).map(c => `<span class="mono">${esc(c.variable)}</span>=${esc(val(c.variable, c.new))}`).join(", ");
     const tr = document.createElement("tr"); tr.className = "click"; tr.onclick = () => location.hash = "#/run/" + r.id;
     tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a></td><td>${statusBadge(r.status)}</td><td style="max-width:320px">${ch || '<span class="muted">none</span>'}</td>
-     <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaCls(r.delta_pct)}">${pct(r.delta_pct)}</td><td class="num ${deltaCls(r.delta_vs_first_pct)}">${pct(r.delta_vs_first_pct)}</td><td>${verdictBadge(r.verdict)}</td>
+     <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaCls(r.delta_pct)}">${pct(r.delta_pct)}</td><td class="num ${deltaCls(r.delta_vs_first_pct)}">${pct(r.delta_vs_first_pct)}</td><td>${verdictBadge(r.verdict)}${(r.evaluation || {}).drift ? ' <span class="badge warn">drift</span>' : ""}</td>
      <td class="num ${deltaCls((r.evaluation || {}).goal_delta_pct)}" title="vs mean of runs ${esc(((r.evaluation || {}).parent_runs || []).join(", "))}">${pct((r.evaluation || {}).goal_delta_pct)}</td>
      <td class="num">${num(sm.tps)}</td><td class="num">${num(sm.avg_latency_ms)}</td><td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td><td class="num">${num(sm.cpu_busy)}</td><td>${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}</td>`;
     tb.appendChild(tr);
@@ -396,7 +396,8 @@ async function runPage(id, tab) {
 
 function renderEvaluation(r) {
   const ev = r.evaluation || {};
-  if (!ev.parent_runs) return r.verdict === "repeat" ? `<div class="note" style="margin-bottom:12px">Repeat of the previous configuration: averaged into its mean.</div>` : "";
+  if (ev.same_config_runs) return `<div class="note" style="margin-bottom:12px">${ev.drift ? '<span class="badge warn">drift</span> ' : ""}Re-measurement of a configuration already measured in runs ${ev.same_config_runs.map(x => "#" + x).join(", ")} (mean ${num(ev.same_config_mean)}): deviation <b>${pct(ev.deviation_pct)}</b> (noise ±${ev.goal_noise_pct}%). ${esc(ev.drift ? ev.note : "Averaged into that configuration's mean.")}</div>`;
+  if (!ev.parent_runs) return "";
   const rows = Object.entries(ev.efficiency || {}).map(([k, e]) => `<tr><td>${esc(EFF_LABELS[k] || e.label)}</td><td class="num">${num(e.parent)}</td><td class="num">${num(e.now)}</td><td class="num ${Math.abs(e.improvement_pct) > e.noise_pct ? (e.improvement_pct > 0 ? "up" : "down") : ""}">${e.improvement_pct > 0 ? "−" : "+"}${Math.abs(e.improvement_pct).toFixed(1)}%</td><td class="num muted">±${e.noise_pct}%</td></tr>`).join("");
   return `<div class="card" style="margin-bottom:14px"><h3 style="margin-top:0">Evaluation ${verdictBadge(r.verdict)}</h3>
    <p style="margin:0 0 8px">Goal vs the parent configuration (mean of runs ${ev.parent_runs.map(x => "#" + x).join(", ")} = ${num(ev.parent_goal_mean)}): <b class="${deltaCls(ev.goal_delta_pct)}">${pct(ev.goal_delta_pct)}</b>, noise threshold ±${ev.goal_noise_pct}%${ev.calibrated ? " (calibrated)" : " (not calibrated)"}.

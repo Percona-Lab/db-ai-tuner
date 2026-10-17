@@ -446,6 +446,8 @@ def _fmt_run(run, diagnosis, goal):
     unit = "ms" if goal == "latency" else "/s"
     lines = [f"Run {run['seq']} '{run['label']}': goal {goal} = {run['goal_value']} {unit} ({s.get('goal_source')})  verdict: {run['verdict']}"]
     ev = run.get("evaluation") or {}
+    if ev.get("same_config_runs"):
+        lines.append(f"  {ev['note']} (deviation {ev['deviation_pct']:+.2f}% from mean {ev['same_config_mean']:.4g})")
     if ev.get("goal_delta_pct") is not None:
         lines.append(f"  vs parent configuration (mean of runs {ev['parent_runs']}) {ev['goal_delta_pct']:+.2f}% "
                      f"(noise threshold {ev['goal_noise_pct']}%{'' if ev.get('calibrated') else ', NOT calibrated: run `tuning-agent calibrate`'})")

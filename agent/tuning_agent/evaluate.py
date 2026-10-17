@@ -140,9 +140,18 @@ def verdict(run, history, goal, noise):
     if not history:
         return "reference", {}
     key = config_key(run.get("managed"))
-    prev = history[-1]
-    if config_key(prev.get("managed")) == key:
-        return "repeat", {"note": "same configuration as the previous run; averaged into its mean"}
+    same = config_means(history, key)
+    if same:  # this configuration was measured before: a repeat, and a drift check
+        goal_noise = (noise or {}).get("noise_pct") or DEFAULT_GOAL_NOISE
+        dev = improvement(goal, run.get("goal_value"), same["goal"])
+        d = {"note": "configuration measured before; averaged into its mean", "same_config_runs": same["seqs"],
+             "same_config_mean": round(same["goal"], 4), "deviation_pct": dev, "goal_noise_pct": goal_noise}
+        if dev is not None and abs(dev) > goal_noise:
+            d["drift"] = True
+            d["note"] = (f"DRIFT: this configuration measured {dev:+.1f}% versus its earlier mean (runs {same['seqs']}), beyond the "
+                         f"±{goal_noise}% noise. The environment changed (data growth, noisy neighbour, caches?) — "
+                         "re-calibrate or reset the data set before trusting small differences.")
+        return "repeat", d
     parent = None
     for r in reversed(history):  # the configuration this run was derived from = last different config measured
         if config_key(r.get("managed")) != key:
