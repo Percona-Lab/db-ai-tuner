@@ -886,20 +886,25 @@ def cmd_autotune(a):
         run, _ = _bench_run(c, prof, f"{nxt}")
         measured += 1
         log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
-    sess = c.session()
-    target = sess.get("best") if a.tradeoffs else sess.get("best_safe")
-    if target:
-        run = next(r for r in sess["runs"] if r["seq"] == target["seq"])
+    def goto(target, why):
+        run = next(r for r in c.session()["runs"] if r["seq"] == target["seq"])
         cur = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
-        if evaluate.config_key(cur) != evaluate.config_key(run.get("managed")):
-            log(f"== returning to the best configuration (run {target['seq']})")
-            changes = [{"variable": k, "value": (run["managed"] or {}).get(k), "reason": "autotune: best configuration", "source": "rollback"}
-                       for k in set(cur) | set(run.get("managed") or {})
-                       if normalize(k, cur.get(k)) != normalize(k, (run.get("managed") or {}).get(k))]
+        want = run.get("managed") or {}
+        if evaluate.config_key(cur) != evaluate.config_key(want):
+            log(f"== switching to {why} (run {target['seq']})")
+            changes = [{"variable": k, "value": want.get(k), "reason": f"autotune: {why}", "source": "rollback"}
+                       for k in set(cur) | set(want) if normalize(k, cur.get(k)) != normalize(k, want.get(k))]
             _apply_and_record(c, changes, "rollback")
+
+    sess = c.session()
+    best, best_safe = sess.get("best"), sess.get("best_safe")
+    if a.confirm and best and best_safe and best["seq"] != best_safe["seq"] and best.get("tradeoffs"):
+        goto(best, "best configuration with trade-offs")
+        _bench_run(c, prof, "best with trade-offs, confirmation")
+    if best_safe:
+        goto(best_safe, "best production-safe configuration")
         if a.confirm:
-            log("== confirmation run of the best configuration")
-            _bench_run(c, prof, "best config, confirmation")
+            _bench_run(c, prof, "best safe config, confirmation")
     sess = c.session()
     out = {"ok": True, "best": sess.get("best"), "best_safe": sess.get("best_safe"),
            "runs": [{k: r.get(k) for k in ("seq", "label", "goal_value", "verdict")} for r in sess["runs"]]}
