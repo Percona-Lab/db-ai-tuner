@@ -328,7 +328,7 @@ async function sessionPage(id) {
   if (!d.runs.length) tb.innerHTML = `<tr><td colspan="15" class="muted">No runs yet: <code>tuning-agent measure start</code> … <code>measure stop</code>.</td></tr>`;
   d.runs.forEach(r => {
     const sm = r.summary || {};
-    const ch = r.status === "aborted" ? `<span class="muted">${esc(r.abort_reason || "aborted")}</span>` : r.seq === 1 ? `<a href="#/run/${r.id}">starting configuration</a>` : (r.changes || []).map(c => `<span class="mono">${esc(c.variable)}</span>=${esc(val(c.variable, c.new))}`).join(", ");
+    const ch = r.status === "aborted" ? `<span class="muted">${esc((r.abort_reason || "aborted").split(":")[0])}</span>${r.abort_reason ? info(r.abort_reason) : ""}` : r.seq === 1 ? `<a href="#/run/${r.id}">starting configuration</a>` : (r.changes || []).map(c => `<span class="mono">${esc(c.variable)}</span>=${esc(val(c.variable, c.new))}`).join(", ");
     const tr = document.createElement("tr"); tr.className = "click"; tr.onclick = () => location.hash = "#/run/" + r.id;
     tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${tradeBadge(r.tradeoffs)}</td><td>${statusBadge(r.status, r.abort_reason)}</td><td style="max-width:320px">${ch || '<span class="muted">none</span>'}</td>
      <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaCls(r.delta_pct)}">${pct(r.delta_pct)}</td><td class="num ${deltaCls(r.delta_vs_first_pct)}">${pct(r.delta_vs_first_pct)}</td><td>${verdictBadge(r.verdict)}${(r.evaluation || {}).drift ? ' <span class="badge warn">drift</span>' : ""}</td>
