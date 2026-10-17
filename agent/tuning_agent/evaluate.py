@@ -33,7 +33,7 @@ EFFICIENCY = {
 KEY_EFFICIENCY = ("mysqld_cpu_ms_per_trx", "host_cpu_ms_per_trx", "disk_ios_per_trx", "disk_kb_per_trx")
 
 DEFAULT_GOAL_NOISE = 2.0
-MIN_GOAL_NOISE = 1.0
+MIN_GOAL_NOISE = 2.0  # back-to-back calibration runs underestimate longer-term variance on shared VMs
 MIN_EFF_NOISE = 3.0
 NOISE_K = 2.5  # threshold = K x coefficient of variation of single runs
 
