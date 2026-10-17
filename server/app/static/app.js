@@ -359,7 +359,8 @@ function calibrationNote(s) {
   const c = s.calibration;
   if (!c) return `<div class="note" style="margin-bottom:12px">Noise not calibrated: verdicts use a fixed ±${s.noise_pct || 2}% threshold. Standard protocol: <code>tuning-agent calibrate --runs 3</code> on the starting configuration.</div>`;
   const eff = Object.entries(c.efficiency || {}).filter(([k]) => EFF_LABELS[k]).map(([k, e]) => `${EFF_LABELS[k]} ±${e.noise_pct}%`).join(" · ");
-  return `<div class="note" style="margin-bottom:12px"><b>Noise calibrated</b> from runs ${c.runs.map(x => "#" + x).join(", ")}: goal mean ${num(c.goal_mean)}, run-to-run CV ${c.goal_cv_pct}% (range ${c.goal_range_pct}%) → changes within <b>±${c.noise_pct}%</b> are treated as noise. Efficiency thresholds: ${eff}.</div>`;
+  return `<div class="note" style="margin-bottom:12px"><b>Noise calibrated</b> from runs ${c.runs.map(x => "#" + x).join(", ")}: goal mean ${num(c.goal_mean)}, run-to-run CV ${c.goal_cv_pct}% (range ${c.goal_range_pct}%) → changes within <b>±${c.noise_pct}%</b> are treated as noise. Efficiency thresholds: ${eff}.
+   <div class="muted" style="margin-top:4px;font-size:12.5px">CV (coefficient of variation) = standard deviation ÷ mean of the calibration runs. Threshold = ${c.k || 2.5} × CV, never below the floor (goal 2%, efficiency 3%): a single run of an unchanged configuration lands outside it only about 1 time in 100. Each experiment is compared with the mean of the most recent runs of the configuration it was changed from.</div></div>`;
 }
 const KEY_VARS = ["innodb_buffer_pool_size", "innodb_buffer_pool_instances", "innodb_redo_log_capacity", "innodb_log_file_size", "innodb_log_buffer_size",
   "innodb_flush_log_at_trx_commit", "sync_binlog", "log_bin", "innodb_doublewrite", "innodb_flush_method", "innodb_io_capacity", "innodb_io_capacity_max",
