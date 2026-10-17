@@ -492,7 +492,8 @@ def _update_best(sess):
 
 def _fmt_run(run, diagnosis, goal):
     s = run["summary"]
-    unit = "ms" if goal == "latency" else "/s"
+    src = str(s.get("goal_source") or "")
+    unit = src.split(":", 1)[1].split()[0] if src.startswith("benchmark:") else ("ms" if goal == "latency" else "/s")
     lines = [f"Run {run['seq']} '{run['label']}': goal {goal} = {run['goal_value']} {unit} ({s.get('goal_source')})  verdict: {run['verdict']}"]
     ev = run.get("evaluation") or {}
     if ev.get("same_config_runs"):
@@ -611,6 +612,13 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
             goal_value = metrics[prof.goal_metric] * prof.goal_scale
             goal_src = f"benchmark:{prof.goal_metric}" + (f" x{prof.goal_scale:g}" if prof.goal_scale != 1 else "")
     extra = {"bench": {**prof.describe(), "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:]}}
+    if goal_value is not None and sess.get("goal_metric") != prof.goal_metric:
+        sess["goal_metric"] = prof.goal_metric
+        c.state.set("session", sess)
+        try:
+            c.client.post(f"/sessions/{sess['id']}/update", {"goal_metric": prof.goal_metric})
+        except Exception:
+            pass
     return _measure_stop(c, metrics, goal_value, notes, b_snap=b_snap, extra_inputs=extra, goal_source=goal_src)
 
 

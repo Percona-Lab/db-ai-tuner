@@ -28,7 +28,7 @@ function num(v, d) { return v == null ? "–" : C.fmtNum(+v); }
 function pct(v, sign = true) { if (v == null) return "–"; return (sign && v > 0 ? "+" : "") + (+v).toFixed(1) + "%"; }
 function deltaCls(v) { return v == null ? "" : v > 0 ? "up" : v < 0 ? "down" : ""; }
 function goalName(g) { return g === "latency" ? "Avg query response time" : "Throughput (TPS)"; }
-function goalUnit(g) { return g === "latency" ? "ms" : "tps"; }
+function goalUnit(g, s) { if (s && s.goal_metric) return s.goal_metric.toUpperCase(); return g === "latency" ? "ms" : "tps"; }
 function verdictBadge(v) {
   const m = { improved: "good", "efficiency-gain": "good", regressed: "bad", "efficiency-loss": "warn", neutral: "plain", reference: "info", repeat: "plain" };
   return v ? `<span class="badge ${m[v] || "plain"}">${esc(v)}</span>` : "";
@@ -304,17 +304,17 @@ async function sessionPage(id) {
   <p class="sub">Goal: <b>${goalName(s.goal)}</b> · policy <a href="#/policies"><b>${esc(s.policy)}</b></a>${s.policy === "benchmark" ? " (trade-offs allowed after safe experiments)" : " (production-safe changes only)"} · noise threshold ±${s.noise_pct}% · started ${fmtTime(s.created)}${s.workload ? " · workload: " + esc(s.workload) : ""}</p>
   ${calibrationNote(s)}
   <div class="tiles"><div class="tile"><div class="k">Runs measured</div><div class="v">${done.length}</div></div>
-   <div class="tile"><div class="k">First run (${goalUnit(s.goal)})</div><div class="v">${first ? num(first.goal_value) : "–"}</div><div class="d">${first ? esc(first.label) : ""}</div></div>
-   ${cfgTile("Best production-safe configuration", bestSafe, firstCfg, lower, s.goal)}
-   ${bestTrade ? cfgTile("Best with trade-offs", bestTrade, firstCfg, lower, s.goal, true) : ""}</div>
+   <div class="tile"><div class="k">First run (${goalUnit(s.goal, s)})</div><div class="v">${first ? num(first.goal_value) : "–"}</div><div class="d">${first ? esc(first.label) : ""}</div></div>
+   ${cfgTile("Best production-safe configuration", bestSafe, firstCfg, lower, s.goal, false, s)}
+   ${bestTrade ? cfgTile("Best with trade-offs", bestTrade, firstCfg, lower, s.goal, true, s) : ""}</div>
   <div class="card" style="margin-top:14px" id="bars"></div>
-  <h2>Runs</h2><div class="card tablewrap"><table><thead><tr><th>#</th><th>Label</th><th>Status</th><th>Changes vs previous run</th><th class="num">${goalUnit(s.goal) === "ms" ? "Avg ms" : "Goal"}</th><th class="num">vs prev</th><th class="num">vs first</th><th>Verdict</th>
+  <h2>Runs</h2><div class="card tablewrap"><table><thead><tr><th>#</th><th>Label</th><th>Status</th><th>Changes vs previous run</th><th class="num">${goalUnit(s.goal, s) === "ms" ? "Avg ms" : "Goal"}</th><th class="num">vs prev</th><th class="num">vs first</th><th>Verdict</th>
    <th class="num">vs parent cfg</th><th class="num">TPS</th><th class="num">Avg lat ms</th><th class="num">mysqld CPU ms/trx</th><th class="num">Disk IOs/trx</th><th class="num">CPU %</th><th>Duration</th></tr></thead><tbody id="runs"></tbody></table></div>
   <h2>Latest recommendations</h2><div class="card" id="recs"></div>
   <h2>Notes</h2><div class="card"><textarea id="notes" rows="3" placeholder="Notes about this session (workload, hypotheses, conclusions)">${esc(s.notes || "")}</textarea><div class="row" style="margin-top:6px"><button id="savenotes">Save notes</button><span id="saved" class="muted"></span></div></div>
   <h2>Activity</h2><div class="card" id="events"></div>`;
   C.barChart(document.getElementById("bars"), {
-    title: goalName(s.goal) + " per run (" + goalUnit(s.goal) + ") — green: best production-safe configuration · orange: runs with trade-offs", unit: goalUnit(s.goal), metric: s.goal === "latency" ? "avg latency" : "goal value",
+    title: goalName(s.goal) + " per run (" + goalUnit(s.goal, s) + ") — green: best production-safe configuration · orange: runs with trade-offs", unit: goalUnit(s.goal, s), metric: s.goal === "latency" ? "avg latency" : "goal value",
     ref: first ? first.goal_value : null,
     bars: done.map(r => ({ label: "#" + r.seq + " " + r.label, value: r.goal_value, sub: r.delta_vs_first_pct != null ? pct(r.delta_vs_first_pct) : "", href: "#/run/" + r.id,
       highlight: (r.tradeoffs || []).length ? "trade" : bestSafe && bestSafe.runs.includes(r) ? "best" : false,
@@ -343,10 +343,10 @@ async function sessionPage(id) {
   }, 10000));
 }
 
-function cfgTile(title, cfg, firstCfg, lower, goal, trade) {
+function cfgTile(title, cfg, firstCfg, lower, goal, trade, sess) {
   if (!cfg) return "";
   const g = firstCfg && firstCfg.mean ? (lower ? (firstCfg.mean - cfg.mean) : (cfg.mean - firstCfg.mean)) / firstCfg.mean * 100 : null;
-  return `<div class="tile"><div class="k">${title} (${goalUnit(goal)})</div><div class="v">${num(cfg.mean)} <span class="${deltaCls(g)}" style="font-size:14px">${pct(g)}</span></div>
+  return `<div class="tile"><div class="k">${title} (${goalUnit(goal, sess)})</div><div class="v">${num(cfg.mean)} <span class="${deltaCls(g)}" style="font-size:14px">${pct(g)}</span></div>
    <div class="d">${cfg.runs.length > 1 ? "mean of runs " : "run "}${cfg.runs.map(r => "#" + r.seq).join(", ")} · vs first configuration${trade ? `<br>${esc((cfg.runs[0].tradeoffs || []).map(t => t.variable + "=" + t.value).join(", "))}` : ""}</div></div>`;
 }
 
@@ -428,7 +428,7 @@ async function runPage(id, tab) {
   $view.innerHTML = `<div class="crumbs"><a href="#/">Environments</a> / <a href="#/env/${s.env_id}">${esc(r.environment.name)}</a> / <a href="#/session/${s.id}">${esc(s.name)}</a> /</div>
   <div class="row"><h1>Run #${r.seq} · ${esc(r.label)}</h1>${statusBadge(r.status)}${verdictBadge(r.verdict)}<span class="spacer"></span>
    <label style="margin:0">Compare with</label><select id="vs" style="width:auto"><option value="">previous run</option>${r.runs.filter(x => x.id !== r.id).map(x => `<option value="${x.id}" ${String(x.id) === vs ? "selected" : ""}>#${x.seq} ${esc(x.label)}</option>`).join("")}</select></div>
-  <p class="sub">${fmtTime(r.started)} – ${r.ended ? fmtTime(r.ended) : "measuring…"} (${dur(sm.duration_s)}) · goal ${goalName(s.goal)} = <b>${num(r.goal_value)} ${goalUnit(s.goal)}</b>${r.goal_source ? ` <span class="muted">(${esc(r.goal_source)})</span>` : ""}
+  <p class="sub">${fmtTime(r.started)} – ${r.ended ? fmtTime(r.ended) : "measuring…"} (${dur(sm.duration_s)}) · goal ${goalName(s.goal)} = <b>${num(r.goal_value)} ${goalUnit(s.goal, s)}</b>${r.goal_source ? ` <span class="muted">(${esc(r.goal_source)})</span>` : ""}
    ${r.delta_pct != null ? ` · <span class="${deltaCls(r.delta_pct)}">${pct(r.delta_pct)}</span> vs previous, <span class="${deltaCls(r.delta_vs_first_pct)}">${pct(r.delta_vs_first_pct)}</span> vs first` : ""}${prev ? ` · compared with run #${prev.seq} ${esc(prev.label)}` : ""}</p>
   ${r.notes ? `<div class="note" style="margin-bottom:12px">${esc(r.notes)}</div>` : ""}
   <div class="tiles">${tile("TPS", sm.tps, "/s", ps.tps)}${tile("QPS", sm.qps, "/s", ps.qps)}${tile("Avg statement latency", sm.avg_latency_ms, "ms", ps.avg_latency_ms, true)}${tile("p95 statement latency", sm.p95_latency_ms, "ms", ps.p95_latency_ms, true)}

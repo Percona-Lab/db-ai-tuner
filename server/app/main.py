@@ -332,7 +332,7 @@ def run_detail(run_id: int, request: Request, vs: int = None):
     out.update({
         "inputs": store.uj(r["inputs"], {}), "diagnosis": store.uj(r["diagnosis"], []), "managed": store.uj(r["managed"], {}),
         "config_count": len(cfg), "diff": diff, "compared_with": run_brief(prev) if prev else None,
-        "session": {k: s[k] for k in ("id", "name", "goal", "policy", "noise_pct", "env_id", "status")},
+        "session": {k: s[k] for k in ("id", "name", "goal", "policy", "noise_pct", "env_id", "status", "goal_metric")},
         "evaluation": store.uj(r["evaluation"], {}),
         "recommendations": recs, "runs": siblings,
         "environment": {"id": s["env_id"], "name": (store.q1("SELECT name FROM environments WHERE id=?", (s["env_id"],)) or {"name": ""})["name"]},
@@ -457,6 +457,8 @@ def agent_session_update(sid: int, body: dict = Body(...), key=Depends(auth.agen
     agent_session(sid, key)
     if body.get("noise_pct") is not None:
         store.ex("UPDATE tsessions SET noise_pct=? WHERE id=?", (float(body["noise_pct"]), sid))
+    if body.get("goal_metric"):
+        store.ex("UPDATE tsessions SET goal_metric=? WHERE id=?", (str(body["goal_metric"])[:40], sid))
     if "calibration" in body:
         store.ex("UPDATE tsessions SET calibration=? WHERE id=?", (store.j(body["calibration"]), sid))
     return {"ok": True}
