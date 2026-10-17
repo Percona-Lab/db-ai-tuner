@@ -40,6 +40,8 @@ def render(managed):
 
 
 def sql_value(var, value):
+    if str(value).upper() == "DEFAULT":
+        return "DEFAULT"
     kind = KB.get(var, {}).get("kind")
     if kind == "size":
         n = parse_size(value)
@@ -90,6 +92,17 @@ class Applier:
         return r.stdout[-3000:]
 
     def apply(self, changes, allow_restart=True, force_restart=False):
+        old_managed = {k: dict(v) for k, v in self.state["managed"].items()}
+        try:
+            return self._apply(changes, allow_restart, force_restart)
+        except Exception:
+            # never leave an option file the agent's state does not describe
+            self.write_cnf(old_managed)
+            self.state.data["managed"] = old_managed
+            self.state.save()
+            raise
+
+    def _apply(self, changes, allow_restart=True, force_restart=False):
         """changes: [{variable, value (None = unmanage), reason, source}]
         Returns dict(applied, restarted, needs_restart, mismatches, errors)."""
         before_vars = self.db.variables()
