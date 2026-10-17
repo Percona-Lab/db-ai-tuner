@@ -425,9 +425,8 @@ def _measure_stop(c, external=None, goal_value=None, notes=None):
         "goal_value": gv, "goal_source": src, "delta_pct": d_prev, "delta_vs_first_pct": d_first, "verdict": verdict,
         "evaluation": evaluation, "notes": notes})
     runs.append(run)
-    scores = engine.config_scores(runs, sess["goal"])
-    if scores:
-        b = scores[0]
+    b = engine.best_config(runs, sess["goal"], float((sess.get("noise") or {}).get("noise_pct") or sess.get("noise_pct") or 2.0))
+    if b:
         sess["best"] = {"seq": b["seqs"][-1], "runs": b["seqs"], "label": b["label"], "goal_value": round(b["mean"], 4),
                         "mean_of_runs": b["n"]}
     sess["last_inputs_path"] = os.path.join(c.state.dir, f"run{run['seq']}_inputs.json")

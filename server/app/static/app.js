@@ -269,6 +269,16 @@ async function sessionPage(id) {
   done.forEach(r => { const k = JSON.stringify(Object.entries(r.managed || {}).sort()); (groups[k] = groups[k] || []).push(r); });
   const cfgs = Object.values(groups).map(rs => ({ runs: rs, mean: rs.reduce((a, r) => a + r.goal_value, 0) / rs.length }));
   cfgs.sort((a, b) => lower ? a.mean - b.mean : b.mean - a.mean);
+  // within the noise threshold the leader is not displaced: prefer kept configurations, then more runs
+  const noiseP = (s.calibration && s.calibration.noise_pct) || s.noise_pct || 2;
+  const KEEP = ["improved", "efficiency-gain", "reference"];
+  if (cfgs.length) {
+    const top = cfgs[0].mean;
+    const tied = cfgs.filter(c => Math.abs(c.mean - top) / Math.abs(top) * 100 <= noiseP);
+    tied.forEach(c => c.kept = c.runs.some(r => KEEP.includes(r.verdict)));
+    tied.sort((a, b) => (b.kept - a.kept) || (b.runs.length - a.runs.length) || (lower ? a.mean - b.mean : b.mean - a.mean));
+    cfgs.splice(cfgs.indexOf(tied[0]), 1); cfgs.unshift(tied[0]);
+  }
   const bestCfg = cfgs[0], best = bestCfg ? bestCfg.runs[bestCfg.runs.length - 1] : null;
   const firstCfg = first ? cfgs.find(c => c.runs.includes(first)) : null;
   const gain = firstCfg && bestCfg && firstCfg.mean ? (lower ? (firstCfg.mean - bestCfg.mean) : (bestCfg.mean - firstCfg.mean)) / firstCfg.mean * 100 : null;

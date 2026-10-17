@@ -387,6 +387,23 @@ def config_scores(history, goal="tps"):
     return out
 
 
+KEEP = ("improved", "efficiency-gain", "reference")
+
+
+def best_config(history, goal="tps", noise=2.0):
+    """Highest mean wins only when it beats the others beyond noise; within noise prefer configurations that were
+    kept (improved / efficiency-gain / the reference) and measured more often."""
+    scores = config_scores(history, goal)
+    if not scores:
+        return None
+    top = scores[0]["mean"]
+    tied = [c for c in scores if abs(c["mean"] - top) / abs(top) * 100 <= noise]
+    for c in tied:
+        c["kept"] = any(r.get("verdict") in KEEP for r in history if config_key(r.get("managed")) == c["key"])
+    tied.sort(key=lambda c: (not c["kept"], -c["n"], c["mean"] if goal == "latency" else -c["mean"]))
+    return tied[0]
+
+
 def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
     """Suggest returning to the best configuration when the current one is measurably worse."""
     if len(history) < 2:
@@ -394,7 +411,7 @@ def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
     scores = config_scores(history, goal)
     if not scores:
         return []
-    best = scores[0]
+    best = best_config(history, goal, noise)
     cur_key = config_key(managed)
     cur = next((c for c in scores if c["key"] == cur_key), None)
     items = []
