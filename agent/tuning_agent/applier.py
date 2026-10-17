@@ -5,7 +5,7 @@ import time
 
 import pymysql
 
-from .knowledge import KB, OPTIONS, normalize, parse_size
+from .knowledge import KB, OPTIONS, flags_subset, normalize, parse_size
 
 HEADER = """# Managed by tuning-agent. Do not edit by hand: changes are overwritten.
 # Use `tuning-agent apply --set var=value` / `tuning-agent rollback` instead.
@@ -127,7 +127,8 @@ class Applier:
         need_restart = []
         for c in changes:
             var, val = c["variable"], c.get("value")
-            if val is not None and normalize(var, before_vars.get(var)) == normalize(var, val):
+            if val is not None and (flags_subset(val, before_vars.get(var)) if KB.get(var, {}).get("kind") == "flags"
+                                    else normalize(var, before_vars.get(var)) == normalize(var, val)):
                 continue
             meta = KB.get(var)
             if var in OPTIONS or (meta is not None and not meta.get("dynamic")):
@@ -176,7 +177,9 @@ class Applier:
                 result["applied"].append(entry)
                 continue
             entry = {"variable": var, "old": c["old"], "new": after.get(var), "reason": c.get("reason", ""), "source": c.get("source", "manual")}
-            if c.get("value") is not None and normalize(var, after.get(var)) != normalize(var, c["value"]) and var not in result["needs_restart"]:
+            ok = flags_subset(c["value"], after.get(var)) if KB.get(var, {}).get("kind") == "flags" else \
+                normalize(var, after.get(var)) == normalize(var, c["value"])
+            if c.get("value") is not None and not ok and var not in result["needs_restart"]:
                 result["mismatches"].append({"variable": var, "wanted": c["value"], "actual": after.get(var)})
             if normalize(var, entry["old"]) != normalize(var, entry["new"]) or var in result["needs_restart"]:
                 result["applied"].append(entry)

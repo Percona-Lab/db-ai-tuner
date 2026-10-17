@@ -27,8 +27,8 @@ function val(name, v) {
 function num(v, d) { return v == null ? "–" : C.fmtNum(+v); }
 function pct(v, sign = true) { if (v == null) return "–"; return (sign && v > 0 ? "+" : "") + (+v).toFixed(1) + "%"; }
 function deltaCls(v) { return v == null ? "" : v > 0 ? "up" : v < 0 ? "down" : ""; }
-function goalName(g) { return g === "latency" ? "Avg query response time" : "Throughput (TPS)"; }
-function goalUnit(g, s) { if (s && s.goal_metric) return s.goal_metric.toUpperCase(); return g === "latency" ? "ms" : "tps"; }
+function goalName(g) { return g === "latency" ? "Query response time" : "Throughput (TPS)"; }
+function goalUnit(g, s) { if (s && s.goal_metric) return s.goal_metric.length <= 5 ? s.goal_metric.toUpperCase() : s.goal_metric.replace(/_/g, " "); return g === "latency" ? "ms" : "tps"; }
 function verdictBadge(v) {
   const m = { improved: "good", "efficiency-gain": "good", regressed: "bad", "efficiency-loss": "warn", neutral: "plain", reference: "info", repeat: "plain" };
   return v ? `<span class="badge ${m[v] || "plain"}">${esc(v)}</span>` : "";

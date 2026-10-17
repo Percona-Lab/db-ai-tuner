@@ -175,6 +175,17 @@ def normalize(name, value):
     return s
 
 
+def flags_subset(wanted, actual):
+    """optimizer_switch: every flag in `wanted` has that value in `actual`."""
+    act = dict(x.split("=", 1) for x in str(actual or "").split(",") if "=" in x)
+    for x in str(wanted or "").split(","):
+        if "=" in x:
+            k, v = x.split("=", 1)
+            if act.get(k.strip()) != v.strip():
+                return False
+    return True
+
+
 def same_value(name, a, b):
     return normalize(name, a) == normalize(name, b)
 
@@ -232,6 +243,8 @@ KB["innodb_stats_persistent_sample_pages"] = dict(kind="int", dynamic=True, risk
                                                   desc="Pages sampled for persistent index statistics.")
 KB["innodb_deadlock_detect"] = dict(kind="bool", dynamic=True, risk="low", cat="concurrency",
                                     desc="Deadlock detection.")
+KB["optimizer_switch"] = dict(kind="flags", dynamic=True, risk="none", cat="optimizer",
+                              desc="Optimizer feature flags (the agent only changes individual flags).")
 KB["binlog_cache_size"] = dict(kind="size", dynamic=True, risk="none", cat="memory",
                                desc="Per-session binlog cache.")
 

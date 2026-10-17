@@ -12,7 +12,7 @@ Inputs (ctx):
 
 Every recommendation carries the evidence it was derived from so the decision can be audited.
 """
-from .knowledge import KB, fmt_size, human_size, normalize, parse_size, tradeoff_of
+from .knowledge import KB, flags_subset, fmt_size, human_size, normalize, parse_size, tradeoff_of
 
 GiB = 1024 ** 3
 MiB = 1024 ** 2
@@ -152,7 +152,8 @@ class Builder:
         for var, val in changes:
             if var not in self.v and var not in ("skip_log_bin", "disable_log_bin"):
                 continue
-            if var in self.v and normalize(var, self.v.get(var)) == normalize(var, val):
+            if var in self.v and (flags_subset(val, self.v.get(var)) if KB.get(var, {}).get("kind") == "flags"
+                                  else normalize(var, self.v.get(var)) == normalize(var, val)):
                 continue
             meta = KB.get(var, {})
             r = meta.get("risk", "low")
@@ -407,6 +408,18 @@ def recommend(ctx):
                   "Scan-heavy analytical reads from disk: triggering linear read-ahead earlier turns more random page reads into larger sequential ones. Experiment.",
                   {"bp_disk_reads": s.get("bp_disk_reads"), "Handler_read_rnd_next_per_s": rates.get("Handler_read_rnd_next")}, impact=1, confidence=1)
         top = (inp.get("top_statements") or [])
+        timeouts = rates.get("Max_execution_time_exceeded", 0)
+        sub = [q for q in top if q.get("pct_time", 0) >= 5 and str(q.get("query", "")).upper().count("SELECT") >= 2]
+        if "subquery_to_derived=off" in str(v.get("optimizer_switch", "")) and (sub or timeouts > 0):
+            b.add("subquery-to-derived", "Rewrite correlated scalar subqueries as derived tables",
+                  [("optimizer_switch", "subquery_to_derived=on")],
+                  "Long-running statements contain nested subqueries"
+                  + (f" and {timeouts * (s.get('duration_s') or 0):.0f} statement(s) hit max_execution_time" if timeouts else "")
+                  + ". With subquery_to_derived the optimizer turns correlated scalar subqueries (e.g. TPC-H Q17/Q20 style "
+                  "\"x < (SELECT 0.2*AVG(..) WHERE corr)\") into a derived table computed once and hash-joined, instead of "
+                  "re-running the subquery per outer row. Same results; off by default in MySQL 8.0/8.4. Experiment.",
+                  {"statements_with_subqueries": [q["query"][:100] for q in sub[:3]], "Max_execution_time_exceeded_per_s": timeouts},
+                  impact=3, confidence=2)
         if top and "innodb_stats_persistent_sample_pages" in v and _int(v, "innodb_stats_persistent_sample_pages", 20) <= 20 and \
                 any(q.get("pct_time", 0) > 10 and q.get("rows_examined_avg", 0) > 100000 for q in top):
             b.add("stats-sample", "More accurate optimizer statistics", [("innodb_stats_persistent_sample_pages", "128")],
