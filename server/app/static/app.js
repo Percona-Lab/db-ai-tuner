@@ -3,6 +3,7 @@ const $view = document.getElementById("view");
 const C = window.Charts;
 let ME = null, SERVER = location.origin, timers = [];
 
+function info(text) { return ` <span class="info" tabindex="0" role="note" aria-label="${esc(text)}" data-tip="${esc(text)}">i</span>`; }
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 async function api(path, opts = {}) {
   const r = await fetch(path, { method: opts.method || "GET", headers: opts.body ? { "Content-Type": "application/json" } : {}, body: opts.body ? JSON.stringify(opts.body) : undefined, credentials: "same-origin" });
@@ -165,7 +166,7 @@ async function policiesPage() {
   $view.innerHTML = `<h1>Tuning policies</h1><p class="sub">How the agent decides what it may change. Generated from the agent's own rule table.</p>
   <div class="grid g2">${Object.entries(p.policies).map(([k, v]) => `<div class="card"><h3 style="margin-top:0">${esc(k)}</h3><p style="margin:0">${esc(v)}</p></div>`).join("")}</div>
   <h2>What “production-safe” means</h2><p>${esc(p.safe_definition)}</p>
-  <h2>Trade-off settings</h2><p class="muted">A change is a trade-off when the variable gets one of these values. Under <b>safe</b> they are advice only; under <b>benchmark</b> they are tried after the safe experiments, and runs that use them are flagged and reported separately.</p>
+  <h2>Trade-off settings${info("A change is a trade-off when the variable gets one of these values. Under safe they are advice only; under benchmark they are tried after the safe experiments, and runs that use them are flagged and reported separately.")}</h2>
   <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Trade-off when</th><th>Category</th><th>What is given up</th></tr></thead><tbody>
   ${p.tradeoffs.map(t => `<tr><td class="mono">${esc(t.variable)}</td><td>${esc(t.when)}</td><td><span class="badge bad">${esc(t.category)}</span></td><td>${esc(t.lost)}</td></tr>`).join("")}</tbody></table></div>
   <h2>Guards that apply under every policy</h2><ul>${p.guards.map(g => `<li>${esc(g)}</li>`).join("")}</ul>
@@ -357,10 +358,10 @@ function tradeBadge(t) {
 
 function calibrationNote(s) {
   const c = s.calibration;
-  if (!c) return `<div class="note" style="margin-bottom:12px">Noise not calibrated: verdicts use a fixed ±${s.noise_pct || 2}% threshold. Standard protocol: <code>tuning-agent calibrate --runs 3</code> on the starting configuration.</div>`;
+  if (!c) return `<div class="note" style="margin-bottom:12px">Noise not calibrated: fixed ±${s.noise_pct || 2}% threshold${info("Standard protocol: measure the starting configuration 3 times with `tuning-agent calibrate --runs 3`; the run-to-run variation then sets the noise threshold.")}</div>`;
   const eff = Object.entries(c.efficiency || {}).filter(([k]) => EFF_LABELS[k]).map(([k, e]) => `${EFF_LABELS[k]} ±${e.noise_pct}%`).join(" · ");
-  return `<div class="note" style="margin-bottom:12px"><b>Noise calibrated</b> from runs ${c.runs.map(x => "#" + x).join(", ")}: goal mean ${num(c.goal_mean)}, run-to-run CV ${c.goal_cv_pct}% (range ${c.goal_range_pct}%) → changes within <b>±${c.noise_pct}%</b> are treated as noise. Efficiency thresholds: ${eff}.
-   <div class="muted" style="margin-top:4px;font-size:12.5px">CV (coefficient of variation) = standard deviation ÷ mean of the calibration runs. Threshold = ${c.k || 2.5} × CV, never below the floor (goal 2%, efficiency 3%): a single run of an unchanged configuration lands outside it only about 1 time in 100. Each experiment is compared with the mean of the most recent runs of the configuration it was changed from.</div></div>`;
+  const how = `Calibration runs ${c.runs.map(x => "#" + x).join(", ")}: mean ${num(c.goal_mean)}, CV ${c.goal_cv_pct}%, range ${c.goal_range_pct}%. CV (coefficient of variation) = standard deviation ÷ mean. Threshold = ${c.k || 2.5} × CV, never below the floor (goal 2%, efficiency 3%): a run of an unchanged configuration lands outside it only about 1 time in 100. Experiments are compared with the mean of the most recent runs of the configuration they were changed from. Efficiency thresholds: ${eff}.`;
+  return `<div class="note" style="margin-bottom:12px">Noise: changes within <b>±${c.noise_pct}%</b> are treated as noise (CV ${c.goal_cv_pct}% over ${c.runs.length} runs)${info(how)}</div>`;
 }
 const KEY_VARS = ["innodb_buffer_pool_size", "innodb_buffer_pool_instances", "innodb_redo_log_capacity", "innodb_log_file_size", "innodb_log_buffer_size",
   "innodb_flush_log_at_trx_commit", "sync_binlog", "log_bin", "innodb_doublewrite", "innodb_flush_method", "innodb_io_capacity", "innodb_io_capacity_max",
@@ -386,7 +387,7 @@ async function renderKeySettings(el, runId) {
     return `<tr><td class="mono">${esc(k)}</td><td class="mono ${def ? "" : "diff-new"}">${esc(val(k, c.config[k]))}</td><td class="mono muted">${m.default != null ? esc(val(k, m.default)) : ""}</td><td>${def ? '<span class="muted">compiled default</span>' : esc(sourceText(m))}</td></tr>`;
   }).join("");
   const nonDef = Object.entries(meta).filter(([k, m]) => !isDefault(m) && !KEY_VARS.includes(k)).length;
-  el.innerHTML = `<h3>Key settings of this run</h3><p class="muted">Value in effect, the server's compiled default and where the value comes from (option files, <code>SET PERSIST</code>, runtime changes). Bold = not the compiled default. ${nonDef} more non-default variables are listed in the Full configuration tab.</p>
+  el.innerHTML = `<h3>Key settings of this run${info(`Value in effect, the server's compiled default and where the value comes from (option files, SET PERSIST, runtime changes). Bold = not the compiled default. ${nonDef} more non-default variables are in the Full configuration tab.`)}</h3>
    <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Value</th><th>Compiled default</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
@@ -400,7 +401,7 @@ function renderRecs(el, rec, runs) {
   if (rec.workload && rec.workload.type) h += `<div class="diag"><span class="badge info">workload</span> <b>${esc(rec.workload.type)}</b> <span class="mono muted" style="font-size:11.5px">${esc(JSON.stringify(rec.workload.evidence || {}))}</span>${rec.phase ? ` · phase: <b>${esc(rec.phase)}</b>` : ""}</div>`;
   const items = rec.items || [];
   const safe = items.filter(i => (i.safety || "safe") !== "trade-off"), trade = items.filter(i => i.safety === "trade-off");
-  const section = (title, list, note) => list.length ? `<h3>${title}</h3>${note ? `<p class="muted" style="margin:0 0 4px">${note}</p>` : ""}` + list.map(recItem).join("") : "";
+  const section = (title, list, note) => list.length ? `<h3>${title}${note ? info(note) : ""}</h3>` + list.map(recItem).join("") : "";
   h += section("Production-safe", safe) + section("Trade-offs (benchmark only)", trade, "These give up durability, replication, observability or semantics. Results with them are not production-equivalent; they are reported separately.");
   el.innerHTML = h;
   return;
@@ -447,7 +448,7 @@ async function runPage(id, tab) {
     clearTimers();
     if (name === "changes") { renderDiff(tabEl, r); const ks = document.createElement("div"); tabEl.appendChild(ks); renderKeySettings(ks, id); }
     else if (name === "graphs") {
-      tabEl.innerHTML = `<p class="muted">Shaded area = measurement window (±60 s shown around it).</p><div class="grid g3" id="rc"></div>`;
+      tabEl.innerHTML = `<p class="muted">Shaded = measurement window${info("Charts show the measurement window plus 60 s before and after it.")}</p><div class="grid g3" id="rc"></div>`;
       const m = await api(`/api/runs/${id}/metrics?points=300`);
       chartsGrid(document.getElementById("rc"), m, RUN_CHARTS, m.window);
       if (r.status === "measuring") timers.push(setInterval(async () => { const m2 = await api(`/api/runs/${id}/metrics?points=300`); chartsGrid(document.getElementById("rc"), m2, RUN_CHARTS, m2.window); }, 15000));
@@ -477,22 +478,21 @@ async function runPage(id, tab) {
 
 function renderEvaluation(r) {
   const ev = r.evaluation || {};
-  if (ev.same_config_runs) return `<div class="note" style="margin-bottom:12px">${ev.drift ? '<span class="badge warn">drift</span> ' : ""}Re-measurement of a configuration already measured in runs ${ev.same_config_runs.map(x => "#" + x).join(", ")} (mean ${num(ev.same_config_mean)}): deviation <b>${pct(ev.deviation_pct)}</b> (noise ±${ev.goal_noise_pct}%). ${esc(ev.drift ? ev.note : "Averaged into that configuration's mean.")}</div>`;
+  if (ev.same_config_runs) return `<div class="note" style="margin-bottom:12px">${ev.drift ? '<span class="badge warn">drift</span> ' : ""}Repeat of runs ${ev.same_config_runs.map(x => "#" + x).join(", ")}: <b>${pct(ev.deviation_pct)}</b> vs their mean${info((ev.drift ? ev.note + " " : "") + `Same configuration measured again (mean of earlier runs ${num(ev.same_config_mean)}, noise ±${ev.goal_noise_pct}%). Repeats are averaged into that configuration's mean.`)}</div>`;
   if (!ev.parent_runs) return "";
   const rows = Object.entries(ev.efficiency || {}).map(([k, e]) => `<tr><td>${esc(EFF_LABELS[k] || e.label)}</td><td class="num">${num(e.parent)}</td><td class="num">${num(e.now)}</td><td class="num ${Math.abs(e.improvement_pct) > e.noise_pct ? (e.improvement_pct > 0 ? "up" : "down") : ""}">${e.improvement_pct > 0 ? "−" : "+"}${Math.abs(e.improvement_pct).toFixed(1)}%</td><td class="num muted">±${e.noise_pct}%</td></tr>`).join("");
   return `<div class="card" style="margin-bottom:14px"><h3 style="margin-top:0">Evaluation ${verdictBadge(r.verdict)}</h3>
-   <p style="margin:0 0 8px">Goal vs the parent configuration (mean of runs ${ev.parent_runs.map(x => "#" + x).join(", ")} = ${num(ev.parent_goal_mean)}): <b class="${deltaCls(ev.goal_delta_pct)}">${pct(ev.goal_delta_pct)}</b>, noise threshold ±${ev.goal_noise_pct}%${ev.calibrated ? " (calibrated)" : " (not calibrated)"}.
-   ${r.verdict === "efficiency-gain" ? " Within noise on the goal, but the server does measurably less work per transaction: keep." : r.verdict === "efficiency-loss" ? " Within noise on the goal, but measurably more work per transaction: revert." : ""}</p>
+   <p style="margin:0 0 8px">Goal <b class="${deltaCls(ev.goal_delta_pct)}">${pct(ev.goal_delta_pct)}</b> vs parent configuration (±${ev.goal_noise_pct}% noise)${info(`Parent configuration = the one this run was changed from; compared with the mean of its most recent runs (${ev.parent_runs.map(x => "#" + x).join(", ")} = ${num(ev.parent_goal_mean)}). Noise threshold ${ev.calibrated ? "calibrated" : "not calibrated"}. improved/regressed: goal beyond noise. efficiency-gain/-loss: goal within noise but CPU or I/O per transaction measurably lower/higher (only resources under load count).`)}</p>
    ${rows ? `<div class="tablewrap"><table><thead><tr><th>Work per transaction</th><th class="num">Parent mean</th><th class="num">This run</th><th class="num">Change</th><th class="num">Noise</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}</div>`;
 }
 
 function renderDiff(el, r) {
   const prev = r.compared_with;
   let h = renderEvaluation(r);
-  if (r.seq === 1) h += `<p class="muted">First run of the session: it measures the session's <b>starting configuration</b>, shown below with the server's compiled defaults and the source of every value.${prev ? ` The differences from the last run before this session (run #${prev.seq} ${esc(prev.label)}) are listed for reference.` : ""}</p>`;
+  if (r.seq === 1) h += `<p class="muted">Starting configuration of the session${info("The first run measures the configuration the session started with. Key settings below show compiled defaults and the source of each value." + (prev ? ` Differences from the last run before this session (run #${prev.seq}) are listed for reference.` : ""))}</p>`;
   if (!prev) {}
   else if (!r.diff.length && r.seq !== 1) h += `<p>No configuration differences with run #${prev.seq} <b>${esc(prev.label)}</b>.</p>`;
-  else if (r.diff.length) h += `<p class="muted">${r.diff.length} variable(s) differ from run #${prev.seq} ${esc(prev.label)}. Source and reasoning come from the agent; “outside the agent” means the value changed some other way (manual edit, server default after restart, automatic sizing).</p>
+  else if (r.diff.length) h += `<h3>Changed since run #${prev.seq} ${esc(prev.label)}${info("Source and reasoning come from the agent. “outside the agent” means the value changed some other way: manual edit, server default after restart, automatic sizing.")}</h3>
    <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Run #${prev.seq}</th><th>This run</th><th>Source</th><th>Reason</th></tr></thead><tbody>${r.diff.map(d => `<tr><td class="mono">${esc(d.variable)}</td><td class="mono diff-old" style="word-break:break-all">${esc(val(d.variable, d.before))}</td><td class="mono diff-new" style="word-break:break-all">${esc(val(d.variable, d.after))}</td><td>${esc(d.source)}</td><td class="reason">${esc(d.reason || "")}</td></tr>`).join("")}</tbody></table></div>`;
   const managed = r.managed || {};
   if (Object.keys(managed).length) h += `<h3>Settings managed by the agent for this run</h3><pre><code>[mysqld]\n${Object.entries(managed).map(([k, v]) => esc(k) + " = " + esc(v)).join("\n")}</code></pre>`;
@@ -510,7 +510,7 @@ function renderInputs(el, r) {
   }
   h += "<h3>Diagnosis</h3>" + ((r.diagnosis || []).map(dg => `<div class="diag">${sevBadge(dg.severity)} <b>${esc(dg.type)}</b> — ${esc(dg.text)}<div class="mono muted" style="font-size:11.5px;margin-top:3px">${esc(JSON.stringify(dg.evidence))}</div></div>`).join("") || '<p class="muted">none</p>');
   if (inp.top_statements && inp.top_statements.length) {
-    h += `<h3>Top statements in the window</h3><p class="muted">From performance_schema digests and server-side prepared statements (marked <span class="badge plain">prepared</span>); the agent's own monitoring queries are excluded.</p><div class="card tablewrap"><table><thead><tr><th>Statement</th><th class="num">% time</th><th class="num">per s</th><th class="num">avg ms</th><th class="num">rows exam.</th><th class="num">rows sent</th><th class="num">no index</th><th class="num">tmp disk</th></tr></thead><tbody>` +
+    h += `<h3>Top statements in the window${info("From performance_schema digests and server-side prepared statements (marked prepared). The agent's own monitoring queries are excluded.")}</h3><div class="card tablewrap"><table><thead><tr><th>Statement</th><th class="num">% time</th><th class="num">per s</th><th class="num">avg ms</th><th class="num">rows exam.</th><th class="num">rows sent</th><th class="num">no index</th><th class="num">tmp disk</th></tr></thead><tbody>` +
       inp.top_statements.map(q => `<tr><td class="mono" style="max-width:520px;word-break:break-all">${q.prepared ? '<span class="badge plain">prepared</span> ' : ""}${esc(q.query)}</td><td class="num">${q.pct_time}</td><td class="num">${num(q.per_s)}</td><td class="num">${num(q.avg_ms)}</td><td class="num">${num(q.rows_examined_avg)}</td><td class="num">${num(q.rows_sent_avg)}</td><td class="num">${q.no_index_used}</td><td class="num">${q.tmp_disk_tables}</td></tr>`).join("") + "</tbody></table></div>";
   }
   if (inp.top_waits && inp.top_waits.length) {
@@ -533,6 +533,21 @@ function renderInputs(el, r) {
     document.getElementById("sflt").oninput = draw; draw();
   }
 }
+
+// ------------------------------------------------------------------ info tooltips (hover, focus, tap)
+(function () {
+  const show = el => { const r = el.getBoundingClientRect(); const t = document.getElementById("tip");
+    t.innerHTML = `<div style="max-width:300px;white-space:normal;line-height:1.45">${esc(el.dataset.tip)}</div>`; t.hidden = false;
+    let left = Math.min(r.left, window.innerWidth - t.offsetWidth - 8), top = r.bottom + 6;
+    if (top + t.offsetHeight > window.innerHeight - 8) top = r.top - t.offsetHeight - 6;
+    t.style.left = Math.max(8, left) + "px"; t.style.top = top + "px"; };
+  const hide = () => { document.getElementById("tip").hidden = true; };
+  document.addEventListener("mouseover", e => { const el = e.target.closest && e.target.closest("[data-tip]"); if (el) show(el); });
+  document.addEventListener("mouseout", e => { if (e.target.closest && e.target.closest("[data-tip]")) hide(); });
+  document.addEventListener("focusin", e => { if (e.target.dataset && e.target.dataset.tip) show(e.target); });
+  document.addEventListener("focusout", hide);
+  document.addEventListener("click", e => { const el = e.target.closest && e.target.closest("[data-tip]"); if (el) show(el); else hide(); });
+})();
 
 // ------------------------------------------------------------------ router
 async function loadMe() { const d = await api("/api/me", { allow401: true }); ME = d.user; if (d.server) SERVER = d.server; }
