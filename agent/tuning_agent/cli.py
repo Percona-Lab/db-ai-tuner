@@ -643,7 +643,7 @@ def cmd_recommend(a):
     for d in res["diagnosis"]:
         lines.append(f"  diagnosis [{d['severity']}] {d['type']}: {d['text']}")
     for it in res["items"]:
-        ch = ", ".join(f"{x['variable']}: {x['current']} -> {x['proposed']}" for x in it["changes"]) or "(no config change)"
+        ch = ", ".join(f"{x['variable']}: {x['current']} -> {'(server default)' if x.get('unset') else x['proposed']}" for x in it["changes"]) or "(no config change)"
         flag = "" if it["kind"] != "advice" else " [advice]"
         lines.append(f"  {it['rank']:>2}. {it['id']:<26} {it['title']}{flag}\n      {ch}\n      risk={it['risk']} restart={it['restart']} "
                      f"impact={it['impact']} confidence={it['confidence']}{' — ' + it['note'] if it.get('note') else ''}\n      why: {it['rationale']}")
