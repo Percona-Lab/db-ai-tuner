@@ -433,8 +433,11 @@ def _measure_stop(c, external=None, goal_value=None, notes=None):
         "ended": b_snap["t"], "summary": summary, "external": external, "inputs": inputs, "diagnosis": diagnosis,
         "goal_value": gv, "goal_source": src, "delta_pct": d_prev, "delta_vs_first_pct": d_first, "verdict": verdict, "notes": notes})
     runs.append(run)
-    if gv is not None and (not best or best.get("goal_value") is None or (d_best or 0) > 0):
-        sess["best"] = {"seq": run["seq"], "label": run["label"], "goal_value": gv}
+    scores = engine.config_scores(runs, sess["goal"])
+    if scores:
+        b = scores[0]
+        sess["best"] = {"seq": b["seqs"][-1], "runs": b["seqs"], "label": b["label"], "goal_value": round(b["mean"], 4),
+                        "mean_of_runs": b["n"]}
     sess["last_inputs_path"] = os.path.join(c.state.dir, f"run{run['seq']}_inputs.json")
     with open(sess["last_inputs_path"], "w") as f:
         json.dump({"summary": summary, "inputs": inputs, "variables": b_snap["variables"], "diagnosis": diagnosis}, f, default=str)

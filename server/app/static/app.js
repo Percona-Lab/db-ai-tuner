@@ -263,15 +263,22 @@ async function sessionPage(id) {
   const s = d.session, runs = d.runs.filter(r => r.status !== "aborted");
   const done = runs.filter(r => r.goal_value != null);
   const lower = s.goal === "latency";
-  const first = done[0], best = done.length ? done.reduce((a, b) => (lower ? b.goal_value < a.goal_value : b.goal_value > a.goal_value) ? b : a) : null;
-  const gain = first && best && first.goal_value ? (lower ? (first.goal_value - best.goal_value) : (best.goal_value - first.goal_value)) / first.goal_value * 100 : null;
+  const first = done[0];
+  // configurations are scored by the mean of all runs measured with them (repeats reduce noise)
+  const groups = {};
+  done.forEach(r => { const k = JSON.stringify(Object.entries(r.managed || {}).sort()); (groups[k] = groups[k] || []).push(r); });
+  const cfgs = Object.values(groups).map(rs => ({ runs: rs, mean: rs.reduce((a, r) => a + r.goal_value, 0) / rs.length }));
+  cfgs.sort((a, b) => lower ? a.mean - b.mean : b.mean - a.mean);
+  const bestCfg = cfgs[0], best = bestCfg ? bestCfg.runs[bestCfg.runs.length - 1] : null;
+  const firstCfg = first ? cfgs.find(c => c.runs.includes(first)) : null;
+  const gain = firstCfg && bestCfg && firstCfg.mean ? (lower ? (firstCfg.mean - bestCfg.mean) : (bestCfg.mean - firstCfg.mean)) / firstCfg.mean * 100 : null;
   $view.innerHTML = `<div class="crumbs"><a href="#/">Environments</a> / <a href="#/env/${d.environment.id}">${esc(d.environment.name)}</a> /</div>
   <div class="row"><h1>${esc(s.name)}</h1>${statusBadge(s.status)}<span class="spacer"></span><button class="ghost" id="rename">Rename</button><button class="ghost danger" id="del">Delete</button></div>
   <p class="sub">Goal: <b>${goalName(s.goal)}</b> · policy <b>${esc(s.policy)}</b>${s.policy === "benchmark" ? " (durability / observability trade-offs allowed)" : " (production-safe changes only)"} · noise threshold ±${s.noise_pct}% · started ${fmtTime(s.created)}${s.workload ? " · workload: " + esc(s.workload) : ""}</p>
   <div class="tiles"><div class="tile"><div class="k">Runs measured</div><div class="v">${done.length}</div></div>
    <div class="tile"><div class="k">First run (${goalUnit(s.goal)})</div><div class="v">${first ? num(first.goal_value) : "–"}</div><div class="d">${first ? esc(first.label) : ""}</div></div>
-   <div class="tile"><div class="k">Best run (${goalUnit(s.goal)})</div><div class="v">${best ? num(best.goal_value) : "–"}</div><div class="d">${best ? "#" + best.seq + " " + esc(best.label) : ""}</div></div>
-   <div class="tile"><div class="k">Best vs first</div><div class="v ${deltaCls(gain)}">${pct(gain)}</div><div class="d">${lower ? "lower latency is better" : "higher throughput is better"}</div></div></div>
+   <div class="tile"><div class="k">Best configuration (${goalUnit(s.goal)})</div><div class="v">${bestCfg ? num(bestCfg.mean) : "–"}</div><div class="d">${bestCfg ? (bestCfg.runs.length > 1 ? "mean of runs " : "run ") + bestCfg.runs.map(r => "#" + r.seq).join(", ") : ""}</div></div>
+   <div class="tile"><div class="k">Best vs first configuration</div><div class="v ${deltaCls(gain)}">${pct(gain)}</div><div class="d">${lower ? "lower latency is better" : "higher throughput is better"}</div></div></div>
   <div class="card" style="margin-top:14px" id="bars"></div>
   <h2>Runs</h2><div class="card tablewrap"><table><thead><tr><th>#</th><th>Label</th><th>Status</th><th>Changes vs previous run</th><th class="num">${goalUnit(s.goal) === "ms" ? "Avg ms" : "Goal"}</th><th class="num">vs prev</th><th class="num">vs first</th><th>Verdict</th>
    <th class="num">TPS</th><th class="num">Avg lat ms</th><th class="num">p95 ms</th><th class="num">CPU %</th><th class="num">IO wait %</th><th>Duration</th></tr></thead><tbody id="runs"></tbody></table></div>
@@ -279,10 +286,10 @@ async function sessionPage(id) {
   <h2>Notes</h2><div class="card"><textarea id="notes" rows="3" placeholder="Notes about this session (workload, hypotheses, conclusions)">${esc(s.notes || "")}</textarea><div class="row" style="margin-top:6px"><button id="savenotes">Save notes</button><span id="saved" class="muted"></span></div></div>
   <h2>Activity</h2><div class="card" id="events"></div>`;
   C.barChart(document.getElementById("bars"), {
-    title: goalName(s.goal) + " per run (" + goalUnit(s.goal) + ")", unit: goalUnit(s.goal), metric: s.goal === "latency" ? "avg latency" : "goal value",
+    title: goalName(s.goal) + " per run (" + goalUnit(s.goal) + ") — green: runs of the best configuration", unit: goalUnit(s.goal), metric: s.goal === "latency" ? "avg latency" : "goal value",
     ref: first ? first.goal_value : null,
-    bars: runs.map(r => ({ label: "#" + r.seq + " " + r.label, value: r.goal_value, sub: r.delta_vs_first_pct != null ? pct(r.delta_vs_first_pct) : "", href: "#/run/" + r.id,
-      highlight: best && r.id === best.id ? "best" : (r.verdict === "improved" ? true : false),
+    bars: done.map(r => ({ label: "#" + r.seq + " " + r.label, value: r.goal_value, sub: r.delta_vs_first_pct != null ? pct(r.delta_vs_first_pct) : "", href: "#/run/" + r.id,
+      highlight: bestCfg && bestCfg.runs.includes(r) ? "best" : false,
       tip: `<div>vs previous<b>${pct(r.delta_pct)}</b></div><div>verdict<b>${esc(r.verdict || "")}</b></div>` })),
   });
   const tb = document.getElementById("runs");

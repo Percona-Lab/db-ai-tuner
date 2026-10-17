@@ -346,7 +346,7 @@ def score(item, goal):
 
 
 def apply_history(items, history):
-    """Mark/skip items already tried; add revert suggestions for regressions."""
+    """Mark/skip items already tried."""
     tried = {}
     for run in history:
         for c in run.get("changes") or []:
@@ -366,49 +366,67 @@ def apply_history(items, history):
     return out
 
 
-def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
-    """Suggest reverting when the current configuration measures worse than the best one."""
-    if len(history) < 2:
-        return []
-    last = history[-1]
-    best = None
+def config_key(managed):
+    return tuple(sorted((k, normalize(k, v)) for k, v in (managed or {}).items()))
+
+
+def config_scores(history, goal="tps"):
+    """Mean goal value per distinct configuration (repeated runs of one config are averaged)."""
+    groups = {}
     for r in history:
         if r.get("goal_value") is None:
             continue
-        if best is None or (r["goal_value"] < best["goal_value"] if goal == "latency" else r["goal_value"] > best["goal_value"]):
-            best = r
-    if best and best is not last and last.get("goal_value") is not None and best.get("goal_value"):
-        gap = (best["goal_value"] - last["goal_value"]) / best["goal_value"] * 100 * (-1 if goal == "latency" else 1)
-        target = best.get("managed") or {}
-        cur = managed or {}
+        g = groups.setdefault(config_key(r.get("managed")), {"runs": [], "managed": r.get("managed") or {}})
+        g["runs"].append(r)
+    out = []
+    for key, g in groups.items():
+        vals = [r["goal_value"] for r in g["runs"]]
+        out.append({"key": key, "managed": g["managed"], "mean": sum(vals) / len(vals), "n": len(vals),
+                    "seqs": [r["seq"] for r in g["runs"]], "label": g["runs"][0].get("label")})
+    out.sort(key=lambda c: c["mean"], reverse=(goal != "latency"))
+    return out
+
+
+def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
+    """Suggest returning to the best configuration when the current one is measurably worse."""
+    if len(history) < 2:
+        return []
+    scores = config_scores(history, goal)
+    if not scores:
+        return []
+    best = scores[0]
+    cur_key = config_key(managed)
+    cur = next((c for c in scores if c["key"] == cur_key), None)
+    items = []
+    if cur is not None and cur["key"] != best["key"]:
+        gap = (best["mean"] - cur["mean"]) / best["mean"] * 100 * (-1 if goal == "latency" else 1)
+        target = best["managed"]
         ch = []
-        for k in sorted(set(cur) | set(target)):
-            if normalize(k, cur.get(k)) != normalize(k, target.get(k)) and k in variables:
+        for k in sorted(set(managed or {}) | set(target)):
+            if normalize(k, (managed or {}).get(k)) != normalize(k, target.get(k)) and k in variables:
                 ch.append({"variable": k, "current": variables.get(k), "proposed": target.get(k), "unset": k not in target})
-        if gap > noise and ch:
-            return [{
-                "id": f"rollback-to-run-{best['seq']}", "title": f"Return to the best configuration (run #{best['seq']} '{best.get('label')}')",
+        if ch:
+            seq = best["seqs"][-1]
+            regressed = gap > noise
+            items.append({
+                "id": f"rollback-to-run-{seq}",
+                "title": (f"Return to the best configuration (run #{seq})" if regressed
+                          else f"Revert the last experiment: no measurable gain over run #{seq}"),
                 "kind": "revert", "changes": ch,
-                "rationale": f"The latest run is {gap:.1f}% worse on the goal than run #{best['seq']} (noise threshold {noise}%). "
-                             f"Undo the changes made since then; `tuning-agent rollback --to-run {best['seq']}` does the same.",
-                "evidence": {"best_goal_value": best["goal_value"], "latest_goal_value": last["goal_value"], "gap_pct": round(gap, 2)},
-                "impact": 3, "confidence": 3, "risk": "none",
+                "rationale": (f"The current configuration averages {cur['mean']:.4g} over {cur['n']} run(s) versus {best['mean']:.4g} "
+                              f"over {best['n']} run(s) for the best one: {gap:.1f}% worse (noise threshold {noise}%). "
+                              if regressed else
+                              f"The current configuration ({cur['mean']:.4g}, {cur['n']} run(s)) is within the {noise}% noise threshold of the best "
+                              f"({best['mean']:.4g}, {best['n']} run(s)). Keeping changes that do not measurably help adds risk; revert unless you "
+                              f"have another reason to keep them. ")
+                             + f"`tuning-agent rollback --to-run {seq}` does the same.",
+                "evidence": {"best_mean": round(best["mean"], 3), "best_runs": best["seqs"], "current_mean": round(cur["mean"], 3),
+                             "current_runs": cur["seqs"], "gap_pct": round(gap, 2)},
+                "impact": 3 if regressed else 1, "confidence": 3 if regressed else 2, "risk": "none",
                 "restart": any(not KB.get(c["variable"], {}).get("dynamic", False) for c in ch), "goals": ["tps", "latency"],
-            }]
-    if last.get("verdict") != "regressed" or not last.get("changes"):
-        return []
-    ch = []
-    for c in last["changes"]:
-        if c.get("old") is not None and c["variable"] in variables:
-            ch.append({"variable": c["variable"], "current": variables.get(c["variable"]), "proposed": c["old"]})
-    if not ch:
-        return []
-    return [{
-        "id": f"revert-run-{last.get('seq')}", "title": f"Revert the changes of run #{last.get('seq')} (regressed)", "kind": "revert",
-        "changes": ch, "rationale": f"Run #{last.get('seq')} was {last.get('delta_pct', 0):+.1f}% versus the previous run on the goal metric.",
-        "evidence": {"goal_value": last.get("goal_value"), "delta_pct": last.get("delta_pct")}, "impact": 3, "confidence": 3,
-        "risk": "none", "restart": any(not KB.get(c["variable"], {}).get("dynamic", False) for c in ch), "goals": ["tps", "latency"],
-    }]
+                "priority": regressed,
+            })
+    return items
 
 
 def run_engine(ctx):
@@ -422,7 +440,7 @@ def run_engine(ctx):
     for it in items:
         if it["risk"] == "durability" and not allowed_durability and it["kind"] == "config":
             it["kind"] = "advice"
-        it["score"] = score(it, ctx.get("goal", "tps")) if it["kind"] != "revert" else 100
+        it["score"] = 100 if it.get("priority") else score(it, ctx.get("goal", "tps")) + (2 if it["kind"] == "revert" else 0)
     items.sort(key=lambda i: -i["score"])
     for n, it in enumerate(items, 1):
         it["rank"] = n

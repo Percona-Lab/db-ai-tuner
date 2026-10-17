@@ -72,6 +72,7 @@ def run_brief(r):
     d["summary"] = store.uj(r["summary"], {})
     d["changes"] = store.uj(r["changes"], [])
     d["external"] = store.uj(r["external"], {})
+    d["managed"] = store.uj(r["managed"], {})
     return d
 
 
