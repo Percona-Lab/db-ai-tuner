@@ -398,37 +398,46 @@ def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
     cur_key = config_key(managed)
     cur = next((c for c in scores if c["key"] == cur_key), None)
     items = []
+    noise_txt = f"noise threshold ±{noise}%"
     if cur is not None and cur["key"] != best["key"]:
         gap = (best["mean"] - cur["mean"]) / best["mean"] * 100 * (-1 if goal == "latency" else 1)
-        target = best["managed"]
-        ch = []
-        for k in sorted(set(managed or {}) | set(target)):
-            if normalize(k, (managed or {}).get(k)) != normalize(k, target.get(k)) and k in variables:
-                ch.append({"variable": k, "current": variables.get(k), "proposed": target.get(k), "unset": k not in target})
-        cur_runs = [r for r in history if config_key(r.get("managed")) == cur_key]
-        kept = any(r.get("verdict") in ("improved", "efficiency-gain") for r in cur_runs)
-        if ch and not (kept and gap <= noise):
-            seq = best["seqs"][-1]
-            regressed = gap > noise
-            items.append({
-                "id": f"rollback-to-run-{seq}",
-                "title": (f"Return to the best configuration (run #{seq})" if regressed
-                          else f"Revert the last experiment: no measurable gain over run #{seq}"),
-                "kind": "revert", "changes": ch,
-                "rationale": (f"The current configuration averages {cur['mean']:.4g} over {cur['n']} run(s) versus {best['mean']:.4g} "
-                              f"over {best['n']} run(s) for the best one: {gap:.1f}% worse (noise threshold {noise}%). "
-                              if regressed else
-                              f"The current configuration ({cur['mean']:.4g}, {cur['n']} run(s)) is within the {noise}% noise threshold of the best "
-                              f"({best['mean']:.4g}, {best['n']} run(s)). Keeping changes that do not measurably help adds risk; revert unless you "
-                              f"have another reason to keep them. ")
-                             + f"`tuning-agent rollback --to-run {seq}` does the same.",
-                "evidence": {"best_mean": round(best["mean"], 3), "best_runs": best["seqs"], "current_mean": round(cur["mean"], 3),
-                             "current_runs": cur["seqs"], "gap_pct": round(gap, 2)},
-                "impact": 3 if regressed else 1, "confidence": 3 if regressed else 2, "risk": "none",
-                "restart": any(not KB.get(c["variable"], {}).get("dynamic", False) for c in ch), "goals": ["tps", "latency"],
-                "priority": regressed,
-            })
-    return items
+        if gap > noise:
+            items.append(_revert_item(f"rollback-to-run-{best['seqs'][-1]}", f"Return to the best configuration (run #{best['seqs'][-1]})",
+                                      managed, best["managed"], variables,
+                                      f"The current configuration averages {cur['mean']:.4g} over {cur['n']} run(s) versus {best['mean']:.4g} over "
+                                      f"{best['n']} run(s) for the best one: {gap:.1f}% worse ({noise_txt}).",
+                                      {"best_mean": round(best["mean"], 3), "best_runs": best["seqs"], "current_mean": round(cur["mean"], 3),
+                                       "current_runs": cur["seqs"], "gap_pct": round(gap, 2)}, priority=True))
+            return [i for i in items if i]
+    # the current configuration is a within-noise experiment without an efficiency win: revert it to its parent
+    cur_runs = [r for r in history if config_key(r.get("managed")) == cur_key]
+    first_eval = next((r.get("evaluation") for r in cur_runs if (r.get("evaluation") or {}).get("parent_runs")), None)
+    verdicts = {r.get("verdict") for r in cur_runs}
+    if first_eval and not verdicts & {"improved", "efficiency-gain"} and verdicts & {"neutral", "efficiency-loss"}:
+        parent_run = next((r for r in history if r["seq"] == first_eval["parent_runs"][-1]), None)
+        if parent_run is not None:
+            items.append(_revert_item(f"revert-to-run-{parent_run['seq']}", "Revert the last experiment: no measurable benefit",
+                                      managed, parent_run.get("managed") or {}, variables,
+                                      f"The experiment was within the {noise_txt} on the goal ({first_eval.get('goal_delta_pct'):+.1f}%) and did not reduce "
+                                      "CPU or I/O per transaction. Keeping changes without a measurable benefit only adds risk.",
+                                      {"goal_delta_pct": first_eval.get("goal_delta_pct"), "parent_runs": first_eval.get("parent_runs")},
+                                      priority=False))
+    return [i for i in items if i]
+
+
+def _revert_item(id_, title, managed, target, variables, rationale, evidence, priority):
+    ch = []
+    for k in sorted(set(managed or {}) | set(target)):
+        if normalize(k, (managed or {}).get(k)) != normalize(k, target.get(k)) and k in variables:
+            ch.append({"variable": k, "current": variables.get(k), "proposed": target.get(k), "unset": k not in target})
+    if not ch:
+        return None
+    seq = id_.rsplit("-", 1)[-1]
+    return {"id": id_, "title": title, "kind": "revert", "changes": ch,
+            "rationale": rationale + f" `tuning-agent rollback --to-run {seq}` does the same.",
+            "evidence": evidence, "impact": 3 if priority else 1, "confidence": 3 if priority else 2, "risk": "none",
+            "restart": any(not KB.get(c["variable"], {}).get("dynamic", False) for c in ch), "goals": ["tps", "latency"],
+            "priority": priority}
 
 
 def run_engine(ctx):
