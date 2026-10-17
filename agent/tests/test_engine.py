@@ -19,9 +19,11 @@ VARS = {
     "innodb_doublewrite": "ON", "performance_schema": "ON", "binlog_group_commit_sync_delay": "0",
     "binlog_group_commit_sync_no_delay_count": "0", "innodb_change_buffering": "none", "innodb_lru_scan_depth": "1024",
 }
+VARS.update({"os:vm.swappiness": "60", "os:thp": "always", "os:scheduler": "bfq", "os:mount_noatime": "OFF", "os:mount_barrier": "ON",
+             "os:vm.dirty_bytes": "0", "os:vm.dirty_background_bytes": "0", "os:kernel.sched_autogroup_enabled": "1", "os:fs.aio-max-nr": "65536", "os:malloc": "glibc", "os:hugepages": "0", "large_pages": "OFF"})
 HW = {"cpus": 2, "ram_bytes": 4 * GiB, "disk_rotational": False, "disk_free_bytes": 50 * GiB}
 
-OLTP = ({"tps": 600, "qps": 1800, "statements_per_s": 1800, "avg_latency_ms": 5, "cpu_busy": 95, "mysqld_cpu_pct": 80,
+OLTP = ({"tps": 600, "qps": 1800, "statements_per_s": 1800, "avg_latency_ms": 5, "cpu_busy": 95, "mysqld_cpu_pct": 70,
          "bp_hit_pct": 98, "bp_disk_reads": 500, "data_fsyncs": 700, "fsyncs_per_trx": 1.2, "threads_running_avg": 10,
          "checkpoint_age_pct_max": 70, "redo_mbs": 5, "row_lock_waits": 60, "row_lock_wait_avg_ms": 7, "disk_util": 40,
          "disk_await_ms": 1, "mem_available_mb": 600, "psi_cpu_some": 80, "duration_s": 300},
@@ -42,8 +44,8 @@ OLAP = ({"tps": 0.1, "qps": 0.1, "statements_per_s": 0.07, "avg_latency_ms": 150
                              "lock_ms_avg": 0, "avg_ms": 120000, "per_s": 0.008}]})
 
 
-def run(summary, inputs, policy, goal="tps", history=None):
-    ctx = {"goal": goal, "policy": policy, "hw": HW, "flavor": "percona", "version": (8, 4, 11), "variables": dict(VARS),
+def run(summary, inputs, policy, goal="tps", history=None, os_tuning=True):
+    ctx = {"goal": goal, "policy": policy, "os_tuning": os_tuning, "os_facts": {"os:filesystem": "ext4", "os:aio_in_use": "60000"}, "hw": HW, "flavor": "percona", "version": (8, 4, 11), "variables": dict(VARS),
            "summary": summary, "inputs": inputs, "history": history or [], "noise_pct": 2.0, "managed": {}}
     return engine.run_engine(ctx)
 
@@ -82,6 +84,16 @@ def test_olap_rules():
     for k in ("join-buffer", "sort-buffer-olap", "tmp-olap", "subquery-to-derived", "bka-mrr", "stats-histograms"):
         assert k in it, (k, list(it))
     assert it["subquery-to-derived"]["changes"][0]["proposed"] == "subquery_to_derived=on"
+
+
+def test_os_rules():
+    it = ids(run(*OLTP, policy="safe"))
+    for k in ("os-swappiness", "os-thp-off", "os-scheduler", "os-noatime", "os-dirty-writeback", "os-jemalloc", "os-hugepages", "os-autogroup", "os-aio"):
+        assert k in it, (k, list(it))
+    assert it["os-nobarrier"]["kind"] == "advice" and it["os-nobarrier"]["safety"] == "trade-off"
+    assert it["os-hugepages"]["restart"] and it["os-jemalloc"]["restart"]
+    assert ids(run(*OLTP, policy="benchmark"))["os-nobarrier"]["kind"] == "config"
+    assert not [k for k in ids(run(*OLTP, policy="safe", os_tuning=False)) if k.startswith("os-")]
 
 
 def test_no_run_yet():

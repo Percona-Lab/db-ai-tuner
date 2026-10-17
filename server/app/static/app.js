@@ -261,11 +261,13 @@ async function envPage(id) {
    <div>CPU</div><div>${hw.cpus} × ${esc(hw.cpu_model)}</div><div>Memory</div><div>${bytes(hw.ram_bytes)} (swap ${bytes(hw.swap_bytes)})</div>
    <div>Data disk</div><div>${esc(hw.data_device)} · ${hw.disk_rotational ? "rotational" : "SSD/NVMe"} · ${esc(hw.filesystem)} · scheduler ${esc(hw.disk_scheduler)}</div>
    <div>Disk space</div><div>${bytes(hw.disk_free_bytes)} free of ${bytes(hw.disk_total_bytes)}</div><div>OS</div><div>${esc(hw.os)} · kernel ${esc(hw.kernel)}</div>
-   <div>Platform</div><div>${esc(hw.vendor || "")} · THP ${esc(hw.thp)} · swappiness ${esc(hw.swappiness)}</div></div></div>
+   <div>Platform</div><div>${esc(hw.vendor || "")}</div>
+   ${Object.entries(f.os || {}).filter(([k]) => KEY_VARS.includes(k)).map(([k, v]) => `<div class="mono">${esc(k.slice(3))}</div><div class="mono">${esc(v)}</div>`).join("")}
+   <div>OS tuning</div><div>${(f.agent || {}).os_tuning === false ? "disabled" : "enabled"}</div></div></div>
    <div class="card"><h3 style="margin-top:0">Database</h3><div class="kv"><div>Server</div><div>${esc(db.version_comment)} ${esc(db.version)}</div>
    <div>Data</div><div>${bytes(db.data_bytes)} in ${db.tables} InnoDB tables</div><div>Datadir</div><div class="mono">${esc(db.datadir)}</div>
    ${Object.entries(kv).map(([k, v]) => `<div class="mono">${esc(k)}</div><div class="mono">${esc(val(k, v))}</div>`).join("")}</div></div></div>
-  <div class="card" style="margin-top:14px"><h3 style="margin-top:0">Settings managed by the agent</h3>${Object.keys((f.agent || {}).managed || {}).length ? `<p class="muted" style="margin:0 0 6px">${esc((f.agent || {}).cnf_path || "")} · restarts ${(f.agent || {}).allow_restart === false ? "disabled" : "allowed"}</p><pre><code>[mysqld]\n${Object.entries(f.agent.managed).map(([k, v]) => esc(k) + " = " + esc(v)).join("\n")}</code></pre>` : '<span class="muted">None yet: <code>tuning-agent baseline --apply</code> writes the first set.</span>'}</div>
+  <div class="card" style="margin-top:14px"><h3 style="margin-top:0">Settings managed by the agent</h3>${Object.keys((f.agent || {}).managed || {}).length ? `<p class="muted" style="margin:0 0 6px">${esc((f.agent || {}).cnf_path || "")} · restarts ${(f.agent || {}).allow_restart === false ? "disabled" : "allowed"}</p><pre><code>${cnfBlock(f.agent.managed)}</code></pre>` : '<span class="muted">None yet: <code>tuning-agent baseline --apply</code> writes the first set.</span>'}</div>
   <div class="row"><h2>Live metrics</h2><span class="spacer"></span><select id="range" style="width:auto"><option value="900">15 min</option><option value="3600" selected>1 hour</option><option value="21600">6 hours</option><option value="86400">24 hours</option></select></div>
   <div class="grid g3" id="live"></div>
   <h2>Tuning sessions</h2><div class="card tablewrap"><table><thead><tr><th>Session</th><th>Goal</th><th>Policy</th><th>Status</th><th class="num">Runs</th><th class="num">First run</th><th class="num">Best</th><th class="num">Best gain</th><th>Started</th></tr></thead><tbody id="sess"></tbody></table></div>
@@ -322,7 +324,7 @@ async function sessionPage(id) {
   const gain = firstCfg && bestCfg && firstCfg.mean ? (lower ? (firstCfg.mean - bestCfg.mean) : (bestCfg.mean - firstCfg.mean)) / firstCfg.mean * 100 : null;
   $view.innerHTML = `<div class="crumbs"><a href="#/">Environments</a> / <a href="#/env/${d.environment.id}">${esc(d.environment.name)}</a> /</div>
   <div class="row"><h1>${esc(s.name)}</h1>${statusBadge(s.status)}<span class="spacer"></span><button class="ghost" id="rename">Rename</button><button class="ghost danger" id="del">Delete</button></div>
-  <p class="sub">Goal: <b>${goalName(s.goal)}</b> · policy <a href="#/policies"><b>${esc(s.policy)}</b></a>${s.policy === "benchmark" ? " (trade-offs allowed after safe experiments)" : " (production-safe changes only)"} · noise threshold ±${s.noise_pct}% · started ${fmtTime(s.created)}${s.workload ? " · workload: " + esc(s.workload) : ""}</p>
+  <p class="sub">Goal: <b>${goalName(s.goal)}</b> · policy <a href="#/policies"><b>${esc(s.policy)}</b></a>${s.policy === "benchmark" ? " (trade-offs allowed after safe experiments)" : " (production-safe changes only)"} · OS tuning ${s.os_tuning === 0 ? "off" : "on"}${info("When on, the agent may also change operating-system settings (swappiness, transparent huge pages, I/O scheduler, mount options, dirty writeback, memory allocator, huge pages). OS changes are recorded per run and rolled back like MySQL settings. Disable with --no-os-tuning.")} · noise threshold ±${s.noise_pct}% · started ${fmtTime(s.created)}${s.workload ? " · workload: " + esc(s.workload) : ""}</p>
   ${calibrationNote(s)}
   <div class="tiles"><div class="tile"><div class="k">Runs measured</div><div class="v">${done.length}</div></div>
    <div class="tile"><div class="k">First run (${goalUnit(s.goal, s)})</div><div class="v">${first ? num(first.goal_value) : "–"}</div><div class="d">${first ? esc(first.label) : ""}</div></div>
@@ -390,14 +392,21 @@ const KEY_VARS = ["innodb_buffer_pool_size", "innodb_buffer_pool_instances", "in
   "innodb_thread_concurrency", "thread_handling", "thread_pool_size", "max_connections", "thread_cache_size", "table_open_cache", "table_open_cache_instances",
   "table_definition_cache", "tmp_table_size", "max_heap_table_size", "temptable_max_ram", "sort_buffer_size", "join_buffer_size", "read_rnd_buffer_size",
   "binlog_format", "binlog_row_image", "binlog_group_commit_sync_delay", "transaction_isolation", "performance_schema", "innodb_dedicated_server",
-  "innodb_read_ahead_threshold", "innodb_stats_persistent_sample_pages", "innodb_page_size"];
+  "innodb_read_ahead_threshold", "innodb_stats_persistent_sample_pages", "innodb_page_size", "large_pages",
+  "os:vm.swappiness", "os:thp", "os:scheduler", "os:read_ahead_kb", "os:vm.dirty_background_bytes", "os:vm.dirty_bytes", "os:mount_noatime",
+  "os:mount_barrier", "os:malloc", "os:hugepages", "os:cpu_governor"];
 function sourceText(m) {
   if (!m || !m.source) return "";
   const src = { COMPILED: "compiled default", EXPLICIT: "option file", GLOBAL: "option file", DYNAMIC: "SET GLOBAL at runtime", PERSISTED: "SET PERSIST",
-    COMMAND_LINE: "command line", LOGIN: "login", CLIENT: "client", SERVER: "server-adjusted", "AUTO-CONFIGURED": "auto-sized", CONFIG: "option file", "SQL": "SET GLOBAL" }[m.source] || m.source.toLowerCase();
+    COMMAND_LINE: "command line", "OS-AGENT": "set by tuning-agent (OS)", OS: "operating system", LOGIN: "login", CLIENT: "client", SERVER: "server-adjusted", "AUTO-CONFIGURED": "auto-sized", CONFIG: "option file", "SQL": "SET GLOBAL" }[m.source] || m.source.toLowerCase();
   return src + (m.path ? " · " + m.path : "");
 }
-function isDefault(m) { return m && (m.source === "COMPILED" || m.source === "COMPILE-TIME"); }
+function isDefault(m) { return m && (m.source === "COMPILED" || m.source === "COMPILE-TIME" || m.source === "OS"); }
+function cnfBlock(managed) {
+  const e = Object.entries(managed || {}), my = e.filter(([k]) => !k.startsWith("os:")), os = e.filter(([k]) => k.startsWith("os:"));
+  return (my.length ? `[mysqld]\n${my.map(([k, v]) => esc(k) + (v === "" ? "" : " = " + esc(v))).join("\n")}` : "") +
+    (os.length ? `${my.length ? "\n\n" : ""}# operating system\n${os.map(([k, v]) => esc(k.slice(3)) + " = " + esc(v)).join("\n")}` : "");
+}
 async function renderKeySettings(el, runId) {
   const c = await api(`/api/runs/${runId}/config`);
   const meta = c.meta || {};
@@ -516,7 +525,7 @@ function renderDiff(el, r) {
   else if (r.diff.length) h += `<h3>Changed since run #${prev.seq} ${esc(prev.label)}${info("Source and reasoning come from the agent. “outside the agent” means the value changed some other way: manual edit, server default after restart, automatic sizing.")}</h3>
    <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Run #${prev.seq}</th><th>This run</th><th>Source</th><th>Reason</th></tr></thead><tbody>${r.diff.map(d => `<tr><td class="mono">${esc(d.variable)}</td><td class="mono diff-old" style="word-break:break-all">${esc(val(d.variable, d.before))}</td><td class="mono diff-new" style="word-break:break-all">${esc(val(d.variable, d.after))}</td><td>${esc(d.source)}</td><td class="reason">${esc(d.reason || "")}</td></tr>`).join("")}</tbody></table></div>`;
   const managed = r.managed || {};
-  if (Object.keys(managed).length) h += `<h3>Settings managed by the agent for this run</h3><pre><code>[mysqld]\n${Object.entries(managed).map(([k, v]) => esc(k) + " = " + esc(v)).join("\n")}</code></pre>`;
+  if (Object.keys(managed).length) h += `<h3>Settings managed by the agent for this run</h3><pre><code>${cnfBlock(managed)}</code></pre>`;
   el.innerHTML = h;
 }
 

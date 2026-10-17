@@ -5,6 +5,7 @@ import time
 
 import pymysql
 
+from . import ostune
 from .knowledge import KB, OPTIONS, flags_subset, normalize, parse_size
 
 HEADER = """# Managed by tuning-agent. Do not edit by hand: changes are overwritten.
@@ -32,6 +33,8 @@ def detect_service():
 def render(managed):
     lines = [HEADER, "[mysqld]"]
     for var in sorted(managed):
+        if var.startswith("os:"):
+            continue
         m = managed[var]
         if m.get("reason"):
             lines.append(f"# {m.get('source', 'manual')}: {m['reason'][:200]}".replace("\n", " "))
@@ -61,6 +64,18 @@ class Applier:
         self.log = log
         self.cnf_path = cfg.get("cnf_path") or detect_cnf_path()
         self.service = cfg.get("service_name") or detect_service()
+        self.os_allowed = str(cfg.get("allow_os_tuning", "true")).lower() == "true"
+
+    def _os(self):
+        from .hostinfo import device_for_path
+        datadir = (self.db.scalar("SELECT @@datadir") or "/var/lib/mysql").rstrip("/")
+        return ostune.OSApplier(datadir, device_for_path(datadir), self.service, self.log)
+
+    def all_settings(self):
+        v = self.db.variables()
+        osa = self._os()
+        v.update(ostune.current(osa.datadir, osa.device, self.service))
+        return v
 
     def write_cnf(self, managed):
         os.makedirs(os.path.dirname(self.cnf_path), exist_ok=True)
@@ -105,12 +120,14 @@ class Applier:
     def _apply(self, changes, allow_restart=True, force_restart=False):
         """changes: [{variable, value (None = unmanage), reason, source}]
         Returns dict(applied, restarted, needs_restart, mismatches, errors)."""
-        before_vars = self.db.variables()
+        before_vars = self.all_settings()
         old_managed = {k: dict(v) for k, v in self.state["managed"].items()}
         managed = {k: dict(v) for k, v in old_managed.items()}
+        if any(c["variable"].startswith("os:") and c.get("value") is not None for c in changes) and not self.os_allowed:
+            raise RuntimeError("OS tuning is disabled for this agent (allow_os_tuning = false)")
         result = {"applied": [], "restarted": False, "needs_restart": [], "mismatches": [], "errors": [], "cnf_path": self.cnf_path}
         for c in changes:
-            var = c["variable"].lower().replace("-", "_")
+            var = c["variable"] if c["variable"].startswith("os:") else c["variable"].lower().replace("-", "_")
             c["variable"] = var
             if var not in before_vars and var not in OPTIONS:
                 result["errors"].append(f"{var}: unknown to this server, skipped")
@@ -125,7 +142,22 @@ class Applier:
             return result
         self.write_cnf(managed)
         need_restart = []
-        for c in changes:
+        osa = None
+        originals = self.state.data.setdefault("os_original", {})
+        for c in [c for c in changes if c["variable"].startswith("os:")]:
+            var, val = c["variable"], c.get("value")
+            osa = osa or self._os()
+            if var not in originals:
+                originals[var] = before_vars.get(var)
+            target = originals.get(var) if val is None else val
+            if target is None or normalize(var, before_vars.get(var)) == normalize(var, target):
+                continue
+            if osa.apply_live(var, target):
+                need_restart.append(var)
+        if osa or any(k.startswith("os:") for k in old_managed):
+            (osa or self._os()).persist(managed)
+            self.state.save()
+        for c in [c for c in changes if not c["variable"].startswith("os:")]:
             var, val = c["variable"], c.get("value")
             if val is not None and (flags_subset(val, before_vars.get(var)) if KB.get(var, {}).get("kind") == "flags"
                                     else normalize(var, before_vars.get(var)) == normalize(var, val)):
@@ -167,9 +199,11 @@ class Applier:
                 if want is None or int(cur) >= want * 0.95 and int(cur) <= want * 1.05:
                     break
                 time.sleep(2)
-        after = self.db.variables()
+        after = self.all_settings()
         for c in changes:
             var = c["variable"]
+            if var.startswith("os:") and c.get("value") is None:
+                c["value"] = originals.get(var)
             if var in OPTIONS:  # verify via the variable the option controls
                 shown = after.get(OPTIONS[var])
                 entry = {"variable": var, "old": c["old"] or "", "new": "" if c.get("value") is None else "ON",

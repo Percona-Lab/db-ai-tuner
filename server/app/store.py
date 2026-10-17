@@ -61,6 +61,7 @@ MIGRATIONS = [
     ("recommendations", "phase", "TEXT"),
     ("tsessions", "goal_metric", "TEXT"),
     ("runs", "abort_reason", "TEXT"),
+    ("tsessions", "os_tuning", "INTEGER"),
 ]
 
 

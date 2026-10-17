@@ -245,8 +245,21 @@ KB["innodb_deadlock_detect"] = dict(kind="bool", dynamic=True, risk="low", cat="
                                     desc="Deadlock detection.")
 KB["optimizer_switch"] = dict(kind="flags", dynamic=True, risk="none", cat="optimizer",
                               desc="Optimizer feature flags (the agent only changes individual flags).")
+KB["innodb_numa_interleave"] = dict(kind="bool", dynamic=False, risk="none", cat="memory",
+                                    desc="Interleave buffer pool allocation across NUMA nodes.")
+KB["large_pages"] = dict(kind="bool", dynamic=False, risk="low", cat="memory",
+                         desc="Allocate the buffer pool from huge pages (needs vm.nr_hugepages and memlock).")
 KB["binlog_cache_size"] = dict(kind="size", dynamic=True, risk="none", cat="memory",
                                desc="Per-session binlog cache.")
+
+
+# operating-system pseudo-variables (see ostune.py)
+from .ostune import OS_KB  # noqa: E402
+for _k, (_desc, _restart, _cat) in OS_KB.items():
+    KB[_k] = dict(kind="str", dynamic=not _restart, risk="durability" if _k == "os:mount_barrier" else "low", cat="os/" + _cat, desc=_desc)
+TRADEOFFS["os:mount_barrier"] = (lambda v: str(v).upper() == "OFF", "durability",
+                                 "Without write barriers a power loss can lose or reorder writes the database already considered durable.",
+                                 "OFF (ext4 nobarrier / barrier=0)")
 
 
 def tradeoff_of(name, value):

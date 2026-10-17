@@ -458,6 +458,82 @@ def recommend(ctx):
                   "(e.g. TPC-C district/warehouse rows); shorter transactions, consistent lock order or fewer concurrent clients on the same rows can.",
                   {"row_lock_waits_per_s": lw, "hot_statements": [q["query"][:80] for q in hot]}, impact=1, confidence=2, kind="advice")
 
+    # ---------------- operating system ---------------------------------------------
+    if ctx.get("os_tuning") and have_run:
+        osf = ctx.get("os_facts") or {}
+        busy_ = s.get("cpu_busy") or 0
+        try:
+            sw = int(v.get("os:vm.swappiness", "0"))
+        except ValueError:
+            sw = 0
+        if sw > 10:
+            b.add("os-swappiness", "Keep database memory out of swap (vm.swappiness=1)", [("os:vm.swappiness", "1")],
+                  f"vm.swappiness={sw} lets the kernel swap out buffer pool pages to keep page cache; 1 swaps only under real memory pressure.",
+                  {"vm.swappiness": sw, "swap_in": s.get("swap_in"), "swap_out": s.get("swap_out"), "psi_memory_some": s.get("psi_memory_some")},
+                  impact=2 if swapping else 1, confidence=3)
+        if v.get("os:thp") == "always":
+            b.add("os-thp-off", "Disable Transparent Huge Pages", [("os:thp", "never")],
+                  "InnoDB accesses memory sparsely; THP compaction and khugepaged add latency spikes and memory bloat (worse with jemalloc).",
+                  {"transparent_hugepage": v.get("os:thp")}, impact=2, confidence=2)
+        if ssd and v.get("os:scheduler") not in (None, "none", "noop", "mq-deadline"):
+            b.add("os-scheduler", "Use the 'none' I/O scheduler on SSD", [("os:scheduler", "none")],
+                  f"Scheduler {v.get('os:scheduler')} reorders requests for rotating disks; SSD/NVMe/virtual disks do better without.",
+                  {"scheduler": v.get("os:scheduler")}, impact=1, confidence=2)
+        if v.get("os:mount_noatime") == "OFF":
+            b.add("os-noatime", "Mount the data filesystem with noatime", [("os:mount_noatime", "ON")],
+                  "Access-time updates turn reads into metadata writes; databases never need them.",
+                  {"filesystem": osf.get("os:filesystem")}, impact=1, confidence=2)
+        if (commit_bound or redo_mbs > 2) and v.get("os:vm.dirty_bytes") == "0" and v.get("os:vm.dirty_background_bytes") == "0" and ram >= 2 * GiB:
+            b.add("os-dirty-writeback", "Write back dirty page cache earlier", [("os:vm.dirty_background_bytes", str(64 * MiB)),
+                                                                                 ("os:vm.dirty_bytes", str(512 * MiB)),
+                                                                                 ("os:vm.dirty_expire_centisecs", "500"),
+                                                                                 ("os:vm.dirty_writeback_centisecs", "100")],
+                  "Binary log and redo are written through the page cache and fsync'ed at commit. With the default ratios gigabytes can "
+                  "accumulate, turning periodic writeback and fsyncs into stalls; small byte limits keep fsync work small and steady. Experiment.",
+                  {"redo_mbs": redo_mbs, "fsyncs_per_trx": s.get("fsyncs_per_trx"), "disk_await_ms": s.get("disk_await_ms")}, impact=1, confidence=1)
+        if v.get("os:malloc") == "glibc" and busy_ >= 70 and (s.get("threads_running_avg") or 0) >= cpus:
+            b.add("os-jemalloc", "Run mysqld with jemalloc", [("os:malloc", "jemalloc")],
+                  f"CPU-bound ({busy_:.0f}%) with {s.get('threads_running_avg', 0):.0f} running threads: jemalloc has less allocator lock "
+                  "contention and fragmentation than glibc malloc (Percona recommendation). Needs a mysqld restart. Experiment.",
+                  {"cpu_busy": busy_, "threads_running_avg": s.get("threads_running_avg")}, impact=2, confidence=1)
+        if "large_pages" in v and not _on(v, "large_pages") and bp >= GiB and not swapping and mem_avail > 256 * MiB:
+            pages = int((bp + 192 * MiB) // (2 * MiB))
+            b.add("os-hugepages", "Back the buffer pool with huge pages", [("os:hugepages", str(pages)), ("large_pages", "ON")],
+                  f"Reserves {pages} x 2 MiB pages for the {human_size(bp)} buffer pool: fewer TLB misses for memory-bound work "
+                  "(MySQL docs / field reports: 5-30%). The memory is reserved even when unused; needs a restart. Experiment.",
+                  {"innodb_buffer_pool_size": human_size(bp), "hugepages": pages, "mem_available": human_size(mem_avail)}, impact=2, confidence=1)
+        if int(osf.get("os:numa_nodes") or 1) > 1 and v.get("os:kernel.numa_balancing") == "1":
+            ch = [("os:kernel.numa_balancing", "0")]
+            if "innodb_numa_interleave" in v and not _on(v, "innodb_numa_interleave"):
+                ch.append(("innodb_numa_interleave", "ON"))
+            b.add("os-numa", "Stop automatic NUMA page migration", ch,
+                  f"{osf.get('os:numa_nodes')} NUMA nodes: the kernel keeps migrating buffer pool pages between nodes; database profiles "
+                  "(tuned oracle/mssql) disable it and InnoDB interleaves the buffer pool instead.", {"numa_nodes": osf.get("os:numa_nodes")},
+                  impact=2, confidence=2)
+        my = s.get("mysqld_cpu_pct")
+        if v.get("os:kernel.sched_autogroup_enabled") == "1" and my is not None and busy_ >= 85 and my < 0.8 * busy_:
+            b.add("os-autogroup", "Disable scheduler autogroups", [("os:kernel.sched_autogroup_enabled", "0")],
+                  f"CPU saturated and mysqld gets only {my:.0f}% of {busy_:.0f}% busy CPU: other processes (e.g. the benchmark client) "
+                  "run in separate autogroups that get an equal CPU share regardless of their thread count. tuned's postgresql profile "
+                  "disables autogroups for database servers. Experiment.", {"mysqld_cpu_pct": my, "cpu_busy": busy_}, impact=1, confidence=1)
+        try:
+            aio_used, aio_max = int(osf.get("os:aio_in_use") or 0), int(v.get("os:fs.aio-max-nr") or 0)
+        except ValueError:
+            aio_used = aio_max = 0
+        if aio_max and aio_used > 0.7 * aio_max:
+            b.add("os-aio", "More asynchronous I/O slots", [("os:fs.aio-max-nr", str(max(1048576, aio_max * 2)))],
+                  f"{aio_used} of {aio_max} AIO request slots in use: InnoDB falls back to simulated AIO when the limit is reached.",
+                  {"aio_in_use": aio_used, "aio_max": aio_max}, impact=2, confidence=3)
+        gov = v.get("os:cpu_governor")
+        if gov and gov != "performance":
+            b.add("os-governor", "CPU frequency governor 'performance'", [("os:cpu_governor", "performance")],
+                  f"Governor {gov} lowers clock speed between bursts, adding latency.", {"cpu_governor": gov}, impact=1, confidence=2)
+        if v.get("os:mount_barrier") == "ON" and commit_bound and wtype in ("oltp-write", "mixed"):
+            b.add("os-nobarrier", "Disable ext4 write barriers (DURABILITY TRADE-OFF)", [("os:mount_barrier", "OFF")],
+                  "Barriers force the device to persist its write cache at every fsync. Without them a power loss can lose or reorder "
+                  "writes the database already acknowledged.", {"fsyncs_per_trx": s.get("fsyncs_per_trx"), "disk_await_ms": s.get("disk_await_ms")},
+                  impact=2, confidence=1, kind="config" if policy == "benchmark" else "advice")
+
     # ---------------- query advice -------------------------------------------------
     for q in (inp.get("top_statements") or [])[:10]:
         if q["pct_time"] < 5:

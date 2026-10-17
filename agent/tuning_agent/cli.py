@@ -12,7 +12,7 @@ import sys
 import time
 import uuid
 
-from . import __version__, baseline, bench, collector, engine, evaluate, hostinfo, mysqldb
+from . import __version__, baseline, bench, collector, engine, evaluate, hostinfo, mysqldb, ostune
 from .knowledge import tradeoffs_in
 from .applier import Applier
 from .client import APIError, Client
@@ -67,6 +67,18 @@ class Ctx:
     def refresh(self):
         self._vars = None
 
+    def os_tuning_allowed(self):
+        return str(self.cfg.get("allow_os_tuning", "true")).lower() == "true"
+
+    def os_settings(self):
+        ap = Applier(self.cfg, self.state, self.db)
+        return ostune.current(self.datadir(), hostinfo.device_for_path(self.datadir()), ap.service)
+
+    def all_settings(self):
+        v = dict(self.variables)
+        v.update(self.os_settings())
+        return v
+
     def datadir(self):
         return (self.variables.get("datadir") or "/var/lib/mysql").rstrip("/")
 
@@ -86,7 +98,9 @@ class Ctx:
             "db": {"flavor": flavor, "version": ver, "version_comment": comment, "version_tuple": vt,
                    "datadir": self.datadir(), "data_bytes": data_bytes, "tables": tables,
                    "key_variables": {k: v[k] for k in keys if k in v}},
+            "os": ostune.facts(self.datadir(), hostinfo.device_for_path(self.datadir()), Applier(self.cfg, self.state, self.db).service),
             "agent": {"version": __version__, "cnf_path": Applier(self.cfg, self.state, self.db).cnf_path,
+                      "os_tuning": self.os_tuning_allowed(),
                       "service": self.cfg.get("service_name") or None,
                       "managed": {k: v["value"] for k, v in self.state.get("managed", {}).items()},
                       "allow_restart": self.cfg.get("allow_restart", "true") == "true"},
@@ -142,6 +156,9 @@ def cmd_init(a):
                 sec["mysql_socket"] = p
                 break
     sec.setdefault("allow_restart", "true" if not a.no_restart else "false")
+    if a.no_os_tuning:
+        sec["allow_os_tuning"] = "false"
+    sec.setdefault("allow_os_tuning", "true")
     sec.setdefault("interval", "10")
     if "server" not in sec or "api_key" not in sec:
         raise Fail("--server and --api-key are required on first init")
@@ -292,13 +309,14 @@ def cmd_session(a):
         old = c.state.get("session")
         if old and not a.force:
             raise Fail(f"session #{old['id']} is still active: `tuning-agent session stop` it or pass --force")
+        os_tuning = c.os_tuning_allowed() and not a.no_os_tuning
         r = c.client.post("/sessions", {"environment_id": c.env_id(), "name": a.name, "goal": a.goal, "policy": a.policy,
-                                        "noise_pct": a.noise_pct, "notes": a.notes, "workload": a.workload})
+                                        "noise_pct": a.noise_pct, "notes": a.notes, "workload": a.workload, "os_tuning": os_tuning})
         if c.state.get("pending_changes"):
             log("note: changes applied before this session are part of its starting configuration")
             c.state.data["pending_changes"] = []
         sess = {"id": r["session_id"], "name": a.name or r.get("name"), "goal": a.goal, "policy": a.policy,
-                "noise_pct": a.noise_pct, "started": time.time(), "runs": [], "best": None}
+                "noise_pct": a.noise_pct, "started": time.time(), "runs": [], "best": None, "os_tuning": os_tuning}
         c.state.set("session", sess)
         emit({"ok": True, "session": sess, "url": r.get("url")},
              f"Session #{sess['id']} started (goal={a.goal}, policy={a.policy}). {r.get('url', '')}\n"
@@ -343,6 +361,7 @@ def _measure_start(c, label=None, notes=None, warmed=False):
         log("WARNING: " + warn)
     c.refresh()
     snap = collector.full_snapshot(c.db, hostinfo.device_for_path(c.datadir()))
+    snap["variables"].update(c.os_settings())
     up = int(float(snap["status"].get("Uptime", 1e9)))
     if up < 300 and not warmed:
         w2 = f"mysqld restarted {up}s ago: caches may still be cold (use `measure run --warmup auto`)"
@@ -379,7 +398,12 @@ def _config_meta(c, variables):
         c.state.set("compiled_defaults", cache)
     defaults = cache.get("defaults") or {}
     out = {}
+    managed = c.state.get("managed", {})
+    originals = c.state.get("os_original") or {}
     for k in variables:
+        if k.startswith("os:"):
+            out[k] = {"source": "OS-AGENT" if k in managed else "OS", "default": originals.get(k, variables[k]) if k in managed else variables[k]}
+            continue
         m = dict(meta.get(k) or {})
         if "default" not in m and k in defaults:
             m["default"] = defaults[k]
@@ -760,8 +784,10 @@ def _engine_ctx(c, sess):
         with open(path) as f:
             last = json.load(f)
     flavor, vt, ver, _ = mysqldb.flavor_of(c.variables)
+    osf = ostune.facts(c.datadir(), hostinfo.device_for_path(c.datadir()), Applier(c.cfg, c.state, c.db).service)
     return {"goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
-            "variables": c.variables, "summary": last.get("summary"), "inputs": last.get("inputs"),
+            "os_tuning": c.os_tuning_allowed() and sess.get("os_tuning", True), "os_facts": osf,
+            "variables": c.all_settings(), "summary": last.get("summary"), "inputs": last.get("inputs"),
             "history": sess["runs"], "noise_pct": sess.get("noise_pct"), "noise": sess.get("noise"),
             "managed": {k: v["value"] for k, v in c.state.get("managed", {}).items()}}
 
@@ -1112,6 +1138,7 @@ def main(argv=None):
     s.add_argument("--service-name", dest="service_name")
     s.add_argument("--state-dir", dest="state_dir")
     s.add_argument("--no-restart", action="store_true", help="never restart the database server")
+    s.add_argument("--no-os-tuning", action="store_true", help="never change operating-system settings")
     s.set_defaults(fn=cmd_init)
 
     sp.add_parser("facts", help="hardware and server facts").set_defaults(fn=cmd_facts)
@@ -1134,6 +1161,7 @@ def main(argv=None):
     s.add_argument("--workload", help="description of the workload/benchmark")
     s.add_argument("--notes")
     s.add_argument("--noise-pct", type=float, default=None, help="fixed noise threshold (default: 2%% until calibrated)")
+    s.add_argument("--no-os-tuning", action="store_true", help="do not tune operating-system settings in this session")
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_session)
 
