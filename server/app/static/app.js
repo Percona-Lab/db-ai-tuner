@@ -3,6 +3,7 @@ const $view = document.getElementById("view");
 const C = window.Charts;
 let ME = null, SERVER = location.origin, timers = [];
 
+function kvText(o) { return Object.entries(o || {}).map(([k, v]) => `${k.replace(/_/g, " ")}: ${typeof v === "object" ? JSON.stringify(v) : v}`).join(" · "); }
 function info(text) { return ` <span class="info" tabindex="0" role="note" aria-label="${esc(text)}" data-tip="${esc(text)}">i</span>`; }
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 async function api(path, opts = {}) {
@@ -34,7 +35,7 @@ function verdictBadge(v) {
   const m = { improved: "good", "efficiency-gain": "good", regressed: "bad", "efficiency-loss": "warn", neutral: "plain", reference: "info", repeat: "plain" };
   return v ? `<span class="badge ${m[v] || "plain"}">${esc(v)}</span>` : "";
 }
-function statusBadge(s) { const m = { active: "good", measuring: "info", done: "plain", closed: "plain", abandoned: "warn", aborted: "warn" }; return `<span class="badge ${m[s] || "plain"}">${esc(s)}</span>`; }
+function statusBadge(s, why) { const m = { active: "good", measuring: "info", done: "plain", closed: "plain", abandoned: "warn", aborted: "warn" }; return `<span class="badge ${m[s] || "plain"}"${why ? ` data-tip="${esc(why)}" tabindex="0"` : ""}>${esc(s)}</span>`; }
 function sevBadge(s) { const m = { high: "bad", medium: "warn", low: "plain" }; return `<span class="badge ${m[s] || "plain"}">${esc(s)}</span>`; }
 function riskBadge(r) { const m = { none: "good", low: "good", compat: "warn", observability: "warn", durability: "bad" }; return `<span class="badge ${m[r] || "plain"}">risk: ${esc(r)}</span>`; }
 function clearTimers() { timers.forEach(clearInterval); timers = []; }
@@ -325,9 +326,9 @@ async function sessionPage(id) {
   if (!d.runs.length) tb.innerHTML = `<tr><td colspan="15" class="muted">No runs yet: <code>tuning-agent measure start</code> … <code>measure stop</code>.</td></tr>`;
   d.runs.forEach(r => {
     const sm = r.summary || {};
-    const ch = r.seq === 1 ? `<a href="#/run/${r.id}">starting configuration</a>` : (r.changes || []).map(c => `<span class="mono">${esc(c.variable)}</span>=${esc(val(c.variable, c.new))}`).join(", ");
+    const ch = r.status === "aborted" ? `<span class="muted">${esc(r.abort_reason || "aborted")}</span>` : r.seq === 1 ? `<a href="#/run/${r.id}">starting configuration</a>` : (r.changes || []).map(c => `<span class="mono">${esc(c.variable)}</span>=${esc(val(c.variable, c.new))}`).join(", ");
     const tr = document.createElement("tr"); tr.className = "click"; tr.onclick = () => location.hash = "#/run/" + r.id;
-    tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${tradeBadge(r.tradeoffs)}</td><td>${statusBadge(r.status)}</td><td style="max-width:320px">${ch || '<span class="muted">none</span>'}</td>
+    tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${tradeBadge(r.tradeoffs)}</td><td>${statusBadge(r.status, r.abort_reason)}</td><td style="max-width:320px">${ch || '<span class="muted">none</span>'}</td>
      <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaCls(r.delta_pct)}">${pct(r.delta_pct)}</td><td class="num ${deltaCls(r.delta_vs_first_pct)}">${pct(r.delta_vs_first_pct)}</td><td>${verdictBadge(r.verdict)}${(r.evaluation || {}).drift ? ' <span class="badge warn">drift</span>' : ""}</td>
      <td class="num ${deltaCls((r.evaluation || {}).goal_delta_pct)}" title="vs mean of runs ${esc(((r.evaluation || {}).parent_runs || []).join(", "))}">${pct((r.evaluation || {}).goal_delta_pct)}</td>
      <td class="num">${num(sm.tps)}</td><td class="num">${num(sm.avg_latency_ms)}</td><td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td><td class="num">${num(sm.cpu_busy)}</td><td>${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}</td>`;
@@ -398,7 +399,7 @@ function renderRecs(el, rec, runs) {
   const run = runs && runs.find(r => r.id === rec.run_id);
   let h = `<div class="muted" style="margin-bottom:6px">Generated ${fmtTime(rec.created)}${run ? ` from run #${run.seq} <a href="#/run/${run.id}">${esc(run.label)}</a>` : " without a measured run"} · goal ${esc(rec.goal)} · policy ${esc(rec.policy)}${rec.next ? ` · suggested next: <code>${esc(rec.next)}</code>` : ""}</div>`;
   (rec.diagnosis || []).forEach(dg => { h += `<div class="diag">${sevBadge(dg.severity)} <b>${esc(dg.type)}</b> — ${esc(dg.text)}</div>`; });
-  if (rec.workload && rec.workload.type) h += `<div class="diag"><span class="badge info">workload</span> <b>${esc(rec.workload.type)}</b> <span class="mono muted" style="font-size:11.5px">${esc(JSON.stringify(rec.workload.evidence || {}))}</span>${rec.phase ? ` · phase: <b>${esc(rec.phase)}</b>` : ""}</div>`;
+  if (rec.workload && rec.workload.type) h += `<div class="diag"><span class="badge info">workload</span> <b>${esc(rec.workload.type)}</b>${info(kvText(rec.workload.evidence))}${rec.phase ? ` · phase: <b>${esc(rec.phase)}</b>` : ""}</div>`;
   const items = rec.items || [];
   const safe = items.filter(i => (i.safety || "safe") !== "trade-off"), trade = items.filter(i => i.safety === "trade-off");
   const section = (title, list, note) => list.length ? `<h3>${title}${note ? info(note) : ""}</h3>` + list.map(recItem).join("") : "";
@@ -432,6 +433,7 @@ async function runPage(id, tab) {
    <label style="margin:0">Compare with</label><select id="vs" style="width:auto"><option value="">previous run</option>${r.runs.filter(x => x.id !== r.id).map(x => `<option value="${x.id}" ${String(x.id) === vs ? "selected" : ""}>#${x.seq} ${esc(x.label)}</option>`).join("")}</select></div>
   <p class="sub">${fmtTime(r.started)} – ${r.ended ? fmtTime(r.ended) : "measuring…"} (${dur(sm.duration_s)}) · goal ${goalName(s.goal)} = <b>${num(r.goal_value)} ${goalUnit(s.goal, s)}</b>${r.goal_source ? ` <span class="muted">(${esc(r.goal_source)})</span>` : ""}
    ${r.delta_pct != null ? ` · <span class="${deltaCls(r.delta_pct)}">${pct(r.delta_pct)}</span> vs previous, <span class="${deltaCls(r.delta_vs_first_pct)}">${pct(r.delta_vs_first_pct)}</span> vs first` : ""}${prev ? ` · compared with run #${prev.seq} ${esc(prev.label)}` : ""}</p>
+  ${r.status === "aborted" ? `<div class="note" style="margin-bottom:12px"><span class="badge warn">aborted</span> ${esc(r.abort_reason || "no reason recorded")}. Its changes were handed to the next run.</div>` : ""}
   ${r.notes ? `<div class="note" style="margin-bottom:12px">${esc(r.notes)}</div>` : ""}
   <div class="tiles">${tile("TPS", sm.tps, "/s", ps.tps)}${tile("QPS", sm.qps, "/s", ps.qps)}${tile("Avg statement latency", sm.avg_latency_ms, "ms", ps.avg_latency_ms, true)}${tile("p95 statement latency", sm.p95_latency_ms, "ms", ps.p95_latency_ms, true)}
    ${tile("CPU busy (host)", sm.cpu_busy, "%", ps.cpu_busy, true)}${tile("mysqld CPU", sm.mysqld_cpu_pct, "% of host", ps.mysqld_cpu_pct, true)}${tile("IO wait", sm.cpu_iowait, "%", ps.cpu_iowait, true)}${tile("BP hit ratio", sm.bp_hit_pct, "%", ps.bp_hit_pct)}${tile("Disk IOPS", (sm.disk_r_iops || 0) + (sm.disk_w_iops || 0), "/s", ps.disk_r_iops != null ? (ps.disk_r_iops || 0) + (ps.disk_w_iops || 0) : null, true)}
@@ -502,7 +504,7 @@ function renderDiff(el, r) {
 function renderInputs(el, r) {
   const inp = r.inputs || {};
   let h = "";
-  if (inp.workload && inp.workload.type) h += `<h3>Workload</h3><div class="diag"><b>${esc(inp.workload.type)}</b> <span class="mono muted" style="font-size:11.5px">${esc(JSON.stringify(inp.workload.evidence || {}))}</span></div>`;
+  if (inp.workload && inp.workload.type) h += `<h3>Workload</h3><div class="diag"><b>${esc(inp.workload.type)}</b>${info(kvText(inp.workload.evidence))}</div>`;
   if (inp.bench) {
     const b = inp.bench;
     h += `<h3>Benchmark: ${esc(b.name)}</h3><div class="kv"><div>Run command</div><div class="mono">${esc(b.run)}</div>${b.reset ? `<div>Reset</div><div class="mono">${esc(b.reset)}</div>` : ""}<div>Warm-up / measured</div><div>${esc(b.warmup)} s / ${b.duration ? esc(b.duration) + " s" : "until finished"}</div><div>Exit code</div><div>${esc(b.exit_code)}</div>

@@ -60,6 +60,7 @@ MIGRATIONS = [
     ("recommendations", "workload", "TEXT"),
     ("recommendations", "phase", "TEXT"),
     ("tsessions", "goal_metric", "TEXT"),
+    ("runs", "abort_reason", "TEXT"),
 ]
 
 

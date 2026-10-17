@@ -438,8 +438,12 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     samples = SampleStore(c.state.dir).window(a_snap["t"], b_snap["t"])
     restarted = int(float(b_snap["status"].get("Uptime", 0))) < (b_snap["t"] - a_snap["t"])
     if restarted:
-        raise Fail("the server restarted during the measurement window; counters are not comparable. "
-                   "Run `tuning-agent measure abort` and measure again.")
+        why = "mysqld restarted during the measurement window: counters are not comparable"
+        c.client.post(f"/runs/{m['run_id']}/abort", {"reason": why})
+        c.state.data["pending_changes"] = (m.get("changes") or []) + (c.state.get("pending_changes") or [])
+        c.state.data["measurement"] = None
+        c.state.save()
+        raise Fail(why + " (run aborted; measure again)")
     summary, inputs = collector.analyze_window(a_snap, b_snap, samples)
     if extra_inputs:
         inputs.update(extra_inputs)
@@ -593,12 +597,13 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
                 time.sleep(2)
         b_snap = _end_snapshot(c)
         rc = r.wait(max(10, prof.timeout - (time.time() - r.t0)))
-    except BaseException:
+    except BaseException as exc:
         r.kill()
         if c.state.get("measurement"):
             m0 = c.state["measurement"]
+            why = "interrupted (Ctrl-C / SIGTERM)" if isinstance(exc, KeyboardInterrupt) else f"agent error: {type(exc).__name__}: {exc}"
             try:
-                c.client.post(f"/runs/{m0['run_id']}/abort", {})
+                c.client.post(f"/runs/{m0['run_id']}/abort", {"reason": why[:900]})
             except Exception:
                 pass
             # the changes were not measured: hand them back to the next run
@@ -639,7 +644,7 @@ def cmd_measure(a):
         m = c.state.get("measurement")
         if not m:
             raise Fail("no measurement in progress")
-        c.client.post(f"/runs/{m['run_id']}/abort", {})
+        c.client.post(f"/runs/{m['run_id']}/abort", {"reason": "aborted with `tuning-agent measure abort`" + (f": {a.notes}" if a.notes else "")})
         c.state.data["pending_changes"] = m.get("changes", []) + (c.state.get("pending_changes") or [])
         c.state.data["measurement"] = None
         c.state.save()

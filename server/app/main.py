@@ -64,7 +64,7 @@ def env_brief(e):
 
 
 RUN_LIST_FIELDS = ("id", "session_id", "seq", "label", "notes", "status", "started", "ended", "goal_value", "goal_source",
-                   "delta_pct", "delta_vs_first_pct", "verdict")
+                   "delta_pct", "delta_vs_first_pct", "verdict", "abort_reason")
 
 
 def run_brief(r):
@@ -494,9 +494,12 @@ def agent_run_evaluation(rid: int, body: dict = Body(...), key=Depends(auth.agen
 
 
 @app.post("/api/v1/agent/runs/{rid}/abort")
-def agent_run_abort(rid: int, key=Depends(auth.agent_key)):
-    agent_run(rid, key)
-    store.ex("UPDATE runs SET status='aborted', ended=? WHERE id=?", (now(), rid))
+def agent_run_abort(rid: int, body: dict = Body(default={}), key=Depends(auth.agent_key)):
+    r = agent_run(rid, key)
+    reason = (body.get("reason") or "aborted (no reason reported by this agent version)")[:1000]
+    store.ex("UPDATE runs SET status='aborted', ended=?, abort_reason=? WHERE id=?", (now(), reason, rid))
+    store.ex("INSERT INTO events(env_id, session_id, ts, type, message) VALUES (?,?,?,?,?)",
+             (r["env_id"], r["session_id"], now(), "measure_abort", f"run {r['seq']} aborted: {reason[:300]}"))
     return {"ok": True}
 
 

@@ -117,3 +117,4 @@ details summary { cursor: pointer; color: var(--ink-2); margin: 6px 0; }
 }
 .info { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--axis); color: var(--muted); font: italic 600 10px/1 Georgia, serif; cursor: help; vertical-align: 2px; margin-left: 4px; user-select: none; }
 .info:hover, .info:focus { color: var(--accent); border-color: var(--accent); outline: none; }
+.diag .mono, .kv .mono { overflow-wrap: anywhere; }
