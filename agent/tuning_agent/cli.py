@@ -431,6 +431,7 @@ def _measure_stop(c, external=None, goal_value=None, notes=None):
     sess["last_inputs_path"] = os.path.join(c.state.dir, f"run{run['seq']}_inputs.json")
     with open(sess["last_inputs_path"], "w") as f:
         json.dump({"summary": summary, "inputs": inputs, "variables": b_snap["variables"], "diagnosis": diagnosis}, f, default=str)
+    sess["last_recommendation"] = None  # based on an older run
     c.state.data["session"] = sess
     c.state.data["measurement"] = None
     c.state.save()
@@ -532,7 +533,9 @@ def cmd_apply(a):
     if a.rec or a.next:
         last = (sess or {}).get("last_recommendation")
         if not last:
-            raise Fail("no recommendation to apply: run `tuning-agent recommend` first")
+            raise Fail("no current recommendation: run `tuning-agent recommend` after the latest measured run")
+        if last.get("applied") and a.next:
+            raise Fail(f"the suggested next step ({last.get('next')}) was already applied: measure, then run `tuning-agent recommend` again")
         ids = list(a.rec or [])
         if a.next:
             if not last.get("next"):
@@ -555,6 +558,9 @@ def cmd_apply(a):
     if not changes:
         raise Fail("nothing to apply: use --rec ID, --next, --set var=value or --unset var")
     res = _apply_and_record(c, changes, "apply", restart=False if a.no_restart else None)
+    if (a.rec or a.next) and sess and sess.get("last_recommendation") and not res.get("rolled_back"):
+        sess["last_recommendation"]["applied"] = True
+        c.state.set("session", sess)
     emit({"ok": not res.get("rolled_back") and not res.get("errors"), "result": res}, "Applied:\n" + _print_apply(res))
     if res.get("rolled_back"):
         raise Fail("apply failed and was rolled back")
@@ -699,6 +705,10 @@ def main(argv=None):
     p.add_argument("--json", action="store_true", help="machine-readable output")
     p.add_argument("--version", action="version", version=__version__)
     sp = p.add_subparsers(dest="cmd", required=True)
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="machine-readable output")
+    _add = sp.add_parser
+    sp.add_parser = lambda *x, **kw: _add(*x, parents=[common], **kw)
 
     s = sp.add_parser("init", help="configure the agent and register this environment")
     s.add_argument("--server")
