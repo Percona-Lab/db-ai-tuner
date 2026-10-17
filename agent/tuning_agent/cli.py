@@ -596,10 +596,13 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     except BaseException:
         r.kill()
         if c.state.get("measurement"):
+            m0 = c.state["measurement"]
             try:
-                c.client.post(f"/runs/{c.state['measurement']['run_id']}/abort", {})
+                c.client.post(f"/runs/{m0['run_id']}/abort", {})
             except Exception:
                 pass
+            # the changes were not measured: hand them back to the next run
+            c.state.data["pending_changes"] = (m0.get("changes") or []) + (c.state.get("pending_changes") or [])
             c.state.data["measurement"] = None
             c.state.save()
         raise
