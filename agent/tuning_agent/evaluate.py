@@ -117,6 +117,23 @@ def improvement(goal, new, old):
     return round(100.0 * ((old - new) if goal == "latency" else (new - old)) / abs(old), 2)
 
 
+CPU_METRICS = ("mysqld_cpu_ms_per_trx", "host_cpu_ms_per_trx")
+IO_METRICS = ("disk_ios_per_trx", "disk_kb_per_trx")
+
+
+def relevant_resources(*summaries):
+    """Efficiency only counts for resources that are actually under load in the compared runs."""
+    cpu = io = False
+    for s in summaries:
+        s = s or {}
+        if (s.get("cpu_busy") or 0) >= 50 or (s.get("psi_cpu_some") or 0) >= 10:
+            cpu = True
+        psi_io = s.get("mysqld_psi_io_some") if s.get("mysqld_psi_io_some") is not None else s.get("psi_io_some")
+        if (psi_io or 0) >= 10 or (s.get("disk_util") or 0) >= 60 or (s.get("cpu_iowait") or 0) >= 10:
+            io = True
+    return {"cpu": cpu, "io": io}
+
+
 def verdict(run, history, goal, noise):
     """run: the new run dict (managed, goal_value, summary); history: earlier runs of the session.
     noise: session noise dict (calibration) or None."""
@@ -139,6 +156,9 @@ def verdict(run, history, goal, noise):
     details = {"parent_runs": pm["seqs"], "parent_goal_mean": round(pm["goal"], 4), "goal_delta_pct": d_goal,
                "goal_noise_pct": goal_noise, "calibrated": bool(noise and noise.get("runs")), "efficiency": {}}
     s = run.get("summary") or {}
+    parent_runs = [r for r in history if config_key(r.get("managed")) == parent]
+    rel = relevant_resources(s, *[r.get("summary") for r in parent_runs])
+    details["relevant"] = rel
     better, worse = [], []
     for k, label in EFFICIENCY.items():
         if s.get(k) is None or not pm.get(k):
@@ -146,7 +166,9 @@ def verdict(run, history, goal, noise):
         ch = round(100.0 * (pm[k] - s[k]) / pm[k], 2)  # positive = less work per transaction
         thr = ((noise or {}).get("efficiency", {}).get(k) or {}).get("noise_pct") or max(MIN_EFF_NOISE, 2 * goal_noise)
         details["efficiency"][k] = {"label": label, "parent": round(pm[k], 4), "now": s[k], "improvement_pct": ch, "noise_pct": thr}
-        if k in KEY_EFFICIENCY:
+        relevant = (k in CPU_METRICS and rel["cpu"]) or (k in IO_METRICS and rel["io"])
+        details["efficiency"][k]["counts"] = relevant
+        if k in KEY_EFFICIENCY and relevant:
             if ch > thr:
                 better.append(label)
             elif ch < -thr:

@@ -620,9 +620,24 @@ def cmd_apply(a):
     if (a.rec or a.next) and sess and sess.get("last_recommendation") and not res.get("rolled_back"):
         sess["last_recommendation"]["applied"] = True
         c.state.set("session", sess)
-    emit({"ok": not res.get("rolled_back") and not res.get("errors"), "result": res}, "Applied:\n" + _print_apply(res))
+    known = _known_config(c, sess)
+    text = "Applied:\n" + _print_apply(res)
+    if known:
+        text += (f"\nThis configuration was already measured in runs {known['runs']} (mean {known['mean']:.4g}); "
+                 "re-measuring is optional — you can go straight to `tuning-agent recommend` / the next experiment.")
+    emit({"ok": not res.get("rolled_back") and not res.get("errors"), "result": res, "known_configuration": known}, text)
     if res.get("rolled_back"):
         raise Fail("apply failed and was rolled back")
+
+
+def _known_config(c, sess):
+    if not sess:
+        return None
+    key = evaluate.config_key({k: v["value"] for k, v in c.state.get("managed", {}).items()})
+    runs = [r for r in sess.get("runs", []) if evaluate.config_key(r.get("managed")) == key and r.get("goal_value") is not None]
+    if not runs:
+        return None
+    return {"runs": [r["seq"] for r in runs], "mean": sum(r["goal_value"] for r in runs) / len(runs)}
 
 
 def _parse_kv_str(items):
