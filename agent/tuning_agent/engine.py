@@ -188,6 +188,7 @@ def recommend(ctx):
     rates = inp.get("status_rates", {})
     b = Builder(ctx)
     have_run = bool(s)
+    wtype = (ctx.get("workload") or {}).get("type")
 
     bp = _int(v, "innodb_buffer_pool_size")
     data_bytes = inp.get("data_bytes") or 0
@@ -369,8 +370,6 @@ def recommend(ctx):
               {"redo_mbs": redo_mbs}, impact=1, confidence=1)
 
     # ---------------- workload-specific rules ---------------------------------------
-    wl = ctx.get("workload") or {}
-    wtype = wl.get("type")
     conc = max(1.0, s.get("threads_running_avg") or 1)
     if have_run and wtype in ("olap", "mixed"):
         mem_budget = ram * 0.10  # per-query buffers may use up to ~10% of RAM across concurrently running queries
