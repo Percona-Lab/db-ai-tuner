@@ -15,6 +15,15 @@ function fmtTime(t) { if (!t) return "–"; const d = new Date(t * 1000); return
 function ago(t) { if (!t) return "never"; const s = Date.now() / 1000 - t; if (s < 90) return Math.round(s) + "s ago"; if (s < 5400) return Math.round(s / 60) + " min ago"; if (s < 129600) return Math.round(s / 3600) + " h ago"; return Math.round(s / 86400) + " d ago"; }
 function dur(s) { if (s == null) return "–"; s = Math.round(s); if (s < 120) return s + " s"; if (s < 7200) return Math.round(s / 60) + " min"; return (s / 3600).toFixed(1) + " h"; }
 function bytes(n) { if (n == null) return "–"; const u = ["B", "KiB", "MiB", "GiB", "TiB"]; let i = 0; n = +n; while (n >= 1024 && i < 4) { n /= 1024; i++; } return (i ? n.toFixed(1) : n) + " " + u[i]; }
+const SIZE_VAR = /(_size|_capacity|_buffer|max_heap_table|_limit_bytes)$/;
+function val(name, v) {
+  if (v == null) return "";
+  if (SIZE_VAR.test(name) && /^\d+$/.test(String(v)) && +v >= 1048576) {
+    const n = +v, g = n / 1073741824;
+    return String(v) + (g >= 1 ? ` (${+g.toFixed(2)} GiB)` : ` (${+(n / 1048576).toFixed(1)} MiB)`);
+  }
+  return String(v);
+}
 function num(v, d) { return v == null ? "–" : C.fmtNum(+v); }
 function pct(v, sign = true) { if (v == null) return "–"; return (sign && v > 0 ? "+" : "") + (+v).toFixed(1) + "%"; }
 function deltaCls(v) { return v == null ? "" : v > 0 ? "up" : v < 0 ? "down" : ""; }
@@ -219,7 +228,7 @@ async function envPage(id) {
    <div>Platform</div><div>${esc(hw.vendor || "")} · THP ${esc(hw.thp)} · swappiness ${esc(hw.swappiness)}</div></div></div>
    <div class="card"><h3 style="margin-top:0">Database</h3><div class="kv"><div>Server</div><div>${esc(db.version_comment)} ${esc(db.version)}</div>
    <div>Data</div><div>${bytes(db.data_bytes)} in ${db.tables} InnoDB tables</div><div>Datadir</div><div class="mono">${esc(db.datadir)}</div>
-   ${Object.entries(kv).map(([k, v]) => `<div class="mono">${esc(k)}</div><div class="mono">${esc(v)}</div>`).join("")}</div></div></div>
+   ${Object.entries(kv).map(([k, v]) => `<div class="mono">${esc(k)}</div><div class="mono">${esc(val(k, v))}</div>`).join("")}</div></div></div>
   <div class="row"><h2>Live metrics</h2><span class="spacer"></span><select id="range" style="width:auto"><option value="900">15 min</option><option value="3600" selected>1 hour</option><option value="21600">6 hours</option><option value="86400">24 hours</option></select></div>
   <div class="grid g3" id="live"></div>
   <h2>Tuning sessions</h2><div class="card tablewrap"><table><thead><tr><th>Session</th><th>Goal</th><th>Policy</th><th>Status</th><th class="num">Runs</th><th class="num">First run</th><th class="num">Best</th><th class="num">Best gain</th><th>Started</th></tr></thead><tbody id="sess"></tbody></table></div>
@@ -279,7 +288,7 @@ async function sessionPage(id) {
   if (!d.runs.length) tb.innerHTML = `<tr><td colspan="14" class="muted">No runs yet: <code>tuning-agent measure start</code> … <code>measure stop</code>.</td></tr>`;
   d.runs.forEach(r => {
     const sm = r.summary || {};
-    const ch = (r.changes || []).map(c => `<span class="mono">${esc(c.variable)}</span>=${esc(c.new)}`).join(", ");
+    const ch = (r.changes || []).map(c => `<span class="mono">${esc(c.variable)}</span>=${esc(val(c.variable, c.new))}`).join(", ");
     const tr = document.createElement("tr"); tr.className = "click"; tr.onclick = () => location.hash = "#/run/" + r.id;
     tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a></td><td>${statusBadge(r.status)}</td><td style="max-width:320px">${ch || '<span class="muted">none</span>'}</td>
      <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaCls(r.delta_pct)}">${pct(r.delta_pct)}</td><td class="num ${deltaCls(r.delta_vs_first_pct)}">${pct(r.delta_vs_first_pct)}</td><td>${verdictBadge(r.verdict)}</td>
@@ -305,7 +314,7 @@ function renderRecs(el, rec, runs) {
   (rec.items || []).forEach(it => {
     h += `<div class="rec"><div class="h"><b>${it.rank}. ${esc(it.title)}</b><span class="id">${esc(it.id)}</span>${it.kind === "advice" ? '<span class="badge plain">advice only</span>' : it.kind === "revert" ? '<span class="badge warn">revert</span>' : ""}
      ${riskBadge(it.risk)}${it.restart ? '<span class="badge plain">restart</span>' : ""}<span class="badge plain">impact ${it.impact}/3</span><span class="badge plain">confidence ${it.confidence}/3</span>${it.id === rec.next ? '<span class="badge info">next</span>' : ""}</div>
-     ${it.changes.length ? `<div class="mono" style="margin:4px 0">${it.changes.map(c => `${esc(c.variable)}: <span class="diff-old">${esc(c.current)}</span> → <span class="diff-new">${esc(c.proposed)}</span>`).join("<br>")}</div>` : ""}
+     ${it.changes.length ? `<div class="mono" style="margin:4px 0">${it.changes.map(c => `${esc(c.variable)}: <span class="diff-old">${esc(val(c.variable, c.current))}</span> → <span class="diff-new">${esc(c.proposed)}</span>`).join("<br>")}</div>` : ""}
      <div class="reason">${esc(it.rationale)}${it.note ? " <b>" + esc(it.note) + "</b>" : ""}</div>
      ${Object.keys(it.evidence || {}).length ? `<details><summary>Evidence</summary><div class="kv">${Object.entries(it.evidence).map(([k, v]) => `<div class="mono">${esc(k)}</div><div class="mono">${esc(typeof v === "object" ? JSON.stringify(v) : v)}</div>`).join("")}</div></details>` : ""}</div>`;
   });
@@ -372,7 +381,7 @@ function renderDiff(el, r) {
   if (!prev) h += '<p class="muted">This is the first run of the environment: nothing to compare with. The full configuration is in the last tab.</p>';
   else if (!r.diff.length) h += `<p>No configuration differences with run #${prev.seq} <b>${esc(prev.label)}</b>.</p>`;
   else h += `<p class="muted">${r.diff.length} variable(s) differ from run #${prev.seq} ${esc(prev.label)}. Source and reasoning come from the agent; “outside the agent” means the value changed some other way (manual edit, server default after restart, automatic sizing).</p>
-   <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Run #${prev.seq}</th><th>This run</th><th>Source</th><th>Reason</th></tr></thead><tbody>${r.diff.map(d => `<tr><td class="mono">${esc(d.variable)}</td><td class="mono diff-old" style="word-break:break-all">${esc(d.before)}</td><td class="mono diff-new" style="word-break:break-all">${esc(d.after)}</td><td>${esc(d.source)}</td><td class="reason">${esc(d.reason || "")}</td></tr>`).join("")}</tbody></table></div>`;
+   <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Run #${prev.seq}</th><th>This run</th><th>Source</th><th>Reason</th></tr></thead><tbody>${r.diff.map(d => `<tr><td class="mono">${esc(d.variable)}</td><td class="mono diff-old" style="word-break:break-all">${esc(val(d.variable, d.before))}</td><td class="mono diff-new" style="word-break:break-all">${esc(val(d.variable, d.after))}</td><td>${esc(d.source)}</td><td class="reason">${esc(d.reason || "")}</td></tr>`).join("")}</tbody></table></div>`;
   const managed = r.managed || {};
   if (Object.keys(managed).length) h += `<h3>Settings managed by the agent for this run</h3><pre><code>[mysqld]\n${Object.entries(managed).map(([k, v]) => esc(k) + " = " + esc(v)).join("\n")}</code></pre>`;
   el.innerHTML = h;

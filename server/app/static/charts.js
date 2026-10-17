@@ -30,6 +30,12 @@
     if (a >= 1) return v.toFixed(2);
     return v.toFixed(3);
   }
+  function fmtTick(v, ticks) {
+    const step = ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : 1;
+    if (step >= 1 || v === 0) return fmtNum(v);
+    const dec = Math.min(6, Math.max(0, -Math.floor(Math.log10(step)) + (step * Math.pow(10, -Math.floor(Math.log10(step))) % 1 ? 1 : 0)));
+    return v.toFixed(dec);
+  }
   function hhmm(t, withSec) {
     const d = new Date(t * 1000);
     const p = x => String(x).padStart(2, "0");
@@ -84,7 +90,7 @@
     ticks.forEach(v => {
       el("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: v === lo ? "var(--axis)" : "var(--grid)", "stroke-width": 1 }, svg);
       const t = el("text", { x: m.l - 6, y: Y(v) + 4, "text-anchor": "end", "font-size": 11, fill: "var(--muted)" }, svg);
-      t.textContent = fmtNum(v);
+      t.textContent = fmtTick(v, ticks);
     });
     const nx = Math.max(2, Math.min(6, Math.floor((W - m.l) / 90)));
     for (let i = 0; i <= nx; i++) {
@@ -116,7 +122,7 @@
         const v = s.values[k];
         if (v != null) { dots[i].setAttribute("cx", X(ts[k])); dots[i].setAttribute("cy", Y(v)); dots[i].setAttribute("visibility", "visible"); }
         else dots[i].setAttribute("visibility", "hidden");
-        html += `<div><i style="background:${SLOTS[i]}"></i>${s.name}<b>${fmtNum(v)}${opts.unit && opts.unit.length <= 3 ? " " + opts.unit : ""}</b></div>`;
+        html += `<div><i style="background:${SLOTS[i]}"></i>${s.name}<b>${v != null && Math.abs(v) >= 99 && Math.abs(v) <= 100 ? v.toFixed(3) : fmtNum(v)}${opts.unit && opts.unit.length <= 3 ? " " + opts.unit : ""}</b></div>`;
       });
       showTip(html, ev.clientX, ev.clientY);
     });
