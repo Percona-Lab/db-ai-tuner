@@ -146,7 +146,10 @@ class OSApplier:
                 raise RuntimeError("cannot find the data directory mount")
             opt = {"os:mount_noatime": {"ON": "noatime", "OFF": "relatime"},
                    "os:mount_barrier": {"ON": "barrier=1", "OFF": "barrier=0"}}[name][value]
-            r = subprocess.run(["mount", "-o", f"remount,{opt}", m[1]], capture_output=True, text=True)
+            # --options-mode=ignore: do not merge in /etc/fstab options (they are rewritten afterwards by persist())
+            r = subprocess.run(["mount", "--options-mode=ignore", "-o", f"remount,{opt}", m[1]], capture_output=True, text=True)
+            if r.returncode != 0 and "options-mode" in (r.stderr or ""):
+                r = subprocess.run(["mount", "-o", f"remount,{opt}", m[1]], capture_output=True, text=True)
             if r.returncode != 0:
                 raise RuntimeError(f"remount {m[1]} with {opt} failed: {r.stderr.strip()}")
             return False
