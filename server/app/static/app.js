@@ -113,22 +113,24 @@ async function envList() {
     <div class="seg" role="group" aria-label="View"><button data-v="list">List</button><button data-v="cards">Cards</button></div><a class="btn" href="#/connect">Connect another</a></div><div id="envs"></div>`;
   const box = document.getElementById("envs");
   const metrics = e => { const l = (e.latest && e.latest.db) || {}, o = (e.latest && e.latest.os) || {};
-    return { tps: e.online ? num(l.tps) : "–", lat: e.online && l.avg_latency_ms != null ? num(l.avg_latency_ms) + " ms" : "–", cpu: e.online && o.cpu_busy != null ? Math.round(o.cpu_busy) + "%" : "–" }; };
+    const dmb = o.disk_r_mbs != null ? (o.disk_r_mbs || 0) + (o.disk_w_mbs || 0) : null;
+    return { tps: e.online ? num(l.tps) : "–", lat: e.online && l.avg_latency_ms != null ? num(l.avg_latency_ms) + " ms" : "–", cpu: e.online && o.cpu_busy != null ? Math.round(o.cpu_busy) + "%" : "–",
+      disk: e.online && dmb != null ? num(dmb) + " MB/s" : "–", diskTip: e.online && dmb != null ? `read ${num(o.disk_r_mbs)} MB/s · write ${num(o.disk_w_mbs)} MB/s · ${num((o.disk_r_iops || 0) + (o.disk_w_iops || 0))} IOPS` : "" }; };
   const status = e => e.online ? '<span class="badge good">online</span>' : `<span class="badge plain">offline · ${ago(e.last_seen)}</span>`;
   const draw = () => {
     box.parentElement.querySelectorAll(".seg button").forEach(b => b.classList.toggle("on", b.dataset.v === mode));
     if (mode === "list") {
-      box.innerHTML = `<div class="card tablewrap"><table><thead><tr><th>Name</th><th>Status</th><th>Database</th><th>Hardware</th><th class="num">Data</th><th class="num">TPS</th><th class="num">Avg latency</th><th class="num">CPU</th><th>Active session</th><th class="num">Sessions</th></tr></thead><tbody>${envs.map(e => {
+      box.innerHTML = `<div class="card tablewrap"><table><thead><tr><th>Name</th><th>Status</th><th>Database</th><th>Hardware</th><th class="num">Data</th><th class="num">TPS</th><th class="num">Avg latency</th><th class="num">CPU</th><th class="num">Disk</th><th>Active session</th><th class="num">Sessions</th></tr></thead><tbody>${envs.map(e => {
         const m = metrics(e);
         return `<tr class="click" data-href="#/env/${e.id}"><td><a href="#/env/${e.id}"><b>${esc(e.name)}</b></a></td><td>${status(e)}</td><td>${esc(e.db_short || e.db)}</td><td>${e.cpus || "?"} CPU · ${bytes(e.ram_bytes)} · ${e.disk}</td><td class="num">${bytes(e.data_bytes)}</td>
-          <td class="num">${m.tps}</td><td class="num">${m.lat}</td><td class="num">${m.cpu}</td><td>${e.active_session ? `<a href="#/session/${e.active_session.id}">#${e.active_session.id} ${esc(e.active_session.name)}</a>` : '<span class="muted">–</span>'}</td><td class="num">${e.sessions}</td></tr>`; }).join("")}</tbody></table></div>`;
+          <td class="num">${m.tps}</td><td class="num">${m.lat}</td><td class="num">${m.cpu}</td><td class="num"${m.diskTip ? ` data-tip="${m.diskTip}"` : ""}>${m.disk}</td><td>${e.active_session ? `<a href="#/session/${e.active_session.id}">#${e.active_session.id} ${esc(e.active_session.name)}</a>` : '<span class="muted">–</span>'}</td><td class="num">${e.sessions}</td></tr>`; }).join("")}</tbody></table></div>`;
       box.querySelectorAll("tr[data-href]").forEach(tr => tr.onclick = ev => { if (!ev.target.closest("a")) location.hash = tr.dataset.href; });
     } else {
       box.innerHTML = `<div class="grid g3">${envs.map(e => { const m = metrics(e);
         return `<a class="card" href="#/env/${e.id}" style="color:inherit;text-decoration:none"><div class="row"><b style="font-size:15px">${esc(e.name)}</b><span class="spacer"></span>${status(e)}</div>
           <div class="muted" style="margin:4px 0 10px">${esc(e.db_short || e.db)}<br>${e.cpus || "?"} CPUs · ${bytes(e.ram_bytes)} RAM · ${e.disk} · data ${bytes(e.data_bytes)}</div>
           <div class="row" style="gap:18px"><div><div class="muted" style="font-size:12px">TPS</div><b>${m.tps}</b></div><div><div class="muted" style="font-size:12px">Avg latency</div><b>${m.lat}</b></div>
-          <div><div class="muted" style="font-size:12px">CPU busy</div><b>${m.cpu}</b></div><div><div class="muted" style="font-size:12px">Sessions</div><b>${e.sessions}</b></div></div>
+          <div><div class="muted" style="font-size:12px">CPU busy</div><b>${m.cpu}</b></div><div data-tip="${m.diskTip}"><div class="muted" style="font-size:12px">Disk</div><b>${m.disk}</b></div><div><div class="muted" style="font-size:12px">Sessions</div><b>${e.sessions}</b></div></div>
           ${e.active_session ? `<div style="margin-top:10px"><span class="badge info">active: ${esc(e.active_session.name)}</span></div>` : ""}</a>`; }).join("")}</div>`;
     }
   };
