@@ -334,7 +334,7 @@ function chartsGrid(container, m, defs, window_, markers, opts) {
 // derived series: combine sampled series point by point (no extra sampling)
 const ser = (m, g, k) => (m[g] || {})[k] || [];
 const combine = (m, f, ...refs) => (m.ts || []).map((_, i) => { const v = refs.map(([g, k]) => ser(m, g, k)[i]); return v.some(x => x == null) ? null : f(...v); });
-const perTrx = (m, f, ...refs) => combine(m, (tps, ...v) => tps > 0.5 ? f(...v) / tps : null, ["db", "tps"], ...refs);
+const perTrx = (m, f, ...refs) => combine(m, (tps, ...v) => tps >= 5 ? f(...v) / tps : null, ["db", "tps"], ...refs);
 const LIVE_CHARTS = [
   { title: "Throughput", unit: "per s", series: [["db", "tps", "transactions"], ["db", "qps", "queries"]] },
   { title: "Avg statement latency", unit: "ms", series: [["db", "avg_latency_ms", "avg latency"]] },
@@ -454,11 +454,12 @@ const LIVE_DB = [
   { title: "Threads", unit: "", series: [["db", "threads_running", "running"], ["db", "threads_connected", "connected"]], tip: "Running threads above the CPU count usually mean contention or waiting; connected minus running = idle connections." },
   { title: "Wait time by class", unit: "threads waiting", series: [["db", "wait_table_io_s", "table I/O"], ["db", "wait_data_io_s", "data file I/O"], ["db", "wait_redo_io_s", "redo I/O"], ["db", "wait_binlog_io_s", "binlog I/O"], ["db", "wait_sync_s", "mutex / rwlock"], ["db", "wait_table_lock_s", "table locks"], ["db", "wait_metadata_lock_s", "metadata locks"], ["db", "wait_socket_s", "socket"], ["db", "wait_other_file_io_s", "other files"]],
     tip: "performance_schema wait time per second = average number of threads waiting on that class. Table I/O is time in storage-engine row calls (including buffer pool hits). Mutex / rwlock waits are only timed when enabled (tuning-agent diag waits on)." },
-  { title: "Cost per transaction", unit: "", series: [
-      { name: "mysqld CPU ms", fn: m => perTrx(m, c => c * m._cpus * 10, ["os", "mysqld_cpu_pct"]) },
+  { title: "mysqld CPU per transaction", unit: "ms", series: [{ name: "CPU ms / trx", fn: m => perTrx(m, c => c * m._cpus * 10, ["os", "mysqld_cpu_pct"]) }],
+    tip: "Derived from sampled mysqld CPU and transactions/s (periods under 5 trx/s left out). Lower = more efficient; the tuner's efficiency verdicts use it." },
+  { title: "I/O per transaction", unit: "", series: [
       { name: "disk IOs", fn: m => perTrx(m, (r, w) => r + w, ["os", "disk_r_iops"], ["os", "disk_w_iops"]) },
       { name: "redo KiB", fn: m => perTrx(m, r => r * 1024, ["db", "redo_mbs"]) }],
-    tip: "Derived from the sampled series: mysqld CPU time, disk I/O requests and redo written per transaction. Lower = more efficient; this is what the tuner's efficiency verdicts use." },
+    tip: "Disk I/O requests and redo written per transaction (periods under 5 trx/s left out)." },
   { title: "Buffer pool hit ratio", unit: "%", min0: false, series: [["db", "bp_hit_pct", "hit ratio"]] },
   { title: "Buffer pool I/O", unit: "pages/s", series: [["db", "bp_disk_reads", "read from disk"], ["db", "bp_pages_flushed", "flushed"], ["db", "bp_wait_free", "waits for a free page"]],
     tip: "Waits for a free page mean user threads had to flush pages themselves: page cleaners cannot keep up." },
