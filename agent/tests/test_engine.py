@@ -316,6 +316,13 @@ def test_research_rules():
             VARS.pop(k)
 
 
+def test_stable_environment_floor():
+    from tuning_agent import evaluate
+    mk = lambda seq, g: {"seq": seq, "goal_value": g, "summary": {"cpu_steal": 0.02}}
+    assert evaluate.calibrate([mk(1, 148367), mk(2, 148354), mk(3, 148368)])["noise_pct"] == 1.0
+    assert evaluate.calibrate([mk(1, 100), mk(2, 101), mk(3, 99)])["noise_pct"] == 2.5
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)

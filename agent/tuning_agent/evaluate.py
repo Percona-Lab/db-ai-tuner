@@ -34,6 +34,7 @@ KEY_EFFICIENCY = ("mysqld_cpu_ms_per_trx", "host_cpu_ms_per_trx", "disk_ios_per_
 
 DEFAULT_GOAL_NOISE = 2.0
 MIN_GOAL_NOISE = 2.0  # back-to-back calibration runs underestimate longer-term variance on shared VMs
+STABLE_GOAL_NOISE = 1.0  # floor when calibration shows a very stable environment (dedicated CPUs: CV < 0.25%, no steal)
 MIN_EFF_NOISE = 3.0
 NOISE_K = 2.5  # threshold = K x coefficient of variation of single runs
 
@@ -95,6 +96,11 @@ def environment_shift(run_summary, noise):
     return out
 
 
+def _goal_floor(runs, cv):
+    steal = max([(r.get("summary") or {}).get("cpu_steal") or 0 for r in runs] or [0])
+    return STABLE_GOAL_NOISE if len(runs) >= 3 and cv < 0.25 and steal < 0.5 else MIN_GOAL_NOISE
+
+
 def calibrate(runs):
     """Noise thresholds from repeated runs of one configuration."""
     runs = [r for r in runs if r.get("verdict") != "unreliable"] or runs
@@ -106,7 +112,7 @@ def calibrate(runs):
     out = {
         "runs": [r["seq"] for r in runs], "goal_mean": round(m, 4), "goal_cv_pct": round(cv, 2),
         "goal_range_pct": round(100.0 * (max(goal_vals) - min(goal_vals)) / abs(m), 2),
-        "noise_pct": round(max(MIN_GOAL_NOISE, NOISE_K * cv), 2), "k": NOISE_K, "efficiency": {},
+        "noise_pct": round(max(_goal_floor(runs, cv), NOISE_K * cv), 2), "k": NOISE_K, "efficiency": {},
     }
     probe = {}
     for key in PROBE_KEYS:
