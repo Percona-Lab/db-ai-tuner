@@ -656,32 +656,37 @@ def agent_experience(workload: str = None, cpus: int = None, exclude_session: in
         "json_extract(e.facts, '$.hardware.cpus') AS cpus, r.session_id FROM runs r JOIN tsessions s ON s.id=r.session_id "
         "JOIN environments e ON e.id=s.env_id WHERE e.user_id=? AND r.status='done' AND r.verdict IN "
         "('improved','efficiency-gain','neutral','regressed','efficiency-loss')", (key["user_id"],))
-    out = {}
+    out, wide = {}, {}
     for r in rows:
         if exclude_session and r["session_id"] == exclude_session:
             continue
-        if workload and r["wl"] and r["wl"] != workload:
+        similar = not (workload and r["wl"] and r["wl"] != workload) and not (cpus and r["cpus"] and cpu_class(r["cpus"]) != cpu_class(cpus))
+        _experience_add(wide, r)  # every workload and machine size: a weaker prior when similar sessions are few
+        if not similar:
             continue
-        if cpus and r["cpus"] and cpu_class(r["cpus"]) != cpu_class(cpus):
-            continue
-        ids = {c.get("source", "")[4:] for c in (store.uj(r["changes"], []) or []) if str(c.get("source", "")).startswith("rec:")}
-        ids = {i for i in ids if not i.startswith(("revert", "rollback"))}
-        delta = (store.uj(r["evaluation"], {}) or {}).get("goal_delta_pct")
-        for rid in ids:
-            e = out.setdefault(rid, {"n": 0, "wins": 0, "losses": 0, "neutral": 0, "deltas": []})
-            e["n"] += 1
-            if r["verdict"] in ("improved", "efficiency-gain"):
-                e["wins"] += 1
-            elif r["verdict"] in ("regressed", "efficiency-loss"):
-                e["losses"] += 1
-            else:
-                e["neutral"] += 1
-            if delta is not None:
-                e["deltas"].append(delta)
-    for e in out.values():
-        d = e.pop("deltas")
-        e["mean_delta_pct"] = round(sum(d) / len(d), 2) if d else None
-    return {"workload": workload, "cpu_class": cpu_class(cpus) if cpus else None, "experience": out}
+        _experience_add(out, r)
+    for d in (out, wide):
+        for e in d.values():
+            x = e.pop("deltas")
+            e["mean_delta_pct"] = round(sum(x) / len(x), 2) if x else None
+    return {"workload": workload, "cpu_class": cpu_class(cpus) if cpus else None, "experience": out, "experience_all": wide}
+
+
+def _experience_add(out, r):
+    ids = {c.get("source", "")[4:] for c in (store.uj(r["changes"], []) or []) if str(c.get("source", "")).startswith("rec:")}
+    ids = {i for i in ids if not i.startswith(("revert", "rollback"))}
+    delta = (store.uj(r["evaluation"], {}) or {}).get("goal_delta_pct")
+    for rid in ids:
+        e = out.setdefault(rid, {"n": 0, "wins": 0, "losses": 0, "neutral": 0, "deltas": []})
+        e["n"] += 1
+        if r["verdict"] in ("improved", "efficiency-gain"):
+            e["wins"] += 1
+        elif r["verdict"] in ("regressed", "efficiency-loss"):
+            e["losses"] += 1
+        else:
+            e["neutral"] += 1
+        if delta is not None:
+            e["deltas"].append(delta)
 
 
 @app.post("/api/v1/agent/llm/suggest")

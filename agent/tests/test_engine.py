@@ -371,6 +371,20 @@ def test_parent_after_combined_revert_and_experiment():
     assert d["parent_runs"] == [1, 2] and v == "neutral", (v, d.get("parent_runs"), d.get("goal_delta_pct"))
 
 
+def test_stack_small_wins():
+    VARS["innodb_adaptive_hash_index"] = "OFF"; VARS["os:malloc"] = "glibc"
+    try:
+        h = [{"seq": i, "label": "x", "managed": {}, "verdict": "repeat", "goal_value": 100, "changes": []} for i in range(1, 7)]
+        h.append({"seq": 7, "label": "ahi-on", "verdict": "neutral", "managed": {"innodb_adaptive_hash_index": "ON"}, "goal_value": 101.2,
+                  "evaluation": {"goal_delta_pct": 1.2}, "changes": [{"variable": "innodb_adaptive_hash_index", "source": "rec:ahi-on"}]})
+        h.append({"seq": 8, "label": "os-jemalloc", "verdict": "neutral", "managed": {"os:malloc": "jemalloc"}, "goal_value": 100.6,
+                  "evaluation": {"goal_delta_pct": 0.6}, "changes": [{"variable": "os:malloc", "source": "rec:os-jemalloc"}]})
+        items = engine.stack_small_wins([], {"variables": dict(VARS), "history": h, "noise_pct": 1.5, "goal": "tps"})
+        assert items and items[0]["id"] == "stack-small-wins" and {c["variable"] for c in items[0]["changes"]} == {"innodb_adaptive_hash_index", "os:malloc"}
+    finally:
+        VARS["innodb_adaptive_hash_index"] = "OFF"; VARS.pop("os:malloc", None)
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)

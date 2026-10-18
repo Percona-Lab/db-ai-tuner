@@ -1019,6 +1019,45 @@ def accepted_practices(history):
     return {v for r in history if is_practice_run(r) and r.get("verdict") not in ("regressed", "efficiency-loss") for v in _practice_vars(r)}
 
 
+def stack_small_wins(items, ctx):
+    """Each experiment alone may stay within the noise threshold although it helps a little. Collect experiments that
+    were reverted as 'neutral' but measured above the parent by at least a third of the threshold (and did not cost
+    efficiency), and propose them together once: small gains add up, and the combination is measured like any other
+    experiment."""
+    hist = ctx.get("history") or []
+    v = ctx["variables"]
+    noise = float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0)
+    if len(hist) < 8 or any(str(r.get("label") or "").startswith("stack-small-wins") for r in hist):
+        return items
+    lower = ctx.get("goal") == "latency"
+    cand = {}
+    for r in hist:
+        ev = r.get("evaluation") or {}
+        d = ev.get("goal_delta_pct")
+        if r.get("verdict") != "neutral" or d is None or d < max(0.3, noise / 3) or ev.get("efficiency_worse"):
+            continue
+        own = [c for c in r.get("changes") or [] if str(c.get("source") or "").startswith(("rec:", "exp:")) and not c["variable"].startswith("client:")]
+        for c in own:
+            val = (r.get("managed") or {}).get(c["variable"])
+            if val is None or normalize(c["variable"], v.get(c["variable"])) == normalize(c["variable"], val):
+                continue
+            if c["variable"] not in cand or d > cand[c["variable"]][1]:
+                cand[c["variable"]] = (val, d, r["seq"])
+    if len(cand) < 2:
+        return items
+    top = sorted(cand.items(), key=lambda x: -x[1][1])[:5]
+    ch = [{"variable": k, "current": v.get(k), "proposed": val} for k, (val, d, seq) in top if k in v]
+    trade = [t for t in (tradeoff_of(c["variable"], c["proposed"]) for c in ch) if t]
+    if len(ch) < 2 or trade:
+        return items
+    return items + [{"id": "stack-small-wins", "title": "Combine experiments that helped a little", "kind": "config", "changes": ch,
+                     "rationale": "These changes each measured above their parent but within the ±%.1f%% noise threshold, so each was "
+                                  "reverted alone: %s. Small gains add up; the combination is measured once like any other experiment."
+                                  % (noise, ", ".join(f"{k}={val} (+{d:.1f}% in run #{seq})" for k, (val, d, seq) in top)),
+                     "safety": "safe", "tradeoffs": [], "evidence": {k: f"+{d:.2f}% run #{seq}" for k, (val, d, seq) in top},
+                     "impact": 2, "confidence": 2, "risk": "low", "restart": True, "goals": ["tps", "latency"]}]
+
+
 def practice_bundle(items, history):
     """Replace individual best-practice items with one bundle. A bundle that regresses is split in halves (bisection)
     until the offending setting is found; that setting is then excluded, the others are kept."""
@@ -1169,6 +1208,7 @@ def run_engine(ctx):
     items = recommend(ctx)
     items = apply_history(items, ctx.get("history") or [])
     items = practice_bundle(items, ctx.get("history") or [])
+    items = stack_small_wins(items, ctx)
     items = items + per_query_hints(ctx.get("history") or [], ctx["variables"])
     items = revert_suggestions(ctx.get("history") or [], ctx["variables"], ctx.get("goal", "tps"),
                                float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0), ctx.get("managed")) + items
@@ -1199,9 +1239,12 @@ def run_engine(ctx):
             sc += 2 * it["relevance"] if it["relevance"] else (-3 if has_major else 0)
         if it.get("experience"):
             e = it["experience"]
-            sc += round(3 * (e.get("wins", 0) - e.get("losses", 0)) / max(e["n"], 1) * min(e["n"], 3) / 3, 2)
+            w = 0.5 if e.get("scope") else 1.0  # evidence from other workloads / machine sizes counts half
+            sc += round(w * 3 * (e.get("wins", 0) - e.get("losses", 0)) / max(e["n"], 1) * min(e["n"], 3) / 3, 2)
             if e.get("losses", 0) >= 2 and not e.get("wins"):
                 it["confidence"] = min(it["confidence"], 1)
+            if e.get("n", 0) >= 5 and e.get("losses", 0) >= 0.7 * e["n"] and not e.get("wins"):
+                sc -= 4  # consistently harmful everywhere so far (e.g. the thread pool on these benchmarks): try it last
         it["score"] = 100 if it.get("priority") else sc
     items.sort(key=lambda i: (i["safety"] == "trade-off" and i["kind"] != "revert", -i["score"]))
     for n, it in enumerate(items, 1):

@@ -1055,7 +1055,11 @@ def _engine_ctx(c, sess):
         from .engine import classify_workload
         wl = classify_workload(last.get("summary"), last.get("inputs")).get("type") if last.get("summary") else None
         q = f"/experience?cpus={os.cpu_count()}&exclude_session={sess['id']}" + (f"&workload={wl}" if wl else "")
-        experience = c.client.get(q).get("experience", {})
+        ex = c.client.get(q)
+        experience = ex.get("experience", {})
+        for rid, e in (ex.get("experience_all") or {}).items():  # thin same-class evidence: fall back to all sessions
+            if e.get("n", 0) >= 3 and (experience.get(rid) or {}).get("n", 0) < 2:
+                experience[rid] = dict(e, scope="all workloads / machine sizes")
     except Exception as e:  # experience is a hint; never block a recommendation on it
         log(f"note: no experience data ({e})")
     return {"diagnosis_basis_run": basis, "goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
@@ -1429,6 +1433,14 @@ def cmd_autotune(a):
             log(f"== {nxt} failed before; stopping")
             break
         item = next((i for i in res["items"] if i["id"] == nxt), None)
+        # benchmark policy: keep the last 30% of the budget for trade-offs, otherwise safe experiments use it all up
+        if a.tradeoffs and measured >= int(a.max_runs * 0.7) and (not item or item.get("safety") == "safe" and item["kind"] != "revert"):
+            tried = {r["label"].split(" ")[0] for r in sess["runs"]}
+            trade = next((i for i in res["items"] if i.get("safety") == "trade-off" and i["kind"] == "config" and i.get("confidence", 0) > 0
+                          and i["id"] not in tried and i["id"] not in (sess.get("failed_recs") or [])), None)
+            if trade:
+                log(f"== trade-off budget: {measured} of {a.max_runs} runs used, switching to trade-off experiments")
+                item, nxt = trade, trade["id"]
         if not item:
             log("== no further experiments suggested")
             break
@@ -1495,6 +1507,12 @@ def cmd_autotune(a):
             continue
         measured += 1
         log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
+        if run["verdict"] == "improved" and measured < a.max_runs:
+            # a single run above the threshold can be luck (winner's curse): measure it again before building on it
+            log("   improvement: measuring the same configuration again to confirm it")
+            run, _ = _bench_run(c, prof, f"{nxt} (confirm)")
+            measured += 1
+            log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
         if run["verdict"] == "unreliable":
             log("   hypervisor steal made the run unreliable: measuring the same configuration again")
             run, _ = _bench_run(c, prof, f"{nxt} (re-measure: CPU steal)")
