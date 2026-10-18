@@ -430,6 +430,7 @@ def cmd_session(a):
         sess = c.session()
         if c.state.get("measurement"):
             raise Fail("a measurement is in progress; stop it first")
+        _remember_noise(c, sess)
         c.client.post(f"/sessions/{sess['id']}/close", {"summary": {"best": sess.get("best"), "runs": len(sess.get("runs", []))}})
         hist = c.state.get("sessions_done") or []
         hist.append({k: sess.get(k) for k in ("id", "name", "goal", "best")})
@@ -618,6 +619,7 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     first = runs[0] if runs else None
     d_prev = _improvement(sess["goal"], gv, prev.get("goal_value")) if prev else None
     d_first = _improvement(sess["goal"], gv, first.get("goal_value")) if first else None
+    _refresh_noise(c, sess, runs)
     verdict, evaluation = evaluate.verdict({"managed": m["managed"], "goal_value": gv, "summary": summary}, runs, sess["goal"],
         sess.get("noise") or ({"noise_pct": sess["noise_pct"]} if sess.get("noise_pct") else None))
     if evaluation.get("parent_runs"):
@@ -900,7 +902,54 @@ def cmd_measure(a):
         emit({"ok": True, "run": run, "diagnosis": diag, "interrupted": interrupted}, _fmt_run(run, diag, c.session()["goal"]))
 
 
+def _noise_key(sess):
+    return str(sess.get("bench_name") or sess.get("workload") or sess.get("name") or "")[:120]
+
+
+def _prior_cv(c, sess):
+    """Long-term goal CV measured by earlier sessions of the same benchmark on this environment (median of the last 5)."""
+    hist = (c.state.get("noise_history") or {}).get(_noise_key(sess)) or []
+    vals = sorted(h["cv"] for h in hist[-5:])
+    return vals[len(vals) // 2] if vals else None
+
+
+def _refresh_noise(c, sess, runs):
+    """Re-estimate the goal noise threshold from all repeats so far (variance is environment and workload specific)."""
+    if not sess.get("noise"):
+        return
+    est = evaluate.noise_estimate(runs, _prior_cv(c, sess))
+    if not est:
+        return
+    old = sess["noise"].get("noise_pct")
+    sess["noise"]["noise_pct"] = est["noise_pct"]
+    sess["noise"]["estimate"] = est
+    sess["noise_pct"] = est["noise_pct"]
+    c.state.set("session", sess)
+    if old != est["noise_pct"]:
+        log(f"   noise threshold ±{old}% -> ±{est['noise_pct']}% (pooled CV {est['pooled_cv_pct']}%, {est['basis']})")
+        try:
+            c.client.post(f"/sessions/{sess['id']}/update", {"noise_pct": est["noise_pct"], "calibration": sess["noise"]})
+        except Exception:
+            pass
+
+
+def _remember_noise(c, sess):
+    """At session end: keep this environment + benchmark's long-term variance as the prior for the next session."""
+    est = (sess.get("noise") or {}).get("estimate") or {}
+    if est.get("long_term_dof"):
+        h = c.state.data.setdefault("noise_history", {}).setdefault(_noise_key(sess), [])
+        h.append({"cv": est["pooled_cv_pct"], "dof": est["dof"], "session": sess.get("id"), "t": time.time()})
+        del h[:-10]
+        c.state.save()
+
+
 def _set_calibration(c, sess, cal):
+    est = evaluate.noise_estimate([{"seq": i, "goal_value": v, "managed": {}} for i, v in enumerate(cal.get("_goal_values") or [])],
+                                  _prior_cv(c, sess)) if cal.get("_goal_values") else None
+    if est:
+        cal["noise_pct"] = est["noise_pct"]
+        cal["estimate"] = est
+    cal.pop("_goal_values", None)
     sess["noise"] = cal
     sess["noise_pct"] = cal["noise_pct"]
     c.state.set("session", sess)
@@ -910,7 +959,7 @@ def _set_calibration(c, sess, cal):
 
 def _fmt_cal(cal):
     lines = [f"Calibration from runs {cal['runs']}: goal mean {cal['goal_mean']:.4g}, CV {cal['goal_cv_pct']}%, range {cal['goal_range_pct']}%",
-             f"  goal noise threshold: ±{cal['noise_pct']}% ({cal['k']} x CV, min {evaluate.MIN_GOAL_NOISE}%)"]
+             f"  goal noise threshold: ±{cal['noise_pct']}% ({(cal.get('estimate') or {}).get('basis') or str(cal['k']) + ' x CV'})"]
     for k, e in cal["efficiency"].items():
         lines.append(f"  {evaluate.EFFICIENCY[k]}: mean {e['mean']:.4g}, CV {e['cv_pct']}% -> threshold ±{e['noise_pct']}%")
     return "\n".join(lines)
@@ -1321,6 +1370,9 @@ def cmd_autotune(a):
     c = Ctx()
     sess = c.session()
     prof = bench.Profile(a.bench)
+    if sess.get("bench_name") != prof.name:  # noise history is kept per environment + benchmark
+        sess["bench_name"] = prof.name
+        c.state.set("session", sess)
     if a.tradeoffs and sess["policy"] != "benchmark":
         raise Fail("--tradeoffs needs a session with --policy benchmark")
     if "filesystem" in (sess.get("scope") or []) and c.all_settings().get("os:datadir_fs") == "rootfs":

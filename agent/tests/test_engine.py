@@ -316,11 +316,21 @@ def test_research_rules():
             VARS.pop(k)
 
 
-def test_stable_environment_floor():
+def test_noise_is_measured_per_environment():
     from tuning_agent import evaluate
-    mk = lambda seq, g: {"seq": seq, "goal_value": g, "summary": {"cpu_steal": 0.02}}
-    assert evaluate.calibrate([mk(1, 148367), mk(2, 148354), mk(3, 148368)])["noise_pct"] == 1.0
-    assert evaluate.calibrate([mk(1, 100), mk(2, 101), mk(3, 99)])["noise_pct"] == 2.5
+    mk = lambda seq, g, cfg="a": {"seq": seq, "goal_value": g, "managed": {"x": cfg}}
+    # back-to-back calibration only: conservative until there is long-term evidence or history
+    est = evaluate.noise_estimate([mk(1, 148367), mk(2, 148354), mk(3, 148368)])
+    assert est["noise_pct"] == evaluate.MIN_GOAL_NOISE and not est["long_term_dof"]
+    # a very stable earlier session on this environment + benchmark is enough to trust it
+    assert evaluate.noise_estimate([mk(1, 148367), mk(2, 148354), mk(3, 148368)], prior_cv=0.05)["noise_pct"] == evaluate.RESOLUTION_NOISE
+    # a time-separated re-check that drifted raises the threshold
+    runs = [mk(1, 100), mk(2, 100.5), mk(3, 99.8), mk(4, 105, "b"), mk(5, 104, "c"), mk(6, 94)]
+    est = evaluate.noise_estimate(runs)
+    assert est["long_term_dof"] > 0 and est["noise_pct"] > 5, est
+    # stable re-checks over time: threshold follows the measured variance
+    runs = [mk(1, 1000), mk(2, 1001), mk(3, 999), mk(4, 1050, "b"), mk(5, 1000.5)]
+    assert evaluate.noise_estimate(runs)["noise_pct"] < 1
 
 
 def test_no_run_yet():

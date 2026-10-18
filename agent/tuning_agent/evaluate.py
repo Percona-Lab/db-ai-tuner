@@ -33,8 +33,8 @@ EFFICIENCY = {
 KEY_EFFICIENCY = ("mysqld_cpu_ms_per_trx", "host_cpu_ms_per_trx", "disk_ios_per_trx", "disk_kb_per_trx")
 
 DEFAULT_GOAL_NOISE = 2.0
-MIN_GOAL_NOISE = 2.0  # back-to-back calibration runs underestimate longer-term variance on shared VMs
-STABLE_GOAL_NOISE = 1.0  # floor when calibration shows a very stable environment (dedicated CPUs: CV < 0.25%, no steal)
+MIN_GOAL_NOISE = 2.0  # used only until the session (or this environment's history) has measured long-term variance
+RESOLUTION_NOISE = 0.5  # below this a difference is not worth acting on, however stable the environment
 MIN_EFF_NOISE = 3.0
 NOISE_K = 2.5  # threshold = K x coefficient of variation of single runs
 
@@ -96,9 +96,45 @@ def environment_shift(run_summary, noise):
     return out
 
 
-def _goal_floor(runs, cv):
-    steal = max([(r.get("summary") or {}).get("cpu_steal") or 0 for r in runs] or [0])
-    return STABLE_GOAL_NOISE if len(runs) >= 3 and cv < 0.25 and steal < 0.5 else MIN_GOAL_NOISE
+def noise_estimate(runs, prior_cv=None):
+    """Goal noise of THIS environment + workload, re-estimated from every configuration measured more than once.
+
+    Back-to-back repeats (calibration) only show short-term noise; repeats separated by other runs (re-checks,
+    confirmations) also include drift. Pooled over all such groups:
+      * with time-separated repeats: threshold = K x pooled CV (at least RESOLUTION_NOISE);
+      * otherwise: K x max(calibration CV, prior long-term CV of earlier sessions on this environment + benchmark),
+        and MIN_GOAL_NOISE when there is no history yet.
+    """
+    groups = {}
+    for r in runs:
+        if r.get("goal_value") is None or r.get("verdict") == "unreliable":
+            continue
+        groups.setdefault(config_key(r.get("managed")), []).append(r)
+    ss = dof = 0.0
+    long_term = 0
+    for g in groups.values():
+        if len(g) < 2:
+            continue
+        vals = [r["goal_value"] for r in g]
+        m = _mean(vals)
+        if not m:
+            continue
+        ss += sum(((v - m) / m * 100) ** 2 for v in vals)
+        dof += len(vals) - 1
+        seqs = sorted(r["seq"] for r in g)
+        if seqs[-1] - seqs[0] >= len(seqs):  # other runs happened in between: includes drift
+            long_term += len(vals) - 1
+    if not dof:
+        return None
+    cv = (ss / dof) ** 0.5
+    if long_term:
+        pct, basis = max(RESOLUTION_NOISE, NOISE_K * cv), f"{int(dof)} repeat(s), {long_term} separated in time"
+    elif prior_cv is not None:
+        pct, basis = max(RESOLUTION_NOISE, NOISE_K * max(cv, prior_cv)), "back-to-back repeats + earlier sessions on this environment"
+    else:
+        pct, basis = max(MIN_GOAL_NOISE, NOISE_K * cv), "back-to-back repeats only (no long-term evidence yet)"
+    return {"noise_pct": round(pct, 2), "pooled_cv_pct": round(cv, 3), "dof": int(dof), "long_term_dof": long_term,
+            "prior_cv_pct": prior_cv, "basis": basis}
 
 
 def calibrate(runs):
@@ -112,7 +148,8 @@ def calibrate(runs):
     out = {
         "runs": [r["seq"] for r in runs], "goal_mean": round(m, 4), "goal_cv_pct": round(cv, 2),
         "goal_range_pct": round(100.0 * (max(goal_vals) - min(goal_vals)) / abs(m), 2),
-        "noise_pct": round(max(_goal_floor(runs, cv), NOISE_K * cv), 2), "k": NOISE_K, "efficiency": {},
+        "noise_pct": round(max(MIN_GOAL_NOISE, NOISE_K * cv), 2), "k": NOISE_K, "efficiency": {},
+        "_goal_values": goal_vals,
     }
     probe = {}
     for key in PROBE_KEYS:
