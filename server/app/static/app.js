@@ -483,9 +483,15 @@ function sourceText(m) {
 }
 function isDefault(m) { return m && (m.source === "COMPILED" || m.source === "COMPILE-TIME" || m.source === "OS"); }
 function cnfBlock(managed) {
-  const e = Object.entries(managed || {}), my = e.filter(([k]) => !k.startsWith("os:")), os = e.filter(([k]) => k.startsWith("os:"));
-  return (my.length ? `[mysqld]\n${my.map(([k, v]) => esc(k) + (v === "" ? "" : " = " + esc(v))).join("\n")}` : "") +
-    (os.length ? `${my.length ? "\n\n" : ""}# operating system\n${os.map(([k, v]) => esc(k.slice(3)) + " = " + esc(v)).join("\n")}` : "");
+  // grouped by where the setting lives: MySQL option file, MySQL runtime objects, database host OS, client hosts
+  const e = Object.entries(managed || {});
+  const groups = [
+    ["[mysqld]", e.filter(([k]) => !/^(os|rg|client):/.test(k)), k => k],
+    ["# MySQL resource groups (runtime)", e.filter(([k]) => k.startsWith("rg:")), k => k.slice(3)],
+    ["# operating system: database host", e.filter(([k]) => k.startsWith("os:")), k => k.slice(3)],
+    ["# operating system: client hosts", e.filter(([k]) => k.startsWith("client:")), k => k.replace(/^client:os:/, "")],
+  ].filter(g => g[1].length);
+  return groups.map(([h, rows, name]) => `${h}\n${rows.map(([k, v]) => esc(name(k)) + (v === "" ? "" : " = " + esc(v))).join("\n")}`).join("\n\n");
 }
 async function renderKeySettings(el, runId) {
   const c = await api(`/api/runs/${runId}/config`);
@@ -496,8 +502,13 @@ async function renderKeySettings(el, runId) {
     return `<tr><td class="mono">${esc(k)}</td><td class="mono ${def ? "" : "diff-new"}">${esc(val(k, c.config[k]))}</td><td class="mono muted">${m.default != null ? esc(val(k, m.default)) : ""}</td><td>${def ? '<span class="muted">compiled default</span>' : esc(sourceText(m))}</td></tr>`;
   }).join("");
   const nonDef = Object.entries(meta).filter(([k, m]) => !isDefault(m) && !KEY_VARS.includes(k)).length;
+  const osKeys = Object.keys(c.config).filter(k => /^(os|rg):/.test(k)).sort();
+  const managedNow = c.managed || {};
+  const osTable = osKeys.length ? `<h3>Operating system &amp; runtime settings of this run${info("Values in effect on the database host while this run was measured. Highlighted = set by the tuning-agent; the rest are the host's own values.")}</h3>
+    <div class="tablewrap"><table><tbody>${osKeys.map(k => `<tr><td class="mono">${esc(k.replace(/^os:/, ""))}</td><td class="mono ${k in managedNow ? "diff-new" : ""}">${esc(c.config[k])}</td><td>${k in managedNow ? "tuning-agent" : '<span class="muted">host</span>'}</td></tr>`).join("")}</tbody></table></div>` : "";
   el.innerHTML = `<h3>Key settings of this run${info(`Value in effect, the server's compiled default and where the value comes from (option files, SET PERSIST, runtime changes). Bold = not the compiled default. ${nonDef} more non-default variables are in the Full configuration tab.`)}</h3>
-   <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Value</th><th>Compiled default</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+   <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Value</th><th>Compiled default</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table></div>
+   ${osTable ? `<details class="card" style="margin-top:10px"><summary style="margin:0">${osTable.replace(/<\/h3>[\s\S]*$/, "").replace(/^<h3>/, "")} (${osKeys.length})</summary>${osTable.replace(/^[\s\S]*?<\/h3>/, "")}</details>` : ""}`;
 }
 
 const EFF_LABELS = { mysqld_cpu_ms_per_trx: "mysqld CPU ms/trx", host_cpu_ms_per_trx: "host CPU ms/trx", disk_ios_per_trx: "disk IOs/trx", disk_kb_per_trx: "disk KiB/trx", fsyncs_per_trx: "fsyncs/trx", redo_kb_per_trx: "redo KiB/trx", rows_read_per_trx: "rows read/trx" };
