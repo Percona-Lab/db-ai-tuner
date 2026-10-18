@@ -848,6 +848,44 @@ def recommend(ctx):
     if have_run and diag_types & {"io", "redo"} and ssd:
         sweep("sweep-io-capacity", "Sweep the background flushing budget", "innodb_io_capacity", [str(ioc // 2), str(ioc * 2), str(ioc * 4)],
               "I/O or redo pressure: find the flushing budget the storage sustains.", {"innodb_io_capacity": ioc, "disk_util": s.get("disk_util")})
+    # ---- advanced flushing / I/O ideas (docs/research/mysql-tuning-ideas.md B2, B9, C8, C13, B5, C2) ----
+    io_bound = bool(diag_types & {"io", "memory"}) or (s.get("bp_disk_reads") or 0) > 500
+    write_heavy = wtype in ("oltp-write", "mixed")
+    if have_run and io_bound and write_heavy and "innodb_max_dirty_pages_pct_lwm" in v:
+        sweep("sweep-dirty-lwm", "Sweep the dirty-page low-water mark", "innodb_max_dirty_pages_pct_lwm", ["0", "30", "80"],
+              "Two schools: Percona sets the pre-flush low-water mark to 0, Mark Callaghan runs 80 so dirty pages absorb more "
+              "updates before being written (write combining). Which wins depends on the update locality of the workload.",
+              {"bp_dirty_pct_avg": s.get("bp_dirty_pct_avg"), "checkpoint_age_pct_max": ck}, impact=2)
+    wait_free = rates.get("Innodb_buffer_pool_wait_free", 0)
+    if have_run and io_bound and "innodb_lru_scan_depth" in v and (wait_free > 0 or write_heavy):
+        lru = _int(v, "innodb_lru_scan_depth", 1024)
+        sweep("sweep-lru-depth", "Sweep the LRU scan depth", "innodb_lru_scan_depth", [str(max(256, lru // 4)), str(lru * 2), str(lru * 4)],
+              "Page cleaners keep this many pages free per buffer pool instance. Deeper scans avoid single-page flushes by user "
+              "threads (free-page waits); shallower scans spend less CPU and I/O when free pages are plentiful.",
+              {"Innodb_buffer_pool_wait_free_per_s": wait_free}, impact=2)
+    if have_run and io_bound and cpus >= 8 and (s.get("bp_disk_reads") or 0) > 200 and "innodb_read_io_threads" in v:
+        rio = _int(v, "innodb_read_io_threads", 4)
+        vals = [x for x in (8, 16, 32) if x > rio][:2]
+        if vals:
+            sweep("sweep-read-io-threads", "Sweep InnoDB read I/O threads", "innodb_read_io_threads", [str(x) for x in vals],
+                  f"{s.get('bp_disk_reads'):.0f} page reads/s from disk on {cpus} CPUs: more read threads keep more asynchronous reads "
+                  "(read-ahead, prefetch) in flight on NVMe. Needs a restart.", {"bp_disk_reads": s.get("bp_disk_reads")}, impact=1)
+    if have_run and (s.get("history_list_length_max") or 0) > 100000 and "innodb_purge_threads" in v:
+        pt = _int(v, "innodb_purge_threads", 4)
+        sweep("sweep-purge-threads", "Sweep purge threads", "innodb_purge_threads", [x for x in ("1", "8") if x != str(pt)] + [str(pt * 2)],
+              "Undo history keeps growing. More purge threads help large I/O-bound boxes and hurt small CPU-bound ones "
+              "(opposite results in Mark Callaghan's benchmarks): measure.", {"history_list_length_max": s.get("history_list_length_max")}, impact=1)
+    if have_run and ck >= 75 and _on(v, "innodb_flush_sync"):
+        b.add("flush-sync-off", "Respect io_capacity_max during sync flushing", [("innodb_flush_sync", "OFF")],
+              f"Checkpoint age reached {ck:.0f}%: InnoDB then flushes as fast as it can, ignoring io_capacity_max and starving reads. "
+              "OFF keeps the cap (Percona; Mark's a3 config: minor gains and losses). Experiment.", {"checkpoint_age_pct_max": ck},
+              impact=1, confidence=1)
+    if have_run and cpus >= 16 and diag_types & {"concurrency", "cpu", "io"} and flavor != "mariadb" and "innodb_buffer_pool_instances" in v:
+        bpi = _int(v, "innodb_buffer_pool_instances", 8)
+        if bpi < 32:
+            sweep("sweep-bp-instances", "Sweep buffer pool instances", "innodb_buffer_pool_instances", [str(x) for x in (16, 32) if x > bpi],
+                  f"{cpus} CPUs: more buffer pool instances split the LRU/free-list mutexes (Vadim Tkachenko's 64-instance result, "
+                  "Mark Callaghan's many-core configs). Needs a restart.", {"innodb_buffer_pool_instances": bpi}, impact=1)
     if have_run and "cpu-spin" in diag_types and "innodb_spin_wait_delay" in v:
         sweep("sweep-spin-wait-delay", "Sweep the spin-wait delay", "innodb_spin_wait_delay", ["2", "12", "24"],
               "The CPU profile shows threads spinning on InnoDB latches. The pause between spin rounds trades CPU for wake-up latency; "

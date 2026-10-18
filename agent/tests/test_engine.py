@@ -345,6 +345,20 @@ def test_ps_lite_before_ps_off():
     assert "performance-schema-instrument = 'memory/%=OFF'" in out and "ps:profile" not in out.replace("# tuning-agent ps:profile=lite", "")
 
 
+def test_io_bound_advanced_sweeps():
+    VARS.update({"innodb_max_dirty_pages_pct_lwm": "10", "innodb_lru_scan_depth": "1024", "innodb_read_io_threads": "4"})
+    try:
+        hw = dict(HW, cpus=16, ram_bytes=32 * GiB)
+        summ = dict(OLTP[0], bp_hit_pct=93.0, bp_disk_reads=3000, cpu_busy=55)
+        ctx = {"variables": dict(VARS), "summary": summ, "inputs": OLTP[1], "hw": hw, "policy": "safe", "goal": "tps", "flavor": "mysql",
+               "history": [{"seq": 1, "managed": {}, "goal_value": 1}], "os_tuning": True}
+        it = {i["id"] for i in engine.run_engine(ctx)["items"]}
+        assert {"sweep-dirty-lwm", "sweep-lru-depth", "sweep-read-io-threads"} <= it, sorted(it)
+    finally:
+        for k in ("innodb_max_dirty_pages_pct_lwm", "innodb_lru_scan_depth", "innodb_read_io_threads"):
+            VARS.pop(k)
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)

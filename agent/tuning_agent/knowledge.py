@@ -254,6 +254,8 @@ KB["binlog_cache_size"] = dict(kind="size", dynamic=True, risk="none", cat="memo
 
 
 # ideas from docs/research/mysql-tuning-ideas.md
+KB.setdefault("innodb_flush_sync", dict(kind="bool", dynamic=True, risk="none", cat="io",
+              desc="ON: during sync flushing (checkpoint pressure) ignore innodb_io_capacity_max."))
 KB.setdefault("innodb_max_purge_lag", dict(kind="int", dynamic=True, risk="none", cat="purge",
               desc="History list length above which DML is delayed so purge can catch up (0 = never)."))
 KB.setdefault("innodb_max_purge_lag_delay", dict(kind="int", dynamic=True, risk="none", cat="purge",
