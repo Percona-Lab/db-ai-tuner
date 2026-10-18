@@ -12,7 +12,7 @@ import sys
 import time
 import uuid
 
-from . import __version__, baseline, bench, collector, engine, evaluate, hostinfo, mysqldb, ostune
+from . import __version__, baseline, bench, collector, engine, evaluate, hostinfo, llmassist, mysqldb, ostune
 from .knowledge import tradeoffs_in
 from .applier import Applier
 from .client import APIError, Client
@@ -851,14 +851,45 @@ def _engine_ctx(c, sess):
             "managed": {k: v["value"] for k, v in c.state.get("managed", {}).items()}}
 
 
-def _recommend(c, sess):
+def _recommend(c, sess, llm=False):
     c.refresh()
     ctx = _engine_ctx(c, sess)
     res = engine.run_engine(ctx)
+    why = llmassist.trigger(res, explicit=llm)
+    if why and ctx.get("summary"):
+        try:
+            meta = c.db.variables_meta()
+        except Exception:
+            meta = {}
+        try:
+            r = c.client.post("/llm/suggest", {"session_id": sess["id"], "trigger": why, "force": bool(llm),
+                                                "context": llmassist.context(ctx, res, meta)})
+        except Exception as e:  # LLM help is optional
+            r = {"enabled": False, "reason": str(e)}
+        if r.get("enabled") and r.get("suggestions") is not None:
+            extra, rejected = llmassist.sanitize(r.get("suggestions"), ctx, res, r.get("model"))
+            res["llm"] = {"model": r.get("model"), "trigger": why, "cached": r.get("cached"), "accepted": len(extra),
+                          "rejected": rejected, "notes": r.get("notes")}
+            if extra:
+                for it in extra:
+                    it["score"] = engine.score(it, ctx.get("goal", "tps")) + (2 if why != "routine" else 0)
+                    if it["safety"] == "trade-off" and ctx.get("policy") != "benchmark":
+                        it["kind"] = "advice"
+                res["items"] = res["items"] + extra
+                res["items"].sort(key=lambda i: (i.get("safety") == "trade-off" and i["kind"] != "revert", -i.get("score", 0)))
+                for n, it in enumerate(res["items"], 1):
+                    it["rank"] = n
+                if not res.get("next") or why == "rules-exhausted":
+                    nxt = next((i for i in res["items"] if i["kind"] in ("config", "revert") and i["confidence"] > 0
+                                and (i.get("safety") == "safe" or ctx.get("policy") == "benchmark")), None)
+                    res["next"] = nxt["id"] if nxt else None
+        elif why != "routine" and r.get("reason"):
+            res["llm"] = {"skipped": r.get("reason"), "trigger": why}
+    res.pop("_ctx", None)
     run_id = sess["runs"][-1]["id"] if sess["runs"] else None
     r = c.client.post("/recommendations", {"session_id": sess["id"], "run_id": run_id, "goal": sess["goal"], "policy": sess["policy"],
                                            "items": res["items"], "diagnosis": res["diagnosis"], "next": res["next"],
-                                           "workload": res.get("workload"), "phase": res.get("phase")})
+                                           "workload": res.get("workload"), "phase": res.get("phase"), "llm": res.get("llm")})
     sess["last_recommendation"] = {"id": r.get("recommendation_id"), "items": res["items"], "next": res["next"]}
     c.state.set("session", sess)
     return res
@@ -871,7 +902,7 @@ def cmd_recommend(a):
         log("note: there are applied changes that have not been measured yet")
     if not sess.get("noise"):
         log("note: noise is not calibrated; run `tuning-agent calibrate --runs 3` (or --from-runs) so verdicts use measured noise")
-    res = _recommend(c, sess)
+    res = _recommend(c, sess, llm=getattr(a, "llm", False))
     lines = [f"Recommendations (goal={sess['goal']}, policy={sess['policy']}, workload={(res.get('workload') or {}).get('type')}, "
              f"phase={res.get('phase')}) based on run {sess['runs'][-1]['seq'] if sess['runs'] else '-'}:"]
     for d in res["diagnosis"]:
@@ -1277,7 +1308,9 @@ def main(argv=None):
     s.set_defaults(fn=cmd_autotune)
 
     sp.add_parser("reevaluate", help="recompute verdicts of all runs (e.g. after calibration)").set_defaults(fn=cmd_reevaluate)
-    sp.add_parser("recommend", help="analyse the last run and recommend changes").set_defaults(fn=cmd_recommend)
+    s = sp.add_parser("recommend", help="analyse the last run and recommend changes")
+    s.add_argument("--llm", action="store_true", help="also ask the configured LLM (OpenRouter, set up in the web app) for knob ideas")
+    s.set_defaults(fn=cmd_recommend)
 
     s = sp.add_parser("apply", help="apply recommendations or explicit settings")
     s.add_argument("--rec", action="append", help="recommendation id (repeatable)")

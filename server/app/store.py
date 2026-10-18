@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY, env_id INTEGER NOT NULL, session_id INTEGER, ts REAL NOT NULL, type TEXT, message TEXT, data TEXT);
 CREATE INDEX IF NOT EXISTS events_env ON events(env_id, ts);
 CREATE INDEX IF NOT EXISTS events_session ON events(session_id, ts);
+CREATE TABLE IF NOT EXISTS llm_calls (
+  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, env_id INTEGER, session_id INTEGER, ts REAL NOT NULL, model TEXT, prompt_hash TEXT,
+  status TEXT, cached INTEGER DEFAULT 0, latency_s REAL, prompt_tokens INTEGER, completion_tokens INTEGER, cost REAL, response TEXT, error TEXT);
+CREATE INDEX IF NOT EXISTS llm_calls_hash ON llm_calls(user_id, prompt_hash);
 CREATE TABLE IF NOT EXISTS metrics (
   env_id INTEGER NOT NULL, ts REAL NOT NULL, data TEXT NOT NULL, PRIMARY KEY (env_id, ts)) WITHOUT ROWID;
 """
@@ -62,6 +66,10 @@ MIGRATIONS = [
     ("tsessions", "goal_metric", "TEXT"),
     ("runs", "abort_reason", "TEXT"),
     ("tsessions", "os_tuning", "INTEGER"),
+    ("users", "llm_key_enc", "TEXT"),
+    ("users", "llm_model", "TEXT"),
+    ("users", "llm_mode", "TEXT"),
+    ("recommendations", "llm", "TEXT"),
 ]
 
 

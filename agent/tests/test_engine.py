@@ -3,7 +3,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from tuning_agent import engine, evaluate  # noqa: E402
+from tuning_agent import engine, evaluate, llmassist  # noqa: E402
 
 GiB = 1024 ** 3
 VARS = {
@@ -117,6 +117,28 @@ def test_per_query_hint():
           "changes": [{"variable": "join_buffer_size", "old": "262144", "new": "8388608"}], "evaluation": {"query_impact": qi, "parent_runs": [1]}}]
     items = engine.per_query_hints(h, VARS)
     assert items and "SET_VAR(join_buffer_size=8388608)" in items[0]["rationale"]
+
+
+def test_llm_trigger_and_sanitize():
+    res = run(*OLTP, policy="safe")
+    assert llmassist.trigger(res) == "routine" and llmassist.trigger(res, explicit=True) == "explicit"
+    assert llmassist.trigger({"items": [], "diagnosis": []}) == "rules-exhausted"
+    ctx = {"variables": dict(VARS, innodb_lru_scan_depth="1024"), "hw": HW, "history": [
+        {"seq": 2, "changes": [{"variable": "innodb_sync_spin_loops", "new": "10"}]}], "os_tuning": False, "policy": "safe"}
+    sugg = [{"title": "deny", "changes": [{"variable": "datadir", "value": "/x"}]},
+            {"title": "missing", "changes": [{"variable": "innodb_made_up", "value": "1"}]},
+            {"title": "tried", "changes": [{"variable": "innodb_sync_spin_loops", "value": "10"}]},
+            {"title": "too big", "changes": [{"variable": "innodb_buffer_pool_size", "value": "8G"}]},
+            {"title": "os off", "changes": [{"variable": "os:vm.swappiness", "value": "1"}]},
+            {"title": "durable", "changes": [{"variable": "innodb_flush_log_at_trx_commit", "value": "2"}], "risk": "durability"},
+            {"title": "ok", "changes": [{"variable": "innodb_lru_scan_depth", "value": "256"}], "expected_effect": "small", "risk": "none"}]
+    items, rejected = llmassist.sanitize(sugg, ctx, {"items": []}, "test-model")
+    assert [r["title"] for r in rejected] == ["deny", "missing", "tried", "too big", "os off"], rejected
+    by = {i["title"]: i for i in items}
+    assert by["durable"]["safety"] == "trade-off" and by["ok"]["safety"] == "safe" and by["ok"]["source"] == "llm"
+    assert by["ok"]["id"] == "llm-innodb-lru-scan-depth"
+    ctxt = llmassist.context({"variables": VARS, "hw": HW, "summary": OLTP[0], "inputs": OLTP[1], "history": [], "goal": "tps"}, res)
+    assert "datadir" not in ctxt["current_variables"] and ctxt["summary"]["tps"] == 600
 
 
 def test_no_run_yet():

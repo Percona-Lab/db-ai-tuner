@@ -9,7 +9,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, store
+from . import auth, llm, store
 
 APP_DIR = os.path.dirname(__file__)
 AGENT_DIR = os.environ.get("TUNER_AGENT_DIR", os.path.join(APP_DIR, "..", "..", "agent"))
@@ -188,6 +188,45 @@ def change_password(request: Request, body: dict = Body(...)):
     return {"ok": True}
 
 
+@app.get("/api/settings/llm")
+def get_llm_settings(request: Request):
+    u = auth.current_user(request)
+    return {**llm.settings(u["id"]), "modes": llm.MODES, "default_model": llm.DEFAULT_MODEL, "usage": llm.usage_summary(u["id"])}
+
+
+@app.put("/api/settings/llm")
+def put_llm_settings(request: Request, body: dict = Body(...)):
+    u = auth.current_user(request)
+    if body.get("mode") and body["mode"] not in llm.MODES:
+        raise HTTPException(400, "unknown mode")
+    if body.get("key"):
+        ok, info = llm.verify_key(body["key"].strip())
+        if not ok:
+            raise HTTPException(400, f"OpenRouter rejected the key ({info.get('error')})")
+        store.ex("UPDATE users SET llm_key_enc=? WHERE id=?", (llm.encrypt(body["key"].strip()), u["id"]))
+    if body.get("remove_key"):
+        store.ex("UPDATE users SET llm_key_enc=NULL WHERE id=?", (u["id"],))
+    if body.get("model"):
+        store.ex("UPDATE users SET llm_model=? WHERE id=?", (body["model"][:120], u["id"]))
+    if body.get("mode"):
+        store.ex("UPDATE users SET llm_mode=? WHERE id=?", (body["mode"], u["id"]))
+    return get_llm_settings(request)
+
+
+@app.get("/api/llm/models")
+def llm_models(request: Request):
+    auth.current_user(request)
+    return {"models": llm.models()}
+
+
+@app.get("/api/llm/calls")
+def llm_calls(request: Request, session: int = None):
+    u = auth.current_user(request)
+    rows = store.q("SELECT id, session_id, ts, model, status, cached, latency_s, prompt_tokens, completion_tokens, cost, error, response "
+                   "FROM llm_calls WHERE user_id=? AND (? IS NULL OR session_id=?) ORDER BY id DESC LIMIT 50", (u["id"], session, session))
+    return {"calls": [store.row(r, ("response",)) for r in rows]}
+
+
 @app.get("/api/keys")
 def list_keys(request: Request):
     u = auth.current_user(request)
@@ -308,7 +347,7 @@ def session(sid: int, request: Request):
     s["calibration"] = store.uj(s.get("calibration"))
     e = own_env(s["env_id"], u["id"])
     runs = [run_brief(r) for r in store.q("SELECT * FROM runs WHERE session_id=? ORDER BY seq, id", (sid,))]
-    recs = [store.row(r, ("items", "diagnosis", "workload")) for r in store.q("SELECT * FROM recommendations WHERE session_id=? ORDER BY id DESC", (sid,))]
+    recs = [store.row(r, ("items", "diagnosis", "workload", "llm")) for r in store.q("SELECT * FROM recommendations WHERE session_id=? ORDER BY id DESC", (sid,))]
     events = [store.row(r, ("data",)) for r in store.q("SELECT * FROM events WHERE session_id=? ORDER BY ts DESC LIMIT 200", (sid,))]
     return {"session": s, "environment": env_brief(e), "runs": runs, "recommendations": recs, "events": events}
 
@@ -340,7 +379,7 @@ def run_detail(run_id: int, request: Request, vs: int = None):
     cfg = store.uj(r["config"], {})
     changes = store.uj(r["changes"], [])
     diff = config_diff(store.uj(prev["config"], {}) if prev else {}, cfg, changes) if prev else []
-    recs = [store.row(x, ("items", "diagnosis", "workload")) for x in store.q("SELECT * FROM recommendations WHERE run_id=? ORDER BY id", (run_id,))]
+    recs = [store.row(x, ("items", "diagnosis", "workload", "llm")) for x in store.q("SELECT * FROM recommendations WHERE run_id=? ORDER BY id", (run_id,))]
     siblings = [{"id": x["id"], "seq": x["seq"], "label": x["label"]} for x in store.q("SELECT id, seq, label FROM runs WHERE session_id=? AND status<>'aborted' ORDER BY seq", (r["session_id"],))]
     out = run_brief(r)
     out.update({
@@ -521,6 +560,18 @@ def agent_experience(workload: str = None, cpus: int = None, exclude_session: in
     return {"workload": workload, "cpu_class": cpu_class(cpus) if cpus else None, "experience": out}
 
 
+@app.post("/api/v1/agent/llm/suggest")
+def agent_llm_suggest(body: dict = Body(...), key=Depends(auth.agent_key)):
+    s = agent_session(body.get("session_id"), key)
+    res = llm.suggest(key["user_id"], s["env_id"], s["id"], body.get("context") or {}, force=bool(body.get("force")),
+                      trigger=body.get("trigger") or "routine")
+    if res.get("enabled") and not res.get("error"):
+        store.ex("INSERT INTO events(env_id, session_id, ts, type, message) VALUES (?,?,?,?,?)",
+                 (s["env_id"], s["id"], now(), "llm", f"{res.get('model')}: {len(res.get('suggestions') or [])} suggestion(s)"
+                  + (" (cached)" if res.get("cached") else "")))
+    return res
+
+
 @app.post("/api/v1/agent/runs")
 def agent_run_create(body: dict = Body(...), key=Depends(auth.agent_key)):
     s = agent_session(body.get("session_id"), key)
@@ -565,10 +616,10 @@ def agent_recommendation(body: dict = Body(...), key=Depends(auth.agent_key)):
     s = agent_session(body.get("session_id"), key)
     if body.get("run_id"):
         agent_run(body["run_id"], key)
-    rid = store.ex("INSERT INTO recommendations(session_id, run_id, created, goal, policy, items, diagnosis, next, workload, phase) "
-                   "VALUES (?,?,?,?,?,?,?,?,?,?)",
+    rid = store.ex("INSERT INTO recommendations(session_id, run_id, created, goal, policy, items, diagnosis, next, workload, phase, llm) "
+                   "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                    (s["id"], body.get("run_id"), now(), body.get("goal"), body.get("policy"), store.j(body.get("items")),
-                    store.j(body.get("diagnosis")), body.get("next"), store.j(body.get("workload")), body.get("phase")))
+                    store.j(body.get("diagnosis")), body.get("next"), store.j(body.get("workload")), body.get("phase"), store.j(body.get("llm"))))
     store.ex("INSERT INTO events(env_id, session_id, ts, type, message, data) VALUES (?,?,?,?,?,?)",
              (s["env_id"], s["id"], now(), "recommend", f"{len(body.get('items') or [])} recommendation(s); next: {body.get('next') or '-'}",
               store.j({"recommendation_id": rid})))

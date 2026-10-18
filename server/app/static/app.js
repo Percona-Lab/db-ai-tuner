@@ -199,9 +199,24 @@ async function policiesPage() {
 
 async function accountPage() {
   setNav("account");
-  $view.innerHTML = `<h1>Account</h1><p class="sub">${esc(ME.email)}</p><div class="card form" style="margin:0;max-width:420px"><h3>Change password</h3>
+  const L = await api("/api/settings/llm");
+  $view.innerHTML = `<h1>Account</h1><p class="sub">${esc(ME.email)}</p>
+  <div class="card" style="max-width:640px;margin-bottom:14px"><h3 style="margin-top:0">AI assistance (OpenRouter)${info("Optional. When configured, the tuner asks a language model for knob ideas only where it adds value: when the rule-based experiments are exhausted, when no clear bottleneck is found, or when you ask (recommend --llm). Suggestions are validated (variable exists, value and memory limits, trade-off policy) and measured like any experiment; if they stop helping for a workload type, the tuner stops asking. The key is stored encrypted on the server and never sent to agents.")}</h3>
+   <form id="lf"><label>OpenRouter API key ${L.configured ? '<span class="badge good">configured</span>' : '<span class="badge plain">not set</span>'}</label>
+   <input name="key" type="password" placeholder="${L.configured ? "•••••••• (leave empty to keep)" : "sk-or-…"}" autocomplete="off">
+   <div class="grid g2"><div><label>Model</label><select name="model" id="lmodel"><option>${esc(L.model)}</option></select></div>
+   <div><label>Use the model</label><select name="mode">${L.modes.map(m => `<option value="${m}" ${m === L.mode ? "selected" : ""}>${{ off: "never", "when-needed": "only when it adds value", always: "for every recommendation" }[m]}</option>`).join("")}</select></div></div>
+   <div class="err" id="lerr"></div><div class="row"><button class="primary">Save</button>${L.configured ? '<button type="button" class="ghost danger" id="lrm">Remove key</button>' : ""}
+   <span class="spacer"></span><span class="muted" style="font-size:12.5px">${L.usage.calls} calls (${L.usage.cached} cached) · $${L.usage.cost_usd} · LLM experiments: ${L.usage.improvements} of ${L.usage.experiments} improved</span></div></form></div><div class="card form" style="margin:0;max-width:420px"><h3>Change password</h3>
   <form id="f"><label>Current password</label><input type="password" name="old" required><label>New password</label><input type="password" name="new" required minlength="8">
   <div class="err" id="err"></div><button class="primary">Change password</button></form></div>`;
+  api("/api/llm/models").then(d => { const sel = document.getElementById("lmodel"); if (!sel) return;
+    sel.innerHTML = d.models.map(m => `<option value="${esc(m.id)}" ${m.id === L.model ? "selected" : ""}>${esc(m.id)} · $${m.in_per_mtok}/$${m.out_per_mtok} per Mtok</option>`).join(""); }).catch(() => {});
+  document.getElementById("lf").onsubmit = async e => {
+    e.preventDefault(); const fd = Object.fromEntries(new FormData(e.target));
+    try { await api("/api/settings/llm", { method: "PUT", body: fd }); accountPage(); } catch (err) { document.getElementById("lerr").textContent = err.message; }
+  };
+  const rm = document.getElementById("lrm"); if (rm) rm.onclick = async () => { if (confirm("Remove the OpenRouter key?")) { await api("/api/settings/llm", { method: "PUT", body: { remove_key: true } }); accountPage(); } };
   document.getElementById("f").onsubmit = async e => {
     e.preventDefault();
     try { await api("/api/auth/password", { method: "POST", body: Object.fromEntries(new FormData(e.target)) }); document.getElementById("err").textContent = "Password changed."; }
@@ -460,6 +475,8 @@ function renderRecs(el, rec, runs) {
   let h = `<div class="muted" style="margin-bottom:6px">Generated ${fmtTime(rec.created)}${run ? ` from run #${run.seq} <a href="#/run/${run.id}">${esc(run.label)}</a>` : " without a measured run"} · goal ${esc(rec.goal)} · policy ${esc(rec.policy)}${rec.next ? ` · suggested next: <code>${esc(rec.next)}</code>` : ""}</div>`;
   (rec.diagnosis || []).forEach(dg => { h += `<div class="diag">${sevBadge(dg.severity)} <b>${esc(dg.type)}</b> — ${esc(dg.text)}</div>`; });
   if (rec.workload && rec.workload.type) h += `<p style="margin:4px 0 8px">Workload: <b>${esc(WORKLOAD[rec.workload.type] || rec.workload.type)}</b>${info(kvText(rec.workload.evidence))}${rec.phase ? ` · Phase: <b>${esc(PHASE[rec.phase] || rec.phase)}</b>` : ""}</p>`;
+  if (rec.llm) h += rec.llm.skipped ? `<p class="muted" style="margin:2px 0 8px;font-size:12.5px">LLM not asked: ${esc(rec.llm.skipped)}</p>` :
+    `<p style="margin:2px 0 8px">LLM <b>${esc(rec.llm.model)}</b>${rec.llm.cached ? " (cached answer)" : ""}: ${rec.llm.accepted} suggestion(s) accepted${(rec.llm.rejected || []).length ? `, ${rec.llm.rejected.length} rejected` + info(rec.llm.rejected.map(x => `${x.title}: ${x.reason}`).join(" · ")) : ""}${info("Asked because: " + ({ "rules-exhausted": "the rule-based experiments were exhausted", "unclear-bottleneck": "no clear bottleneck was found", explicit: "it was requested", routine: "the account is set to use it for every recommendation" }[rec.llm.trigger] || rec.llm.trigger) + (rec.llm.notes ? ". Model notes: " + rec.llm.notes : ""))}</p>`;
   const items = rec.items || [];
   const safe = items.filter(i => (i.safety || "safe") !== "trade-off"), trade = items.filter(i => i.safety === "trade-off");
   const section = (title, list, note) => list.length ? `<h3>${title}${note ? info(note) : ""}</h3>` + list.map(recItem).join("") : "";
@@ -467,7 +484,7 @@ function renderRecs(el, rec, runs) {
   el.innerHTML = h;
   return;
   function recItem(it) {
-    return `<div class="rec"><div class="h"><b>${it.rank}. ${esc(it.title)}</b><span class="id">${esc(it.id)}</span>${it.kind === "advice" ? '<span class="badge plain">advice only</span>' : it.kind === "revert" ? '<span class="badge warn">revert</span>' : ""}
+    return `<div class="rec"><div class="h"><b>${it.rank}. ${esc(it.title)}</b><span class="id">${esc(it.id)}</span>${it.source === "llm" ? `<span class="badge info">LLM</span>` : ""}${it.kind === "advice" ? '<span class="badge plain">advice only</span>' : it.kind === "revert" ? '<span class="badge warn">revert</span>' : ""}
      ${riskBadge(it.risk)}${it.restart ? '<span class="badge plain">restart</span>' : ""}<span class="badge plain">impact ${it.impact}/3</span><span class="badge plain">confidence ${it.confidence}/3</span>${it.id === rec.next ? '<span class="badge info">next</span>' : ""}</div>
      ${it.changes.length ? `<div class="mono" style="margin:4px 0">${it.changes.map(c => `${esc(c.variable)}: <span class="diff-old">${esc(val(c.variable, c.current))}</span> → <span class="diff-new">${c.unset ? "(server default)" : esc(val(c.variable, c.proposed))}</span>`).join("<br>")}</div>` : ""}
      <div class="reason">${esc(it.rationale)}${it.note ? " <b>" + esc(it.note) + "</b>" : ""}</div>
