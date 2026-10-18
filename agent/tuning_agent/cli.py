@@ -964,6 +964,133 @@ def cmd_apply(a):
         raise Fail("apply failed and was rolled back")
 
 
+# ---- human / agent specified experiments ---------------------------------------------------
+def _validate_changes(c, changes, force=False):
+    """Same safety checks as for LLM suggestions (minus 'already tried': repeating is legitimate when asked)."""
+    v = c.all_settings()
+    ram = int(c.hw().get("ram_bytes") or 0)
+    ok, errors = [], []
+    for ch in changes:
+        var = ch["variable"].strip()
+        var = var if var.startswith("os:") else var.lower().replace("-", "_")
+        val = str(ch["value"]).strip().strip("'\"")
+        if var in llmassist.DENY:
+            errors.append(f"{var} is not tunable by the agent")
+        elif var not in v and var not in ("skip_log_bin", "disable_log_bin"):
+            errors.append(f"{var} does not exist on this server")
+        elif var.startswith("os:") and not c.os_tuning_allowed():
+            errors.append("OS tuning is disabled for this agent")
+        else:
+            from .knowledge import KB as _KB, parse_size as _ps
+            n = _ps(val) if _KB.get(var, {}).get("kind") == "size" else None
+            if n is not None and ram and not force and n > ram * (0.85 if var == "innodb_buffer_pool_size" else 0.25):
+                errors.append(f"{var}={val} exceeds the memory budget of this {ram / 2 ** 30:.1f} GiB host (use force to override)")
+            else:
+                ok.append({"variable": var, "value": val})
+    return ok, errors
+
+
+def _goto_managed(c, target, reason, source):
+    cur = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
+    changes = [{"variable": k, "value": target.get(k), "reason": reason, "source": source}
+               for k in set(cur) | set(target) if normalize(k, cur.get(k)) != normalize(k, target.get(k))]
+    return _apply_and_record(c, changes, source.split(":")[0]) if changes else None
+
+
+def _run_experiment(c, prof, exp):
+    """Measure every arm of an experiment from the same parent configuration; keep the best arm only if it beats noise."""
+    sess = c.session()
+    eid, spec = exp["id"], exp["spec"]
+    arms = [spec["changes"]] if exp["kind"] == "try" else [[{"variable": spec["variable"], "value": x}] for x in spec["values"]]
+    label = lambda arm: ", ".join(f"{x['variable']}={x['value']}" for x in arm)
+    parent = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
+    goal = sess["goal"]
+    pkey = evaluate.config_key(parent)
+    pm = evaluate.config_means(sess["runs"], pkey, recent=evaluate.RECENT)
+    noise = float((sess.get("noise") or {}).get("noise_pct") or sess.get("noise_pct") or 2.0)
+    c.client.post(f"/experiments/{eid}", {"status": "running"})
+    results, problems = [], []
+    for arm in arms:
+        ok, errs = _validate_changes(c, arm, force=bool(exp.get("force")))
+        if errs:
+            problems.append(f"{label(arm)}: " + "; ".join(errs))
+            results.append({"arm": label(arm), "status": "rejected", "reason": "; ".join(errs)})
+            continue
+        target = dict(parent)
+        for x in ok:
+            target[x["variable"]] = x["value"]
+        why = f"experiment #{eid}" + (f": {exp['reason']}" if exp.get("reason") else "")
+        res = _goto_managed(c, target, why, f"exp:{eid}")
+        if res and res.get("rolled_back"):
+            results.append({"arm": label(arm), "status": "failed", "reason": "; ".join(res.get("errors") or ["apply failed"])})
+            continue
+        vals = []
+        for i in range(int(exp.get("repeats") or 1)):
+            run, _ = _bench_run(c, prof, f"exp#{eid} {label(arm)}" + (f" ({i + 1}/{exp['repeats']})" if (exp.get("repeats") or 1) > 1 else ""))
+            if run.get("goal_value") is not None:
+                vals.append(run["goal_value"])
+        mean = sum(vals) / len(vals) if vals else None
+        d = _improvement(goal, mean, pm["goal"]) if (pm and mean is not None) else None
+        results.append({"arm": label(arm), "status": "measured", "runs": len(vals), "goal_mean": round(mean, 4) if mean is not None else None,
+                        "delta_pct": d, "verdict": None if d is None else ("better" if d > noise else "worse" if d < -noise else "within noise")})
+        log(f"   {label(arm)}: {mean} ({'' if d is None else f'{d:+.1f}%'})")
+    measured = [r for r in results if r["status"] == "measured" and r.get("delta_pct") is not None]
+    best = max(measured, key=lambda r: r["delta_pct"], default=None)
+    keep = best if best and best["delta_pct"] > noise else None
+    if keep:
+        arm = next(a for a in arms if label(a) == keep["arm"])
+        target = dict(parent)
+        for x in arm:
+            target[x["variable"]] = x["value"]
+        _goto_managed(c, target, f"experiment #{eid}: best value, {keep['delta_pct']:+.1f}% vs parent", f"exp:{eid}")
+        msg = f"kept {keep['arm']} ({keep['delta_pct']:+.1f}% vs parent mean {pm['goal']:.4g}, noise ±{noise}%)"
+    else:
+        _goto_managed(c, parent, f"experiment #{eid}: no value beat the parent beyond noise", f"exp:{eid}")
+        msg = "no value beat the parent configuration beyond noise; parent kept" + (f" (best: {best['arm']} {best['delta_pct']:+.1f}%)" if best else "")
+    if problems:
+        msg += " | " + " | ".join(problems)
+    c.client.post(f"/experiments/{eid}", {"status": "done" if measured else "failed", "message": msg,
+                                          "results": {"parent_mean": pm["goal"] if pm else None, "parent_runs": pm["seqs"] if pm else [],
+                                                      "noise_pct": noise, "arms": results, "kept": keep["arm"] if keep else None}})
+    return msg
+
+
+def _queued_experiments(c, sess):
+    try:
+        return c.client.get(f"/sessions/{sess['id']}/experiments?status=queued").get("experiments", [])
+    except Exception:
+        return []
+
+
+def cmd_experiment(a):
+    c = Ctx()
+    sess = c.session()
+    if a.action == "add":
+        if a.sweep:
+            var, _, vals = a.sweep.partition("=")
+            body = {"kind": "sweep", "variable": var, "values": vals}
+        elif a.try_:
+            body = {"kind": "try", "settings": "\n".join(a.try_)}
+        else:
+            raise Fail("use --sweep var=v1,v2,... or --try var=value (repeatable)")
+        body.update({"repeats": a.repeats, "reason": a.reason, "force": a.force, "created_by": "cli"})
+        r = c.client.post(f"/sessions/{sess['id']}/experiments", body)
+        emit({"ok": True, "id": r["id"]}, f"Experiment #{r['id']} queued; autotune runs it next, or run it now with `tuning-agent experiment run --bench PROFILE`.")
+    elif a.action == "list":
+        ex = c.client.get(f"/sessions/{sess['id']}/experiments?status=").get("experiments", [])
+        emit({"experiments": ex}, "\n".join(f"#{e['id']} {e['status']:<9} {e['kind']:<5} {json.dumps(e['spec'])[:80]}  {e.get('message') or ''}" for e in ex) or "No experiments.")
+    elif a.action == "run":
+        prof_path = a.bench or sess.get("bench")
+        if not prof_path:
+            raise Fail("experiments are measured with a benchmark profile: pass --bench PROFILE")
+        prof = bench.Profile(prof_path)
+        done = []
+        for e in _queued_experiments(c, sess):
+            log(f"== experiment #{e['id']} ({e['kind']}, from {e.get('created_by')})")
+            done.append({"id": e["id"], "result": _run_experiment(c, prof, e)})
+        emit({"ok": True, "ran": done}, "\n".join(f"#{d['id']}: {d['result']}" for d in done) or "No queued experiments.")
+
+
 def cmd_autotune(a):
     """Unattended loop: calibrate (if needed) -> recommend -> apply next -> measure (bench) ... -> best config confirmation."""
     c = Ctx()
@@ -983,10 +1110,20 @@ def cmd_autotune(a):
         _set_calibration(c, sess, cal)
         _reevaluate(c, c.session())
         log(_fmt_cal(cal))
+    sess = c.session()
+    sess["bench"] = os.path.abspath(a.bench)
+    c.state.set("session", sess)
     measured = iterations = 0
     while measured < a.max_runs and iterations < a.max_runs * 3:
         iterations += 1
         sess = c.session()
+        queued = _queued_experiments(c, sess)
+        if queued:  # human / agent specified experiments go first
+            e = queued[0]
+            log(f"== experiment #{e['id']} ({e['kind']}, from {e.get('created_by')}): {json.dumps(e['spec'])[:120]}")
+            log("   " + _run_experiment(c, prof, e))
+            measured += len(e["spec"].get("values") or [1]) * int(e.get("repeats") or 1)
+            continue
         res = _recommend(c, sess)
         nxt = res.get("next")
         if nxt in (sess.get("failed_recs") or []):
@@ -1296,6 +1433,16 @@ def main(argv=None):
     s.add_argument("--from-runs", help="calibrate from existing runs of one configuration, e.g. 2,5,7")
     s.add_argument("--bench", help="benchmark profile to run for each calibration run")
     s.set_defaults(fn=cmd_calibrate)
+
+    s = sp.add_parser("experiment", help="human-specified experiments: try settings or sweep one variable")
+    s.add_argument("action", choices=["add", "list", "run"])
+    s.add_argument("--sweep", help="var=v1,v2,v3 (e.g. innodb_buffer_pool_size=1G,2G,3G)")
+    s.add_argument("--try", dest="try_", action="append", help="var=value (repeatable): one combined configuration")
+    s.add_argument("--repeats", type=int, default=1)
+    s.add_argument("--reason")
+    s.add_argument("--force", action="store_true", help="skip the memory-budget guard")
+    s.add_argument("--bench", help="benchmark profile used to measure (default: the session's autotune profile)")
+    s.set_defaults(fn=cmd_experiment)
 
     s = sp.add_parser("autotune", help="unattended tuning loop driven by a benchmark profile")
     s.add_argument("--bench", required=True)

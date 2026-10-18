@@ -382,6 +382,7 @@ async function sessionPage(id) {
   <div class="card" style="margin-top:14px" id="bars"></div>
   <h2>Runs</h2><div class="card tablewrap"><table class="runs"><thead><tr><th>#</th><th>Run</th><th>Changes</th><th class="num">${goalUnit(s.goal, s) === "ms" ? "Avg ms" : "Goal"}</th><th class="num">Δ${info("Change of the goal vs the mean of the parent configuration (the configuration this run was changed from). Coloured only beyond the noise threshold.")}</th><th>Verdict</th>
    <th class="num">TPS</th><th class="num">Avg ms</th><th class="num">CPU ms/trx</th><th class="num">IOs/trx</th><th class="num">Time</th></tr></thead><tbody id="runs"></tbody></table></div>
+  <h2>Experiments${info("Your own experiments: try a set of settings, or sweep one variable over several values (e.g. buffer pool 1G, 2G, 3G). They run before the tuner's own ideas, each value measured from the same parent configuration with the session's benchmark. The best value is kept only if it beats the parent beyond the noise threshold.")}</h2><div class="card" id="exps"></div>
   <h2>Latest recommendations</h2><div class="card" id="recs"></div>
   <h2>Notes</h2><div class="card"><textarea id="notes" rows="3" placeholder="Notes about this session (workload, hypotheses, conclusions)">${esc(s.notes || "")}</textarea><div class="row" style="margin-top:6px"><button id="savenotes">Save notes</button><span id="saved" class="muted"></span></div></div>
   <h2>Recent activity</h2><div class="card" id="events"></div>`;
@@ -412,6 +413,7 @@ async function sessionPage(id) {
     tb.appendChild(tr);
   });
   renderRecs(document.getElementById("recs"), d.recommendations[0], runs);
+  renderExperiments(document.getElementById("exps"), s);
   renderEvents(document.getElementById("events"), null, false, { session: id });
   document.getElementById("savenotes").onclick = async () => { await api("/api/sessions/" + id, { method: "PATCH", body: { notes: document.getElementById("notes").value } }); document.getElementById("saved").textContent = "Saved."; };
   document.getElementById("rename").onclick = async () => { const n = prompt("Session name", s.name); if (n) { await api("/api/sessions/" + id, { method: "PATCH", body: { name: n } }); sessionPage(id); } };
@@ -480,6 +482,38 @@ async function renderKeySettings(el, runId) {
 }
 
 const EFF_LABELS = { mysqld_cpu_ms_per_trx: "mysqld CPU ms/trx", host_cpu_ms_per_trx: "host CPU ms/trx", disk_ios_per_trx: "disk IOs/trx", disk_kb_per_trx: "disk KiB/trx", fsyncs_per_trx: "fsyncs/trx", redo_kb_per_trx: "redo KiB/trx", rows_read_per_trx: "rows read/trx" };
+
+async function renderExperiments(el, sess) {
+  const d = await api(`/api/sessions/${sess.id}/experiments`);
+  const active = sess.status === "active";
+  const row = e => {
+    const spec = e.kind === "sweep" ? `sweep <span class="mono">${esc(e.spec.variable)}</span> = ${e.spec.values.map(esc).join(", ")}` : `try ${e.spec.changes.map(c => `<span class="mono">${esc(c.variable)}=${esc(c.value)}</span>`).join(", ")}`;
+    const res = e.results && e.results.arms ? `<div class="tablewrap" style="margin-top:6px"><table><thead><tr><th>Value</th><th class="num">Runs</th><th class="num">Goal</th><th class="num">vs parent</th><th>Result</th></tr></thead><tbody>${e.results.arms.map(a =>
+      `<tr><td class="mono">${esc(a.arm)}${e.results.kept === a.arm ? ' <span class="badge good">kept</span>' : ""}</td><td class="num">${a.runs || ""}</td><td class="num">${num(a.goal_mean)}</td>
+       <td class="num ${a.verdict === "better" ? "up" : a.verdict === "worse" ? "down" : ""}">${a.delta_pct != null ? pct(a.delta_pct) : ""}</td><td>${esc(a.verdict || a.status)}${a.reason ? info(a.reason) : ""}</td></tr>`).join("")}</tbody></table></div>` : "";
+    return `<div class="rec"><div class="h"><b>#${e.id}</b> ${spec}${e.repeats > 1 ? ` · ${e.repeats} runs each` : ""} ${statusBadge(e.status === "done" ? "done" : e.status === "queued" ? "measuring" : e.status, e.message)}
+      <span class="muted" style="font-size:12px">${esc((e.created_by || "").replace("human:", ""))}</span>${e.status === "queued" ? ` <button class="ghost danger" data-cancel="${e.id}">Cancel</button>` : ""}</div>
+      ${e.reason ? `<div class="reason">${esc(e.reason)}</div>` : ""}${e.message ? `<div class="reason">${esc(e.message)}</div>` : ""}${res}</div>`;
+  };
+  el.innerHTML = (active ? `<form id="expf" class="row" style="align-items:flex-end;gap:8px">
+      <div><label>Kind</label><select name="kind" id="ekind" style="width:auto"><option value="sweep">Sweep a variable</option><option value="try">Try settings</option></select></div>
+      <div id="esweep" class="row" style="gap:8px"><div><label>Variable</label><input name="variable" placeholder="innodb_buffer_pool_size" style="width:220px"></div>
+        <div><label>Values</label><input name="values" placeholder="1G, 2G, 3G" style="width:160px"></div></div>
+      <div id="etry" hidden><label>Settings</label><input name="settings" placeholder="var=value, var2=value2" style="width:380px"></div>
+      <div><label>Runs per value</label><select name="repeats" style="width:auto"><option>1</option><option>2</option><option>3</option></select></div>
+      <div style="flex:1;min-width:160px"><label>Reason</label><input name="reason" placeholder="why (optional)"></div>
+      <button class="primary">Queue</button></form><div class="err" id="eerr"></div>` : "") +
+    (d.experiments.length ? d.experiments.map(row).join("") : `<p class="muted" style="margin:6px 0 0">No experiments${active ? " queued" : ""}.</p>`);
+  const f = el.querySelector("#expf");
+  if (f) {
+    const k = el.querySelector("#ekind");
+    k.onchange = () => { el.querySelector("#esweep").hidden = k.value !== "sweep"; el.querySelector("#etry").hidden = k.value !== "try"; };
+    f.onsubmit = async ev => { ev.preventDefault();
+      try { await api(`/api/sessions/${sess.id}/experiments`, { method: "POST", body: Object.fromEntries(new FormData(f)) }); renderExperiments(el, sess); }
+      catch (err) { el.querySelector("#eerr").textContent = err.message; } };
+  }
+  el.querySelectorAll("[data-cancel]").forEach(b => b.onclick = async () => { await api(`/api/experiments/${b.dataset.cancel}`, { method: "DELETE" }); renderExperiments(el, sess); });
+}
 
 function renderRecs(el, rec, runs) {
   if (!rec) { el.innerHTML = '<span class="muted">No recommendations yet: run <code>tuning-agent recommend</code> after a measured run.</span>'; return; }

@@ -183,7 +183,7 @@ def _verdict(run, history, goal, noise):
         dev = improvement(goal, run.get("goal_value"), same["goal"])
         d = {"note": "configuration measured before; averaged into its mean", "same_config_runs": same["seqs"],
              "same_config_mean": round(same["goal"], 4), "deviation_pct": dev, "goal_noise_pct": goal_noise}
-        if dev is not None and abs(dev) > goal_noise:
+        if dev is not None and abs(dev) > goal_noise and (noise or {}).get("runs"):  # only once noise is calibrated
             d["drift"] = True
             d["note"] = (f"DRIFT: this configuration measured {dev:+.1f}% versus its earlier mean (runs {same['seqs']}), beyond the "
                          f"±{goal_noise}% noise. The environment changed (data growth, noisy neighbour, caches?) — "

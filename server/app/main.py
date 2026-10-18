@@ -1,5 +1,6 @@
 """AI DB Tuner web service."""
 import io
+import json
 import os
 import re
 import tarfile
@@ -370,6 +371,66 @@ def delete_session(sid: int, request: Request):
     return {"ok": True}
 
 
+def _parse_experiment(body):
+    kind = body.get("kind")
+    if kind == "try":
+        changes = []
+        for line in str(body.get("settings") or "").replace(",", "\n").splitlines():
+            if line.strip():
+                if "=" not in line:
+                    raise HTTPException(400, f"expected variable=value, got {line.strip()!r}")
+                k, v = line.split("=", 1)
+                changes.append({"variable": k.strip(), "value": v.strip()})
+        if not changes:
+            raise HTTPException(400, "add at least one variable=value")
+        spec = {"changes": changes}
+    elif kind == "sweep":
+        var = str(body.get("variable") or "").strip()
+        values = [v.strip() for v in str(body.get("values") or "").split(",") if v.strip()]
+        if not var or len(values) < 2:
+            raise HTTPException(400, "a sweep needs a variable and at least two comma-separated values")
+        spec = {"variable": var, "values": values[:12]}
+    else:
+        raise HTTPException(400, "kind must be 'try' or 'sweep'")
+    return kind, spec, max(1, min(int(body.get("repeats") or 1), 5))
+
+
+def _experiments(sid):
+    return [store.row(r, ("spec", "results")) for r in store.q("SELECT * FROM experiments WHERE session_id=? ORDER BY id DESC", (sid,))]
+
+
+@app.get("/api/sessions/{sid}/experiments")
+def list_experiments(sid: int, request: Request):
+    u = auth.current_user(request)
+    own_session(sid, u["id"])
+    return {"experiments": _experiments(sid)}
+
+
+@app.post("/api/sessions/{sid}/experiments")
+def add_experiment(sid: int, request: Request, body: dict = Body(...)):
+    u = auth.current_user(request)
+    s = own_session(sid, u["id"])
+    if s["status"] != "active":
+        raise HTTPException(400, "the session is not active")
+    kind, spec, repeats = _parse_experiment(body)
+    eid = store.ex("INSERT INTO experiments(session_id, created, created_by, kind, spec, repeats, reason, force) VALUES (?,?,?,?,?,?,?,?)",
+                   (sid, now(), "human:" + u["email"], kind, store.j(spec), repeats, (body.get("reason") or "")[:500], 1 if body.get("force") else 0))
+    store.ex("INSERT INTO events(env_id, session_id, ts, type, message) VALUES (?,?,?,?,?)",
+             (s["env_id"], sid, now(), "experiment", f"experiment #{eid} queued by {u['email']}: {kind} {json.dumps(spec)[:200]}"))
+    return {"id": eid, "experiments": _experiments(sid)}
+
+
+@app.delete("/api/experiments/{eid}")
+def cancel_experiment(eid: int, request: Request):
+    u = auth.current_user(request)
+    r = store.q1("SELECT * FROM experiments WHERE id=?", (eid,))
+    if not r:
+        raise HTTPException(404, "experiment not found")
+    own_session(r["session_id"], u["id"])
+    store.ex("UPDATE experiments SET status='cancelled', updated=? WHERE id=? AND status='queued'", (now(), eid))
+    return {"ok": True}
+
+
 @app.get("/api/runs/{run_id}")
 def run_detail(run_id: int, request: Request, vs: int = None):
     u = auth.current_user(request)
@@ -570,6 +631,38 @@ def agent_llm_suggest(body: dict = Body(...), key=Depends(auth.agent_key)):
                  (s["env_id"], s["id"], now(), "llm", f"{res.get('model')}: {len(res.get('suggestions') or [])} suggestion(s)"
                   + (" (cached)" if res.get("cached") else "")))
     return res
+
+
+@app.get("/api/v1/agent/sessions/{sid}/experiments")
+def agent_experiments(sid: int, status: str = "queued", key=Depends(auth.agent_key)):
+    agent_session(sid, key)
+    return {"experiments": [e for e in _experiments(sid) if not status or e["status"] == status][::-1]}
+
+
+@app.post("/api/v1/agent/sessions/{sid}/experiments")
+def agent_add_experiment(sid: int, body: dict = Body(...), key=Depends(auth.agent_key)):
+    s = agent_session(sid, key)
+    kind, spec, repeats = _parse_experiment(body)
+    eid = store.ex("INSERT INTO experiments(session_id, created, created_by, kind, spec, repeats, reason, force) VALUES (?,?,?,?,?,?,?,?)",
+                   (sid, now(), body.get("created_by") or "agent", kind, store.j(spec), repeats, (body.get("reason") or "")[:500], 1 if body.get("force") else 0))
+    store.ex("INSERT INTO events(env_id, session_id, ts, type, message) VALUES (?,?,?,?,?)",
+             (s["env_id"], sid, now(), "experiment", f"experiment #{eid} queued: {kind} {json.dumps(spec)[:200]}"))
+    return {"id": eid}
+
+
+@app.post("/api/v1/agent/experiments/{eid}")
+def agent_update_experiment(eid: int, body: dict = Body(...), key=Depends(auth.agent_key)):
+    r = store.q1("SELECT * FROM experiments WHERE id=?", (eid,))
+    if not r:
+        raise HTTPException(404, "experiment not found")
+    s = agent_session(r["session_id"], key)
+    store.ex("UPDATE experiments SET status=?, results=COALESCE(?, results), message=COALESCE(?, message), updated=? WHERE id=?",
+             (body.get("status") or r["status"], store.j(body.get("results")) if body.get("results") is not None else None,
+              body.get("message"), now(), eid))
+    if body.get("status") in ("done", "failed"):
+        store.ex("INSERT INTO events(env_id, session_id, ts, type, message) VALUES (?,?,?,?,?)",
+                 (s["env_id"], s["id"], now(), "experiment", f"experiment #{eid} {body['status']}: {(body.get('message') or '')[:250]}"))
+    return {"ok": True}
 
 
 @app.post("/api/v1/agent/runs")

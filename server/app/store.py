@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, env_id INTEGER, session_id INTEGER, ts REAL NOT NULL, model TEXT, prompt_hash TEXT,
   status TEXT, cached INTEGER DEFAULT 0, latency_s REAL, prompt_tokens INTEGER, completion_tokens INTEGER, cost REAL, response TEXT, error TEXT);
 CREATE INDEX IF NOT EXISTS llm_calls_hash ON llm_calls(user_id, prompt_hash);
+CREATE TABLE IF NOT EXISTS experiments (
+  id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL, created REAL NOT NULL, created_by TEXT, kind TEXT NOT NULL, spec TEXT NOT NULL,
+  repeats INTEGER DEFAULT 1, reason TEXT, force INTEGER DEFAULT 0, status TEXT NOT NULL DEFAULT 'queued', results TEXT, message TEXT, updated REAL);
+CREATE INDEX IF NOT EXISTS experiments_session ON experiments(session_id, status);
 CREATE TABLE IF NOT EXISTS metrics (
   env_id INTEGER NOT NULL, ts REAL NOT NULL, data TEXT NOT NULL, PRIMARY KEY (env_id, ts)) WITHOUT ROWID;
 """
