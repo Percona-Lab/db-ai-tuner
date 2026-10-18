@@ -9,8 +9,7 @@ OpenTelemetry eBPF profiler attach their programs to), driven by `perf record`:
   linked list; without frame pointers the profile is leaf-only (still enough for the category breakdown);
 * symbolisation (`perf script`) runs after the measurement window has ended, at nice 19, so it never competes with
   the benchmark;
-* the throughput during the profiling slice is compared with the rest of the run and reported as the measured
-  overhead; when it exceeds 2% the frequency is halved for the next profiles.
+* the slice is taken at the end of the benchmark warm-up, so the measured window is never profiled.
 
 Results are aggregated into categories that map to tuning mechanisms (spinning, allocator, performance_schema, redo,
 parser/optimizer, ...), top functions, and folded stacks for a flame graph.
@@ -181,17 +180,3 @@ class Profiler:
             "top_inclusive": [{"fn": k, "pct": round(100 * v / n, 2)} for k, v in incl_fn.most_common(40) if v < n],
             "folded": [[k, v] for k, v in folded.most_common(max_stacks)],
         }
-
-
-def overhead_pct(samples, t0, t1, t_meas0):
-    """Throughput while profiling (end of warm-up) vs the measured window, when the difference exceeds the 10 s sample
-    noise; None when it is not measurable. Positive = slower while profiling."""
-    tps = lambda xs: [s["db"]["tps"] for s in xs if (s.get("db") or {}).get("tps")]
-    inside = tps([s for s in samples if t0 + 5 <= s.get("ts", 0) <= t1 + 5])
-    after = tps([s for s in samples if s.get("ts", 0) >= t_meas0 + 10])
-    if len(inside) < 2 or len(after) < 4:
-        return None
-    a, b = sum(inside) / len(inside), sum(after) / len(after)
-    sd = (sum((x - b) ** 2 for x in after) / (len(after) - 1)) ** 0.5
-    d = round(100 * (b - a) / b, 2) if b else None
-    return d if d is not None and abs(b - a) > 2 * sd / len(inside) ** 0.5 else 0.0

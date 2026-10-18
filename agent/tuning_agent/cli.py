@@ -756,18 +756,11 @@ def _finish_profile(c, p, t_meas0):
         res = p.process(pids)
     except Exception as e:  # never fail a run because of the profiler
         return {"error": str(e)[:300]}
-    if p.t0 and p.t1:
-        samples = SampleStore(c.state.dir).window(p.t0 - 1, time.time())
-        res["overhead_pct"] = cpuprof.overhead_pct(samples, p.t0, p.t1, t_meas0)
-        res["in_measured_window"] = False
-        if (res["overhead_pct"] or 0) > 2:  # be gentler next time
-            sess = c.session()
-            sess["profile_hz"] = max(9, p.hz // 2)
-            c.state.set("session", sess)
+    res["in_measured_window"] = False  # taken at the end of the warm-up
     cats = res.get("categories") or {}
     if cats:
         log("   CPU profile: " + ", ".join(f"{k} {v}%" for k, v in list(cats.items())[:5])
-            + (f" (overhead {res['overhead_pct']:+.1f}%)" if res.get("overhead_pct") is not None else ""))
+            )
     return res
 
 
