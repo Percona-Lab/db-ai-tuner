@@ -65,7 +65,7 @@ def env_brief(e):
         "db_short": f"{FLAVOR_NAMES.get(db.get('flavor'), db.get('flavor') or '')} {str(db.get('version', '')).split('-log')[0]}".strip(),
         "cpus": hw.get("cpus"), "ram_bytes": hw.get("ram_bytes"), "disk": "HDD" if hw.get("disk_rotational") else "SSD",
         "data_bytes": db.get("data_bytes"), "cost_month": e["cost_month"] if "cost_month" in e.keys() else None,
-        **{k: (e[k] if k in e.keys() else None) for k in ("cost_hourly", "provisioned_at", "destroyed_at", "plan")},
+        **{k: (e[k] if k in e.keys() else None) for k in ("cost_hourly", "provisioned_at", "destroyed_at", "plan", "agent_state", "agent_state_at")},
         "cpu_model": hw.get("cpu_model"),
     }
 
@@ -578,9 +578,17 @@ def agent_metrics(body: dict = Body(...), key=Depends(auth.agent_key)):
     c = store.conn()
     c.execute("BEGIN")
     c.executemany("INSERT OR REPLACE INTO metrics(env_id, ts, data) VALUES (?,?,?)", rows)
-    c.execute("UPDATE environments SET last_seen=? WHERE id=?", (now(), e["id"]))
+    c.execute("UPDATE environments SET last_seen=?, agent_state='running' WHERE id=?", (now(), e["id"]))
     c.execute("COMMIT")
     return {"ok": True, "stored": len(rows)}
+
+
+@app.post("/api/v1/agent/bye")
+def agent_bye(body: dict = Body(...), key=Depends(auth.agent_key)):
+    """The agent daemon was stopped on purpose (service stop): show 'agent stopped' instead of 'offline'."""
+    e = agent_env(body.get("environment_id"), key)
+    store.ex("UPDATE environments SET agent_state='stopped', agent_state_at=? WHERE id=?", (now(), e["id"]))
+    return {"ok": True}
 
 
 @app.post("/api/v1/agent/events")

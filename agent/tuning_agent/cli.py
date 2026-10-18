@@ -1656,6 +1656,11 @@ def cmd_daemon(a):
             last_prune = time.time()
         while not stop["flag"] and time.time() - t0 < interval:
             time.sleep(0.5)
+    try:  # stopped on purpose: tell the server, so the UI shows "agent stopped" rather than "offline"
+        c.client.timeout = 5
+        c.client._call("POST", "/bye", {"environment_id": c.env_id()})  # one attempt: never delay the service stop
+    except Exception:
+        pass
 
 
 GUIDE = """tuning-agent workflow (for people and coding agents)

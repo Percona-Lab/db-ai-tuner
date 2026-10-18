@@ -105,6 +105,12 @@ function authForm(kind) {
   };
 }
 
+function envStatus(e) {
+  if (e.destroyed_at) return `<span class="badge plain" data-tip="The machine was deleted ${ago(e.destroyed_at)} (e.g. at the end of a study). Its sessions and results are kept.">decommissioned</span>`;
+  if (e.online) return '<span class="badge good">online</span>';
+  if (e.agent_state === "stopped") return `<span class="badge plain" data-tip="The tuning-agent service was stopped on the host ${ago(e.agent_state_at)} (systemctl stop), not a loss of contact.">agent stopped</span>`;
+  return `<span class="badge warn" data-tip="Last report from the agent ${ago(e.last_seen)}: host down, agent crashed or network problem.">offline · ${ago(e.last_seen)}</span>`;
+}
 async function envList() {
   setNav("envs");
   const d = await api("/api/environments");
@@ -113,7 +119,7 @@ async function envList() {
     <div class="card"><h3>No environment connected yet</h3><p>Install the agent on the database host to see it here.</p><a class="btn primary" href="#/connect">Connect an agent</a></div>`;
     return;
   }
-  const envs = d.environments.slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+  const envs = d.environments.slice().sort((a, b) => (!!a.destroyed_at - !!b.destroyed_at) || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
   let mode = "list";
   try { mode = localStorage.getItem("envView") || "list"; } catch (e) { }
   $view.innerHTML = `<div class="row"><div><h1>Environments</h1><p class="sub">Database servers with a connected tuning-agent.</p></div><span class="spacer"></span>
@@ -124,7 +130,7 @@ async function envList() {
     return { tps: e.online ? num(l.tps) : "–", lat: e.online && l.avg_latency_ms != null ? num(l.avg_latency_ms) + " ms" : "–", cpu: e.online && o.cpu_busy != null ? Math.round(o.cpu_busy) + "%" : "–",
       disk: e.online && dmb != null ? num(dmb) + " MB/s" : "–", diskTip: e.online && dmb != null ? `read ${num(o.disk_r_mbs)} MB/s · write ${num(o.disk_w_mbs)} MB/s · ${num((o.disk_r_iops || 0) + (o.disk_w_iops || 0))} IOPS` : "" }; };
   const clients = e => (e.clients || []).length ? `<div class="muted" style="font-size:12px" data-tip="Client hosts linked to this database server: ${esc(e.clients.map(c => c.name + (c.online ? " (online)" : " (offline)")).join(", "))}">+ ${e.clients.length} client${e.clients.length > 1 ? "s" : ""}: ${esc(e.clients.map(c => c.name).join(", "))}</div>` : "";
-  const status = e => e.online ? '<span class="badge good">online</span>' : `<span class="badge plain">offline · ${ago(e.last_seen)}</span>`;
+  const status = e => envStatus(e);
   const draw = () => {
     box.parentElement.querySelectorAll(".seg button").forEach(b => b.classList.toggle("on", b.dataset.v === mode));
     if (mode === "list") {
@@ -385,7 +391,7 @@ async function envPage(id) {
   const e = d.environment, f = d.facts || {}, hw = f.hardware || {}, db = f.db || {};
   const kv = db.key_variables || {};
   $view.innerHTML = `<div class="crumbs"><a href="#/">Environments</a> /</div>
-  <div class="row"><h1>${esc(e.name)}</h1>${e.online ? '<span class="badge good">agent online</span>' : `<span class="badge plain">agent offline · last seen ${ago(e.last_seen)}</span>`}<span class="spacer"></span>
+  <div class="row"><h1>${esc(e.name)}</h1>${envStatus(e)}<span class="spacer"></span>
   <button class="ghost" id="rename">Rename</button><button class="ghost danger" id="del">Delete</button></div>
   <p class="sub">${esc(e.db_short || e.db)} · ${esc(hw.hostname || "")} · agent ${esc(e.agent_version || "")}</p>
   <div class="card"><div class="row" style="gap:6px 18px">

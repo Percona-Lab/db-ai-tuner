@@ -92,6 +92,8 @@ MIGRATIONS = [
     ("environments", "provisioned_at", "REAL"),
     ("environments", "destroyed_at", "REAL"),
     ("environments", "plan", "TEXT"),
+    ("environments", "agent_state", "TEXT"),
+    ("environments", "agent_state_at", "REAL"),
 ]
 
 
