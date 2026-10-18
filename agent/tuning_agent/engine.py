@@ -694,6 +694,9 @@ def run_engine(ctx):
             it["mechanism"] = MECHANISMS[it["id"]][1]
             it["addresses"] = matched
             it["relevance"] = rel
+        if it["id"] in (ctx.get("failed") or []):
+            it["confidence"] = 0
+            it["note"] = (it.get("note", "") + " Failed earlier in this session (apply/restart failure or run too slow).").strip()
         # experience prior: how did this change do in earlier sessions with a similar workload?
         e = exp.get(it["id"])
         if e and e.get("n"):

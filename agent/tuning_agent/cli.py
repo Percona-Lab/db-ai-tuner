@@ -836,6 +836,7 @@ def _engine_ctx(c, sess):
         log(f"note: no experience data ({e})")
     return {"goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
             "os_tuning": c.os_tuning_allowed() and sess.get("os_tuning", True), "os_facts": osf, "experience": experience,
+            "failed": sess.get("failed_recs") or [],
             "variables": c.all_settings(), "summary": last.get("summary"), "inputs": last.get("inputs"),
             "history": sess["runs"], "noise_pct": sess.get("noise_pct"), "noise": sess.get("noise"),
             "managed": {k: v["value"] for k, v in c.state.get("managed", {}).items()}}
