@@ -152,6 +152,10 @@ def diagnose(ctx):
     if rtt and rtt >= 10:
         add("network-rtt", "medium" if rtt < 40 else "high", f"Clients are {rtt:.0f} ms away (TCP RTT): every round trip costs more than "
             "most statements; batching, pooling and window settings matter.", {"rtt_avg_ms": rtt, "rtt_p95_ms": s.get("rtt_p95_ms")})
+    if (s.get("client_cpu_busy") or 0) >= 90:
+        add("client-bound", "high", f"The benchmark/application client is saturated ({s['client_cpu_busy']:.0f}% CPU): measured throughput "
+            "reflects the client, not the database. Use a bigger client host or fewer client-side cycles before tuning the server.",
+            {"client_cpu_busy": s.get("client_cpu_busy")})
     if not out:
         add("none", "low", "No dominant bottleneck: the server is not saturated by this workload (client-bound or too little load?).",
             {"cpu_busy": busy, "cpu_iowait": iow})
@@ -627,6 +631,35 @@ def recommend(ctx):
                   f"CPUs ({s.get('threads_running_avg', 0):.0f} running on {cpus} CPUs here). The effective fix is fewer runnable threads: "
                   "a thread pool or smaller client pools.", {"threads_running_avg": s.get("threads_running_avg"), "kernel": kernel},
                   impact=2, confidence=2, kind="advice")
+
+    # ---------------- client hosts (applied through the client role) ---------------
+    if have_run and ctx.get("os_tuning") and any(k.startswith("client:os:") for k in v):
+        tw, cr = s.get("client_net_time_wait") or 0, s.get("client_net_conn_per_s") or 0
+        if tw > 20000 or cr > 200:
+            ch = []
+            if v.get("client:os:net.ipv4.tcp_tw_reuse") != "1":
+                ch.append(("client:os:net.ipv4.tcp_tw_reuse", "1"))
+            if not str(v.get("client:os:net.ipv4.ip_local_port_range", "")).replace("\t", " ").startswith("1024 "):
+                ch.append(("client:os:net.ipv4.ip_local_port_range", "1024 65535"))
+            b.add("client-ports", "Client: more ephemeral ports and TIME_WAIT reuse", ch,
+                  f"The client opens {cr:.0f} connections/s and holds {tw:.0f} sockets in TIME_WAIT: it can run out of ephemeral ports "
+                  "(connect fails with EADDRNOTAVAIL). Pooling is the real fix; these settings raise the ceiling.",
+                  {"client_net_conn_per_s": cr, "client_net_time_wait": tw}, impact=2, confidence=3)
+        crtt = s.get("client_rtt_avg_ms") or 0
+        if crtt >= 10 and str(v.get("client:os:net.ipv4.tcp_slow_start_after_idle", "1")) == "1":
+            b.add("client-no-slow-start-idle", "Client: keep the congestion window on idle connections",
+                  [("client:os:net.ipv4.tcp_slow_start_after_idle", "0")],
+                  f"{crtt:.0f} ms RTT to the database: idle pooled connections restart slow start for every request burst.",
+                  {"client_rtt_avg_ms": crtt}, impact=2, confidence=2)
+        if crtt >= 10 and v.get("client:os:net.ipv4.tcp_congestion_control") == "cubic" and (s.get("client_net_tx_mbs") or 0) > 1:
+            b.add("client-bbr", "Client: BBR congestion control with fq", [("client:os:net.ipv4.tcp_congestion_control", "bbr"),
+                                                                            ("client:os:net.core.default_qdisc", "fq")],
+                  f"The client sends {s.get('client_net_tx_mbs'):.1f} MiB/s over a {crtt:.0f} ms path (large writes/loads). Experiment.",
+                  {"client_rtt_avg_ms": crtt, "client_net_tx_mbs": s.get("client_net_tx_mbs")}, impact=1, confidence=1)
+        if (s.get("client_softirq_max_cpu_pct") or 0) > 50 and (s.get("client_softirq_avg_cpu_pct") or 0) < 25 and v.get("client:os:rps") == "off":
+            b.add("client-rps", "Client: spread packet processing over all CPUs", [("client:os:rps", "on")],
+                  f"One client CPU spends {s['client_softirq_max_cpu_pct']:.0f}% in softirq.", {"client_softirq_max_cpu_pct": s.get("client_softirq_max_cpu_pct")},
+                  impact=2, confidence=2)
 
     # ---------------- sweeps: measure several values where a single step is a guess ----
     def sweep(id_, title, var, values, rationale, evidence, impact=2):

@@ -12,7 +12,7 @@ import sys
 import time
 import uuid
 
-from . import __version__, baseline, bench, collector, engine, evaluate, hostinfo, llmassist, mysqldb, ostune
+from . import __version__, baseline, bench, clientrole, collector, engine, evaluate, hostinfo, llmassist, mysqldb, ostune
 from .knowledge import tradeoffs_in
 from .applier import Applier
 from .client import APIError, Client
@@ -61,6 +61,7 @@ class Ctx:
         self.db = mysqldb.DB(self.cfg)
         self.client = Client(self.cfg["server"], self.cfg["api_key"]) if need_server else None
         self._vars = None
+        self._hosts = None
 
     @property
     def variables(self):
@@ -70,6 +71,7 @@ class Ctx:
 
     def refresh(self):
         self._vars = None
+        self._hosts = None
 
     def os_tuning_allowed(self):
         return str(self.cfg.get("allow_os_tuning", "true")).lower() == "true"
@@ -78,9 +80,22 @@ class Ctx:
         ap = Applier(self.cfg, self.state, self.db)
         return ostune.current(self.datadir(), hostinfo.device_for_path(self.datadir()), ap.service, ap.fs_device)
 
+    def client_hosts(self):
+        if self._hosts is None:
+            try:
+                self._hosts = [h for h in self.client.get(f"/environments/{self.env_id()}/hosts").get("hosts", []) if h.get("role") == "client"]
+            except Exception:
+                self._hosts = []
+        return self._hosts
+
     def all_settings(self):
         v = dict(self.variables)
         v.update(self.os_settings())
+        hosts = [h for h in self.client_hosts() if h.get("online")]
+        if hosts:  # client settings as client:os:* (from the first online client; clients are tuned together)
+            for k, val in ((hosts[0].get("facts") or {}).get("os") or {}).items():
+                if k.startswith("os:"):
+                    v["client:" + k] = val
         return v
 
     def datadir(self):
@@ -170,9 +185,19 @@ def cmd_init(a):
     sec.setdefault("interval", "10")
     if "server" not in sec or "api_key" not in sec:
         raise Fail("--server and --api-key are required on first init")
+    if a.role == "client":
+        if not a.environment:
+            raise Fail("--role client needs --environment <id of the database environment it talks to>")
+        sec["role"], sec["environment_id"] = "client", str(a.environment)
     with open(CONFIG_PATH, "w") as f:
         cp.write(f)
     os.chmod(CONFIG_PATH, 0o600)
+    if sec.get("role") == "client":
+        c = Ctx()
+        r = clientrole.hello(c)
+        emit({"ok": True, "host_id": r["host_id"], "environment_id": r["environment_id"]},
+             f"Client host #{r['host_id']} linked to environment #{r['environment_id']}. Start the daemon: systemctl enable --now tuning-agent")
+        return
     c = Ctx()
     c.db.connect()
     r, f = c.hello()
@@ -255,8 +280,13 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
     for ch in changes:
         ch.setdefault("source", source)
         ch.setdefault("reason", reason_default)
+    client_changes = [ch for ch in changes if ch["variable"].startswith("client:")]
+    changes = [ch for ch in changes if not ch["variable"].startswith("client:")]
     ap = Applier(c.cfg, c.state, c.db, log=log)
-    res = ap.apply(changes, allow_restart=allow)
+    res = ap.apply(changes, allow_restart=allow) if changes else {"applied": [], "restarted": False, "needs_restart": [],
+                                                                  "mismatches": [], "errors": [], "cnf_path": ap.cnf_path}
+    if client_changes and not res.get("rolled_back"):
+        _apply_clients(c, client_changes, res)
     if res["applied"]:
         pend = c.state.get("pending_changes") or []
         by = {p["variable"]: p for p in pend}
@@ -276,6 +306,44 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
     c.event("apply", f"{source}: applied {len(res['applied'])} change(s)" + (" with restart" if res["restarted"] else ""),
             {"result": res, "requested": changes})
     return res
+
+
+def _apply_clients(c, changes, res, timeout=180):
+    """Send OS changes to every online client host of the environment and wait for their results."""
+    hosts = [h for h in c.client_hosts() if h.get("online")]
+    if not hosts:
+        res["errors"].append("client settings requested but no client host is online")
+        return
+    payload = {"changes": [{"variable": ch["variable"][len("client:"):], "value": ch.get("value"), "reason": ch.get("reason"),
+                            "source": ch.get("source")} for ch in changes]}
+    sid = (c.state.get("session") or {}).get("id")
+    pending = {c.client.post(f"/hosts/{h['id']}/commands", {"action": "os_apply", "payload": payload, "session_id": sid})["command_id"]: h
+               for h in hosts}
+    deadline, results = time.time() + timeout, {}
+    while pending and time.time() < deadline:
+        for cid in list(pending):
+            r = c.client.get(f"/commands/{cid}")
+            if r["status"] in ("done", "failed"):
+                results[pending.pop(cid)["name"]] = r.get("result") or {}
+        if pending:
+            time.sleep(2)
+    for name in [h["name"] for h in pending.values()]:
+        res["errors"].append(f"client {name}: no answer within {timeout}s")
+    managed = c.state.data.setdefault("managed", {})
+    for name, r in results.items():
+        for e in r.get("errors") or []:
+            res["errors"].append(f"client {name}: {e}")
+    first = next(iter(results.values()), {})
+    for a in first.get("applied") or []:
+        key = "client:" + a["variable"]
+        res["applied"].append({"variable": key, "old": a.get("old"), "new": a.get("new"), "reason": "", "source": "client"})
+    for ch in changes:
+        if ch.get("value") is None:
+            managed.pop(ch["variable"], None)
+        elif not any(e for e in res["errors"] if ch["variable"][len("client:"):] in e):
+            managed[ch["variable"]] = {"value": str(ch["value"]), "reason": ch.get("reason", ""), "source": ch.get("source", "")}
+    c.state.save()
+    c.refresh()
 
 
 def _print_apply(res):
@@ -507,6 +575,22 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
         for k, v in (extra_inputs.get("probe") or {}).items():
             summary["probe_" + k] = v
     summary["tradeoffs"] = tradeoffs_in(m["managed"])
+    clients = {}
+    for h in c.client_hosts():
+        try:
+            w = c.client.get(f"/hosts/{h['id']}/window?start={a_snap['t']}&end={b_snap['t']}")
+            if w.get("samples"):
+                clients[h["name"]] = w
+        except Exception:
+            pass
+    if clients:
+        inputs["clients"] = clients
+        keys = ("cpu_busy", "net_conn_per_s", "net_time_wait", "net_retrans_pct", "rtt_avg_ms", "rtt_p95_ms", "softirq_max_cpu_pct",
+                "softirq_avg_cpu_pct", "net_tx_mbs", "net_rx_mbs", "psi_cpu_some")
+        for k in keys:
+            vals = [w["avg"][k] for w in clients.values() if k in w["avg"]]
+            if vals:
+                summary["client_" + k] = round(max(vals), 3)
     external = external or {}
     gv, src = _goal_value(sess["goal"], summary, external, goal_value)
     if goal_source and goal_value is not None:
@@ -1307,6 +1391,9 @@ def cmd_config(a):
 
 def cmd_daemon(a):
     c = Ctx()
+    if c.cfg.get("role") == "client":
+        clientrole.daemon(c, log)
+        return
     interval = float(c.cfg.get("interval", 10))
     store = SampleStore(c.state.dir)
     stop = {"flag": False}
@@ -1411,6 +1498,8 @@ def main(argv=None):
     s.add_argument("--state-dir", dest="state_dir")
     s.add_argument("--no-restart", action="store_true", help="never restart the database server")
     s.add_argument("--no-os-tuning", action="store_true", help="never change operating-system settings")
+    s.add_argument("--role", choices=["server", "client"], default=None, help="client = application/benchmark host (no MySQL access needed)")
+    s.add_argument("--environment", type=int, help="client role: id of the database environment this host talks to")
     s.add_argument("--fs-device", help="dedicated block device for filesystem experiments (it is reformatted!)")
     s.add_argument("--allow-fs-experiments", action="store_true", help="allow filesystem experiments on --fs-device")
     s.set_defaults(fn=cmd_init)

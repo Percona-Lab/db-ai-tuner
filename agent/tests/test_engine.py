@@ -192,6 +192,21 @@ def test_network_rules():
     assert it["net-listen-backlog"]["relevance"] == 3
 
 
+def test_client_rules():
+    v = dict(VARS, **{"client:os:net.ipv4.tcp_tw_reuse": "2", "client:os:net.ipv4.ip_local_port_range": "32768\t60999",
+                      "client:os:net.ipv4.tcp_slow_start_after_idle": "1", "client:os:rps": "off",
+                      "client:os:net.ipv4.tcp_congestion_control": "cubic"})
+    summ = dict(OLTP[0], client_net_time_wait=30000, client_net_conn_per_s=500, client_rtt_avg_ms=15, client_softirq_max_cpu_pct=80,
+                client_softirq_avg_cpu_pct=20, client_cpu_busy=95)
+    res = engine.run_engine({"goal": "tps", "policy": "safe", "hw": HW, "flavor": "percona", "version": (8, 4, 11), "variables": v,
+                             "summary": summ, "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}, "os_tuning": True})
+    it = {i["id"]: i for i in res["items"]}
+    assert {"client-ports", "client-no-slow-start-idle", "client-rps"} <= set(it)
+    assert [c["variable"] for c in it["client-ports"]["changes"]] == ["client:os:net.ipv4.tcp_tw_reuse", "client:os:net.ipv4.ip_local_port_range"]
+    assert not it["client-ports"]["restart"]
+    assert any(d["type"] == "client-bound" for d in res["diagnosis"])
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)

@@ -270,6 +270,11 @@ TRADEOFFS["os:datadir_fs"] = (lambda v: any(x in str(v) for x in ("barrier=0", "
                               "options barrier=0 / nobarrier / data=writeback / sync=disabled")
 
 
+# client-host settings (applied through the client role); same semantics as the os:* entries
+for _k, (_desc, _restart, _cat) in list(OS_KB.items()):
+    KB["client:" + _k] = dict(kind="str", dynamic=True, risk="low", cat="client/" + _cat, desc="Client host: " + _desc)
+
+
 def tradeoff_of(name, value):
     """None for a production-safe value, else {variable, value, category, lost}."""
     t = TRADEOFFS.get(name)

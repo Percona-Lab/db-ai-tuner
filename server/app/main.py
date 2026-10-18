@@ -104,8 +104,11 @@ def previous_run(r):
     return dict(p) if p else None
 
 
-def metrics_window(env_id, t0, t1, points=400):
-    rows = store.q("SELECT ts, data FROM metrics WHERE env_id=? AND ts>=? AND ts<=? ORDER BY ts", (env_id, t0, t1))
+def metrics_window(env_id, t0, t1, points=400, host_id=None):
+    if host_id:
+        rows = store.q("SELECT ts, data FROM host_metrics WHERE host_id=? AND ts>=? AND ts<=? ORDER BY ts", (host_id, t0, t1))
+    else:
+        rows = store.q("SELECT ts, data FROM metrics WHERE env_id=? AND ts>=? AND ts<=? ORDER BY ts", (env_id, t0, t1))
     if not rows:
         return {"ts": [], "db": {}, "os": {}, "gaps": []}
     samples = [(r["ts"], store.uj(r["data"], {})) for r in rows]
@@ -286,7 +289,8 @@ def environment(env_id: int, request: Request):
                 d["best_gain_pct"] = round(100 * ((first - best) / first if s["goal"] == "latency" else (best - first) / first), 2)
         sessions.append(d)
     events = [store.row(r, ("data",)) for r in store.q("SELECT * FROM events WHERE env_id=? ORDER BY ts DESC LIMIT 50", (env_id,))]
-    return {"environment": env_brief(e), "facts": store.uj(e["facts"], {}), "sessions": sessions, "events": events}
+    hosts = [host_brief(dict(h)) for h in store.q("SELECT * FROM hosts WHERE env_id=? ORDER BY name", (env_id,))]
+    return {"environment": env_brief(e), "facts": store.uj(e["facts"], {}), "sessions": sessions, "events": events, "hosts": hosts}
 
 
 @app.patch("/api/environments/{env_id}")
@@ -471,6 +475,10 @@ def run_metrics(run_id: int, request: Request, pad: float = 60, points: int = 40
     t1 = (r["ended"] or now()) + (pad if r["ended"] else 0)
     m = metrics_window(s["env_id"], t0, t1, points)
     m["window"] = [r["started"], r["ended"]]
+    for h in store.q("SELECT id, name FROM hosts WHERE env_id=? ORDER BY name", (s["env_id"],)):
+        hm = metrics_window(None, t0, t1, points, host_id=h["id"])
+        if hm["ts"]:
+            m.setdefault("clients", []).append({"name": h["name"], "ts": hm["ts"], "os": hm["os"]})
     return m
 
 
@@ -663,6 +671,112 @@ def agent_update_experiment(eid: int, body: dict = Body(...), key=Depends(auth.a
         store.ex("INSERT INTO events(env_id, session_id, ts, type, message) VALUES (?,?,?,?,?)",
                  (s["env_id"], s["id"], now(), "experiment", f"experiment #{eid} {body['status']}: {(body.get('message') or '')[:250]}"))
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------- client hosts + command channel
+
+def agent_host(host_id, key):
+    h = store.q1("SELECT * FROM hosts WHERE id=? AND user_id=?", (host_id, key["user_id"]))
+    if not h:
+        raise HTTPException(404, "host not found for this API key")
+    return dict(h)
+
+
+def host_brief(h):
+    f = store.uj(h["facts"], {}) or {}
+    m = store.q1("SELECT data FROM host_metrics WHERE host_id=? ORDER BY ts DESC LIMIT 1", (h["id"],))
+    return {"id": h["id"], "name": h["name"], "role": h["role"], "env_id": h["env_id"], "last_seen": h["last_seen"],
+            "online": bool(h["last_seen"] and now() - h["last_seen"] < ONLINE_S), "facts": f, "latest": store.uj(m["data"]) if m else None}
+
+
+@app.post("/api/v1/agent/hosts/hello")
+def agent_host_hello(body: dict = Body(...), key=Depends(auth.agent_key)):
+    env = agent_env(body.get("environment_id"), key)
+    uid = (body.get("agent_uid") or "")[:64]
+    if not uid:
+        raise HTTPException(400, "agent_uid required")
+    h = store.q1("SELECT id FROM hosts WHERE user_id=? AND agent_uid=?", (key["user_id"], uid))
+    facts = store.j(body.get("facts") or {})
+    if h:
+        store.ex("UPDATE hosts SET env_id=?, name=?, role=?, facts=?, last_seen=? WHERE id=?",
+                 (env["id"], (body.get("name") or "")[:80], body.get("role") or "client", facts, now(), h["id"]))
+        hid = h["id"]
+    else:
+        hid = store.ex("INSERT INTO hosts(user_id, env_id, agent_uid, name, role, facts, created, last_seen) VALUES (?,?,?,?,?,?,?,?)",
+                       (key["user_id"], env["id"], uid, (body.get("name") or "")[:80], body.get("role") or "client", facts, now(), now()))
+        store.ex("INSERT INTO events(env_id, ts, type, message) VALUES (?,?,?,?)", (env["id"], now(), "agent", f"client host {body.get('name')} linked"))
+    return {"host_id": hid, "environment_id": env["id"]}
+
+
+@app.post("/api/v1/agent/hosts/{hid}/metrics")
+def agent_host_metrics(hid: int, body: dict = Body(...), key=Depends(auth.agent_key)):
+    agent_host(hid, key)
+    rows = [(hid, float(x["ts"]), store.j({k: x.get(k) for k in ("os",)})) for x in (body.get("samples") or [])[:2000]
+            if isinstance(x, dict) and isinstance(x.get("ts"), (int, float))]
+    c = store.conn()
+    c.execute("BEGIN")
+    c.executemany("INSERT OR REPLACE INTO host_metrics(host_id, ts, data) VALUES (?,?,?)", rows)
+    c.execute("UPDATE hosts SET last_seen=? WHERE id=?", (now(), hid))
+    c.execute("COMMIT")
+    return {"ok": True, "stored": len(rows)}
+
+
+@app.get("/api/v1/agent/hosts/{hid}/commands")
+def agent_host_commands(hid: int, key=Depends(auth.agent_key)):
+    agent_host(hid, key)
+    store.ex("UPDATE hosts SET last_seen=? WHERE id=?", (now(), hid))
+    rows = store.q("SELECT * FROM commands WHERE host_id=? AND status='queued' ORDER BY id", (hid,))
+    return {"commands": [store.row(r, ("payload", "result")) for r in rows]}
+
+
+@app.post("/api/v1/agent/commands/{cid}")
+def agent_command_update(cid: int, body: dict = Body(...), key=Depends(auth.agent_key)):
+    r = store.q1("SELECT * FROM commands WHERE id=?", (cid,))
+    if not r:
+        raise HTTPException(404, "command not found")
+    agent_host(r["host_id"], key)
+    store.ex("UPDATE commands SET status=?, result=COALESCE(?, result), updated=? WHERE id=?",
+             (body.get("status") or r["status"], store.j(body.get("result")) if body.get("result") is not None else None, now(), cid))
+    return {"ok": True}
+
+
+@app.get("/api/v1/agent/commands/{cid}")
+def agent_command_get(cid: int, key=Depends(auth.agent_key)):
+    r = store.q1("SELECT * FROM commands WHERE id=?", (cid,))
+    if not r:
+        raise HTTPException(404, "command not found")
+    agent_host(r["host_id"], key)
+    return store.row(r, ("payload", "result"))
+
+
+@app.get("/api/v1/agent/environments/{env_id}/hosts")
+def agent_env_hosts(env_id: int, key=Depends(auth.agent_key)):
+    agent_env(env_id, key)
+    return {"hosts": [host_brief(dict(h)) for h in store.q("SELECT * FROM hosts WHERE env_id=? ORDER BY name", (env_id,))]}
+
+
+@app.post("/api/v1/agent/hosts/{hid}/commands")
+def agent_queue_command(hid: int, body: dict = Body(...), key=Depends(auth.agent_key)):
+    h = agent_host(hid, key)
+    cid = store.ex("INSERT INTO commands(host_id, session_id, created, action, payload) VALUES (?,?,?,?,?)",
+                   (hid, body.get("session_id"), now(), body.get("action"), store.j(body.get("payload"))))
+    store.ex("INSERT INTO events(env_id, session_id, ts, type, message) VALUES (?,?,?,?,?)",
+             (h["env_id"], body.get("session_id"), now(), "client", f"{body.get('action')} sent to {h['name']}"))
+    return {"command_id": cid}
+
+
+@app.get("/api/v1/agent/hosts/{hid}/window")
+def agent_host_window(hid: int, start: float, end: float, key=Depends(auth.agent_key)):
+    """Averages of a client host's metrics over a measurement window."""
+    agent_host(hid, key)
+    rows = store.q("SELECT data FROM host_metrics WHERE host_id=? AND ts>=? AND ts<=?", (hid, start, end))
+    acc = {}
+    for r in rows:
+        for k, v in ((store.uj(r["data"], {}) or {}).get("os") or {}).items():
+            if isinstance(v, (int, float)):
+                acc.setdefault(k, []).append(v)
+    return {"samples": len(rows), "avg": {k: round(sum(v) / len(v), 4) for k, v in acc.items()},
+            "max": {k: max(v) for k, v in acc.items()}}
 
 
 @app.post("/api/v1/agent/runs")

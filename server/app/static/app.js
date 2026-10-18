@@ -305,6 +305,12 @@ async function envPage(id) {
    ${Object.entries(kv).map(([k, v]) => `<div class="mono">${esc(k)}</div><div class="mono">${esc(val(k, v))}</div>`).join("")}</div></div></div>
   </div></div>
   <div class="card" style="margin-top:10px"><details><summary style="margin:0">Current agent-applied configuration (${Object.keys((f.agent || {}).managed || {}).length} settings)${info("The settings the tuning-agent currently enforces on this server: MySQL variables written to its own option file (shown below) and operating-system settings. Everything not listed is the server default or comes from your own option files. As of the agent's last report.")}</summary>${Object.keys((f.agent || {}).managed || {}).length ? `<p class="muted" style="margin:0 0 6px">${esc((f.agent || {}).cnf_path || "")} · restarts ${(f.agent || {}).allow_restart === false ? "disabled" : "allowed"}</p><pre><code>${cnfBlock(f.agent.managed)}</code></pre>` : '<span class="muted">None yet: <code>tuning-agent baseline --apply</code> writes the first set.</span>'}</details></div>
+  ${(d.hosts || []).length ? `<h2>Client hosts${info("Application or benchmark hosts running the tuning-agent in client role. They report OS and network metrics and accept OS/network setting changes from the session driver.")}</h2>
+   <div class="card tablewrap"><table><thead><tr><th>Host</th><th>Status</th><th>Hardware</th><th class="num">RTT to DB</th><th class="num">Connections/s</th><th class="num">TIME_WAIT</th><th class="num">CPU</th></tr></thead><tbody>
+   ${d.hosts.map(h => { const o = (h.latest && h.latest.os) || {}, hw = (h.facts || {}).hardware || {};
+     return `<tr><td><b>${esc(h.name)}</b></td><td>${h.online ? '<span class="badge good">online</span>' : `<span class="badge plain">offline · ${ago(h.last_seen)}</span>`}</td>
+       <td>${hw.cpus || "?"} CPU · ${bytes(hw.ram_bytes)}</td><td class="num">${o.rtt_avg_ms != null ? num(o.rtt_avg_ms) + " ms" : "–"}</td>
+       <td class="num">${num(o.net_conn_per_s)}</td><td class="num">${num(o.net_time_wait)}</td><td class="num">${o.cpu_busy != null ? Math.round(o.cpu_busy) + "%" : "–"}</td></tr>`; }).join("")}</tbody></table></div>` : ""}
   <div class="row"><h2>Live metrics</h2><span class="spacer"></span><select id="range" style="width:auto"><option value="900">15 min</option><option value="3600" selected>1 hour</option><option value="21600">6 hours</option><option value="86400">24 hours</option></select></div>
   <div class="grid g3" id="live"></div>
   <h2>Tuning sessions</h2><div class="card tablewrap"><table><thead><tr><th>#</th><th>Session</th><th>Goal</th><th>Policy</th><th>Status</th><th class="num">Runs</th><th class="num">First run</th><th class="num">Best</th><th class="num">Best gain</th><th>Started</th></tr></thead><tbody id="sess"></tbody></table></div>
@@ -588,6 +594,16 @@ async function runPage(id, tab) {
       tabEl.innerHTML = `<p class="muted">Shaded = measurement window${info("Charts show the measurement window plus 60 s before and after it.")}</p><div class="grid g3" id="rc"></div>`;
       const m = await api(`/api/runs/${id}/metrics?points=300`);
       chartsGrid(document.getElementById("rc"), m, RUN_CHARTS, m.window);
+      (m.clients || []).forEach(cl => {
+        const box = document.createElement("div"); box.className = "grid g3"; box.style.marginTop = "14px";
+        document.getElementById("rc").after(box);
+        const cm = { ts: cl.ts, os: cl.os, db: {} };
+        chartsGrid(box, cm, [
+          { title: `Client ${cl.name}: CPU`, unit: "%", max100: true, series: [["os", "cpu_user", "user"], ["os", "cpu_sys", "system"], ["os", "softirq_max_cpu_pct", "busiest CPU softirq"]] },
+          { title: `Client ${cl.name}: RTT to DB`, unit: "ms", series: [["os", "rtt_avg_ms", "avg"], ["os", "rtt_p95_ms", "p95"]] },
+          { title: `Client ${cl.name}: connections`, unit: "", series: [["os", "net_conn_per_s", "new/s"], ["os", "net_time_wait", "TIME_WAIT"], ["os", "net_retrans_pct", "retrans %"]] },
+        ], m.window);
+      });
       if (r.status === "measuring") timers.push(setInterval(async () => { const m2 = await api(`/api/runs/${id}/metrics?points=300`); chartsGrid(document.getElementById("rc"), m2, RUN_CHARTS, m2.window); }, 15000));
     }
     else if (name === "inputs") renderInputs(tabEl, r);

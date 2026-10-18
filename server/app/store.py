@@ -40,6 +40,15 @@ CREATE TABLE IF NOT EXISTS experiments (
   id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL, created REAL NOT NULL, created_by TEXT, kind TEXT NOT NULL, spec TEXT NOT NULL,
   repeats INTEGER DEFAULT 1, reason TEXT, force INTEGER DEFAULT 0, status TEXT NOT NULL DEFAULT 'queued', results TEXT, message TEXT, updated REAL);
 CREATE INDEX IF NOT EXISTS experiments_session ON experiments(session_id, status);
+CREATE TABLE IF NOT EXISTS hosts (
+  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, env_id INTEGER NOT NULL, agent_uid TEXT NOT NULL, name TEXT, role TEXT NOT NULL DEFAULT 'client',
+  facts TEXT, created REAL NOT NULL, last_seen REAL, UNIQUE(user_id, agent_uid));
+CREATE TABLE IF NOT EXISTS host_metrics (
+  host_id INTEGER NOT NULL, ts REAL NOT NULL, data TEXT NOT NULL, PRIMARY KEY (host_id, ts)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS commands (
+  id INTEGER PRIMARY KEY, host_id INTEGER NOT NULL, session_id INTEGER, created REAL NOT NULL, action TEXT NOT NULL, payload TEXT,
+  status TEXT NOT NULL DEFAULT 'queued', result TEXT, updated REAL);
+CREATE INDEX IF NOT EXISTS commands_host ON commands(host_id, status);
 CREATE TABLE IF NOT EXISTS metrics (
   env_id INTEGER NOT NULL, ts REAL NOT NULL, data TEXT NOT NULL, PRIMARY KEY (env_id, ts)) WITHOUT ROWID;
 """

@@ -74,6 +74,10 @@ MECHANISMS = {
     "net-conntrack": (("connections", "network-loss"), "No drops from a full conntrack table."),
     "net-no-slow-start-idle": (("network-rtt",), "Idle pooled connections keep their congestion window."),
     "net-bbr": (("network-rtt", "network-loss"), "Bandwidth/RTT-based pacing on long paths."),
+    "client-ports": (("connections",), "Client keeps finding free ephemeral ports."),
+    "client-no-slow-start-idle": (("network-rtt",), "Client connections keep their congestion window."),
+    "client-bbr": (("network-rtt", "network-loss"), "Client pacing on long paths."),
+    "client-rps": (("softirq", "client-bound"), "Client packet processing spread over CPUs."),
     "os-nobarrier": (("commit", "io"), "fsync does not flush the device write cache."),
 }
 
