@@ -97,6 +97,7 @@ def environment_shift(run_summary, noise):
 
 def calibrate(runs):
     """Noise thresholds from repeated runs of one configuration."""
+    runs = [r for r in runs if r.get("verdict") != "unreliable"] or runs
     goal_vals = [r["goal_value"] for r in runs if r.get("goal_value") is not None]
     if len(goal_vals) < 2:
         return None
@@ -125,7 +126,8 @@ RECENT = 3  # parent configuration = mean of its most recent runs (protects agai
 
 
 def config_means(runs, key, recent=None):
-    sel = [r for r in runs if config_key(r.get("managed")) == key and r.get("goal_value") is not None]
+    sel = [r for r in runs if config_key(r.get("managed")) == key and r.get("goal_value") is not None
+           and r.get("verdict") != "unreliable"]
     if recent:
         sel = sel[-recent:]
     if not sel:
@@ -162,8 +164,35 @@ def relevant_resources(*summaries):
     return {"cpu": cpu, "io": io}
 
 
+STEAL_FLAG_AVG, STEAL_FLAG_PEAK, STEAL_INVALID_AVG = 3.0, 15.0, 8.0
+
+
+def steal_check(summary):
+    """Hypervisor CPU steal on the database host or a client during the run. Steal takes CPU away at random from the
+    workload, so the run measures the neighbours as much as the configuration. Flag from 3% average (or 15% in any
+    10 s sample); from 8% average the run is not comparable and is excluded (and re-measured by autotune)."""
+    s = summary or {}
+    avg, peak, cli = s.get("cpu_steal") or 0, s.get("cpu_steal_max") or 0, s.get("client_cpu_steal") or 0
+    worst = max(avg, cli)
+    if worst >= STEAL_INVALID_AVG:
+        level = "invalid"
+    elif worst >= STEAL_FLAG_AVG or peak >= STEAL_FLAG_PEAK:
+        level = "flag"
+    else:
+        return None
+    return {"level": level, "avg_pct": round(avg, 2), "peak_pct": round(peak, 2), "client_avg_pct": round(cli, 2) if cli else None}
+
+
 def verdict(run, history, goal, noise):
+    st = steal_check(run.get("summary"))
+    if st and st["level"] == "invalid":
+        return "unreliable", {"steal": st, "note": f"UNRELIABLE: hypervisor CPU steal averaged {max(st['avg_pct'], st['client_avg_pct'] or 0):.1f}% "
+                                                   "during the run (noisy neighbours on a shared host). The result is kept for reference "
+                                                   "but excluded from comparisons."}
     v, d = _verdict(run, history, goal, noise)
+    if st:
+        d = dict(d)
+        d["steal"] = st
     shift = environment_shift(run.get("summary"), noise)
     if shift:
         d = dict(d)
@@ -235,7 +264,7 @@ def _verdict(run, history, goal, noise):
     return "neutral", details
 
 
-KEEP_VERDICTS = ("improved", "efficiency-gain", "reference")
+KEEP_VERDICTS = ("improved", "efficiency-gain", "reference")  # "unreliable" runs are never kept or compared
 
 
 # ---- per-query impact (query-level view of an experiment, after CMU's Booster) -------------

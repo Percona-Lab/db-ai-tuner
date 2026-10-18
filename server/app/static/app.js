@@ -40,8 +40,9 @@ function deltaCls(v) { return v == null ? "" : v > 0 ? "up" : v < 0 ? "down" : "
 function goalName(g) { return g === "latency" ? "Query response time" : "Throughput (TPS)"; }
 function goalUnit(g, s) { if (s && s.goal_metric) return s.goal_metric.length <= 5 ? s.goal_metric.toUpperCase() : s.goal_metric.replace(/_/g, " "); return g === "latency" ? "ms" : "tps"; }
 function verdictBadge(v) {
-  const m = { improved: "good", "efficiency-gain": "good", regressed: "bad", "efficiency-loss": "warn", neutral: "plain", reference: "info", repeat: "plain" };
-  return v ? `<span class="badge ${m[v] || "plain"}">${esc(v)}</span>` : "";
+  const m = { improved: "good", "efficiency-gain": "good", regressed: "bad", "efficiency-loss": "warn", neutral: "plain", reference: "info", repeat: "plain", unreliable: "warn" };
+  const tip = v === "unreliable" ? ' data-tip="Hypervisor CPU steal of 8% or more during the run: excluded from all comparisons (and re-measured by autotune)." tabindex="0"' : "";
+  return v ? `<span class="badge ${m[v] || "plain"}"${tip}>${esc(v)}</span>` : "";
 }
 function statusBadge(s, why) { const m = { active: "good", measuring: "info", done: "plain", closed: "plain", abandoned: "warn", aborted: "warn" }; return `<span class="badge ${m[s] || "plain"}"${why ? ` data-tip="${esc(why)}" tabindex="0"` : ""}>${esc(s)}</span>`; }
 function sevBadge(s) { const m = { high: "bad", medium: "warn", low: "plain" }; return `<span class="badge ${m[s] || "plain"}">${esc(s)}</span>`; }
@@ -557,7 +558,7 @@ async function sessionPage(id) {
   setNav("envs");
   const d = await api("/api/sessions/" + id);
   const s = d.session, runs = d.runs.filter(r => r.status !== "aborted");
-  const done = runs.filter(r => r.goal_value != null);
+  const done = runs.filter(r => r.goal_value != null && r.verdict !== "unreliable");
   const lower = s.goal === "latency";
   const first = done[0];
   // configurations are scored by the mean of all runs measured with them (repeats reduce noise)
@@ -627,7 +628,7 @@ async function sessionPage(id) {
     const ev = r.evaluation || {};
     tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${r.status !== "done" ? " " + statusBadge(r.status, r.abort_reason) : ""}${tradeBadge(r.tradeoffs)}</td><td class="chg">${ch}</td>
      <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaClsN(ev.goal_delta_pct, noiseP)}">${pct(ev.goal_delta_pct)}</td>
-     <td>${verdictBadge(r.verdict)}${ev.drift ? ' <span class="badge warn">drift</span>' : ""}${ev.environment_shift ? ` <span class="badge warn" data-tip="Environment probe differs from calibration: ${esc(kvText(ev.environment_shift))} %">env shift</span>` : ""}</td>
+     <td>${verdictBadge(r.verdict)}${ev.drift ? ' <span class="badge warn">drift</span>' : ""}${ev.environment_shift ? ` <span class="badge warn" data-tip="Environment probe differs from calibration: ${esc(kvText(ev.environment_shift))} %">env shift</span>` : ""}${ev.steal && ev.steal.level === "flag" ? ` <span class="badge warn" data-tip="Hypervisor CPU steal ${ev.steal.avg_pct}% average, ${ev.steal.peak_pct}% peak${ev.steal.client_avg_pct ? `, client ${ev.steal.client_avg_pct}%` : ""}: treat small differences with caution.">steal</span>` : ""}</td>
      <td class="num">${num(sm.tps)}</td><td class="num">${num(sm.avg_latency_ms)}</td><td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td><td class="num">${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}</td>`;
     tb.appendChild(tr);
   });
@@ -822,7 +823,7 @@ async function runPage(id, tab) {
   ${r.status === "aborted" ? `<div class="note" style="margin-bottom:12px"><span class="badge warn">aborted</span> ${esc(r.abort_reason || "no reason recorded")}. Its changes were handed to the next run.</div>` : ""}
   ${r.notes ? `<div class="note" style="margin-bottom:12px">${esc(r.notes)}</div>` : ""}
   <div class="tiles">${tile("TPS", sm.tps, "/s", ps.tps, 1)}${tile("QPS", sm.qps, "/s", ps.qps, 1)}${tile("Avg statement latency", sm.avg_latency_ms, "ms", ps.avg_latency_ms, -1)}${tile("p95 statement latency", sm.p95_latency_ms, "ms", ps.p95_latency_ms, -1)}
-   ${tile("CPU busy (host)", sm.cpu_busy, "%", ps.cpu_busy, 0)}${tile("mysqld CPU", sm.mysqld_cpu_pct, "% of host", ps.mysqld_cpu_pct, 0)}${tile("IO wait", sm.cpu_iowait, "%", ps.cpu_iowait, -1, "x")}${tile("BP hit ratio", sm.bp_hit_pct, "%", ps.bp_hit_pct, 1)}${tile("Disk IOPS", (sm.disk_r_iops || 0) + (sm.disk_w_iops || 0), "/s", ps.disk_r_iops != null ? (ps.disk_r_iops || 0) + (ps.disk_w_iops || 0) : null, 0)}
+   ${tile("CPU busy (host)", sm.cpu_busy, "%", ps.cpu_busy, 0)}${(sm.cpu_steal || 0) >= 1 || (sm.cpu_steal_max || 0) >= 5 ? tile("CPU steal" + info(`CPU time the hypervisor gave to other virtual machines: average over the run, peak ${num(sm.cpu_steal_max)}% in a 10 s sample${sm.client_cpu_steal != null ? `, client ${num(sm.client_cpu_steal)}%` : ""}. From 3% average (or 15% peak) the run is flagged; from 8% it is excluded from comparisons.`), sm.cpu_steal, "%", ps.cpu_steal, 0) : ""}${tile("mysqld CPU", sm.mysqld_cpu_pct, "% of host", ps.mysqld_cpu_pct, 0)}${tile("IO wait", sm.cpu_iowait, "%", ps.cpu_iowait, -1, "x")}${tile("BP hit ratio", sm.bp_hit_pct, "%", ps.bp_hit_pct, 1)}${tile("Disk IOPS", (sm.disk_r_iops || 0) + (sm.disk_w_iops || 0), "/s", ps.disk_r_iops != null ? (ps.disk_r_iops || 0) + (ps.disk_w_iops || 0) : null, 0)}
    ${tile("CPU pressure", sm.mysqld_psi_cpu_some != null ? sm.mysqld_psi_cpu_some : sm.psi_cpu_some, "% stalled", ps.mysqld_psi_cpu_some != null ? ps.mysqld_psi_cpu_some : ps.psi_cpu_some, -1, "x")}${tile("I/O pressure", sm.mysqld_psi_io_some != null ? sm.mysqld_psi_io_some : sm.psi_io_some, "% stalled", ps.mysqld_psi_io_some != null ? ps.mysqld_psi_io_some : ps.psi_io_some, -1, "x")}${tile("Memory pressure", sm.psi_memory_some, "% stalled", ps.psi_memory_some, -1, "x")}${tile("Sched delay" + info(`Average time database threads waited in the CPU run queue each time they were scheduled (from /proc/<tid>/schedstat). It adds directly to query latency, mostly at the tail. Database threads waited ${num(sm.dbproc_runq_wait_pct)}% of their runnable time (${num(sm.dbproc_runq_wait_threads)} threads waiting on average); worst 10 s interval ${num(sm.dbproc_sched_delay_us_max)} µs; ${num(sm.dbproc_nvcsw_per_s)} preemptions/s. All tasks on the host: ${num(sm.host_sched_delay_us)} µs.`), sm.dbproc_sched_delay_us, "µs", ps.dbproc_sched_delay_us, -1, "x")}${tile("DB memory (PSS)" + info(`Proportional set size of the database process(es): shared pages are split between the processes that map them, so this is their real share of RAM (RSS counts shared pages once per process). At the end of the run: RSS ${num(sm.dbproc_rss_mb)} MiB · VSZ ${num(sm.dbproc_vsz_mb)} MiB · swap PSS ${num(sm.dbproc_swap_pss_mb)} MiB · ${sm.dbproc_procs || 1} process(es). Peak PSS ${num(sm.dbproc_pss_mb_max)} MiB.`), sm.dbproc_pss_mb, "MiB", ps.dbproc_pss_mb, 0)}
    ${tile("mysqld CPU / trx", sm.mysqld_cpu_ms_per_trx, "ms", ps.mysqld_cpu_ms_per_trx, -1, "mysqld_cpu_ms_per_trx")}${tile("Disk IOs / trx", sm.disk_ios_per_trx, "", ps.disk_ios_per_trx, -1, "disk_ios_per_trx")}
    ${tile("Redo written", sm.redo_mbs, "MiB/s", ps.redo_mbs, 0)}${tile("Ckpt age max", sm.checkpoint_age_pct_max, "%", ps.checkpoint_age_pct_max, -1, "x")}${tile("Threads running", sm.threads_running_avg, "avg", ps.threads_running_avg, 0)}${tile("TPS variation", sm.tps_cv_pct, "% CV", ps.tps_cv_pct, -1, "x")}</div>

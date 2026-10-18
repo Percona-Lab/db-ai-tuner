@@ -329,6 +329,7 @@ def analyze_window(a, b, samples):
         "rtt_avg_ms": avg("os", "rtt_avg_ms"), "rtt_p95_ms": avg("os", "rtt_p95_ms"), "mysql_conns_avg": avg("os", "mysql_conns"),
         "psi_memory_some_max": mx("os", "psi_memory_some"),
         "cpu_steal": os_rates.get("cpu_steal"),
+        "cpu_steal_max": mx("os", "cpu_steal"),
         "load1_avg": avg("os", "load1"),
         "disk_r_iops": os_rates.get("disk_r_iops"),
         "disk_w_iops": os_rates.get("disk_w_iops"),

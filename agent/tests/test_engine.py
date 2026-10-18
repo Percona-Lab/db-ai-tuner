@@ -293,6 +293,18 @@ def test_wait_profile_diagnosis():
     assert any(x["type"] == "commit" and "redo" in x["text"] for x in d), d
 
 
+def test_steal_flags_and_invalidates():
+    from tuning_agent import evaluate
+    base = {"seq": 1, "managed": {}, "goal_value": 100, "summary": {}, "verdict": "reference"}
+    v, d = evaluate.verdict({"managed": {"a": "1"}, "goal_value": 130, "summary": {"cpu_steal": 9.5}}, [base], "tps", {"noise_pct": 2})
+    assert v == "unreliable" and d["steal"]["level"] == "invalid"
+    v, d = evaluate.verdict({"managed": {"a": "1"}, "goal_value": 103, "summary": {"cpu_steal": 1, "cpu_steal_max": 20}}, [base], "tps", {"noise_pct": 2})
+    assert v == "improved" and d["steal"]["level"] == "flag"
+    # unreliable runs never win
+    h = [base, {"seq": 2, "managed": {"a": "1"}, "goal_value": 200, "verdict": "unreliable", "summary": {}}]
+    assert engine.best_config(h, "tps", 2.0)["managed"] == {}
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)

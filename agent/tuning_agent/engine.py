@@ -100,8 +100,11 @@ def diagnose(ctx):
             "or reducing contention, not from more I/O capacity.", {"cpu_busy": busy, "mysqld_cpu_pct": my, "cpus": cpus})
     elif busy >= 65:
         add("cpu", "medium", f"CPU fairly busy ({busy:.0f}%).", {"cpu_busy": busy})
-    if steal >= 5:
-        add("steal", "medium", f"Hypervisor steal {steal:.1f}%: noisy neighbour; results will be noisy.", {"cpu_steal": steal})
+    if steal >= 3 or (s.get("cpu_steal_max") or 0) >= 15:
+        add("steal", "high" if steal >= 8 else "medium",
+            f"Hypervisor CPU steal {steal:.1f}% on average (peak {s.get('cpu_steal_max') or steal:.0f}% in a 10 s sample): noisy neighbours "
+            "on a shared host take CPU at random, so small differences between runs are not trustworthy. Dedicated-CPU instances avoid it.",
+            {"cpu_steal": steal, "cpu_steal_max": s.get("cpu_steal_max"), "client_cpu_steal": s.get("client_cpu_steal")})
     # pressure stall information (Linux 4.20+): prefer mysqld's own cgroup numbers, fall back to host-wide
     def psi(res):
         v = s.get(f"mysqld_psi_{res}")
@@ -911,7 +914,7 @@ def config_scores(history, goal="tps"):
     """Mean goal value per distinct configuration (repeated runs of one config are averaged)."""
     groups = {}
     for r in history:
-        if r.get("goal_value") is None:
+        if r.get("goal_value") is None or r.get("verdict") == "unreliable":
             continue
         g = groups.setdefault(config_key(r.get("managed")), {"runs": [], "managed": r.get("managed") or {}})
         g["runs"].append(r)

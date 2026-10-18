@@ -601,7 +601,7 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
             pass
     if clients:
         inputs["clients"] = clients
-        keys = ("cpu_busy", "net_conn_per_s", "net_time_wait", "net_retrans_pct", "rtt_avg_ms", "rtt_p95_ms", "softirq_max_cpu_pct",
+        keys = ("cpu_busy", "cpu_steal", "net_conn_per_s", "net_time_wait", "net_retrans_pct", "rtt_avg_ms", "rtt_p95_ms", "softirq_max_cpu_pct",
                 "softirq_avg_cpu_pct", "net_tx_mbs", "net_rx_mbs", "psi_cpu_some")
         for k in keys:
             vals = [w["avg"][k] for w in clients.values() if k in w["avg"]]
@@ -1330,10 +1330,17 @@ def cmd_autotune(a):
     if not sess.get("noise"):
         log(f"== calibration: {a.calibrate} runs of the current configuration")
         runs = []
-        for i in range(a.calibrate):
-            run, _ = _bench_run(c, prof, f"baseline ({i + 1}/{a.calibrate})")
-            log(f"   run {run['seq']}: goal {run['goal_value']}")
+        extra = 0
+        while len([r for r in runs if r.get("verdict") != "unreliable"]) < a.calibrate:
+            run, _ = _bench_run(c, prof, f"baseline ({len(runs) + 1}/{a.calibrate + extra})")
+            log(f"   run {run['seq']}: goal {run['goal_value']}" + (" (unreliable: CPU steal, measured again)" if run.get("verdict") == "unreliable" else ""))
             runs.append(run)
+            if run.get("verdict") == "unreliable":
+                extra += 1
+                if extra > a.calibrate:  # the host is too noisy right now: calibrate with what we have
+                    log("   WARNING: persistent CPU steal; calibrating with the runs available")
+                    break
+        runs = [r for r in runs if r.get("verdict") != "unreliable"] or runs
         sess = c.session()
         cal = evaluate.calibrate(runs)
         _set_calibration(c, sess, cal)
@@ -1421,6 +1428,11 @@ def cmd_autotune(a):
             continue
         measured += 1
         log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
+        if run["verdict"] == "unreliable":
+            log("   hypervisor steal made the run unreliable: measuring the same configuration again")
+            run, _ = _bench_run(c, prof, f"{nxt} (re-measure: CPU steal)")
+            measured += 1
+            log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
         shift = (run.get("evaluation") or {}).get("environment_shift")
         if shift and run["verdict"] in ("improved", "regressed", "efficiency-gain", "efficiency-loss"):
             log(f"   environment probe shifted ({shift}): measuring the same configuration again before deciding")

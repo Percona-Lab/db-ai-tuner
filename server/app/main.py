@@ -283,7 +283,7 @@ def environment(env_id: int, request: Request):
         d["summary"] = store.uj(d["summary"])
         runs = [dict(r) for r in store.q("SELECT seq, label, goal_value, status, verdict, started, ended FROM runs WHERE session_id=? AND status<>'aborted' ORDER BY seq", (s["id"],))]
         d["runs"] = len(runs)
-        done = [r for r in runs if r["goal_value"] is not None]
+        done = [r for r in runs if r["goal_value"] is not None and r["verdict"] != "unreliable"]
         if done:
             first = done[0]["goal_value"]
             best = (min if s["goal"] == "latency" else max)(r["goal_value"] for r in done)
@@ -970,7 +970,7 @@ def session_results(s):
     """Per-session headline numbers: first run (usually server defaults), best configuration and best production-safe
     configuration, each as the mean of the runs of that configuration (repeated runs average out noise)."""
     runs = [dict(r) for r in store.q("SELECT seq, label, goal_value, managed, tradeoffs, verdict FROM runs WHERE session_id=? "
-                                     "AND status<>'aborted' AND goal_value IS NOT NULL ORDER BY seq", (s["id"],))]
+                                     "AND status<>'aborted' AND goal_value IS NOT NULL AND COALESCE(verdict,'')<>'unreliable' ORDER BY seq", (s["id"],))]
     if not runs:
         return {"runs": 0}
     lat = s["goal"] == "latency"
