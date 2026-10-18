@@ -4,6 +4,7 @@ dbset bm TPC-C
 diset connection mysql_host [e HDB_HOST 127.0.0.1]
 diset connection mysql_port 3306
 if {[e HDB_HOST] eq ""} { diset connection mysql_socket /var/run/mysqld/mysqld.sock } else { diset connection mysql_socket null }
+diset connection mysql_ssl false
 diset tpcc mysql_user tpcc
 diset tpcc mysql_pass tpcc
 diset tpcc mysql_dbase tpcc

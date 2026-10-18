@@ -12,7 +12,7 @@ if grep -q "^reset.*reset_datadir" $PROF; then
   /root/bench/reset_datadir.sh || exit 1
 fi
 for kv in $PRE_APPLY; do tuning-agent apply --set "$kv" --reason "session setup" || exit 1; done  # e.g. PRE_APPLY="os:datadir_fs=ext4"
-tuning-agent session start --goal $GOAL --policy benchmark ${SCOPE:+--scope $SCOPE} --name "$NAME" --workload "$(grep '^name' $PROF | cut -d= -f2- | sed 's/^ //')" || exit 1
+tuning-agent session start --goal $GOAL --policy benchmark ${SCOPE:+--scope $SCOPE} ${STUDY:+--study "$STUDY"} --name "$NAME" --workload "$(grep '^name' $PROF | cut -d= -f2- | sed 's/^ //')" || exit 1
 tuning-agent measure run --bench $PROF --label "server defaults" || exit 1
 tuning-agent baseline --apply $BASELINE_ARGS || exit 1  # e.g. BASELINE_ARGS="--reserve-mem 1.5G" with a co-located client
 tuning-agent autotune --bench $PROF --calibrate 3 --max-runs $MAX --tradeoffs || exit 1
