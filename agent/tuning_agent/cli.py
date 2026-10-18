@@ -1428,7 +1428,11 @@ def cmd_autotune(a):
             cur = evaluate.config_key({k: v["value"] for k, v in c.state.get("managed", {}).items()})
             mine = [r for r in sess["runs"] if evaluate.config_key(r.get("managed")) == cur]
             since = len([r for r in sess["runs"] if r["seq"] > max([r["seq"] for r in mine] or [0])])
-            if mine and since >= a.recheck_every and not c.state.get("pending_changes"):
+            # no time-separated repeat yet: the noise threshold is still the conservative default, so re-check early
+            no_long_term = not (((sess.get("noise") or {}).get("estimate") or {}).get("long_term_dof"))
+            due = since >= (min(a.recheck_every, 3) if no_long_term else a.recheck_every)
+            # pending changes that only lead back to an already-measured configuration (a revert) do not block a re-check
+            if mine and due and (not c.state.get("pending_changes") or _known_config(c, sess)):
                 log(f"== re-check: measuring the current configuration again ({since} runs since it was last measured) to control drift")
                 run, _ = _bench_run(c, prof, f"re-check (run {mine[-1]['seq']} config)")
                 log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}"
