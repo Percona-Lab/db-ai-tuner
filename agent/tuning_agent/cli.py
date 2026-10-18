@@ -723,12 +723,12 @@ def _warmup(c, spec):
             return round(el)
 
 
-def _maybe_profile(c, sess, prof):
+def _maybe_profile(c, sess, prof, warmup_s):
     """CPU profile for a slice of this run when the workload is CPU-bound and this configuration was not profiled yet.
     agent.ini: cpu_profiling = auto (default) | always | off, profile_hz (49), profile_seconds (20)."""
     from . import cpuprof
     mode = str(c.cfg.get("cpu_profiling", "auto")).lower()
-    if mode == "off" or prof.duration < 60:
+    if mode == "off" or warmup_s < 30:  # needs room for the profile before the measured window starts
         return None
     key = evaluate.config_key({k: v["value"] for k, v in c.state.get("managed", {}).items()})
     done = sess.get("profiled_configs") or []
@@ -739,12 +739,12 @@ def _maybe_profile(c, sess, prof):
     if not cpuprof.ensure_perf(log):
         log("CPU profiling skipped: perf is not available")
         return None
-    secs = min(int(c.cfg.get("profile_seconds", 20)), max(10, prof.duration // 3))
+    secs = min(int(c.cfg.get("profile_seconds", 20)), warmup_s - 10)
     p = cpuprof.Profiler(c.state.dir, secs, int(sess.get("profile_hz") or c.cfg.get("profile_hz", 49)))
-    p.start(delay=max(5, int(prof.duration * 0.4)))
+    p.start(delay=max(0, warmup_s - secs - 5))  # ends 5 s before the measurement starts
     sess.setdefault("profiled_configs", []).append(repr(key))
     c.state.set("session", sess)
-    log(f"   CPU profile: {secs}s at {p.hz} Hz in the middle of the run")
+    log(f"   CPU profile: {secs}s at {p.hz} Hz at the end of the warm-up (outside the measured window)")
     return p
 
 
@@ -757,8 +757,9 @@ def _finish_profile(c, p, t_meas0):
     except Exception as e:  # never fail a run because of the profiler
         return {"error": str(e)[:300]}
     if p.t0 and p.t1:
-        samples = SampleStore(c.state.dir).window(t_meas0, time.time())
-        res["overhead_pct"] = cpuprof.overhead_pct(samples, p.t0, p.t1)
+        samples = SampleStore(c.state.dir).window(p.t0 - 1, time.time())
+        res["overhead_pct"] = cpuprof.overhead_pct(samples, p.t0, p.t1, t_meas0)
+        res["in_measured_window"] = False
         if (res["overhead_pct"] or 0) > 2:  # be gentler next time
             sess = c.session()
             sess["profile_hz"] = max(9, p.hz // 2)
@@ -793,12 +794,15 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
             log(f"probe failed: {e}")
     log(f"benchmark: {prof.name}")
     r = bench.Running(prof.run, logfile)
+    profiler = None
     try:
         warm = warmup_override if warmup_override is not None else prof.warmup
         if str(warm) == "auto":
             waited = _warmup(c, "auto")
         else:
             waited = int(warm or 0)
+            # CPU profile during the end of the warm-up: the load is already on, and the measured window stays untouched
+            profiler = _maybe_profile(c, sess, prof, waited)
             if waited:
                 log(f"warm-up {waited}s ...")
                 deadline = time.time() + waited
@@ -808,7 +812,6 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
             raise Fail(f"benchmark exited during warm-up (code {r.p.returncode}); tail:\n{r.output()[-1500:]}")
         m, warn, url = _measure_start(c, label, notes, warmed=True)
         t_meas0 = time.time()
-        profiler = _maybe_profile(c, sess, prof)
         if prof.duration > 0:
             log(f"measuring run {m['seq']} for {prof.duration}s ...")
             deadline = time.time() + prof.duration

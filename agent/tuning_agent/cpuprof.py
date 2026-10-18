@@ -183,11 +183,15 @@ class Profiler:
         }
 
 
-def overhead_pct(samples, t0, t1):
-    """Throughput during the profiling slice vs the rest of the measured window (positive = slower while profiling)."""
-    inside = [s["db"]["tps"] for s in samples if t0 <= s.get("ts", 0) <= t1 + 10 and (s.get("db") or {}).get("tps")]
-    outside = [s["db"]["tps"] for s in samples if not (t0 <= s.get("ts", 0) <= t1 + 10) and (s.get("db") or {}).get("tps")]
-    if len(inside) < 2 or len(outside) < 4:
+def overhead_pct(samples, t0, t1, t_meas0):
+    """Throughput while profiling (end of warm-up) vs the measured window, when the difference exceeds the 10 s sample
+    noise; None when it is not measurable. Positive = slower while profiling."""
+    tps = lambda xs: [s["db"]["tps"] for s in xs if (s.get("db") or {}).get("tps")]
+    inside = tps([s for s in samples if t0 + 5 <= s.get("ts", 0) <= t1 + 5])
+    after = tps([s for s in samples if s.get("ts", 0) >= t_meas0 + 10])
+    if len(inside) < 2 or len(after) < 4:
         return None
-    a, b = sum(inside) / len(inside), sum(outside) / len(outside)
-    return round(100 * (b - a) / b, 2) if b else None
+    a, b = sum(inside) / len(inside), sum(after) / len(after)
+    sd = (sum((x - b) ** 2 for x in after) / (len(after) - 1)) ** 0.5
+    d = round(100 * (b - a) / b, 2) if b else None
+    return d if d is not None and abs(b - a) > 2 * sd / len(inside) ** 0.5 else 0.0
