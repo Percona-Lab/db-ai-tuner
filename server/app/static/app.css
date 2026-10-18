@@ -121,3 +121,5 @@ details summary { cursor: pointer; color: var(--ink-2); margin: 6px 0; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-right: 8px; }
 .seg button { border: none; border-radius: 0; padding: 6px 12px; background: var(--surface); color: var(--ink-2); }
 .seg button.on { background: var(--surface-2); color: var(--ink); font-weight: 600; }
+table.runs td.chg { max-width: 260px; overflow-wrap: anywhere; font-size: 12.5px; }
+table.runs td, table.runs th { padding: 7px 6px; }

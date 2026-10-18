@@ -28,6 +28,11 @@ function val(name, v) {
   }
   return String(v);
 }
+function shortVal(name, v) {
+  if (v == null) return "";
+  if (SIZE_VAR.test(name) && /^\d+$/.test(String(v)) && +v >= 1048576) { const n = +v; return n >= 1073741824 ? +(n / 1073741824).toFixed(2) + "G" : +(n / 1048576).toFixed(0) + "M"; }
+  const t = String(v); return t.length > 24 ? t.slice(0, 22) + "…" : t;
+}
 function num(v, d) { return v == null ? "–" : C.fmtNum(+v); }
 function pct(v, sign = true) { if (v == null) return "–"; return (sign && v > 0 ? "+" : "") + (+v).toFixed(1) + "%"; }
 function deltaClsN(v, noise) { return v == null || Math.abs(v) <= (noise || 0) ? "" : v > 0 ? "up" : "down"; }
@@ -375,8 +380,8 @@ async function sessionPage(id) {
    ${cfgTile("Best safe", bestSafe, firstCfg, lower, s.goal, false, s)}
    ${bestTrade ? cfgTile("Best with trade-offs", bestTrade, firstCfg, lower, s.goal, true, s) : ""}</div>
   <div class="card" style="margin-top:14px" id="bars"></div>
-  <h2>Runs</h2><div class="card tablewrap"><table><thead><tr><th>#</th><th>Label</th><th>Status</th><th>Changes vs previous run</th><th class="num">${goalUnit(s.goal, s) === "ms" ? "Avg ms" : "Goal"}</th><th class="num">vs prev</th><th class="num">vs first</th><th>Verdict</th>
-   <th class="num">vs parent cfg</th><th class="num">TPS</th><th class="num">Avg lat ms</th><th class="num">mysqld CPU ms/trx</th><th class="num">Disk IOs/trx</th><th class="num">CPU %</th><th>Duration</th></tr></thead><tbody id="runs"></tbody></table></div>
+  <h2>Runs</h2><div class="card tablewrap"><table class="runs"><thead><tr><th>#</th><th>Run</th><th>Changes</th><th class="num">${goalUnit(s.goal, s) === "ms" ? "Avg ms" : "Goal"}</th><th class="num">Δ${info("Change of the goal vs the mean of the parent configuration (the configuration this run was changed from). Coloured only beyond the noise threshold.")}</th><th>Verdict</th>
+   <th class="num">TPS</th><th class="num">Avg ms</th><th class="num">CPU ms/trx</th><th class="num">IOs/trx</th><th class="num">Time</th></tr></thead><tbody id="runs"></tbody></table></div>
   <h2>Latest recommendations</h2><div class="card" id="recs"></div>
   <h2>Notes</h2><div class="card"><textarea id="notes" rows="3" placeholder="Notes about this session (workload, hypotheses, conclusions)">${esc(s.notes || "")}</textarea><div class="row" style="margin-top:6px"><button id="savenotes">Save notes</button><span id="saved" class="muted"></span></div></div>
   <h2>Recent activity</h2><div class="card" id="events"></div>`;
@@ -388,15 +393,22 @@ async function sessionPage(id) {
       tip: `<div>vs previous<b>${pct(r.delta_pct)}</b></div><div>verdict<b>${esc(r.verdict || "")}</b></div>` })),
   });
   const tb = document.getElementById("runs");
-  if (!d.runs.length) tb.innerHTML = `<tr><td colspan="15" class="muted">No runs yet: <code>tuning-agent measure start</code> … <code>measure stop</code>.</td></tr>`;
+  if (!d.runs.length) tb.innerHTML = `<tr><td colspan="11" class="muted">No runs yet: <code>tuning-agent measure start</code> … <code>measure stop</code>.</td></tr>`;
   d.runs.forEach(r => {
     const sm = r.summary || {};
-    const ch = r.status === "aborted" ? `<span class="muted">${esc((r.abort_reason || "aborted").split(":")[0])}</span>${r.abort_reason ? info(r.abort_reason) : ""}` : r.seq === 1 ? `<a href="#/run/${r.id}">starting configuration</a>` : (r.changes || []).map(c => `<span class="mono">${esc(c.variable)}</span>=${esc(val(c.variable, c.new))}`).join(", ");
+    const chs = r.changes || [];
+    const chTip = chs.map(c => `${c.variable}=${val(c.variable, c.new)}`).join("\n");
+    const ch = r.status === "aborted" ? `<span class="muted">${esc((r.abort_reason || "aborted").split(":")[0])}</span>${r.abort_reason ? info(r.abort_reason) : ""}`
+      : r.seq === 1 ? `<a href="#/run/${r.id}">starting configuration</a>`
+      : !chs.length ? '<span class="muted">none</span>'
+      : chs.length > 2 ? `<span data-tip="${esc(chTip)}" tabindex="0">${chs.length} settings</span>`
+      : chs.map(c => `<span class="mono" data-tip="${esc(c.variable + "=" + val(c.variable, c.new))}">${esc(c.variable.replace(/^innodb_/, ""))}=${esc(shortVal(c.variable, c.new))}</span>`).join("<br>");
     const tr = document.createElement("tr"); tr.className = "click"; tr.onclick = () => location.hash = "#/run/" + r.id;
-    tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${tradeBadge(r.tradeoffs)}</td><td>${statusBadge(r.status, r.abort_reason)}</td><td style="max-width:320px">${ch || '<span class="muted">none</span>'}</td>
-     <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaClsN(r.delta_pct, noiseP)}">${pct(r.delta_pct)}</td><td class="num ${deltaClsN(r.delta_vs_first_pct, noiseP)}">${pct(r.delta_vs_first_pct)}</td><td>${verdictBadge(r.verdict)}${(r.evaluation || {}).drift ? ' <span class="badge warn">drift</span>' : ""}${(r.evaluation || {}).environment_shift ? ` <span class="badge warn" data-tip="Environment probe differs from calibration: ${esc(kvText(r.evaluation.environment_shift))} %. The VM itself was faster or slower during this run.">env shift</span>` : ""}</td>
-     <td class="num ${deltaClsN((r.evaluation || {}).goal_delta_pct, noiseP)}" title="vs mean of runs ${esc(((r.evaluation || {}).parent_runs || []).join(", "))}">${pct((r.evaluation || {}).goal_delta_pct)}</td>
-     <td class="num">${num(sm.tps)}</td><td class="num">${num(sm.avg_latency_ms)}</td><td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td><td class="num">${num(sm.cpu_busy)}</td><td>${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}</td>`;
+    const ev = r.evaluation || {};
+    tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${r.status !== "done" ? " " + statusBadge(r.status, r.abort_reason) : ""}${tradeBadge(r.tradeoffs)}</td><td class="chg">${ch}</td>
+     <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaClsN(ev.goal_delta_pct, noiseP)}">${pct(ev.goal_delta_pct)}</td>
+     <td>${verdictBadge(r.verdict)}${ev.drift ? ' <span class="badge warn">drift</span>' : ""}${ev.environment_shift ? ` <span class="badge warn" data-tip="Environment probe differs from calibration: ${esc(kvText(ev.environment_shift))} %">env shift</span>` : ""}</td>
+     <td class="num">${num(sm.tps)}</td><td class="num">${num(sm.avg_latency_ms)}</td><td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td><td class="num">${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}</td>`;
     tb.appendChild(tr);
   });
   renderRecs(document.getElementById("recs"), d.recommendations[0], runs);
