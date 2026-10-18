@@ -301,6 +301,10 @@ def analyze_window(a, b, samples):
         **{k: os_rates.get(k) for k in ("dbproc_procs", "dbproc_rss_mb", "dbproc_vsz_mb", "dbproc_pss_mb", "dbproc_pss_anon_mb",
                                          "dbproc_pss_file_mb", "dbproc_pss_shmem_mb", "dbproc_swap_pss_mb", "dbproc_swap_mb",
                                          "dbproc_cg_mem_mb", "dbproc_cg_swap_mb")},
+        # scheduling delay: per-thread rates exist only in the collector daemon's samples; host-wide ones also between the window snapshots
+        **{k: avg("os", k) for k in ("dbproc_runq_wait_threads", "dbproc_sched_delay_us", "dbproc_runq_wait_pct", "dbproc_nvcsw_per_s", "dbproc_threads")},
+        **{k: os_rates.get(k) if os_rates.get(k) is not None else avg("os", k) for k in ("host_runq_wait_threads", "host_sched_delay_us", "host_runq_wait_pct")},
+        "dbproc_sched_delay_us_max": mx("os", "dbproc_sched_delay_us"), "dbproc_runq_wait_pct_max": mx("os", "dbproc_runq_wait_pct"),
         "dbproc_pss_mb_max": mx("os", "dbproc_pss_mb"), "dbproc_swap_pss_mb_max": mx("os", "dbproc_swap_pss_mb"),
         "samples": len(samples),
     }

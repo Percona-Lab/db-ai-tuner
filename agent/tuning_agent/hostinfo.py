@@ -195,6 +195,47 @@ def process_memory(pids):
     return tot
 
 
+def thread_sched(pids, limit=8192):
+    """Per-thread scheduler accounting: {tid: (on-CPU ns, run-queue wait ns, timeslices, involuntary switches)}.
+    /proc/<tid>/schedstat is kept by the kernel for every task (CONFIG_SCHED_INFO), no tracing needed."""
+    out = {}
+    for pid in pids:
+        try:
+            tids = os.listdir(f"/proc/{pid}/task")
+        except OSError:
+            continue
+        for tid in tids:
+            st = _read(f"/proc/{pid}/task/{tid}/schedstat").split()
+            if len(st) < 3:
+                continue
+            nv = 0
+            for line in _read(f"/proc/{pid}/task/{tid}/status").splitlines():
+                if line.startswith("nonvoluntary_ctxt_switches:"):
+                    nv = int(line.split()[1])
+            out[int(tid)] = (int(st[0]), int(st[1]), int(st[2]), nv)
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def host_sched():
+    """Sum over CPUs of /proc/schedstat (on-CPU ns, run-queue wait ns, timeslices) for all tasks on the host."""
+    run = wait = slices = 0
+    for line in _read("/proc/schedstat").splitlines():
+        p = line.split()
+        if p and p[0].startswith("cpu") and len(p) >= 10:
+            run, wait, slices = run + int(p[7]), wait + int(p[8]), slices + int(p[9])
+    return (run, wait, slices) if slices else None
+
+
+def sched_rates(d_run, d_wait, d_slices, dt, prefix):
+    out = {f"{prefix}runq_wait_threads": round(d_wait / dt / 1e9, 3),  # average number of threads ready to run but waiting for a CPU
+           f"{prefix}sched_delay_us": round(d_wait / d_slices / 1e3, 1) if d_slices else 0.0}  # average wait each time a thread got a CPU
+    if d_run + d_wait:
+        out[f"{prefix}runq_wait_pct"] = round(100.0 * d_wait / (d_run + d_wait), 2)  # share of runnable time spent waiting
+    return out
+
+
 def cgroup_memory(cgroup):
     out = {}
     for f, k in (("memory.current", "cg_mem"), ("memory.swap.current", "cg_swap")):
@@ -247,13 +288,31 @@ class OSCounters:
             if time.time() - getattr(self, "_mem_t", 0) >= 30 or getattr(self, "_mem_pid", None) != self.pid:
                 self._mem_t, self._mem_pid = time.time(), self.pid
                 try:
-                    self._mem = process_memory(service_pids(self.pid, self.cgroup))
+                    self._pids = service_pids(self.pid, self.cgroup)
+                    self._mem = process_memory(self._pids)
                     if self._mem is not None and self.cgroup:
                         self._mem.update(cgroup_memory(self.cgroup))
                 except Exception:  # best effort
                     self._mem = None
             if getattr(self, "_mem", None):
                 s["dbmem"] = self._mem
+            # scheduling delay of the database threads. Threads come and go (connections, PostgreSQL backends), so the
+            # deltas are taken per thread inside this long-lived collector and the snapshot carries the interval's rates.
+            try:
+                now_t, cur = time.time(), thread_sched(getattr(self, "_pids", None) or [self.pid])
+                prev, pt = getattr(self, "_sched", None), getattr(self, "_sched_t", None)
+                if prev is not None and now_t > pt:
+                    d = [0, 0, 0, 0]
+                    for tid, v in cur.items():
+                        base = prev.get(tid, (0, 0, 0, 0))  # new thread: started within the interval
+                        for i in range(4):
+                            d[i] += max(v[i] - base[i], 0)
+                    s["dbsched"] = dict(sched_rates(d[0], d[1], d[2], now_t - pt, "dbproc_"), dbproc_nvcsw_per_s=round(d[3] / (now_t - pt), 1),
+                                        dbproc_threads=len(cur))
+                self._sched, self._sched_t = cur, now_t
+            except Exception:  # best effort
+                pass
+        s["hsched"] = host_sched()
         la = _read("/proc/loadavg").split()
         s["load1"] = float(la[0]) if la else 0.0
         vm = {}
@@ -306,6 +365,11 @@ class OSCounters:
             out["mysqld_cpu_pct"] = round(100.0 * (b["mysqld"][1] - a["mysqld"][1]) / ticks / dt / (os.cpu_count() or 1), 2)
         if "mysqld_rss" in b:
             out["mysqld_rss_mb"] = round(b["mysqld_rss"] / 2 ** 20, 1)
+        out.update(b.get("dbsched") or {})
+        if a.get("hsched") and b.get("hsched"):
+            d = [y - x for x, y in zip(a["hsched"], b["hsched"])]
+            if min(d) >= 0:
+                out.update(sched_rates(d[0], d[1], d[2], dt, "host_"))
         for k, v in (b.get("dbmem") or {}).items():
             out["dbproc_procs" if k == "procs" else f"dbproc_{k}_mb"] = v if k == "procs" else round(v / 2 ** 20, 1)
         # pressure stall information: % of wall time some (or all) tasks were stalled on the resource

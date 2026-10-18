@@ -104,6 +104,15 @@ def diagnose(ctx):
         add("cpu-pressure", "high" if cpu_some >= 50 else "medium",
             f"CPU pressure: runnable {src} tasks waited for a CPU {cpu_some:.0f}% of the time (PSI cpu some).",
             {"psi_cpu_some": cpu_some, "source": src, "psi_cpu_some_host": s.get("psi_cpu_some")})
+    wait_pct, delay = s.get("dbproc_runq_wait_pct"), s.get("dbproc_sched_delay_us")
+    if wait_pct is not None and (wait_pct >= 10 or (delay or 0) >= 500):
+        add("sched-delay", "high" if wait_pct >= 25 else "medium",
+            f"Scheduling delay: database threads were runnable but waiting for a CPU {wait_pct:.0f}% of their runnable time "
+            f"(avg {delay or 0:.0f} µs each time they got a CPU, worst interval {s.get('dbproc_sched_delay_us_max') or 0:.0f} µs). "
+            "This adds directly to query latency, most visibly at the tail. Fewer runnable threads (thread pool, concurrency "
+            "limits) or keeping other work off the database CPUs helps more than faster I/O.",
+            {k: s.get(k) for k in ("dbproc_runq_wait_pct", "dbproc_sched_delay_us", "dbproc_sched_delay_us_max", "dbproc_runq_wait_threads",
+                                   "dbproc_nvcsw_per_s", "host_runq_wait_pct", "mysqld_cpu_pct", "cpu_busy")})
     mem_some, src = psi("memory_some")
     if mem_some is not None and mem_some >= 5:
         add("memory-pressure", "high" if mem_some >= 20 else "medium",
@@ -334,11 +343,13 @@ def recommend(ctx):
         b.add("spin-loops", "Spin less before sleeping on mutexes", [("innodb_sync_spin_loops", "10")],
               f"CPU saturated with {tr:.0f} running threads on {cpus} CPUs: shorter spinning gives cycles back to useful work. Experiment.",
               {"cpu_busy": busy, "threads_running_avg": tr, "innodb_sync_spin_loops": v.get("innodb_sync_spin_loops")}, impact=2, confidence=1)
-    if have_run and "thread_handling" in v and v.get("thread_handling") == "one-thread-per-connection" and tr > cpus * 4 and busy >= 70:
+    if have_run and "thread_handling" in v and v.get("thread_handling") == "one-thread-per-connection" and \
+            (tr > cpus * 4 and busy >= 70 or tr > cpus and (s.get("dbproc_runq_wait_pct") or 0) >= 15):
         b.add("thread-pool", "Try the thread pool", [("thread_handling", "pool-of-threads")],
               f"{tr:.0f} concurrently running threads on {cpus} CPUs; a thread pool caps active threads and reduces context switching. "
               "Can lower throughput for commit-heavy loads (smaller group commits). Experiment.",
-              {"threads_running_avg": tr, "cpus": cpus, "ctx_switches": (inp.get("os_rates") or {}).get("ctx_switches")}, impact=2, confidence=1)
+              {"threads_running_avg": tr, "cpus": cpus, "ctx_switches": (inp.get("os_rates") or {}).get("ctx_switches"),
+               "dbproc_runq_wait_pct": s.get("dbproc_runq_wait_pct")}, impact=2, confidence=1)
 
     # ---------------- connections / caches ----------------------------------------
     if have_run and rates.get("Opened_tables", 0) > 1:
@@ -695,7 +706,7 @@ def recommend(ctx):
     if have_run and diag_types & {"io", "redo"} and ssd:
         sweep("sweep-io-capacity", "Sweep the background flushing budget", "innodb_io_capacity", [str(ioc // 2), str(ioc * 2), str(ioc * 4)],
               "I/O or redo pressure: find the flushing budget the storage sustains.", {"innodb_io_capacity": ioc, "disk_util": s.get("disk_util")})
-    if have_run and diag_types & {"concurrency", "cpu-pressure"} and "innodb_thread_concurrency" in v:
+    if have_run and diag_types & {"concurrency", "cpu-pressure", "sched-delay"} and "innodb_thread_concurrency" in v:
         sweep("sweep-thread-concurrency", "Sweep InnoDB thread concurrency", "innodb_thread_concurrency", [str(cpus * 2), str(cpus * 4), "0"],
               f"{s.get('threads_running_avg', 0):.0f} running threads on {cpus} CPUs: measure admission limits.",
               {"threads_running_avg": s.get("threads_running_avg"), "cpus": cpus})
