@@ -65,6 +65,12 @@ SOCK=$(mysql -N -e "SELECT @@socket"); sed -i "s|^mysql_socket.*|mysql_socket = 
 systemctl start tuning-agent
 tuning-agent facts
 tuning-agent baseline --apply
+if ! mysqladmin ping >/dev/null 2>&1; then
+  echo "COMPAT FAIL: mysqld is down after the baseline configuration ($F $V)"
+  cat /etc/mysql/*/zz-tuning-agent.cnf /etc/mysql/conf.d/zz-tuning-agent.cnf 2>/dev/null
+  tail -40 /var/log/mysql/error.log 2>/dev/null; journalctl -u mysql -u mariadb -n 30 --no-pager
+  exit 1
+fi
 sysbench oltp_read_write --mysql-user=sbtest --mysql-password=sbtest --mysql-socket=$SOCK --mysql-db=sbtest --tables=4 --table-size=1000000 --threads=2 prepare >/dev/null
 sed -i "s|--mysql-socket=[^ ]*|--mysql-socket=$SOCK|" /root/bench/sbcompat.ini
 NAME="compat: $(mysql -N -e 'SELECT CONCAT(@@version_comment, " ", VERSION())' | cut -c1-80)"
