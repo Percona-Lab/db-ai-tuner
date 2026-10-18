@@ -496,7 +496,7 @@ def recommend(ctx):
                   f"CPU-bound ({busy_:.0f}%) with {s.get('threads_running_avg', 0):.0f} running threads: jemalloc has less allocator lock "
                   "contention and fragmentation than glibc malloc (Percona recommendation). Needs a mysqld restart. Experiment.",
                   {"cpu_busy": busy_, "threads_running_avg": s.get("threads_running_avg")}, impact=2, confidence=1)
-        if "large_pages" in v and not _on(v, "large_pages") and bp >= GiB and not swapping and mem_avail > 256 * MiB:
+        if "large_pages" in v and not _on(v, "large_pages") and bp >= 8 * GiB and ram >= 16 * GiB and not swapping and mem_avail > GiB:
             pages = int((bp + 192 * MiB) // (2 * MiB))
             b.add("os-hugepages", "Back the buffer pool with huge pages", [("os:hugepages", str(pages)), ("large_pages", "ON")],
                   f"Reserves {pages} x 2 MiB pages for the {human_size(bp)} buffer pool: fewer TLB misses for memory-bound work "
@@ -645,7 +645,8 @@ def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
     cur_runs = [r for r in history if config_key(r.get("managed")) == cur_key]
     first_eval = next((r.get("evaluation") for r in cur_runs if (r.get("evaluation") or {}).get("parent_runs")), None)
     verdicts = {r.get("verdict") for r in cur_runs}
-    if first_eval and not verdicts & {"improved", "efficiency-gain"} and verdicts & {"neutral", "efficiency-loss"}:
+    just_measured = bool(history) and config_key(history[-1].get("managed")) == cur_key
+    if just_measured and first_eval and not verdicts & {"improved", "efficiency-gain"} and verdicts & {"neutral", "efficiency-loss"}:
         parent_run = next((r for r in history if r["seq"] == first_eval["parent_runs"][-1]), None)
         if parent_run is not None:
             items.append(_revert_item(f"revert-to-run-{parent_run['seq']}", "Revert the last experiment: no measurable benefit",

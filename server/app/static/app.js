@@ -304,9 +304,11 @@ async function envPage(id) {
   timers.push(setInterval(load, 15000));
 }
 
-function renderEvents(el, events) {
+function renderEvents(el, events, all) {
   if (!events.length) { el.innerHTML = '<span class="muted">No activity yet.</span>'; return; }
-  el.innerHTML = events.map(ev => `<div class="ev"><span class="muted">${fmtTime(ev.ts)}</span><span><span class="badge plain">${esc(ev.type)}</span></span><span>${esc(ev.message)}</span></div>`).join("");
+  const shown = all ? events : events.slice(0, 10);
+  el.innerHTML = (events.length > 10 ? `<div class="muted" style="font-size:12.5px;margin-bottom:4px">${all ? `All ${events.length} events` : `Latest 10 of ${events.length}`} · <a href="#" class="evtoggle">${all ? "Show latest only" : "Show all"}</a></div>` : "") + shown.map(ev => `<div class="ev"><span class="muted">${fmtTime(ev.ts)}</span><span><span class="badge plain">${esc(ev.type)}</span></span><span>${esc(ev.message)}</span></div>`).join("");
+  const t = el.querySelector(".evtoggle"); if (t) t.onclick = e => { e.preventDefault(); renderEvents(el, events, !all); };
 }
 
 async function sessionPage(id) {

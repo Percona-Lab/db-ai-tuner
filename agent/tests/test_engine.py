@@ -88,12 +88,23 @@ def test_olap_rules():
 
 def test_os_rules():
     it = ids(run(*OLTP, policy="safe"))
-    for k in ("os-swappiness", "os-thp-off", "os-scheduler", "os-noatime", "os-dirty-writeback", "os-jemalloc", "os-hugepages", "os-autogroup", "os-aio"):
+    for k in ("os-swappiness", "os-thp-off", "os-scheduler", "os-noatime", "os-dirty-writeback", "os-jemalloc", "os-autogroup", "os-aio"):
         assert k in it, (k, list(it))
     assert it["os-nobarrier"]["kind"] == "advice" and it["os-nobarrier"]["safety"] == "trade-off"
-    assert it["os-hugepages"]["restart"] and it["os-jemalloc"]["restart"]
+    assert "os-hugepages" not in it  # only proposed on >= 16 GB hosts with >= 8 GB buffer pool
+    assert it["os-jemalloc"]["restart"]
     assert ids(run(*OLTP, policy="benchmark"))["os-nobarrier"]["kind"] == "config"
     assert not [k for k in ids(run(*OLTP, policy="safe", os_tuning=False)) if k.startswith("os-")]
+
+
+def test_no_revert_chain():
+    # a(base) -> b neutral -> reverted to a (no new run): no further "revert" suggestion for a
+    h = [{"seq": 1, "managed": {}, "goal_value": 100, "verdict": "reference", "evaluation": {}},
+         {"seq": 2, "managed": {"x": "1"}, "goal_value": 101, "verdict": "neutral", "evaluation": {"parent_runs": [1], "goal_delta_pct": 1}},
+         {"seq": 3, "managed": {"x": "1", "y": "1"}, "goal_value": 100.5, "verdict": "neutral", "evaluation": {"parent_runs": [2], "goal_delta_pct": -0.5}}]
+    v = {"x": "1", "y": "0"}
+    assert engine.revert_suggestions(h, v, "tps", 3.0, {"x": "1", "y": "1"})  # right after run 3: revert to run 2
+    assert not engine.revert_suggestions(h, v, "tps", 3.0, {"x": "1"})       # already reverted to run 2's config: stop
 
 
 def test_no_run_yet():

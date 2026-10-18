@@ -102,6 +102,19 @@ class Applier:
                 time.sleep(2)
         return False, "server did not accept connections: " + last
 
+    def _verify_huge_pages(self):
+        """mysqld must actually use the reserved huge pages; otherwise they only take memory away from it."""
+        def meminfo(k):
+            for line in open("/proc/meminfo"):
+                if line.startswith(k + ":"):
+                    return int(line.split()[1])
+            return 0
+        total, free = meminfo("HugePages_Total"), meminfo("HugePages_Free")
+        used = total - free
+        if total and used >= total * 0.5:
+            return True, ""
+        return False, f"mysqld did not use the reserved huge pages ({used} of {total} in use); huge pages reverted"
+
     def journal_tail(self):
         r = subprocess.run(["journalctl", "-u", self.service, "-n", "30", "--no-pager"], capture_output=True, text=True)
         return r.stdout[-3000:]
@@ -188,9 +201,21 @@ class Applier:
                     result["errors"].append(f"{var}: {e.args[-1] if e.args else e}")
         if (need_restart or force_restart) and allow_restart:
             ok, err = self.restart()
+            if ok and any(c["variable"] == "large_pages" and str(c.get("value")).upper() == "ON" for c in changes):
+                ok, err = self._verify_huge_pages()
             if not ok:
                 self.log("restart FAILED, restoring previous configuration: " + err)
                 tail = self.journal_tail()
+                if osa is not None:  # undo this batch's OS changes too (e.g. reserved huge pages would starve mysqld)
+                    for done in reversed(applied_os):
+                        try:
+                            osa.apply_live(done, before_vars.get(done))
+                        except Exception:
+                            pass
+                    try:
+                        osa.persist(old_managed)
+                    except Exception:
+                        pass
                 self.write_cnf(old_managed)
                 ok2, err2 = self.restart()
                 result["errors"].append("restart failed, previous configuration restored" + ("" if ok2 else f" (and restart after restore failed: {err2})"))
