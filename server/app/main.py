@@ -64,7 +64,8 @@ def env_brief(e):
         "db": f"{db.get('version_comment', '')} {db.get('version', '')}".strip(), "flavor": db.get("flavor"),
         "db_short": f"{FLAVOR_NAMES.get(db.get('flavor'), db.get('flavor') or '')} {str(db.get('version', '')).split('-log')[0]}".strip(),
         "cpus": hw.get("cpus"), "ram_bytes": hw.get("ram_bytes"), "disk": "HDD" if hw.get("disk_rotational") else "SSD",
-        "data_bytes": db.get("data_bytes"),
+        "data_bytes": db.get("data_bytes"), "cost_month": e["cost_month"] if "cost_month" in e.keys() else None,
+        "cpu_model": hw.get("cpu_model"),
     }
 
 
@@ -301,6 +302,9 @@ def rename_environment(env_id: int, request: Request, body: dict = Body(...)):
     own_env(env_id, u["id"])
     if body.get("name"):
         store.ex("UPDATE environments SET name=? WHERE id=?", (body["name"][:80], env_id))
+    if "cost_month" in body:
+        c = body.get("cost_month")
+        store.ex("UPDATE environments SET cost_month=? WHERE id=?", (float(c) if c not in (None, "") else None, env_id))
     return {"ok": True}
 
 
@@ -356,7 +360,9 @@ def session(sid: int, request: Request):
     runs = [run_brief(r) for r in store.q("SELECT * FROM runs WHERE session_id=? ORDER BY seq, id", (sid,))]
     recs = [store.row(r, ("items", "diagnosis", "workload", "llm")) for r in store.q("SELECT * FROM recommendations WHERE session_id=? ORDER BY id DESC", (sid,))]
     events = [store.row(r, ("data",)) for r in store.q("SELECT * FROM events WHERE session_id=? ORDER BY ts DESC LIMIT 200", (sid,))]
-    return {"session": s, "environment": env_brief(e), "runs": runs, "recommendations": recs, "events": events}
+    st = store.q1("SELECT id, name, kind FROM studies WHERE id=?", (s.get("study_id"),)) if s.get("study_id") else None
+    return {"session": s, "environment": env_brief(e), "runs": runs, "recommendations": recs, "events": events,
+            "study": dict(st) if st else None}
 
 
 @app.patch("/api/sessions/{sid}")
@@ -366,6 +372,11 @@ def update_session(sid: int, request: Request, body: dict = Body(...)):
     for f in ("name", "notes"):
         if f in body:
             store.ex(f"UPDATE tsessions SET {f}=? WHERE id=?", ((body[f] or "")[:4000], sid))
+    if "study_id" in body:
+        st = body.get("study_id")
+        if st:
+            own_study(int(st), u["id"])
+        store.ex("UPDATE tsessions SET study_id=? WHERE id=?", (int(st) if st else None, sid))
     return {"ok": True}
 
 
@@ -567,7 +578,12 @@ def agent_session_start(body: dict = Body(...), key=Depends(auth.agent_key)):
                     1 if body.get("os_tuning", True) else 0))
     store.ex("INSERT INTO events(env_id, session_id, ts, type, message, data) VALUES (?,?,?,?,?,?)",
              (e["id"], sid, now(), "session", f"session started: goal={goal}, policy={body.get('policy') or 'safe'}", store.j(body)))
-    return {"session_id": sid, "name": name, "url": f"{PUBLIC_URL}/#/session/{sid}"}
+    study = None
+    if body.get("study"):
+        study = study_get_or_create(key["user_id"], body["study"], goal, body.get("workload"))
+        store.ex("UPDATE tsessions SET study_id=? WHERE id=?", (study["id"], sid))
+    return {"session_id": sid, "name": name, "url": f"{PUBLIC_URL}/#/session/{sid}",
+            "study": {"id": study["id"], "name": study["name"], "url": f"{PUBLIC_URL}/#/study/{study['id']}"} if study else None}
 
 
 @app.post("/api/v1/agent/sessions/{sid}/close")
@@ -902,3 +918,157 @@ def index():
 
 
 app.mount("/static", StaticFiles(directory=os.path.join(APP_DIR, "static")), name="static")
+
+
+# ---------------------------------------------------------------------------- studies (experiments across environments)
+STUDY_KINDS = ("compare", "scaling", "min-hardware")
+
+
+def own_study(study_id, user_id):
+    st = store.q1("SELECT * FROM studies WHERE id=? AND user_id=?", (study_id, user_id))
+    if not st:
+        raise HTTPException(404, "study not found")
+    return dict(st)
+
+
+def study_get_or_create(user_id, ref, goal="tps", workload=None, kind="compare"):
+    ref = str(ref).strip()
+    st = store.q1("SELECT * FROM studies WHERE user_id=? AND (CAST(id AS TEXT)=? OR name=?) ORDER BY id LIMIT 1", (user_id, ref, ref))
+    if st:
+        return dict(st)
+    sid = store.ex("INSERT INTO studies(user_id, name, kind, goal, workload, created) VALUES (?,?,?,?,?,?)",
+                   (user_id, ref[:120], kind if kind in STUDY_KINDS else "compare", goal, workload, now()))
+    return dict(store.q1("SELECT * FROM studies WHERE id=?", (sid,)))
+
+
+def session_results(s):
+    """Per-session headline numbers: first run (usually server defaults), best configuration and best production-safe
+    configuration, each as the mean of the runs of that configuration (repeated runs average out noise)."""
+    runs = [dict(r) for r in store.q("SELECT seq, label, goal_value, managed, tradeoffs, verdict FROM runs WHERE session_id=? "
+                                     "AND status<>'aborted' AND goal_value IS NOT NULL ORDER BY seq", (s["id"],))]
+    if not runs:
+        return {"runs": 0}
+    lat = s["goal"] == "latency"
+    groups = {}
+    for r in runs:
+        m = store.uj(r["managed"], {}) or {}
+        g = groups.setdefault(store.j(sorted(m.items())), {"runs": [], "managed": m, "safe": True})
+        g["runs"].append(r)
+        if store.uj(r["tradeoffs"]) or []:
+            g["safe"] = False
+    cfgs = [{"mean": sum(x["goal_value"] for x in g["runs"]) / len(g["runs"]), "n": len(g["runs"]), "seq": g["runs"][-1]["seq"],
+             "label": g["runs"][0]["label"], "safe": g["safe"], "settings": len(g["managed"])} for g in groups.values()]
+    pick = (min if lat else max)
+    best = pick(cfgs, key=lambda c: c["mean"])
+    safe = [c for c in cfgs if c["safe"]]
+    best_safe = pick(safe, key=lambda c: c["mean"]) if safe else None
+    first = runs[0]
+    out = {"runs": len(runs), "first": {"value": first["goal_value"], "label": first["label"], "seq": first["seq"]},
+           "best": best, "best_safe": best_safe}
+    for k in ("best", "best_safe"):
+        if out[k] and first["goal_value"]:
+            f, b = first["goal_value"], out[k]["mean"]
+            out[k]["gain_pct"] = round(100 * ((f - b) / f if lat else (b - f) / f), 2)
+    return out
+
+
+def study_view(st, user_id):
+    sessions = []
+    for s in store.q("SELECT s.*, e.name env_name FROM tsessions s JOIN environments e ON e.id=s.env_id "
+                     "WHERE s.study_id=? AND e.user_id=? ORDER BY s.id", (st["id"], user_id)):
+        s = dict(s)
+        e = own_env(s["env_id"], user_id)
+        sessions.append({"id": s["id"], "name": s["name"], "status": s["status"], "goal": s["goal"], "policy": s["policy"],
+                         "goal_metric": s.get("goal_metric"), "noise_pct": s["noise_pct"], "workload": s["workload"],
+                         "created": s["created"], "environment": env_brief(e), "results": session_results(s)})
+    return sessions
+
+
+@app.get("/api/studies")
+def studies(request: Request):
+    u = auth.current_user(request)
+    out = []
+    for st in store.q("SELECT * FROM studies WHERE user_id=? ORDER BY id DESC", (u["id"],)):
+        st = dict(st)
+        n = store.q1("SELECT COUNT(*) n, COUNT(DISTINCT env_id) e, SUM(status='active') a FROM tsessions WHERE study_id=?", (st["id"],))
+        st.update(sessions=n["n"], environments=n["e"], active=n["a"] or 0)
+        out.append(st)
+    return {"studies": out, "kinds": STUDY_KINDS}
+
+
+@app.post("/api/studies")
+def create_study(request: Request, body: dict = Body(...)):
+    u = auth.current_user(request)
+    if not (body.get("name") or "").strip():
+        raise HTTPException(400, "name required")
+    kind = body.get("kind") if body.get("kind") in STUDY_KINDS else "compare"
+    goal = body.get("goal") if body.get("goal") in ("tps", "latency") else "tps"
+    target = float(body["target"]) if body.get("target") not in (None, "") else None
+    sid = store.ex("INSERT INTO studies(user_id, name, kind, goal, target, workload, notes, created) VALUES (?,?,?,?,?,?,?,?)",
+                   (u["id"], body["name"].strip()[:120], kind, goal, target, (body.get("workload") or "")[:300] or None,
+                    (body.get("notes") or "")[:4000] or None, now()))
+    for x in body.get("session_ids") or []:
+        own_session(int(x), u["id"])
+        store.ex("UPDATE tsessions SET study_id=? WHERE id=?", (sid, int(x)))
+    return {"id": sid}
+
+
+@app.get("/api/studies/{study_id}")
+def study(study_id: int, request: Request):
+    u = auth.current_user(request)
+    st = own_study(study_id, u["id"])
+    others = [dict(r) for r in store.q("SELECT s.id, s.name, s.goal, e.name env_name FROM tsessions s JOIN environments e ON e.id=s.env_id "
+                                        "WHERE e.user_id=? AND (s.study_id IS NULL OR s.study_id<>?) ORDER BY s.id DESC LIMIT 200",
+                                        (u["id"], study_id))]
+    return {"study": st, "sessions": study_view(st, u["id"]), "other_sessions": others}
+
+
+@app.patch("/api/studies/{study_id}")
+def update_study(study_id: int, request: Request, body: dict = Body(...)):
+    u = auth.current_user(request)
+    own_study(study_id, u["id"])
+    for f in ("name", "workload", "notes"):
+        if f in body:
+            store.ex(f"UPDATE studies SET {f}=? WHERE id=?", ((body[f] or "")[:4000] or None, study_id))
+    if "kind" in body and body["kind"] in STUDY_KINDS:
+        store.ex("UPDATE studies SET kind=? WHERE id=?", (body["kind"], study_id))
+    if "goal" in body and body["goal"] in ("tps", "latency"):
+        store.ex("UPDATE studies SET goal=? WHERE id=?", (body["goal"], study_id))
+    if "target" in body:
+        store.ex("UPDATE studies SET target=? WHERE id=?", (float(body["target"]) if body["target"] not in (None, "") else None, study_id))
+    return {"ok": True}
+
+
+@app.delete("/api/studies/{study_id}")
+def delete_study(study_id: int, request: Request):
+    u = auth.current_user(request)
+    own_study(study_id, u["id"])
+    store.ex("UPDATE tsessions SET study_id=NULL WHERE study_id=?", (study_id,))
+    store.ex("DELETE FROM studies WHERE id=?", (study_id,))
+    return {"ok": True}
+
+
+@app.get("/api/v1/agent/studies")
+def agent_studies(key=Depends(auth.agent_key)):
+    out = []
+    for st in store.q("SELECT * FROM studies WHERE user_id=? ORDER BY id DESC", (key["user_id"],)):
+        st = dict(st)
+        st["sessions"] = study_view(st, key["user_id"])
+        st["url"] = f"{PUBLIC_URL}/#/study/{st['id']}"
+        out.append(st)
+    return {"studies": out}
+
+
+@app.post("/api/v1/agent/studies")
+def agent_study_create(body: dict = Body(...), key=Depends(auth.agent_key)):
+    if not (body.get("name") or "").strip():
+        raise HTTPException(400, "name required")
+    st = study_get_or_create(key["user_id"], body["name"], body.get("goal") or "tps", body.get("workload"), body.get("kind") or "compare")
+    upd = {k: body[k] for k in ("kind", "target", "notes") if body.get(k) not in (None, "")}
+    if upd.get("kind") in STUDY_KINDS:
+        store.ex("UPDATE studies SET kind=? WHERE id=?", (upd["kind"], st["id"]))
+    if "target" in upd:
+        store.ex("UPDATE studies SET target=? WHERE id=?", (float(upd["target"]), st["id"]))
+    if "notes" in upd:
+        store.ex("UPDATE studies SET notes=? WHERE id=?", (str(upd["notes"])[:4000], st["id"]))
+    return {"id": st["id"], "name": st["name"], "url": f"{PUBLIC_URL}/#/study/{st['id']}"}

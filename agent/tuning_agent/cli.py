@@ -406,7 +406,8 @@ def cmd_session(a):
             raise Fail(f"session #{old['id']} is still active: `tuning-agent session stop` it or pass --force")
         os_tuning = c.os_tuning_allowed() and not a.no_os_tuning
         r = c.client.post("/sessions", {"environment_id": c.env_id(), "name": a.name, "goal": a.goal, "policy": a.policy,
-                                        "noise_pct": a.noise_pct, "notes": a.notes, "workload": a.workload, "os_tuning": os_tuning})
+                                        "noise_pct": a.noise_pct, "notes": a.notes, "workload": a.workload, "os_tuning": os_tuning,
+                                        "study": a.study})
         warn = _maintenance_tasks(c)
         if warn:
             log("WARNING: scheduled tasks can disturb measurements: " + "; ".join(warn))
@@ -418,9 +419,12 @@ def cmd_session(a):
             raise Fail("scope 'filesystem' needs a dedicated device: tuning-agent init --fs-device /dev/... --allow-fs-experiments")
         sess = {"id": r["session_id"], "name": a.name or r.get("name"), "goal": a.goal, "policy": a.policy, "scope": scope,
                 "noise_pct": a.noise_pct, "started": time.time(), "runs": [], "best": None, "os_tuning": os_tuning}
+        if r.get("study"):
+            sess["study"] = r["study"]
         c.state.set("session", sess)
-        emit({"ok": True, "session": sess, "url": r.get("url")},
+        emit({"ok": True, "session": sess, "url": r.get("url"), "study": r.get("study")},
              f"Session #{sess['id']} started (goal={a.goal}, policy={a.policy}). {r.get('url', '')}\n"
+             + (f"Part of study '{r['study']['name']}': {r['study']['url']}\n" if r.get("study") else "") +
              "Next: start your workload, then `tuning-agent measure start` / `measure stop` (or `measure run --duration 300`).")
     elif a.action == "stop":
         sess = c.session()
@@ -1167,6 +1171,34 @@ def _queued_experiments(c, sess):
         return []
 
 
+def cmd_study(a):
+    c = Ctx()
+    if a.action == "create":
+        if not a.name:
+            raise Fail("study name required")
+        r = c.client.post("/studies", {"name": a.name, "kind": a.kind, "goal": a.goal, "target": a.target, "notes": a.notes})
+        emit(r, f"Study #{r['id']} '{r['name']}': {r['url']}\nAttach sessions with `tuning-agent session start --study \"{r['name']}\" ...` "
+                "on each environment.")
+        return
+    studies = c.client.get("/studies")["studies"]
+    if a.action == "list":
+        emit({"studies": studies}, "\n".join(f"#{s['id']:<4} {s['name']:<40} {s['kind']:<13} {len(s['sessions'])} session(s)  {s['url']}"
+                                              for s in studies) or "No studies yet.")
+        return
+    st = next((s for s in studies if a.name and (str(s["id"]) == a.name or s["name"] == a.name)), None)
+    if not st:
+        raise Fail(f"study {a.name!r} not found")
+    lat = st.get("goal") == "latency"
+    lines = [f"Study #{st['id']} {st['name']} ({st['kind']}, goal {st.get('goal')}" + (f", target {st['target']:g}" if st.get("target") else "") + ")"]
+    for s in st["sessions"]:
+        e, r = s["environment"], s["results"]
+        bs = (r.get("best_safe") or {}).get("mean")
+        meets = "" if not st.get("target") or bs is None else ("  meets target" if (bs <= st["target"] if lat else bs >= st["target"]) else "  below target")
+        lines.append(f"  {e['name']:<16} {e.get('cpus')} CPU {round((e.get('ram_bytes') or 0) / 2 ** 30)} GiB  session #{s['id']} "
+                     f"first {((r.get('first') or {}).get('value'))!s:>10}  best safe {bs!s:>10}  best {((r.get('best') or {}).get('mean'))!s:>10}{meets}")
+    emit(st, "\n".join(lines))
+
+
 def cmd_experiment(a):
     c = Ctx()
     sess = c.session()
@@ -1554,8 +1586,19 @@ def main(argv=None):
     s.add_argument("--noise-pct", type=float, default=None, help="fixed noise threshold (default: 2%% until calibrated)")
     s.add_argument("--no-os-tuning", action="store_true", help="do not tune operating-system settings in this session")
     s.add_argument("--scope", help="what may be tuned: knobs,os (default); add 'filesystem' for filesystem experiments")
+    s.add_argument("--study", help="study (name or id) this session belongs to; created if it does not exist. Studies compare "
+                                   "sessions across environments (hardware scaling, minimum hardware for a target)")
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_session)
+
+    s = sp.add_parser("study", help="studies: compare tuning sessions across environments")
+    s.add_argument("action", choices=["create", "list", "show"])
+    s.add_argument("name", nargs="?", help="study name (create/show) or id (show)")
+    s.add_argument("--kind", choices=["compare", "scaling", "min-hardware"], default="compare")
+    s.add_argument("--goal", choices=["tps", "latency"], default="tps")
+    s.add_argument("--target", type=float, help="min-hardware: goal value to reach (e.g. 50000 NOPM, or 5 ms for latency)")
+    s.add_argument("--notes")
+    s.set_defaults(fn=cmd_study)
 
     s = sp.add_parser("measure", help="measurement windows (runs)")
     s.add_argument("action", choices=["start", "stop", "abort", "run"])

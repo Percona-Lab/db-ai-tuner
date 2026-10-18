@@ -50,7 +50,7 @@ function clearTimers() { timers.forEach(clearInterval); timers = []; }
 function setNav(active) {
   const nav = document.getElementById("nav");
   if (!ME) { nav.innerHTML = `<a class="right" href="#/login">Log in</a><a href="#/register">Create account</a>`; return; }
-  nav.innerHTML = `<a href="#/" class="${active === "envs" ? "on" : ""}">Environments</a><a href="#/connect" class="${active === "connect" ? "on" : ""}">Connect agent</a>` +
+  nav.innerHTML = `<a href="#/" class="${active === "envs" ? "on" : ""}">Environments</a><a href="#/studies" class="${active === "studies" ? "on" : ""}">Studies</a><a href="#/connect" class="${active === "connect" ? "on" : ""}">Connect agent</a>` +
     `<a href="#/policies" class="${active === "policies" ? "on" : ""}">Policies</a><a href="#/account" class="${active === "account" ? "on" : ""}">Account</a><span class="right">${esc(ME.email)}</span><a href="#" id="logout">Log out</a>`;
   document.getElementById("logout").onclick = async e => { e.preventDefault(); await api("/api/auth/logout", { method: "POST", body: {} }); ME = null; location.hash = "#/"; };
 }
@@ -148,6 +148,94 @@ async function envList() {
     const d2 = await api("/api/environments"); const byId = Object.fromEntries(d2.environments.map(e => [e.id, e]));
     envs.forEach((e, i) => { if (byId[e.id]) envs[i] = byId[e.id]; }); draw();
   }, 15000));
+}
+
+const STUDY_KINDS = { compare: "Compare", scaling: "Hardware scaling", "min-hardware": "Minimum hardware" };
+const STUDY_TIPS = {
+  compare: "Sessions on several environments with the same workload, side by side.",
+  scaling: "How the tuned result grows with hardware: throughput relative to the smallest environment versus its CPU count.",
+  "min-hardware": "The cheapest (or smallest) environment whose best production-safe configuration reaches the target.",
+};
+async function studiesPage() {
+  setNav("studies");
+  const d = await api("/api/studies");
+  $view.innerHTML = `<div class="row"><div><h1>Studies</h1><p class="sub">Experiments across environments: compare hardware, measure scaling, find the minimum hardware for a target.</p></div><span class="spacer"></span><button class="primary" id="newStudy">New study</button></div>
+  <div class="card" id="newForm" hidden><div class="grid g2" style="gap:10px">
+    <label>Name<input id="nsName" placeholder="HammerDB 200W hardware scaling"></label>
+    <label>Kind<select id="nsKind">${Object.entries(STUDY_KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></label>
+    <label>Goal<select id="nsGoal"><option value="tps">Throughput</option><option value="latency">Avg response time</option></select></label>
+    <label>Target${info("Minimum hardware studies: the goal value to reach (e.g. 100000 for NOPM, or 5 for 5 ms average latency).")}<input id="nsTarget" type="number" step="any" placeholder="optional"></label></div>
+    <div class="row" style="margin-top:10px"><button class="primary" id="nsCreate">Create</button><span class="muted">Add sessions from each session page, or start them with <code>tuning-agent session start --study "name"</code>.</span></div></div>
+  <div class="card tablewrap" style="margin-top:10px"><table><thead><tr><th>#</th><th>Study</th><th>Kind</th><th>Goal</th><th class="num">Target</th><th class="num">Environments</th><th class="num">Sessions</th><th>Created</th></tr></thead><tbody>
+  ${d.studies.length ? d.studies.map(st => `<tr class="click" data-href="#/study/${st.id}"><td class="muted">${st.id}</td><td><a href="#/study/${st.id}"><b>${esc(st.name)}</b></a></td><td>${STUDY_KINDS[st.kind] || esc(st.kind)}</td><td>${goalName(st.goal || "tps")}</td><td class="num">${st.target != null ? num(st.target) : "–"}</td><td class="num">${st.environments}</td><td class="num">${st.sessions}${st.active ? ` <span class="badge info">${st.active} active</span>` : ""}</td><td>${fmtTime(st.created)}</td></tr>`).join("")
+    : '<tr><td colspan="8" class="muted">No studies yet.</td></tr>'}</tbody></table></div>`;
+  $view.querySelectorAll("tr[data-href]").forEach(tr => tr.onclick = ev => { if (!ev.target.closest("a")) location.hash = tr.dataset.href; });
+  document.getElementById("newStudy").onclick = () => { const f = document.getElementById("newForm"); f.hidden = !f.hidden; };
+  document.getElementById("nsCreate").onclick = async () => {
+    const name = document.getElementById("nsName").value.trim(); if (!name) return;
+    const r = await api("/api/studies", { method: "POST", body: { name, kind: document.getElementById("nsKind").value, goal: document.getElementById("nsGoal").value, target: document.getElementById("nsTarget").value } });
+    location.hash = "#/study/" + r.id;
+  };
+}
+
+async function studyPage(id) {
+  setNav("studies");
+  const d = await api("/api/studies/" + id);
+  const st = d.study, lat = st.goal === "latency";
+  const rows = d.sessions.map(s => {
+    const e = s.environment, r = s.results || {}, bs = (r.best_safe || {}).mean, bt = r.best && !r.best.safe ? r.best.mean : null;
+    return { s, e, r, bs, bt, first: (r.first || {}).value, cpus: e.cpus || 0, cost: e.cost_month,
+      meets: st.target == null || bs == null ? null : (lat ? bs <= st.target : bs >= st.target) };
+  });
+  rows.sort((a, b) => (a.cost || 0) - (b.cost || 0) || a.cpus - b.cpus || (a.e.ram_bytes || 0) - (b.e.ram_bytes || 0));
+  const better = (a, b) => lat ? a < b : a > b;
+  let verdict = "";
+  const measured = rows.filter(x => x.bs != null);
+  if (st.kind === "min-hardware") {
+    if (st.target == null) verdict = `<span class="muted">Set a target to find the minimum hardware.</span>`;
+    else {
+      const ok = measured.filter(x => x.meets);
+      verdict = ok.length ? `<b>${esc(ok[0].e.name)}</b> is the smallest environment reaching ${num(st.target)}: best production-safe ${num(ok[0].bs)} (${ok[0].e.cpus} CPU · ${bytes(ok[0].e.ram_bytes)}${ok[0].cost ? ` · $${num(ok[0].cost)}/month` : ""}). <a href="#/session/${ok[0].s.id}">Its configuration</a>.`
+        : measured.length ? `No environment reaches ${num(st.target)} yet; closest: <b>${esc(measured.reduce((a, b) => better(a.bs, b.bs) ? a : b).e.name)}</b> with ${num(measured.reduce((a, b) => better(a.bs, b.bs) ? a : b).bs)}.` : "No results yet.";
+    }
+  } else if (measured.length >= 2) {
+    const small = measured[0], big = measured[measured.length - 1];
+    const hw = big.cpus && small.cpus ? big.cpus / small.cpus : null, perf = lat ? small.bs / big.bs : big.bs / small.bs;
+    verdict = st.kind === "scaling" && hw ? `From <b>${esc(small.e.name)}</b> (${small.cpus} CPU) to <b>${esc(big.e.name)}</b> (${big.cpus} CPU): ${num(hw)}× the CPUs gave ${num(perf)}× the tuned result — scaling efficiency ${Math.round(100 * perf / hw)}%.${info("Scaling efficiency = result ratio / CPU ratio. 100% = linear scaling. Tuned = best production-safe configuration of each environment.")}`
+      : `Best production-safe result: <b>${esc(measured.reduce((a, b) => better(a.bs, b.bs) ? a : b).e.name)}</b>.`;
+  } else verdict = measured.length ? "Add sessions from more environments to compare." : "No results yet.";
+  $view.innerHTML = `<div class="crumbs"><a href="#/studies">Studies</a> /</div>
+  <div class="row"><h1>${esc(st.name)}</h1><span class="badge plain">${STUDY_KINDS[st.kind] || esc(st.kind)}</span>${info(STUDY_TIPS[st.kind] || "")}<span class="spacer"></span><button class="ghost" id="edit">Edit</button><button class="ghost danger" id="del">Delete</button></div>
+  <p class="sub">Goal ${goalName(st.goal || "tps")}${st.target != null ? ` · target <b>${num(st.target)}</b>` : ""}${st.workload ? " · workload: " + esc(st.workload) : ""} · ${new Set(rows.map(x => x.e.id)).size} environment(s), ${rows.length} session(s)</p>
+  <div class="note" style="margin-bottom:12px">${verdict}</div>
+  <div class="card" id="sbars"></div>
+  <h2>Results by environment${info("Start = first run of each session (usually server defaults). Tuned = best production-safe configuration; with trade-offs = best configuration that gives up durability, replication or observability guarantees. Values are means of all runs of a configuration. Click a cost to edit it.")}</h2>
+  <div class="card tablewrap"><table><thead><tr><th>Environment</th><th>Hardware</th><th class="num">Cost / month</th><th>Session</th><th class="num">Start</th><th class="num">Tuned</th><th class="num">Gain</th><th class="num">With trade-offs</th><th class="num">Per CPU</th>${rows.some(x => x.cost) ? '<th class="num">Per $</th>' : ""}${st.target != null ? "<th>Target</th>" : ""}<th></th></tr></thead><tbody>
+  ${rows.length ? rows.map(x => `<tr><td><a href="#/env/${x.e.id}"><b>${esc(x.e.name)}</b></a></td><td>${x.e.cpus || "?"} CPU · ${bytes(x.e.ram_bytes)} · ${x.e.disk}</td>
+    <td class="num"><a href="#" class="cost" data-env="${x.e.id}" data-cost="${x.cost != null ? x.cost : ""}">${x.cost ? "$" + num(x.cost) : "set"}</a></td>
+    <td><a href="#/session/${x.s.id}">#${x.s.id} ${esc(x.s.name)}</a> ${statusBadge(x.s.status)}</td><td class="num">${num(x.first)}</td><td class="num"><b>${num(x.bs)}</b></td>
+    <td class="num ${deltaCls((x.r.best_safe || {}).gain_pct)}">${pct((x.r.best_safe || {}).gain_pct)}</td><td class="num">${x.bt != null ? num(x.bt) : "–"}</td>
+    <td class="num">${x.bs != null && x.cpus ? num(lat ? x.bs * x.cpus : x.bs / x.cpus) : "–"}</td>${rows.some(y => y.cost) ? `<td class="num">${x.bs != null && x.cost ? num(lat ? x.bs * x.cost : x.bs / x.cost) : "–"}</td>` : ""}
+    ${st.target != null ? `<td>${x.meets == null ? "–" : x.meets ? '<span class="badge good">meets</span>' : '<span class="badge plain">below</span>'}</td>` : ""}
+    <td><a href="#" class="detach" data-sid="${x.s.id}" title="Remove from study">×</a></td></tr>`).join("") : `<tr><td colspan="12" class="muted">No sessions yet.</td></tr>`}</tbody></table></div>
+  <div class="row" style="margin-top:8px"><select id="addSess" style="width:auto"><option value="">Add a session…</option>${d.other_sessions.map(o => `<option value="${o.id}">#${o.id} ${esc(o.env_name)} · ${esc(o.name)}</option>`).join("")}</select>
+   <span class="muted">or <code>tuning-agent session start --study "${esc(st.name)}" ...</code> on each environment</span></div>
+  <h2>Notes</h2><div class="card"><textarea id="snotes" rows="3" placeholder="Hypothesis, method, conclusions">${esc(st.notes || "")}</textarea><div class="row" style="margin-top:6px"><button id="savesn">Save notes</button><span id="snsaved" class="muted"></span></div></div>`;
+  C.barChart(document.getElementById("sbars"), {
+    title: `Tuned result per environment (${goalName(st.goal || "tps")}) — green: meets the target`, unit: "", metric: "tuned",
+    ref: st.target, refLabel: "target", bars: rows.map(x => ({ label: x.e.name + (x.cpus ? ` (${x.cpus} CPU)` : ""), value: x.bs, sub: x.first ? "start " + num(x.first) : "", href: "#/session/" + x.s.id, highlight: x.meets ? "best" : false })),
+  });
+  $view.querySelectorAll("a.cost").forEach(a => a.onclick = async ev => { ev.preventDefault(); const v = prompt("Cost per month in USD (empty to clear)", a.dataset.cost); if (v === null) return; await api("/api/environments/" + a.dataset.env, { method: "PATCH", body: { cost_month: v } }); studyPage(id); });
+  $view.querySelectorAll("a.detach").forEach(a => a.onclick = async ev => { ev.preventDefault(); await api("/api/sessions/" + a.dataset.sid, { method: "PATCH", body: { study_id: null } }); studyPage(id); });
+  document.getElementById("addSess").onchange = async e => { if (!e.target.value) return; await api("/api/sessions/" + e.target.value, { method: "PATCH", body: { study_id: id } }); studyPage(id); };
+  document.getElementById("savesn").onclick = async () => { await api("/api/studies/" + id, { method: "PATCH", body: { notes: document.getElementById("snotes").value } }); document.getElementById("snsaved").textContent = "saved"; };
+  document.getElementById("del").onclick = async () => { if (confirm("Delete this study? Its sessions stay in their environments.")) { await api("/api/studies/" + id, { method: "DELETE" }); location.hash = "#/studies"; } };
+  document.getElementById("edit").onclick = async () => {
+    const name = prompt("Name", st.name); if (name === null) return;
+    const kind = prompt("Kind: compare, scaling or min-hardware", st.kind); if (kind === null) return;
+    const target = prompt("Target goal value (empty for none)", st.target != null ? st.target : ""); if (target === null) return;
+    await api("/api/studies/" + id, { method: "PATCH", body: { name, kind, target } }); studyPage(id);
+  };
 }
 
 async function connectPage() {
@@ -394,6 +482,7 @@ async function sessionPage(id) {
   <div class="row"><h1><span class="muted" style="font-weight:500">#${s.id}</span> ${esc(s.name)}</h1>${statusBadge(s.status)}<span class="spacer"></span><button class="ghost" id="rename">Rename</button><button class="ghost danger" id="del">Delete</button></div>
   <p class="sub">Goal: <b>${goalName(s.goal)}</b> · policy <a href="#/policies"><b>${esc(s.policy)}</b></a>${s.policy === "benchmark" ? " (trade-offs allowed after safe experiments)" : " (production-safe changes only)"} · OS tuning ${s.os_tuning === 0 ? "off" : "on"}${info("When on, the agent may also change operating-system settings (swappiness, transparent huge pages, I/O scheduler, mount options, dirty writeback, memory allocator, huge pages). OS changes are recorded per run and rolled back like MySQL settings. Disable with --no-os-tuning.")} · noise threshold ±${s.noise_pct}% · started ${fmtTime(s.created)}${s.workload ? " · workload: " + esc(s.workload) : ""}</p>
   ${calibrationNote(s)}
+  <p class="sub" style="margin-top:-6px">Study${info("A study groups sessions from several environments running the same workload, e.g. to compare hardware or find the smallest hardware that reaches a target.")}: <select id="studySel" style="width:auto"><option value="">none</option></select>${d.study ? ` <a href="#/study/${d.study.id}">open study</a>` : ""}</p>
   <div class="tiles"><div class="tile"><div class="k">Runs measured</div><div class="v">${done.length}</div></div>
    <div class="tile"><div class="k">Start${info(`Starting configuration: first run of the session (${goalUnit(s.goal, s)}).`)}</div><div class="v">${first ? num(first.goal_value) : "–"}</div><div class="d">${first ? esc(first.label) : ""}</div></div>
    ${cfgTile("Best safe", bestSafe, firstCfg, lower, s.goal, false, s)}
@@ -405,6 +494,15 @@ async function sessionPage(id) {
   <h2>Latest recommendations</h2><div class="card" id="recs"></div>
   <h2>Notes</h2><div class="card"><textarea id="notes" rows="3" placeholder="Notes about this session (workload, hypotheses, conclusions)">${esc(s.notes || "")}</textarea><div class="row" style="margin-top:6px"><button id="savenotes">Save notes</button><span id="saved" class="muted"></span></div></div>
   <h2>Recent activity</h2><div class="card" id="events"></div>`;
+  api("/api/studies").then(st => {
+    const sel = document.getElementById("studySel"); if (!sel) return;
+    sel.innerHTML = '<option value="">none</option>' + st.studies.map(x => `<option value="${x.id}" ${x.id === s.study_id ? "selected" : ""}>${esc(x.name)}</option>`).join("") + '<option value="new">New study…</option>';
+    sel.onchange = async () => {
+      let v = sel.value;
+      if (v === "new") { const n = prompt("Study name (e.g. HammerDB 200W hardware scaling)"); if (!n) { sel.value = s.study_id || ""; return; } v = (await api("/api/studies", { method: "POST", body: { name: n, goal: s.goal, workload: s.workload } })).id; }
+      await api("/api/sessions/" + id, { method: "PATCH", body: { study_id: v ? +v : null } }); sessionPage(id);
+    };
+  });
   C.barChart(document.getElementById("bars"), {
     title: goalName(s.goal) + " per run (" + goalUnit(s.goal, s) + ") — green: best production-safe configuration · orange: runs with trade-offs", unit: goalUnit(s.goal, s), metric: s.goal === "latency" ? "avg latency" : "goal value",
     ref: first ? first.goal_value : null,
@@ -750,6 +848,8 @@ async function route() {
     if (parts[0] === "account") return await accountPage();
     if (parts[0] === "policies") return await policiesPage();
     if (parts[0] === "env") return await envPage(+parts[1]);
+    if (parts[0] === "studies") return await studiesPage();
+    if (parts[0] === "study") return await studyPage(+parts[1]);
     if (parts[0] === "session") return await sessionPage(+parts[1]);
     if (parts[0] === "run") return await runPage(+parts[1], parts[2]);
     $view.innerHTML = "<p>Not found.</p>";

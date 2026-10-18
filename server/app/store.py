@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS commands (
   id INTEGER PRIMARY KEY, host_id INTEGER NOT NULL, session_id INTEGER, created REAL NOT NULL, action TEXT NOT NULL, payload TEXT,
   status TEXT NOT NULL DEFAULT 'queued', result TEXT, updated REAL);
 CREATE INDEX IF NOT EXISTS commands_host ON commands(host_id, status);
+CREATE TABLE IF NOT EXISTS studies (
+  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'compare', goal TEXT,
+  target REAL, workload TEXT, notes TEXT, created REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS metrics (
   env_id INTEGER NOT NULL, ts REAL NOT NULL, data TEXT NOT NULL, PRIMARY KEY (env_id, ts)) WITHOUT ROWID;
 """
@@ -83,6 +86,8 @@ MIGRATIONS = [
     ("users", "llm_model", "TEXT"),
     ("users", "llm_mode", "TEXT"),
     ("recommendations", "llm", "TEXT"),
+    ("tsessions", "study_id", "INTEGER"),
+    ("environments", "cost_month", "REAL"),
 ]
 
 

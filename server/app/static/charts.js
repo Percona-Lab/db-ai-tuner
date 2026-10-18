@@ -150,7 +150,7 @@
     const m = { l: 48, r: 8, t: 16, b: 34 };
     const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": opts.title });
     wrap.appendChild(svg);
-    const ticks = niceTicks(0, Math.max(...bars.map(b => b.value)), 4);
+    const ticks = niceTicks(0, Math.max(...bars.map(b => b.value), opts.ref != null ? opts.ref : 0), 4);
     const hi = ticks[ticks.length - 1];
     const Y = v => m.t + (H - m.t - m.b) * (1 - v / hi);
     ticks.forEach(v => {
@@ -179,7 +179,7 @@
     });
     if (opts.ref != null) {
       el("line", { x1: m.l, x2: W - m.r, y1: Y(opts.ref), y2: Y(opts.ref), stroke: "var(--ink-2)", "stroke-dasharray": "4 3", "stroke-width": 1 }, svg);
-      const t = el("text", { x: W - m.r, y: Y(opts.ref) - 4, "text-anchor": "end", "font-size": 11, fill: "var(--ink-2)" }, svg); t.textContent = "first run";
+      const t = el("text", { x: W - m.r, y: Y(opts.ref) - 4, "text-anchor": "end", "font-size": 11, fill: "var(--ink-2)" }, svg); t.textContent = opts.refLabel || "first run";
     }
   }
 
