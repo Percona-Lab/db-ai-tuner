@@ -183,5 +183,48 @@
     }
   }
 
-  window.Charts = { lineChart, barChart, fmtNum, hhmm };
+  // flame graph (root at the bottom) from folded stacks [["a;b;c", count], ...]; click a frame to zoom, click it again to reset
+  function flameGraph(container, folded, opts) {
+    opts = opts || {};
+    const root = { name: "all", value: 0, children: {} };
+    folded.forEach(([stack, n]) => {
+      root.value += n;
+      let node = root;
+      stack.split(";").forEach(f => { node = node.children[f] = node.children[f] || { name: f, value: 0, children: {} }; node.value += n; });
+    });
+    const H = 17, wrap = document.createElement("div"); wrap.className = "chart flame";
+    container.appendChild(wrap);
+    const depthOf = n => 1 + Math.max(0, ...Object.values(n.children).map(depthOf));
+    let focus = root;
+    const color = name => {
+      if (/^\[|\.so/.test(name)) return "var(--grid)";
+      let h = 0; for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+      return `hsl(${20 + h % 35}, ${70 + h % 20}%, ${58 + h % 14}%)`;
+    };
+    function draw() {
+      wrap.innerHTML = "";
+      const W = Math.max(wrap.clientWidth || 600, 300), D = Math.min(depthOf(focus), opts.maxDepth || 60), Ht = D * H;
+      const svg = el("svg", { viewBox: `0 0 ${W} ${Ht}`, height: Ht, width: "100%", role: "img", "aria-label": "CPU flame graph" });
+      wrap.appendChild(svg);
+      const total = focus.value;
+      (function walk(node, x, depth) {
+        const w = node.value / total * W;
+        if (w < 0.6 || depth >= D) return;
+        const y = Ht - (depth + 1) * H;
+        const g = el("g", { "data-tip": `${node.name} — ${(100 * node.value / root.value).toFixed(1)}% of database CPU samples`, style: "cursor:pointer" }, svg);
+        el("rect", { x, y, width: Math.max(w - 0.5, 0.5), height: H - 1, fill: color(node.name), rx: 2 }, g);
+        if (w > 40) {
+          const t = el("text", { x: x + 4, y: y + 12, "font-size": 11, fill: "#222" }, g);
+          const fit = Math.max(1, Math.floor((w - 8) / 6.3));
+          t.textContent = node.name.length > fit ? node.name.slice(0, fit - 1) + "…" : node.name;
+        }
+        g.addEventListener("click", () => { focus = node === focus ? root : node; draw(); });
+        let cx = x;
+        Object.values(node.children).sort((a, b) => b.value - a.value).forEach(ch => { walk(ch, cx, depth + 1); cx += ch.value / total * W; });
+      })(focus, 0, 0);
+    }
+    draw();
+  }
+
+  window.Charts = { lineChart, barChart, flameGraph, fmtNum, hhmm };
 })();

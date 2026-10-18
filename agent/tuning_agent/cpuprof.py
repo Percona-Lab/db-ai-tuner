@@ -26,7 +26,7 @@ import time
 CATEGORIES = (  # (category, regex on one frame) - frames are checked from the leaf upwards, first match wins
     ("spin / mutex wait", r"ut_delay|PolicyMutex|TTASEventMutex|spin_and_try|rw_lock_[xs]_lock_(spin|func)|sync_array|::spin|lock_word|Spin_lock"),
     ("memory allocator", r"^(malloc|free|calloc|realloc|_int_malloc|_int_free|cfree|operator new|operator delete|je_|tc_|mi_|arena_|tcache)"),
-    ("performance_schema", r"^(pfs_|PFS_|start_(mutex|rwlock|cond|statement|stage)_wait|insert_events_|aggregate_)|pfs_.*_v[0-9]"),
+    ("performance_schema", r"^(pfs_|PFS_|psi_|PSI_|start_(mutex|rwlock|cond|statement|stage)_wait|insert_events_|aggregate_)|pfs_.*_v[0-9]"),
     ("compression / checksums", r"crc32|ut_crc|zlib|deflate|inflate|lz4|zstd|buf_calc_page|page_zip"),
     ("parser / optimizer", r"MYSQLparse|my_sql_parser|THD::sql_parser|JOIN::optimize|Optimize_table_order|make_join_plan|find_best_ref|test_quick_select|Item::fix_fields|setup_fields|Query_block::prepare|bind_fields"),
     ("redo / commit", r"^log_|mtr_t::commit|mtr_commit|trx_commit|ha_commit|log_buffer|redo"),

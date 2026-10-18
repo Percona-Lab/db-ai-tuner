@@ -829,7 +829,7 @@ async function runPage(id, tab) {
   ${Object.keys(r.external || {}).length ? `<h3>Benchmark-reported values</h3><div class="row">${Object.entries(r.external).map(([k, v]) => `<span class="badge plain">${esc(k)} = ${esc(v)}</span>`).join("")}</div>` : ""}
   <div class="tabs" id="tabs"></div><div id="tab"></div>`;
   document.getElementById("vs").onchange = e => { location.hash = "#/run/" + id + (e.target.value ? "?vs=" + e.target.value : ""); };
-  const tabs = [["changes", "Configuration"], ["graphs", "Graphs"], ["inputs", "Diagnosis & inputs"], ["recs", "Recommendations"], ["config", "Full configuration"]];
+  const tabs = [["changes", "Configuration"], ["graphs", "Graphs"], ["inputs", "Diagnosis & inputs"], ...((r.inputs || {}).cpu_profile ? [["cpu", "CPU profile"]] : []), ["recs", "Recommendations"], ["config", "Full configuration"]];
   const tabsEl = document.getElementById("tabs"), tabEl = document.getElementById("tab");
   const show = async name => {
     tabsEl.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.t === name));
@@ -852,6 +852,7 @@ async function runPage(id, tab) {
       if (r.status === "measuring") timers.push(setInterval(async () => { const m2 = await api(`/api/runs/${id}/metrics?points=300`); chartsGrid(document.getElementById("rc"), m2, RUN_CHARTS, m2.window); }, 15000));
     }
     else if (name === "inputs") renderInputs(tabEl, r);
+    else if (name === "cpu") renderCpuProfile(tabEl, r.inputs.cpu_profile);
     else if (name === "recs") { tabEl.innerHTML = ""; if (!r.recommendations.length) tabEl.innerHTML = '<p class="muted">No recommendation was generated from this run.</p>'; r.recommendations.forEach(rec => { const c = document.createElement("div"); c.className = "card"; c.style.marginBottom = "12px"; tabEl.appendChild(c); renderRecs(c, rec); }); }
     else if (name === "config") {
       const c = await api(`/api/runs/${id}/config`);
@@ -907,6 +908,21 @@ function renderDiff(el, r) {
   el.innerHTML = h;
 }
 
+function renderCpuProfile(el, p) {
+  if (p.error) { el.innerHTML = `<p class="muted">The CPU profile could not be taken: ${esc(p.error)}</p>`; return; }
+  const cats = Object.entries(p.categories || {});
+  const ov = p.overhead_pct;
+  el.innerHTML = `<p class="sub">${p.seconds} s at ${p.hz} samples/s per CPU in the middle of the run · ${num(p.db_samples)} database samples${p.call_stacks ? "" : " · leaf functions only (binary without frame pointers)"}${ov != null ? ` · throughput while profiling ${ov > 0 ? "−" : "+"}${Math.abs(ov).toFixed(1)}% vs the rest of the run` : ""}${info("perf-event sampling (the kernel mechanism eBPF profilers use) on every CPU at a low frequency for a slice of the run; symbols are resolved after the measurement at low priority. The throughput comparison shows how much the profiler itself cost.")}</p>
+  <h3>Where the database spent CPU${info("Each sample is assigned to the first matching category from the innermost frame outwards. Categories map to tuning mechanisms, e.g. spin / mutex wait → spin loops or a thread pool, memory allocator → jemalloc, performance_schema → instrumentation cost.")}</h3>
+  <div class="card"><div class="waitbar">${cats.map(([k, v], i) => `<span style="width:${v}%;background:${WAIT_COLORS[i % WAIT_COLORS.length]}" data-tip="${esc(k)}: ${v}%"></span>`).join("")}</div>
+   <div class="row" style="gap:4px 14px;font-size:12px;margin-top:6px">${cats.map(([k, v], i) => `<span><i class="dot" style="background:${WAIT_COLORS[i % WAIT_COLORS.length]}"></i>${esc(k)} ${v}%</span>`).join("")}</div>
+   <p class="muted" style="margin:8px 0 0;font-size:12px">Whole host during the profile: ${Object.entries(p.by_process || {}).map(([k, v]) => `${esc(k)} ${v}%`).join(" · ")}</p></div>
+  <h3>Flame graph${info("Width = share of database CPU samples. Bottom = thread entry points, top = the function on CPU. Click a frame to zoom in, click it again to zoom out. Grey frames are unsymbolised library code.")}</h3><div class="card" id="flame"></div>
+  <div class="grid g2" style="margin-top:12px"><div><h3 style="margin-top:0">Top functions (self)</h3><div class="card tablewrap"><table class="kvt"><tbody>${(p.top_self || []).slice(0, 20).map(x => `<tr><td class="mono" style="word-break:break-all">${esc(x.fn)}</td><td class="num">${x.pct}%</td></tr>`).join("")}</tbody></table></div></div>
+   <div><h3 style="margin-top:0">Top functions (including callees)</h3><div class="card tablewrap"><table class="kvt"><tbody>${(p.top_inclusive || []).filter(x => !/^\[/.test(x.fn)).slice(0, 20).map(x => `<tr><td class="mono" style="word-break:break-all">${esc(x.fn)}</td><td class="num">${x.pct}%</td></tr>`).join("")}</tbody></table></div></div></div>`;
+  if ((p.folded || []).length) C.flameGraph(document.getElementById("flame"), p.folded);
+  else document.getElementById("flame").innerHTML = '<p class="muted">No call stacks.</p>';
+}
 function renderInputs(el, r) {
   const inp = r.inputs || {};
   let h = "";
