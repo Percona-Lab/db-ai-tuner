@@ -385,6 +385,18 @@ def test_stack_small_wins():
         VARS["innodb_adaptive_hash_index"] = "OFF"; VARS.pop("os:malloc", None)
 
 
+def test_env_shift_only_for_compared_runs_and_beyond_probe_noise():
+    from tuning_agent import evaluate
+    noise = {"noise_pct": 2, "probe": {"probe_fsync_per_s": 4035}, "probe_cv": {"probe_fsync_per_s": 8.0}}
+    v, d = evaluate.verdict({"managed": {}, "goal_value": 100, "summary": {"probe_fsync_per_s": 4887}}, [], "tps", noise)
+    assert v == "reference" and "environment_shift" not in d
+    base = [{"seq": 1, "managed": {}, "goal_value": 100, "summary": {}, "verdict": "reference"}]
+    run = {"managed": {"a": "1"}, "goal_value": 100.5, "summary": {"probe_fsync_per_s": 4887}}  # +21%, below 3 x 8% CV
+    assert "environment_shift" not in evaluate.verdict(run, base, "tps", noise)[1]
+    run["summary"]["probe_fsync_per_s"] = 6000  # +49%
+    assert "environment_shift" in evaluate.verdict(run, base, "tps", noise)[1]
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)

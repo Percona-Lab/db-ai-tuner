@@ -84,14 +84,17 @@ PROBE_SHIFT_PCT = 15.0
 
 
 def environment_shift(run_summary, noise):
-    """Compare a run's environment probe with the calibration runs' probe means."""
+    """Compare a run's environment probe (quick CPU / storage benchmark before the run) with the calibration runs.
+    A probe counts as shifted only beyond its own run-to-run variation during calibration (3 x CV, at least 15%):
+    e.g. fsync rates on shared storage vary by 10% between identical runs."""
     ref = (noise or {}).get("probe") or {}
+    cvs = (noise or {}).get("probe_cv") or {}
     out = {}
     for k in PROBE_KEYS:
         a, b = ref.get(k), (run_summary or {}).get(k)
         if a and b:
             d = round(100.0 * (b - a) / a, 1)
-            if abs(d) > PROBE_SHIFT_PCT:
+            if abs(d) > max(PROBE_SHIFT_PCT, 3 * (cvs.get(k) or 0)):
                 out[k[6:]] = d
     return out
 
@@ -152,11 +155,15 @@ def calibrate(runs):
         "_goal_values": goal_vals,
     }
     probe = {}
+    probe_cv = {}
     for key in PROBE_KEYS:
         vals = [r["summary"][key] for r in runs if (r.get("summary") or {}).get(key)]
         if vals:
             probe[key] = round(_mean(vals), 2)
+            if len(vals) >= 2:
+                probe_cv[key] = round(_cv(vals), 2)
     out["probe"] = probe
+    out["probe_cv"] = probe_cv
     for key in EFFICIENCY:
         vals = [r["summary"][key] for r in runs if (r.get("summary") or {}).get(key) is not None]
         c = _cv(vals)
@@ -236,7 +243,8 @@ def verdict(run, history, goal, noise):
     if st:
         d = dict(d)
         d["steal"] = st
-    shift = environment_shift(run.get("summary"), noise)
+    # only meaningful for a run compared with another configuration (not the first run, not calibration repeats)
+    shift = environment_shift(run.get("summary"), noise) if v in ("improved", "regressed", "neutral", "efficiency-gain", "efficiency-loss") else None
     if shift:
         d = dict(d)
         d["environment_shift"] = shift
