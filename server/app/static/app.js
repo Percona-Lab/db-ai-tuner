@@ -107,8 +107,9 @@ function authForm(kind) {
 
 function envStatus(e) {
   if (e.destroyed_at) return `<span class="badge plain" data-tip="The machine was deleted ${ago(e.destroyed_at)} (e.g. at the end of a study). Its sessions and results are kept.">decommissioned</span>`;
-  if (e.online) return '<span class="badge good">online</span>';
-  if (e.agent_state === "stopped") return `<span class="badge plain" data-tip="The tuning-agent service was stopped on the host ${ago(e.agent_state_at)} (systemctl stop), not a loss of contact.">agent stopped</span>`;
+  const stopped = e.agent_state === "stopped" && (e.agent_state_at || 0) >= (e.last_seen || 0);
+  if (e.online && !stopped) return '<span class="badge good">online</span>';
+  if (stopped) return `<span class="badge plain" data-tip="The tuning-agent service was stopped on the host ${ago(e.agent_state_at)} (systemctl stop), not a loss of contact.">agent stopped</span>`;
   return `<span class="badge warn" data-tip="Last report from the agent ${ago(e.last_seen)}: host down, agent crashed or network problem.">offline · ${ago(e.last_seen)}</span>`;
 }
 async function envList() {
