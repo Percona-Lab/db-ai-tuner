@@ -33,7 +33,7 @@ def detect_service():
 def render(managed):
     lines = [HEADER, "[mysqld]"]
     for var in sorted(managed):
-        if var.startswith(("os:", "rg:")):
+        if ":" in var:  # os:, rg:, client: pseudo-variables are not MySQL options
             continue
         m = managed[var]
         if m.get("reason"):

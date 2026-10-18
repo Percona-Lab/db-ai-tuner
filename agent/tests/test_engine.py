@@ -280,6 +280,13 @@ def test_practice_bundle_bisect_and_keep():
     assert [c["variable"] for c in nxt["changes"]] == ["v4"] or nxt["id"] == "best-practices", nxt
 
 
+def test_option_file_has_only_mysql_options():
+    from tuning_agent.applier import render
+    out = render({"innodb_io_capacity": {"value": "2000"}, "os:thp": {"value": "never"}, "rg:innodb_bg_cpus": {"value": "1"},
+                  "client:os:net.ipv4.tcp_slow_start_after_idle": {"value": "0"}})
+    assert "innodb_io_capacity = 2000" in out and ":" not in out.replace("# ", "").split("[mysqld]")[1].replace("Managed", "")
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)
