@@ -318,17 +318,23 @@ async function accountPage() {
   };
 }
 
-function chartsGrid(container, m, defs, window_, markers) {
+function chartsGrid(container, m, defs, window_, markers, opts) {
+  // series: [group, key, name] or {name, fn: m => values} for values derived from sampled series
   container.innerHTML = "";
   defs.forEach(def => {
+    const series = def.series.map(x => Array.isArray(x) ? { name: x[2], values: (m[x[0]] || {})[x[1]] } : { name: x.name, values: x.fn(m) });
+    if (opts && opts.skipEmpty && !series.some(s => s.values && s.values.some(v => v != null))) return;
     const cell = document.createElement("div"); cell.className = "card";
     container.appendChild(cell);
-    C.lineChart(cell, {
-      title: def.title, unit: def.unit, ts: m.ts, window: window_, max100: def.max100, min0: def.min0, markers,
-      series: def.series.map(([g, k, name]) => ({ name, values: (m[g] || {})[k] })),
-    });
+    C.lineChart(cell, { title: def.title, unit: def.unit, ts: m.ts, window: window_, max100: def.max100, min0: def.min0, markers, series });
+    const t = cell.querySelector(".title");
+    if (def.tip && t) t.insertAdjacentHTML("beforeend", info(def.tip));
   });
 }
+// derived series: combine sampled series point by point (no extra sampling)
+const ser = (m, g, k) => (m[g] || {})[k] || [];
+const combine = (m, f, ...refs) => (m.ts || []).map((_, i) => { const v = refs.map(([g, k]) => ser(m, g, k)[i]); return v.some(x => x == null) ? null : f(...v); });
+const perTrx = (m, f, ...refs) => combine(m, (tps, ...v) => tps > 0.5 ? f(...v) / tps : null, ["db", "tps"], ...refs);
 const LIVE_CHARTS = [
   { title: "Throughput", unit: "per s", series: [["db", "tps", "transactions"], ["db", "qps", "queries"]] },
   { title: "Avg statement latency", unit: "ms", series: [["db", "avg_latency_ms", "avg latency"]] },
@@ -409,7 +415,7 @@ async function envPage(id) {
        <td class="num">${num(o.net_conn_per_s)}</td><td class="num">${num(o.net_time_wait)}</td><td class="num">${o.cpu_busy != null ? Math.round(o.cpu_busy) + "%" : "–"}</td></tr>`; }).join("")}</tbody></table></div>` : ""}
   <div class="card" style="margin-top:10px"><details><summary style="margin:0">Current agent-applied configuration (${Object.keys((f.agent || {}).managed || {}).length} settings)${info("The settings the tuning-agent currently enforces on this server: MySQL variables written to its own option file (shown below) and operating-system settings. Everything not listed is the server default or comes from your own option files. As of the agent's last report.")}</summary>${Object.keys((f.agent || {}).managed || {}).length ? `<p class="muted" style="margin:0 0 6px">${esc((f.agent || {}).cnf_path || "")} · restarts ${(f.agent || {}).allow_restart === false ? "disabled" : "allowed"}</p><pre><code>${cnfBlock(f.agent.managed)}</code></pre>` : '<span class="muted">None yet: <code>tuning-agent baseline --apply</code> writes the first set.</span>'}</details></div>
   <div class="row"><h2>Live metrics</h2><span class="spacer"></span><select id="range" style="width:auto"><option value="900">15 min</option><option value="3600" selected>1 hour</option><option value="21600">6 hours</option><option value="86400">24 hours</option></select></div>
-  <div class="grid g3" id="live"></div>
+  <div id="live"></div>
   <h2>Tuning sessions</h2><div class="card tablewrap"><table><thead><tr><th>#</th><th>Session</th><th>Goal</th><th>Policy</th><th>Status</th><th class="num">Runs</th><th class="num">First run</th><th class="num">Best</th><th class="num">Best gain</th><th>Started</th></tr></thead><tbody id="sess"></tbody></table></div>
   <h2>Recent activity</h2><div class="card" id="events"></div>`;
   const tb = document.getElementById("sess");
@@ -428,10 +434,95 @@ async function envPage(id) {
   const sessionMarkers = [];
   d.sessions.forEach(x => { sessionMarkers.push({ t: x.created, label: `#${x.id} start` }); if (x.ended) sessionMarkers.push({ t: x.ended, label: `#${x.id} end`, end: true }); });
   const live = document.getElementById("live"), range = document.getElementById("range");
-  const load = async () => { const span = +range.value; const now = Date.now() / 1000; const m = await api(`/api/environments/${id}/metrics?start=${now - span}&end=${now}&points=240`); chartsGrid(live, m, [...LIVE_CHARTS, LIVE_PSI, LIVE_SCHED, LIVE_MEM], null, sessionMarkers); };
+  const cpus = hw.cpus || 1;
+  const load = async () => {
+    const span = +range.value; const now = Date.now() / 1000;
+    const m = await api(`/api/environments/${id}/metrics?start=${now - span}&end=${now}&points=240`);
+    renderLive(live, m, cpus, e.name, sessionMarkers);
+  };
   range.onchange = load;
   await load();
   timers.push(setInterval(load, 15000));
+}
+
+const LIVE_DB = [
+  { title: "Throughput", unit: "per s", series: [["db", "tps", "transactions"], ["db", "qps", "queries"]] },
+  { title: "Avg statement latency", unit: "ms", series: [["db", "avg_latency_ms", "avg latency"]] },
+  { title: "Statement mix", unit: "per s", series: [["db", "selects", "SELECT"], ["db", "inserts", "INSERT"], ["db", "updates", "UPDATE"], ["db", "deletes", "DELETE"]] },
+  { title: "Commits and rollbacks", unit: "per s", series: [["db", "commits", "commits"], ["db", "rollbacks", "rollbacks"]] },
+  { title: "Threads", unit: "", series: [["db", "threads_running", "running"], ["db", "threads_connected", "connected"]], tip: "Running threads above the CPU count usually mean contention or waiting; connected minus running = idle connections." },
+  { title: "Cost per transaction", unit: "", series: [
+      { name: "mysqld CPU ms", fn: m => perTrx(m, c => c * m._cpus * 10, ["os", "mysqld_cpu_pct"]) },
+      { name: "disk IOs", fn: m => perTrx(m, (r, w) => r + w, ["os", "disk_r_iops"], ["os", "disk_w_iops"]) },
+      { name: "redo KiB", fn: m => perTrx(m, r => r * 1024, ["db", "redo_mbs"]) }],
+    tip: "Derived from the sampled series: mysqld CPU time, disk I/O requests and redo written per transaction. Lower = more efficient; this is what the tuner's efficiency verdicts use." },
+  { title: "Buffer pool hit ratio", unit: "%", min0: false, series: [["db", "bp_hit_pct", "hit ratio"]] },
+  { title: "Buffer pool I/O", unit: "pages/s", series: [["db", "bp_disk_reads", "read from disk"], ["db", "bp_pages_flushed", "flushed"], ["db", "bp_wait_free", "waits for a free page"]],
+    tip: "Waits for a free page mean user threads had to flush pages themselves: page cleaners cannot keep up." },
+  { title: "Buffer pool content", unit: "% of pages", max100: true, series: [["db", "bp_dirty_pct", "dirty"], ["db", "bp_free_pct", "free"]] },
+  { title: "Redo log", unit: "", series: [["db", "redo_mbs", "written MiB/s"], ["db", "checkpoint_age_pct", "checkpoint age %"], ["db", "log_waits", "log buffer waits/s"]],
+    tip: "Checkpoint age near 75-80% of capacity forces synchronous flushing (stalls). Log buffer waits mean innodb_log_buffer_size is too small." },
+  { title: "InnoDB file I/O", unit: "per s", series: [["db", "data_reads", "reads"], ["db", "data_writes", "writes"], ["db", "data_fsyncs", "fsyncs"]] },
+  { title: "Locks and purge", unit: "", series: [["db", "row_lock_waits", "row lock waits/s"], ["db", "row_lock_current_waits", "waiting now"]],
+    tip: "Row lock waits are a workload property (hot rows) more than a configuration one." },
+  { title: "Purge lag (history list length)", unit: "undo records", series: [["db", "history_list_length", "history list"]],
+    tip: "Undo records not yet purged. Growth means long transactions or purge falling behind: reads get slower as versions pile up." },
+  { title: "Query plan warnings", unit: "per s", series: [["db", "select_scan", "full table scans"], ["db", "select_full_join", "joins without index"], ["db", "sort_merge_passes", "sort merge passes"]],
+    tip: "Full scans and joins without an index are query/schema issues; sort merge passes mean sorts spill to disk (sort_buffer_size)." },
+  { title: "Rows read sequentially", unit: "rows/s", series: [["db", "handler_read_rnd_next", "rows scanned"]] },
+  { title: "Temporary tables", unit: "per s", series: [["db", "tmp_tables", "created"], ["db", "tmp_disk_tables", "on disk"]],
+    tip: "On-disk temporary tables are slow: raise tmp_table_size / temptable_max_ram when this is a large share of all temporary tables." },
+  { title: "Cache misses", unit: "per s", series: [["db", "opened_tables", "tables opened"], ["db", "opened_table_defs", "table definitions opened"], ["db", "threads_created", "threads created"]],
+    tip: "Should be near zero in steady state; otherwise table_open_cache, table_definition_cache or thread_cache_size are too small." },
+  { title: "Client traffic (MySQL protocol)", unit: "MiB/s", series: [["db", "net_received_mbs", "received"], ["db", "net_sent_mbs", "sent"]] },
+  { title: "Errors and spills", unit: "per s", series: [["db", "aborted_connects", "aborted connects"], ["db", "slow_queries", "slow queries"], ["db", "binlog_cache_disk_use", "binlog cache spills"]] },
+];
+const LIVE_DBPROC = [
+  { title: "mysqld CPU", unit: "% of host", series: [["os", "mysqld_cpu_pct", "mysqld"]] },
+  { title: "Database process memory", unit: "MiB", series: [["os", "dbproc_rss_mb", "RSS"], ["os", "dbproc_pss_mb", "PSS"], ["os", "dbproc_swap_pss_mb", "swap PSS"], ["os", "dbproc_cg_mem_mb", "cgroup charge"]],
+    tip: "PSS splits shared pages between the processes that map them: the real share of RAM. The cgroup charge also includes page cache charged to the service." },
+  { title: "Scheduling delay", unit: "µs per CPU slice", series: [["os", "dbproc_sched_delay_us", "database threads"], ["os", "host_sched_delay_us", "all tasks"]],
+    tip: "Time a runnable database thread waited for a CPU each time it was scheduled; adds directly to query latency." },
+  { title: "Run-queue wait", unit: "% of runnable time", series: [["os", "dbproc_runq_wait_pct", "database threads"]] },
+  { title: "Pressure stall (mysqld cgroup)", unit: "% time", max100: true, series: [["os", "mysqld_psi_cpu_some", "CPU"], ["os", "mysqld_psi_io_some", "I/O"], ["os", "mysqld_psi_memory_some", "memory"]] },
+  { title: "Preemptions and faults", unit: "per s", series: [["os", "dbproc_nvcsw_per_s", "involuntary switches"], ["os", "dbproc_pgmajfault_per_s", "major faults"]],
+    tip: "Involuntary switches: threads preempted while running. Major faults on a database with O_DIRECT data files are mostly swap-ins." },
+];
+const LIVE_OS = [
+  { title: "CPU", unit: "%", max100: true, series: [["os", "cpu_user", "user"], ["os", "cpu_sys", "system"], ["os", "cpu_iowait", "iowait"], ["os", "cpu_steal", "steal"]] },
+  { title: "Load", unit: "", series: [["os", "load1", "load 1m"], ["os", "procs_running", "running"], ["os", "procs_blocked", "blocked on I/O"]] },
+  { title: "Pressure stall (host)", unit: "% time", max100: true, series: [["os", "psi_cpu_some", "CPU"], ["os", "psi_io_some", "I/O"], ["os", "psi_memory_some", "memory"]] },
+  { title: "Disk IOPS", unit: "per s", series: [["os", "disk_r_iops", "reads"], ["os", "disk_w_iops", "writes"]] },
+  { title: "Disk throughput", unit: "MiB/s", series: [["os", "disk_r_mbs", "read"], ["os", "disk_w_mbs", "write"]] },
+  { title: "Disk latency and queue", unit: "", series: [["os", "disk_await_ms", "await ms"], ["os", "disk_queue", "queue depth"], ["os", "disk_util", "util %"]] },
+  { title: "Memory", unit: "MiB", series: [["os", "mem_available_mb", "available"], ["os", "page_cache_mb", "page cache"], ["os", "inactive_anon_mb", "inactive anon"]] },
+  { title: "Swap", unit: "", series: [["os", "swap_used_mb", "used MiB"], ["os", "swap_in_mbs", "in MiB/s"], ["os", "swap_out_mbs", "out MiB/s"]] },
+  { title: "Network", unit: "MiB/s", series: [["os", "net_rx_mbs", "received"], ["os", "net_tx_mbs", "sent"]] },
+  { title: "TCP", unit: "", series: [["os", "net_conn_per_s", "connections/s"], ["os", "net_retrans_pct", "retransmits %"], ["os", "net_time_wait", "TIME_WAIT"]] },
+  { title: "Packet processing", unit: "", series: [["os", "softirq_max_cpu_pct", "busiest CPU softirq %"], ["os", "softirq_avg_cpu_pct", "avg softirq %"], ["os", "net_softnet_drops", "drops/s"]] },
+  { title: "Context switches", unit: "per s", series: [["os", "ctx_switches", "switches"]] },
+];
+const LIVE_CLIENT = [
+  { title: "CPU", unit: "%", max100: true, series: [["os", "cpu_user", "user"], ["os", "cpu_sys", "system"], ["os", "cpu_steal", "steal"]] },
+  { title: "Round trip to the database", unit: "ms", series: [["os", "rtt_avg_ms", "avg"], ["os", "rtt_p95_ms", "p95"]] },
+  { title: "Network", unit: "MiB/s", series: [["os", "net_rx_mbs", "received"], ["os", "net_tx_mbs", "sent"]] },
+  { title: "TCP", unit: "", series: [["os", "net_conn_per_s", "connections/s"], ["os", "net_retrans_pct", "retransmits %"], ["os", "net_time_wait", "TIME_WAIT"]] },
+  { title: "Pressure stall", unit: "% time", max100: true, series: [["os", "psi_cpu_some", "CPU"], ["os", "psi_memory_some", "memory"]] },
+  { title: "Scheduling delay (all tasks)", unit: "µs per CPU slice", series: [["os", "host_sched_delay_us", "all tasks"]] },
+];
+function renderLive(el, m, cpus, hostName, markers) {
+  m._cpus = cpus;
+  let open = {};
+  try { open = JSON.parse(localStorage.getItem("liveOpen") || "{}"); } catch (e) { }
+  const sections = [["db", `Database: ${hostName}`, LIVE_DB, m], ["proc", `Database process: ${hostName}`, LIVE_DBPROC, m], ["os", `Operating system: ${hostName}`, LIVE_OS, m]];
+  (m.clients || []).forEach(c => sections.push(["cli" + c.id, `Client host: ${c.name}`, LIVE_CLIENT, { ts: c.ts, os: c.os, db: {} }]));
+  // keep open/closed state across refreshes
+  const prev = {}; el.querySelectorAll("details[data-k]").forEach(d => { prev[d.dataset.k] = d.open; });
+  el.innerHTML = sections.map(([k, title]) => `<details class="livesec" data-k="${k}" ${(k in prev ? prev[k] : open[k] !== false) ? "open" : ""}><summary><h3 style="display:inline">${esc(title)}</h3></summary><div class="grid g3" data-grid="${k}"></div></details>`).join("");
+  sections.forEach(([k, , defs, mm]) => chartsGrid(el.querySelector(`[data-grid="${k}"]`), mm, defs, null, markers, { skipEmpty: true }));
+  el.querySelectorAll("details[data-k]").forEach(d => d.addEventListener("toggle", () => {
+    open[d.dataset.k] = d.open; try { localStorage.setItem("liveOpen", JSON.stringify(open)); } catch (e) { }
+  }));
 }
 
 async function renderEvents(el, _events, _all, scope) {

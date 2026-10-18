@@ -123,3 +123,7 @@ details summary { cursor: pointer; color: var(--ink-2); margin: 6px 0; }
 .seg button.on { background: var(--surface-2); color: var(--ink); font-weight: 600; }
 table.runs td.chg { max-width: 260px; overflow-wrap: anywhere; font-size: 12.5px; }
 table.runs td, table.runs th { padding: 7px 6px; }
+details.livesec { margin: 6px 0 14px; }
+details.livesec > summary { cursor: pointer; padding: 4px 0; list-style-position: outside; }
+details.livesec > summary h3 { margin: 0; }
+details.livesec > .grid { margin-top: 8px; }

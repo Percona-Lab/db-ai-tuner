@@ -326,7 +326,12 @@ def env_metrics(env_id: int, request: Request, start: float = None, end: float =
     own_env(env_id, u["id"])
     end = end or now()
     start = start or end - 3600
-    return metrics_window(env_id, start, end, min(max(points, 20), 2000))
+    pts = min(max(points, 20), 2000)
+    m = metrics_window(env_id, start, end, pts)
+    for h in store.q("SELECT id, name FROM hosts WHERE env_id=? ORDER BY name", (env_id,)):
+        hm = metrics_window(None, start, end, pts, host_id=h["id"])
+        m.setdefault("clients", []).append({"id": h["id"], "name": h["name"], "ts": hm["ts"], "os": hm["os"]})
+    return m
 
 
 def _delete_session(sid):
