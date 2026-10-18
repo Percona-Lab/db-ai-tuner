@@ -172,6 +172,26 @@ def test_sweeps():
     assert items[0]["sweep"]["values"] == ["256", "512", "2048"]
 
 
+def test_network_rules():
+    v = dict(VARS, **{"os:net.core.somaxconn": "4096", "back_log": "151", "skip_name_resolve": "OFF", "os:rps": "off",
+                      "os:net.core.netdev_max_backlog": "1000", "os:net.ipv4.tcp_slow_start_after_idle": "1",
+                      "os:net.ipv4.tcp_congestion_control": "cubic", "os:net.netfilter.nf_conntrack_max": "65536"})
+    base = {"goal": "tps", "policy": "safe", "hw": dict(HW, kernel="6.8.0-134-generic"), "flavor": "percona", "version": (8, 4, 11),
+            "inputs": OLTP[1], "noise_pct": 2.0, "managed": {}, "os_tuning": True, "os_facts": {}, "history": []}
+    quiet = engine.run_engine({**base, "variables": v, "summary": OLTP[0]})
+    assert not [i for i in quiet["items"] if i["id"].startswith(("net-", "client-", "skip-name"))]  # no network signal -> nothing
+    noisy = dict(OLTP[0], net_listen_overflows=3.0, net_conn_per_s=400, net_softnet_drops=2, softirq_max_cpu_pct=70,
+                 softirq_avg_cpu_pct=20, rtt_avg_ms=18, conntrack_fill_pct=90, threads_running_avg=12)
+    res = engine.run_engine({**base, "variables": v, "summary": noisy})
+    it = {i["id"]: i for i in res["items"]}
+    for k in ("net-listen-backlog", "skip-name-resolve", "client-pooling", "net-netdev-backlog", "net-rps", "net-conntrack",
+              "net-no-slow-start-idle", "net-bbr", "client-compression", "eevdf-oversubscription"):
+        assert k in it, (k, sorted(it))
+    assert it["skip-name-resolve"]["safety"] == "trade-off" and it["skip-name-resolve"]["kind"] == "advice"  # semantics, safe policy
+    assert {d["type"] for d in res["diagnosis"]} >= {"connections", "softirq", "network-rtt"}
+    assert it["net-listen-backlog"]["relevance"] == 3
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)

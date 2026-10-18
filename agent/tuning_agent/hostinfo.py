@@ -149,9 +149,11 @@ def mysqld_pid():
 class OSCounters:
     """Takes raw counters; rates computed between two snapshots."""
 
-    def __init__(self, device=None):
+    def __init__(self, device=None, mysql_port=3306, role="server"):
         self.device = device
         self.pid = None
+        self.mysql_port = mysql_port
+        self.role = role
 
     def snapshot(self):
         s = {"t": time.time()}
@@ -205,6 +207,12 @@ class OSCounters:
                 rx += int(p[0])
                 tx += int(p[8])
         s["net"] = (rx, tx)
+        try:
+            from . import netmon
+            s["netmon"] = netmon.snapshot()
+            s["ss"] = netmon.ss_probe(self.mysql_port, self.role)
+        except Exception:  # network observability is best effort
+            pass
         return s
 
     @staticmethod
@@ -260,4 +268,8 @@ class OSCounters:
         if "net" in a:
             out["net_rx_mbs"] = round((b["net"][0] - a["net"][0]) / dt / 2 ** 20, 3)
             out["net_tx_mbs"] = round((b["net"][1] - a["net"][1]) / dt / 2 ** 20, 3)
+        if a.get("netmon") and b.get("netmon"):
+            from . import netmon
+            out.update(netmon.rates(a["netmon"], b["netmon"], dt))
+        out.update({k: v for k, v in (b.get("ss") or {}).items()})
         return out

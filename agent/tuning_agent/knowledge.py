@@ -262,6 +262,9 @@ TRADEOFFS["os:mount_barrier"] = (lambda v: str(v).upper() == "OFF", "durability"
                                  "OFF (ext4 nobarrier / barrier=0)")
 
 
+TRADEOFFS["skip_name_resolve"] = (lambda v: str(v).upper() in ("ON", "1"), "semantics",
+                                  "Host-name based accounts (user@hostname) stop matching; only IP-based and wildcard grants work.", "ON")
+KB["back_log"] = dict(kind="int", dynamic=False, risk="none", cat="connections", desc="Listen backlog of mysqld (capped by net.core.somaxconn).")
 TRADEOFFS["os:datadir_fs"] = (lambda v: any(x in str(v) for x in ("barrier=0", "nobarrier", "data=writeback", "sync=disabled")),
                               "durability", "The filesystem may acknowledge writes before they are durable (crash can lose or corrupt recent data).",
                               "options barrier=0 / nobarrier / data=writeback / sync=disabled")

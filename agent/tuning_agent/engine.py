@@ -12,6 +12,8 @@ Inputs (ctx):
 
 Every recommendation carries the evidence it was derived from so the decision can be audited.
 """
+import re
+
 from .mechanisms import MECHANISMS, relevance
 from .knowledge import KB, flags_subset, fmt_size, human_size, normalize, parse_size, tradeoff_of
 
@@ -132,6 +134,24 @@ def diagnose(ctx):
     if tr > cpus * 4 and busy > 60:
         add("concurrency", "medium", f"{tr:.0f} threads running on {cpus} CPUs: heavy oversubscription, mutex convoys likely.",
             {"threads_running_avg": tr, "cpus": cpus})
+    ovf = (s.get("net_listen_overflows") or 0) + (s.get("net_listen_drops") or 0) + (s.get("net_tcp_req_q_full_drop") or 0)
+    if ovf > 0:
+        add("connections", "high", f"Connection attempts dropped by full accept/SYN queues ({ovf:.2f}/s).",
+            {"listen_overflows": s.get("net_listen_overflows"), "syn_queue_drops": s.get("net_tcp_req_q_full_drop")})
+    elif (s.get("net_conn_per_s") or 0) > 50 * cpus:
+        add("connections", "medium", f"{s['net_conn_per_s']:.0f} new TCP connections/s: per-request connections (pooling would help).",
+            {"net_conn_per_s": s.get("net_conn_per_s")})
+    if (s.get("net_softnet_drops") or 0) > 0 or ((s.get("softirq_max_cpu_pct") or 0) > 50 and (s.get("softirq_avg_cpu_pct") or 0) < 25):
+        add("softirq", "medium", f"Packet processing concentrated or dropping (busiest CPU {s.get('softirq_max_cpu_pct', 0):.0f}% softirq, "
+            f"average {s.get('softirq_avg_cpu_pct', 0):.0f}%; softnet drops {s.get('net_softnet_drops', 0)}/s).",
+            {"softirq_max_cpu_pct": s.get("softirq_max_cpu_pct"), "net_softnet_drops": s.get("net_softnet_drops")})
+    rtt = s.get("rtt_avg_ms")
+    if (s.get("net_retrans_pct") or 0) > 0.5 and (rtt or 99) < 2:
+        add("network-loss", "medium", f"{s['net_retrans_pct']:.2f}% TCP retransmits on a low-latency link: packet loss on the path or host.",
+            {"net_retrans_pct": s.get("net_retrans_pct"), "rtt_avg_ms": rtt})
+    if rtt and rtt >= 10:
+        add("network-rtt", "medium" if rtt < 40 else "high", f"Clients are {rtt:.0f} ms away (TCP RTT): every round trip costs more than "
+            "most statements; batching, pooling and window settings matter.", {"rtt_avg_ms": rtt, "rtt_p95_ms": s.get("rtt_p95_ms")})
     if not out:
         add("none", "low", "No dominant bottleneck: the server is not saturated by this workload (client-bound or too little load?).",
             {"cpu_busy": busy, "cpu_iowait": iow})
@@ -534,6 +554,79 @@ def recommend(ctx):
                   "Barriers force the device to persist its write cache at every fsync. Without them a power loss can lose or reorder "
                   "writes the database already acknowledged.", {"fsyncs_per_trx": s.get("fsyncs_per_trx"), "disk_await_ms": s.get("disk_await_ms")},
                   impact=2, confidence=1, kind="config" if policy == "benchmark" else "advice")
+
+    # ---------------- network (decision table in docs/research/os-network-tuning.md) ----
+    if have_run:
+        ovf = (s.get("net_listen_overflows") or 0) + (s.get("net_listen_drops") or 0)
+        if ovf > 0:
+            ch = []
+            if ctx.get("os_tuning") and _int(v, "os:net.core.somaxconn", 4096) < 4096:
+                ch.append(("os:net.core.somaxconn", "4096"))
+            bl = _int(v, "back_log", 80)
+            ch.append(("back_log", str(max(bl * 2, min(max(max_conn, 512), 4096)))))
+            b.add("net-listen-backlog", "Larger accept backlog: connections are being dropped", ch,
+                  f"{ovf:.2f} listen-queue overflows/drops per second: bursts of new connections overflow mysqld's accept queue "
+                  f"(back_log={bl}, capped by net.core.somaxconn) and clients see connect timeouts/retries.",
+                  {"listen_overflows_per_s": s.get("net_listen_overflows"), "back_log": bl, "somaxconn": v.get("os:net.core.somaxconn")},
+                  impact=3, confidence=3)
+        if ctx.get("os_tuning") and (s.get("net_tcp_req_q_full_drop") or 0) > 0 and _int(v, "os:net.ipv4.tcp_max_syn_backlog", 4096) < 8192:
+            b.add("net-syn-backlog", "Larger SYN queue", [("os:net.ipv4.tcp_max_syn_backlog", "8192")],
+                  "Half-open connections are dropped because the SYN queue is full.", {"syn_queue_drops_per_s": s.get("net_tcp_req_q_full_drop")},
+                  impact=2, confidence=3)
+        conn_rate = s.get("net_conn_per_s") or 0
+        if conn_rate > 5 and str(v.get("skip_name_resolve", "")).upper() == "OFF":
+            b.add("skip-name-resolve", "Skip reverse DNS on connect", [("skip_name_resolve", "ON")],
+                  f"{conn_rate:.0f} new connections/s each pay a reverse DNS lookup; with DNS hiccups connects stall for seconds.",
+                  {"net_conn_per_s": conn_rate}, impact=2, confidence=2)
+        if conn_rate > 50 * cpus:
+            b.add("client-pooling", "Use connection pooling in the application", [],
+                  f"{conn_rate:.0f} TCP connections/s: per-request connections cost a TCP handshake, authentication and a server thread "
+                  "each. A pool (or ProxySQL) removes most of it; this is usually the largest single client-side win.",
+                  {"net_conn_per_s": conn_rate}, impact=3, confidence=3, kind="advice")
+        if ctx.get("os_tuning"):
+            if (s.get("net_softnet_drops") or 0) > 0 and _int(v, "os:net.core.netdev_max_backlog", 1000) < 16384:
+                b.add("net-netdev-backlog", "Larger per-CPU packet backlog", [("os:net.core.netdev_max_backlog", "16384")],
+                      "Packets are dropped before the network stack processes them (softnet backlog full).",
+                      {"softnet_drops_per_s": s.get("net_softnet_drops")}, impact=2, confidence=3)
+            if (s.get("net_softnet_squeeze") or 0) > 1 and _int(v, "os:net.core.netdev_budget", 300) < 600:
+                b.add("net-netdev-budget", "Larger softirq packet budget", [("os:net.core.netdev_budget", "600"),
+                                                                              ("os:net.core.netdev_budget_usecs", "8000")],
+                      "Packet processing regularly runs out of its per-round budget (time_squeeze).",
+                      {"softnet_squeeze_per_s": s.get("net_softnet_squeeze")}, impact=1, confidence=2)
+            if (s.get("softirq_max_cpu_pct") or 0) > 50 and (s.get("softirq_avg_cpu_pct") or 0) < 25 and v.get("os:rps") == "off":
+                b.add("net-rps", "Spread packet processing over all CPUs (RPS/RFS)", [("os:rps", "on")],
+                      f"One CPU spends {s['softirq_max_cpu_pct']:.0f}% in softirq while the average is {s['softirq_avg_cpu_pct']:.0f}%: "
+                      "the NIC has fewer queues than CPUs. RPS/RFS steer packets to the CPU running the consuming thread.",
+                      {"softirq_max_cpu_pct": s.get("softirq_max_cpu_pct")}, impact=2, confidence=2)
+            if (s.get("conntrack_fill_pct") or 0) > 80:
+                cur = _int(v, "os:net.netfilter.nf_conntrack_max", 262144)
+                b.add("net-conntrack", "Larger connection tracking table", [("os:net.netfilter.nf_conntrack_max", str(cur * 4))],
+                      f"Conntrack table {s['conntrack_fill_pct']:.0f}% full: new connections are dropped when it fills. "
+                      "Alternatively exempt the database port from tracking.", {"conntrack_fill_pct": s.get("conntrack_fill_pct")},
+                      impact=3, confidence=3)
+            rtt = s.get("rtt_avg_ms") or 0
+            if rtt >= 10:
+                if str(v.get("os:net.ipv4.tcp_slow_start_after_idle", "1")) == "1":
+                    b.add("net-no-slow-start-idle", "Keep the congestion window on idle pooled connections", [("os:net.ipv4.tcp_slow_start_after_idle", "0")],
+                          f"With {rtt:.0f} ms RTT, a pooled connection that was idle restarts from a small congestion window and needs "
+                          "extra round trips to send a large result. Disabling slow start after idle keeps the window.",
+                          {"rtt_avg_ms": rtt}, impact=2, confidence=2)
+                if v.get("os:net.ipv4.tcp_congestion_control") == "cubic":
+                    b.add("net-bbr", "BBR congestion control with fq", [("os:net.ipv4.tcp_congestion_control", "bbr"), ("os:net.core.default_qdisc", "fq")],
+                          f"{rtt:.0f} ms RTT: BBR paces by measured bandwidth and RTT instead of loss, filling long paths faster "
+                          "(applies to data this host sends: result sets on the server, large writes on clients). Experiment.",
+                          {"rtt_avg_ms": rtt, "net_retrans_pct": s.get("net_retrans_pct")}, impact=2, confidence=1)
+                b.add("client-compression", "Compress the protocol over the long link", [],
+                      f"{rtt:.0f} ms RTT: for result-heavy traffic enable zstd protocol compression in the client "
+                      "(--compression-algorithms=zstd); batch statements to save round trips.", {"rtt_avg_ms": rtt}, impact=1, confidence=2, kind="advice")
+        kernel = str((ctx.get("hw") or {}).get("kernel", ""))
+        km = re.match(r"(\d+)\.(\d+)", kernel)
+        if km and (int(km.group(1)), int(km.group(2))) >= (6, 6) and (s.get("threads_running_avg") or 0) > 4 * cpus:
+            b.add("eevdf-oversubscription", "Fewer runnable threads (EEVDF scheduler)", [],
+                  f"Kernel {kernel} uses the EEVDF scheduler, which AWS measured 11-18% slower for MySQL when runnable threads exceed "
+                  f"CPUs ({s.get('threads_running_avg', 0):.0f} running on {cpus} CPUs here). The effective fix is fewer runnable threads: "
+                  "a thread pool or smaller client pools.", {"threads_running_avg": s.get("threads_running_avg"), "kernel": kernel},
+                  impact=2, confidence=2, kind="advice")
 
     # ---------------- sweeps: measure several values where a single step is a guess ----
     def sweep(id_, title, var, values, rationale, evidence, impact=2):

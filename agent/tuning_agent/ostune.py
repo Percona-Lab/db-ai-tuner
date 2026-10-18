@@ -41,13 +41,39 @@ def allocator_env(value):
     return lines
 
 SYSCTLS = ["vm.swappiness", "vm.dirty_background_bytes", "vm.dirty_bytes", "vm.dirty_ratio", "vm.dirty_background_ratio", "vm.dirty_expire_centisecs", "vm.dirty_writeback_centisecs",
-           "kernel.numa_balancing", "kernel.sched_autogroup_enabled", "fs.aio-max-nr"]
+           "kernel.numa_balancing", "kernel.sched_autogroup_enabled", "fs.aio-max-nr", "vm.min_free_kbytes",
+           "net.core.somaxconn", "net.ipv4.tcp_max_syn_backlog", "net.core.netdev_max_backlog", "net.core.netdev_budget",
+           "net.core.netdev_budget_usecs", "net.ipv4.ip_local_port_range", "net.ipv4.tcp_tw_reuse", "net.ipv4.tcp_slow_start_after_idle",
+           "net.ipv4.tcp_congestion_control", "net.core.default_qdisc", "net.ipv4.tcp_rmem", "net.ipv4.tcp_wmem", "net.core.rmem_max",
+           "net.core.wmem_max", "net.ipv4.tcp_keepalive_time", "net.ipv4.tcp_keepalive_intvl", "net.ipv4.tcp_keepalive_probes",
+           "net.netfilter.nf_conntrack_max", "net.core.rps_sock_flow_entries"]
 
 # name -> (description, needs mysqld restart, category)
 OS_KB = {
     "os:vm.swappiness": ("Kernel preference for swapping anonymous memory (1 = only under real pressure).", False, "memory"),
     "os:vm.dirty_ratio": ("Dirty page cache (% of memory) at which writers are throttled (used when dirty_bytes is 0).", False, "io"),
     "os:vm.dirty_background_ratio": ("Dirty page cache (% of memory) that starts background writeback (used when dirty_background_bytes is 0).", False, "io"),
+    "os:vm.min_free_kbytes": ("Free memory the kernel keeps for atomic (network/driver) allocations.", False, "memory"),
+    "os:net.core.somaxconn": ("Upper bound of listen backlogs (MySQL back_log is capped by it).", False, "network"),
+    "os:net.ipv4.tcp_max_syn_backlog": ("Half-open connection queue.", False, "network"),
+    "os:net.core.netdev_max_backlog": ("Per-CPU packet backlog before softnet drops.", False, "network"),
+    "os:net.core.netdev_budget": ("Packets processed per softirq round.", False, "network"),
+    "os:net.core.netdev_budget_usecs": ("Time budget per softirq round.", False, "network"),
+    "os:net.ipv4.ip_local_port_range": ("Ephemeral ports for outgoing connections (clients).", False, "network"),
+    "os:net.ipv4.tcp_tw_reuse": ("Reuse TIME_WAIT sockets for new outgoing connections (clients).", False, "network"),
+    "os:net.ipv4.tcp_slow_start_after_idle": ("Shrink the congestion window after idle (hurts pooled connections over WAN).", False, "network"),
+    "os:net.ipv4.tcp_congestion_control": ("TCP congestion control algorithm (cubic / bbr).", False, "network"),
+    "os:net.core.default_qdisc": ("Default queueing discipline (fq pairs with bbr).", False, "network"),
+    "os:net.ipv4.tcp_rmem": ("TCP receive buffer min/default/max (autotuning ceiling).", False, "network"),
+    "os:net.ipv4.tcp_wmem": ("TCP send buffer min/default/max.", False, "network"),
+    "os:net.core.rmem_max": ("Max receive buffer an application may set.", False, "network"),
+    "os:net.core.wmem_max": ("Max send buffer an application may set.", False, "network"),
+    "os:net.ipv4.tcp_keepalive_time": ("Idle time before TCP keepalive probes.", False, "network"),
+    "os:net.ipv4.tcp_keepalive_intvl": ("Interval between keepalive probes.", False, "network"),
+    "os:net.ipv4.tcp_keepalive_probes": ("Keepalive probes before the connection is dropped.", False, "network"),
+    "os:net.netfilter.nf_conntrack_max": ("Connection tracking table size (firewalled hosts).", False, "network"),
+    "os:net.core.rps_sock_flow_entries": ("RFS global flow table.", False, "network"),
+    "os:rps": ("Receive Packet Steering over all CPUs for every RX queue (spreads softirq).", False, "network"),
     "os:vm.dirty_expire_centisecs": ("Age at which dirty page cache must be written back.", False, "io"),
     "os:vm.dirty_writeback_centisecs": ("Interval of the background writeback thread.", False, "io"),
     "os:kernel.numa_balancing": ("Automatic NUMA page migration (multi-socket hosts).", False, "cpu"),
@@ -118,6 +144,10 @@ def current(datadir, device, service, fs_device=None):
         out["os:mount_noatime"] = "ON" if "noatime" in opts else "OFF"
         if m[2] == "ext4":
             out["os:mount_barrier"] = "OFF" if ("nobarrier" in opts or "barrier=0" in opts) else "ON"
+    q = sorted(glob.glob("/sys/class/net/*/queues/rx-*/rps_cpus"))
+    q = [p for p in q if "/lo/" not in p]
+    if q:
+        out["os:rps"] = "on" if any(_read(p).strip("0,\n ") for p in q) else "off"
     dropin = _read(service_dropin(service))
     m = re.search(r"^# os:malloc=(.+)$", dropin, re.M)
     out["os:malloc"] = m.group(1).strip() if m else ("jemalloc" if "jemalloc" in dropin else "glibc")
@@ -157,8 +187,16 @@ class OSApplier:
             r = self.originals.get(ratio)
             _write("/proc/sys/" + ratio[3:].replace(".", "/"), r if r not in (None, "", "0") else default)
             return False
+        if name == "os:net.ipv4.tcp_congestion_control" and value not in _read("/proc/sys/net/ipv4/tcp_available_congestion_control").split():
+            subprocess.run(["modprobe", f"tcp_{value}"], capture_output=True)
+        if name == "os:rps":
+            self._rps(value == "on")
+            return False
         if name[3:] in SYSCTLS:
-            _write("/proc/sys/" + name[3:].replace(".", "/"), value)
+            p = "/proc/sys/" + name[3:].replace(".", "/")
+            if not os.path.exists(p):
+                raise RuntimeError(f"{name[3:]} is not available on this kernel")
+            _write(p, value)
             return False
         if name == "os:thp":
             for f in ("enabled", "defrag"):
@@ -241,6 +279,16 @@ class OSApplier:
                 pass
         return 0
 
+    @staticmethod
+    def _rps(on):
+        ncpu = os.cpu_count() or 1
+        mask = format((1 << ncpu) - 1, "x") if on else "0"
+        qs = [p for p in glob.glob("/sys/class/net/*/queues/rx-*") if "/lo/" not in p]
+        for q in qs:
+            _write(os.path.join(q, "rps_cpus"), mask)
+            _write(os.path.join(q, "rps_flow_cnt"), str(32768 // max(len(qs), 1)) if on else "0")
+        _write("/proc/sys/net/core/rps_sock_flow_entries", "32768" if on else "0")
+
     # -- persistence ---------------------------------------------------------------
     def persist(self, managed):
         """Write boot-time configuration for every managed os:* setting (and remove what is no longer managed)."""
@@ -264,6 +312,10 @@ class OSApplier:
         if "os:thp" in osm:
             cmds += [f"/bin/sh -c 'echo {osm['os:thp']} > /sys/kernel/mm/transparent_hugepage/enabled'",
                      f"/bin/sh -c 'echo {osm['os:thp']} > /sys/kernel/mm/transparent_hugepage/defrag'"]
+        if osm.get("os:rps") == "on":
+            ncpu = os.cpu_count() or 1
+            cmds.append("/bin/sh -c 'for q in /sys/class/net/*/queues/rx-*; do case $q in */lo/*) continue;; esac; "
+                        f"echo {format((1 << ncpu) - 1, 'x')} > $q/rps_cpus; echo 8192 > $q/rps_flow_cnt; done; echo 32768 > /proc/sys/net/core/rps_sock_flow_entries'")
         if "os:cpu_governor" in osm:
             cmds.append(f"/bin/sh -c 'for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo {osm['os:cpu_governor']} > $g; done'")
         if cmds:
@@ -275,6 +327,8 @@ class OSApplier:
         elif os.path.exists(BOOT_UNIT):
             subprocess.run(["systemctl", "disable", "tuning-agent-os.service"], capture_output=True)
             self._file(BOOT_UNIT, None)
+        cc = osm.get("os:net.ipv4.tcp_congestion_control")
+        self._file("/etc/modules-load.d/tuning-agent.conf", f"tcp_{cc}\n" if cc and cc not in ("cubic", "reno") else None)
         # mysqld service drop-in: allocator, memlock for huge pages
         lines = []
         if osm.get("os:malloc") and osm["os:malloc"] != "glibc":

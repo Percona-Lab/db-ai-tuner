@@ -65,6 +65,15 @@ MECHANISMS = {
     "sweep-redo": (("redo", "io"), "Fewer forced checkpoints."),
     "sweep-io-capacity": (("io", "redo"), "Background flushing matched to the storage."),
     "sweep-thread-concurrency": (("concurrency", "cpu-pressure"), "Caps threads inside InnoDB."),
+    "net-listen-backlog": (("connections",), "Bursts of connects queue instead of being dropped."),
+    "net-syn-backlog": (("connections",), "Half-open connections queue instead of being dropped."),
+    "skip-name-resolve": (("connections",), "No reverse DNS lookup per connection."),
+    "net-netdev-backlog": (("softirq", "network-loss"), "Fewer packets dropped before protocol processing."),
+    "net-netdev-budget": (("softirq",), "More packets per softirq round."),
+    "net-rps": (("softirq", "cpu-pressure"), "Packet processing spread over all CPUs."),
+    "net-conntrack": (("connections", "network-loss"), "No drops from a full conntrack table."),
+    "net-no-slow-start-idle": (("network-rtt",), "Idle pooled connections keep their congestion window."),
+    "net-bbr": (("network-rtt", "network-loss"), "Bandwidth/RTT-based pacing on long paths."),
     "os-nobarrier": (("commit", "io"), "fsync does not flush the device write cache."),
 }
 

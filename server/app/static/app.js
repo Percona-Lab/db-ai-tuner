@@ -268,6 +268,9 @@ const RUN_CHARTS = [
   { title: "History list length", unit: "", series: [["db", "history_list_length", "undo history"]] },
   { title: "Temp tables on disk", unit: "per s", series: [["db", "tmp_disk_tables", "on disk"], ["db", "tmp_tables", "all"]] },
   { title: "Network", unit: "MiB/s", series: [["os", "net_rx_mbs", "rx"], ["os", "net_tx_mbs", "tx"]] },
+  { title: "TCP connections", unit: "per s", series: [["os", "net_conn_per_s", "new connections"], ["os", "net_listen_overflows", "listen overflows"], ["os", "net_resets_per_s", "resets"]] },
+  { title: "Client RTT (MySQL connections)", unit: "ms", series: [["os", "rtt_avg_ms", "avg"], ["os", "rtt_p95_ms", "p95"]] },
+  { title: "Packet processing", unit: "%", series: [["os", "softirq_max_cpu_pct", "busiest CPU softirq"], ["os", "softirq_avg_cpu_pct", "avg CPU softirq"], ["os", "net_retrans_pct", "TCP retransmits"]] },
   { title: "Context switches", unit: "per s", series: [["os", "ctx_switches", "ctx switches"]] },
 ];
 
