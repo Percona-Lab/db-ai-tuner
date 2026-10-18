@@ -30,6 +30,7 @@ function val(name, v) {
 }
 function num(v, d) { return v == null ? "–" : C.fmtNum(+v); }
 function pct(v, sign = true) { if (v == null) return "–"; return (sign && v > 0 ? "+" : "") + (+v).toFixed(1) + "%"; }
+function deltaClsN(v, noise) { return v == null || Math.abs(v) <= (noise || 0) ? "" : v > 0 ? "up" : "down"; }
 function deltaCls(v) { return v == null ? "" : v > 0 ? "up" : v < 0 ? "down" : ""; }
 function goalName(g) { return g === "latency" ? "Query response time" : "Throughput (TPS)"; }
 function goalUnit(g, s) { if (s && s.goal_metric) return s.goal_metric.length <= 5 ? s.goal_metric.toUpperCase() : s.goal_metric.replace(/_/g, " "); return g === "latency" ? "ms" : "tps"; }
@@ -355,8 +356,8 @@ async function sessionPage(id) {
   <p class="sub">Goal: <b>${goalName(s.goal)}</b> · policy <a href="#/policies"><b>${esc(s.policy)}</b></a>${s.policy === "benchmark" ? " (trade-offs allowed after safe experiments)" : " (production-safe changes only)"} · OS tuning ${s.os_tuning === 0 ? "off" : "on"}${info("When on, the agent may also change operating-system settings (swappiness, transparent huge pages, I/O scheduler, mount options, dirty writeback, memory allocator, huge pages). OS changes are recorded per run and rolled back like MySQL settings. Disable with --no-os-tuning.")} · noise threshold ±${s.noise_pct}% · started ${fmtTime(s.created)}${s.workload ? " · workload: " + esc(s.workload) : ""}</p>
   ${calibrationNote(s)}
   <div class="tiles"><div class="tile"><div class="k">Runs measured</div><div class="v">${done.length}</div></div>
-   <div class="tile"><div class="k">First run (${goalUnit(s.goal, s)})</div><div class="v">${first ? num(first.goal_value) : "–"}</div><div class="d">${first ? esc(first.label) : ""}</div></div>
-   ${cfgTile("Best production-safe configuration", bestSafe, firstCfg, lower, s.goal, false, s)}
+   <div class="tile"><div class="k">Starting configuration${info(`First run of the session (${goalUnit(s.goal, s)}).`)}</div><div class="v">${first ? num(first.goal_value) : "–"}</div><div class="d">${first ? esc(first.label) : ""}</div></div>
+   ${cfgTile("Best safe", bestSafe, firstCfg, lower, s.goal, false, s)}
    ${bestTrade ? cfgTile("Best with trade-offs", bestTrade, firstCfg, lower, s.goal, true, s) : ""}</div>
   <div class="card" style="margin-top:14px" id="bars"></div>
   <h2>Runs</h2><div class="card tablewrap"><table><thead><tr><th>#</th><th>Label</th><th>Status</th><th>Changes vs previous run</th><th class="num">${goalUnit(s.goal, s) === "ms" ? "Avg ms" : "Goal"}</th><th class="num">vs prev</th><th class="num">vs first</th><th>Verdict</th>
@@ -378,8 +379,8 @@ async function sessionPage(id) {
     const ch = r.status === "aborted" ? `<span class="muted">${esc((r.abort_reason || "aborted").split(":")[0])}</span>${r.abort_reason ? info(r.abort_reason) : ""}` : r.seq === 1 ? `<a href="#/run/${r.id}">starting configuration</a>` : (r.changes || []).map(c => `<span class="mono">${esc(c.variable)}</span>=${esc(val(c.variable, c.new))}`).join(", ");
     const tr = document.createElement("tr"); tr.className = "click"; tr.onclick = () => location.hash = "#/run/" + r.id;
     tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${tradeBadge(r.tradeoffs)}</td><td>${statusBadge(r.status, r.abort_reason)}</td><td style="max-width:320px">${ch || '<span class="muted">none</span>'}</td>
-     <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaCls(r.delta_pct)}">${pct(r.delta_pct)}</td><td class="num ${deltaCls(r.delta_vs_first_pct)}">${pct(r.delta_vs_first_pct)}</td><td>${verdictBadge(r.verdict)}${(r.evaluation || {}).drift ? ' <span class="badge warn">drift</span>' : ""}</td>
-     <td class="num ${deltaCls((r.evaluation || {}).goal_delta_pct)}" title="vs mean of runs ${esc(((r.evaluation || {}).parent_runs || []).join(", "))}">${pct((r.evaluation || {}).goal_delta_pct)}</td>
+     <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaClsN(r.delta_pct, noiseP)}">${pct(r.delta_pct)}</td><td class="num ${deltaClsN(r.delta_vs_first_pct, noiseP)}">${pct(r.delta_vs_first_pct)}</td><td>${verdictBadge(r.verdict)}${(r.evaluation || {}).drift ? ' <span class="badge warn">drift</span>' : ""}</td>
+     <td class="num ${deltaClsN((r.evaluation || {}).goal_delta_pct, noiseP)}" title="vs mean of runs ${esc(((r.evaluation || {}).parent_runs || []).join(", "))}">${pct((r.evaluation || {}).goal_delta_pct)}</td>
      <td class="num">${num(sm.tps)}</td><td class="num">${num(sm.avg_latency_ms)}</td><td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td><td class="num">${num(sm.cpu_busy)}</td><td>${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}</td>`;
     tb.appendChild(tr);
   });
@@ -397,8 +398,11 @@ async function sessionPage(id) {
 function cfgTile(title, cfg, firstCfg, lower, goal, trade, sess) {
   if (!cfg) return "";
   const g = firstCfg && firstCfg.mean ? (lower ? (firstCfg.mean - cfg.mean) : (cfg.mean - firstCfg.mean)) / firstCfg.mean * 100 : null;
-  return `<div class="tile"><div class="k">${title} (${goalUnit(goal, sess)})</div><div class="v">${num(cfg.mean)} <span class="${deltaCls(g)}" style="font-size:14px">${pct(g)}</span></div>
-   <div class="d">${cfg.runs.length > 1 ? "mean of runs " : "run "}${cfg.runs.map(r => "#" + r.seq).join(", ")} · vs first configuration${trade ? `<br>${esc((cfg.runs[0].tradeoffs || []).map(t => t.variable + "=" + t.value).join(", "))}` : ""}</div></div>`;
+  const runs = cfg.runs.map(r => "#" + r.seq).join(", ");
+  const tip = `${cfg.runs.length > 1 ? `Mean of runs ${runs}` : `Run ${runs}`} (${goalUnit(goal, sess)}). Gain is vs the starting configuration.` +
+    (trade ? ` Trade-offs: ${(cfg.runs[0].tradeoffs || []).map(t => t.variable + "=" + t.value).join(", ")}.` : "");
+  return `<div class="tile"><div class="k">${title}${info(tip)}</div><div class="v">${num(cfg.mean)} <span class="${deltaCls(g)}" style="font-size:14px">${pct(g)}</span></div>
+   <div class="d">${cfg.runs.length > 1 ? "runs" : "run"} ${runs}</div></div>`;
 }
 
 function tradeBadge(t) {
