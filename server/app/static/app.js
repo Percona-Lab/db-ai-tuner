@@ -650,7 +650,11 @@ async function sessionPage(id) {
       tip: `<div>vs previous<b>${pct(r.delta_pct)}</b></div><div>verdict<b>${esc(r.verdict || "")}</b></div>` })),
   });
   function changeLines(r, chs, fate) {
-    const own = chs.filter(c => c.source !== "rollback"), undo = chs.filter(c => c.source === "rollback");
+    // undo = a change that only returns a setting to its value before the previous run changed it
+    const idx = later.findIndex(x => x.seq === r.seq), prev = later[idx - 1], before = later[idx - 2];
+    const isUndo = c => c.source === "rollback" || (prev && before && (prev.changes || []).some(p => p.variable === c.variable)
+      && String((r.managed || {})[c.variable]) === String((before.managed || {})[c.variable]));
+    const own = chs.filter(c => !isUndo(c)), undo = chs.filter(isUndo);
     const line = c => {
       const f = fate(r, c), txt = `${esc(c.variable.replace(/^innodb_/, ""))}=${esc(shortVal(c.variable, c.new))}`;
       return f.kept ? `<span class="mono" data-tip="${esc(c.variable + "=" + val(c.variable, c.new))} · ${f.pending ? "in effect now" : "kept in the next runs"}">${txt}</span>`
@@ -680,7 +684,7 @@ async function sessionPage(id) {
     tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${r.status !== "done" ? " " + statusBadge(r.status, r.abort_reason) : ""}${tradeBadge(r.tradeoffs)}</td><td class="chg">${ch}</td>
      <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaClsN(ev.goal_delta_pct, noiseP)}">${pct(ev.goal_delta_pct)}</td><td class="num ${deltaClsN(r.goal_value != null ? vsRef(r.goal_value) : null, noiseP)}">${r.goal_value != null && vsRef(r.goal_value) != null ? (bestAt[r.id] ? `<b data-tip="Best configuration known at this point">${pct(vsRef(r.goal_value))}</b>` : pct(vsRef(r.goal_value))) : "–"}</td>
      <td>${verdictBadge(r.verdict)}${ev.drift ? ' <span class="badge warn">drift</span>' : ""}${ev.environment_shift ? ` <span class="badge warn" data-tip="Environment probe differs from calibration: ${esc(kvText(ev.environment_shift))} %">env shift</span>` : ""}${ev.steal && ev.steal.level === "flag" ? ` <span class="badge warn" data-tip="Hypervisor CPU steal ${ev.steal.avg_pct}% average, ${ev.steal.peak_pct}% peak${ev.steal.client_avg_pct ? `, client ${ev.steal.client_avg_pct}%` : ""}: treat small differences with caution.">steal</span>` : ""}</td>
-     <td class="num">${num(sm.tps)}</td><td class="num">${num(sm.avg_latency_ms)}</td><td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td><td class="num">${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}${costOf(r) != null ? `<div class="muted" style="font-size:11px" data-tip="Machine cost of this run: wall time since the previous run ended (data reset, warm-up, measurement) × $${(d.cost.rate_hourly).toFixed(4)}/hour">$${costOf(r).toFixed(costOf(r) < 0.1 ? 3 : 2)}</div>` : ""}</td>`;
+     <td class="num">${num(sm.tps)}</td><td class="num">${num(sm.avg_latency_ms)}</td><td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td><td class="num" style="white-space:nowrap">${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}${costOf(r) != null ? `<div class="muted" style="font-size:11px" data-tip="Machine cost of this run: wall time since the previous run ended (data reset, warm-up, measurement) × $${(d.cost.rate_hourly).toFixed(4)}/hour">$${costOf(r).toFixed(costOf(r) < 0.1 ? 3 : 2)}</div>` : ""}</td>`;
     tb.appendChild(tr);
   });
   renderRecs(document.getElementById("recs"), d.recommendations[0], runs);

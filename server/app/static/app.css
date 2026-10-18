@@ -136,3 +136,4 @@ table.kvt td:first-child { color: var(--ink-2); }
 .waitbar span { display: block; height: 100%; }
 i.dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 .rolled { text-decoration: line-through; color: var(--muted); }
+table.runs td.chg { font-size: 12px; overflow-wrap: anywhere; }
