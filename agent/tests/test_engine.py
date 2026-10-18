@@ -287,6 +287,12 @@ def test_option_file_has_only_mysql_options():
     assert "innodb_io_capacity = 2000" in out and ":" not in out.replace("# ", "").split("[mysqld]")[1].replace("Managed", "")
 
 
+def test_wait_profile_diagnosis():
+    d = engine.diagnose({"summary": {"tps": 1000, "duration_s": 300}, "hw": HW,
+                         "inputs": {"wait_classes": {"table_io": 900, "redo_io": 400, "data_io": 30}}})
+    assert any(x["type"] == "commit" and "redo" in x["text"] for x in d), d
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)

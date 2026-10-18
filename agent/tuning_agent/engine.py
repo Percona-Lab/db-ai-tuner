@@ -147,6 +147,21 @@ def diagnose(ctx):
     if tps > 0 and fsyncs / tps > 0.5 and s.get("disk_await_ms", 0) > 0.5:
         add("commit", "medium", f"Commit-bound: {fsyncs:.0f} fsyncs/s for {tps:.0f} tps, disk await {s.get('disk_await_ms', 0):.2f} ms.",
             {"data_fsyncs": fsyncs, "tps": tps, "disk_await_ms": s.get("disk_await_ms")})
+    # wait profile (performance_schema): which class of waits dominates, excluding table I/O (row calls incl. buffer hits)
+    wc = inp.get("wait_classes") or {}
+    real = {k: v for k, v in wc.items() if k != "table_io"}
+    tot = sum(real.values())
+    dur = s.get("duration_s") or 0
+    if tot > 0 and dur:
+        top_cls, top_v = max(real.items(), key=lambda x: x[1])
+        share, threads = 100 * top_v / tot, top_v / dur
+        names = {"redo_io": "redo log I/O (commit fsyncs)", "data_io": "data file I/O", "binlog_io": "binary log I/O", "sync": "mutex / rwlock contention",
+                 "table_lock": "table locks", "metadata_lock": "metadata locks", "socket": "client sockets"}
+        if threads >= 0.5 and share >= 40 and top_cls in names:
+            kind = {"redo_io": "commit", "binlog_io": "commit", "data_io": "io", "sync": "concurrency"}.get(top_cls, "wait-" + top_cls)
+            if not any(d["type"] == kind for d in out):
+                add(kind, "medium", f"Wait profile: {names[top_cls]} accounts for {share:.0f}% of non-row wait time "
+                    f"({threads:.1f} threads waiting on average).", {"wait_classes": wc, "duration_s": dur})
     lw = s.get("row_lock_waits") or 0
     if lw > 0 and tps > 0 and lw / tps > 0.02:
         add("locks", "medium" if lw / tps < 0.1 else "high",
