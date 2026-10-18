@@ -52,6 +52,7 @@ MECHANISMS = {
     "os-numa": (("cpu", "memory"), "No cross-node page migration."),
     "os-autogroup": (("cpu-pressure", "cpu", "sched-delay"), "mysqld threads compete for CPU individually, not as one group."),
     "os-aio": (("io",), "Native async I/O stays available."),
+    "ps-lite": (("cpu", "cpu-pressure", "cpu-pfs"), "Less instrumentation work per statement and allocation."),
     "purge-lag": (("locks", "io", "memory"), "Bounded history: shorter version chains for readers."),
     "sweep-spin-wait-delay": (("cpu-spin", "concurrency"), "Less CPU burned spinning, or faster wake-ups."),
     "writeset-history": (("cpu", "commit"), "Less hashing work per commit."),

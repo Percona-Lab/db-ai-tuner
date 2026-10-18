@@ -283,6 +283,12 @@ TRADEOFFS["os:datadir_fs"] = (lambda v: any(x in str(v) for x in ("barrier=0", "
 
 
 from .resgroups import RG_KB  # noqa: E402
+from .psprofile import PS_KB  # noqa: E402
+for _k, (_desc, _restart, _cat) in PS_KB.items():
+    KB[_k] = dict(kind="str", dynamic=True, risk="observability", cat="mysql/" + _cat, desc=_desc)
+TRADEOFFS["ps:profile"] = (lambda v: str(v) == "lite", "observability",
+                           "performance_schema statement/transaction history and memory accounting are no longer collected "
+                           "(digests, latency histogram and wait summaries stay).", "lite")
 for _k, (_desc, _restart, _cat) in RG_KB.items():
     KB[_k] = dict(kind="str", dynamic=True, risk="low", cat="mysql/" + _cat, desc=_desc)
 

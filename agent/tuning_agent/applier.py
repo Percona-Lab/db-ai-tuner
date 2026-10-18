@@ -5,7 +5,7 @@ import time
 
 import pymysql
 
-from . import ostune, resgroups
+from . import ostune, psprofile, resgroups
 from .knowledge import KB, OPTIONS, flags_subset, normalize, parse_size
 
 HEADER = """# Managed by tuning-agent. Do not edit by hand: changes are overwritten.
@@ -39,6 +39,8 @@ def render(managed):
         if m.get("reason"):
             lines.append(f"# {m.get('source', 'manual')}: {m['reason'][:200]}".replace("\n", " "))
         lines.append(var if var in OPTIONS else f"{var} = {m['value']}")
+    if psprofile.VAR in managed:
+        lines += psprofile.cnf_lines(managed[psprofile.VAR]["value"])
     return "\n".join(lines) + "\n"
 
 
@@ -77,6 +79,7 @@ class Applier:
         osa = self._os()
         v.update(ostune.current(osa.datadir, osa.device, self.service, self.fs_device))
         v.update(resgroups.current(self.db))
+        v.update(psprofile.current(self.db))
         return v
 
     def write_cnf(self, managed):
@@ -141,6 +144,11 @@ class Applier:
 
     def reapply_runtime(self):
         """Settings that live only in the running server (resource group thread assignments)."""
+        if psprofile.VAR in self.state["managed"]:  # runtime consumer settings are also in the option file; re-assert anyway
+            try:
+                psprofile.apply(self.db, self.state["managed"][psprofile.VAR]["value"])
+            except Exception:
+                pass
         if resgroups.VAR in self.state["managed"]:
             try:
                 resgroups.ensure(self.db)
@@ -227,6 +235,14 @@ class Applier:
         if osa or any(k.startswith("os:") for k in old_managed):
             (osa or self._os()).persist(managed)
             self.state.save()
+        for c in [c for c in changes if c["variable"] == psprofile.VAR]:
+            var, val = c["variable"], c.get("value")
+            if var not in originals:
+                originals[var] = before_vars.get(var)
+            try:
+                psprofile.apply(self.db, originals.get(var) or "full" if val is None else val)
+            except pymysql.MySQLError as e:
+                result["errors"].append(f"{var}: {e.args[-1] if e.args else e}")
         for c in [c for c in changes if c["variable"].startswith("rg:")]:
             var, val = c["variable"], c.get("value")
             if var not in originals:
@@ -235,7 +251,7 @@ class Applier:
                 resgroups.apply(self.db, originals.get(var) or "off" if val is None else val)
             except pymysql.MySQLError as e:
                 result["errors"].append(f"{var}: {e.args[-1] if e.args else e}")
-        for c in [c for c in changes if not c["variable"].startswith(("os:", "rg:"))]:
+        for c in [c for c in changes if not c["variable"].startswith(("os:", "rg:", "ps:"))]:
             var, val = c["variable"], c.get("value")
             if val is not None and (flags_subset(val, before_vars.get(var)) if KB.get(var, {}).get("kind") == "flags"
                                     else normalize(var, before_vars.get(var)) == normalize(var, val)):
@@ -292,7 +308,7 @@ class Applier:
         after = self.all_settings()
         for c in changes:
             var = c["variable"]
-            if var.startswith(("os:", "rg:")) and c.get("value") is None:
+            if var.startswith(("os:", "rg:", "ps:")) and c.get("value") is None:
                 c["value"] = originals.get(var)
             if var in OPTIONS:  # verify via the variable the option controls
                 shown = after.get(OPTIONS[var])

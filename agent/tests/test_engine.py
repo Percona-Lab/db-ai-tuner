@@ -333,6 +333,18 @@ def test_noise_is_measured_per_environment():
     assert evaluate.noise_estimate(runs)["noise_pct"] < 1
 
 
+def test_ps_lite_before_ps_off():
+    VARS["ps:profile"] = "full"
+    try:
+        it = ids(run(*OLTP, policy="benchmark"))
+        assert "ps-lite" in it and "ps-off" not in it and it["ps-lite"]["safety"] == "trade-off"
+    finally:
+        VARS.pop("ps:profile")
+    from tuning_agent.applier import render
+    out = render({"ps:profile": {"value": "lite"}, "innodb_io_capacity": {"value": "2000"}})
+    assert "performance-schema-instrument = 'memory/%=OFF'" in out and "ps:profile" not in out.replace("# tuning-agent ps:profile=lite", "")
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)

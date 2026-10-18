@@ -499,7 +499,14 @@ def recommend(ctx):
               "Every commit is a two-phase commit between the binlog and InnoDB with its own fsync. Without the binlog there is no replication "
               "and no point-in-time recovery.", {"fsyncs_per_trx": s.get("fsyncs_per_trx"), "log_bin": v.get("log_bin")},
               impact=3, confidence=2, kind="config" if policy == "benchmark" else "advice")
-    if policy == "benchmark" and have_run and goal == "tps" and busy >= 80 and _on(v, "performance_schema"):
+    if policy == "benchmark" and have_run and busy >= 70 and v.get("ps:profile") == "full":
+        pfs = ((inp.get("cpu_profile") or {}).get("categories") or {}).get("performance_schema")
+        b.add("ps-lite", "Lighter performance_schema (OBSERVABILITY TRADE-OFF)", [("ps:profile", "lite")],
+              "Keeps what tuning needs (statement digests, latency histogram, wait summaries) and stops statement/transaction "
+              "history and memory accounting, which cost CPU on every statement and allocation. Measured: full instrumentation "
+              f"costs ~4.5% on HammerDB vs none.{f' The CPU profile shows {pfs:.0f}% of database CPU in performance_schema.' if pfs else ''}",
+              {"cpu_busy": busy, "pfs_cpu_pct": pfs}, impact=2, confidence=2)
+    if policy == "benchmark" and have_run and goal == "tps" and busy >= 80 and _on(v, "performance_schema") and v.get("ps:profile") != "full":
         b.add("ps-off", "Disable Performance Schema (OBSERVABILITY TRADE-OFF)", [("performance_schema", "OFF")],
               "On a CPU-bound server instrumentation costs a few percent of CPU. You lose statement latency measurement "
               "(the tuner will rely on throughput only) and most diagnostics.", {"cpu_busy": busy}, impact=2, confidence=2)
