@@ -27,6 +27,10 @@ class Fail(Exception):
     pass
 
 
+class TooSlow(Fail):
+    pass
+
+
 def emit(obj, text=None):
     if JSON:
         print(json.dumps(obj, indent=1, default=str))
@@ -223,6 +227,25 @@ def cmd_status(a):
     emit(out, "\n".join(lines))
 
 
+def _maintenance_tasks(c):
+    """Background jobs that can run during measurements (OtterTune lesson: a nightly statistics job skewed results)."""
+    import subprocess as sp
+    out = []
+    r = sp.run(["systemctl", "list-timers", "--no-legend", "--no-pager"], capture_output=True, text=True)
+    for unit in ("apt-daily", "apt-daily-upgrade", "unattended-upgrades", "man-db", "logrotate", "fstrim"):
+        if unit in r.stdout:
+            out.append(f"timer {unit}")
+    if sp.run(["systemctl", "is-active", "unattended-upgrades"], capture_output=True, text=True).stdout.strip() == "active":
+        out.append("unattended-upgrades service (can restart mysqld)")
+    try:
+        n = c.db.scalar("SELECT COUNT(*) FROM information_schema.EVENTS WHERE STATUS='ENABLED'")
+        if n:
+            out.append(f"{n} MySQL scheduled event(s)")
+    except Exception:
+        pass
+    return out
+
+
 def _apply_and_record(c, changes, source, reason_default="", restart=None):
     allow = c.cfg.get("allow_restart", "true").lower() == "true" if restart is None else restart
     for ch in changes:
@@ -312,6 +335,9 @@ def cmd_session(a):
         os_tuning = c.os_tuning_allowed() and not a.no_os_tuning
         r = c.client.post("/sessions", {"environment_id": c.env_id(), "name": a.name, "goal": a.goal, "policy": a.policy,
                                         "noise_pct": a.noise_pct, "notes": a.notes, "workload": a.workload, "os_tuning": os_tuning})
+        warn = _maintenance_tasks(c)
+        if warn:
+            log("WARNING: scheduled tasks can disturb measurements: " + "; ".join(warn))
         if c.state.get("pending_changes"):
             log("note: changes applied before this session are part of its starting configuration")
             c.state.data["pending_changes"] = []
@@ -624,10 +650,16 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
             while time.time() < deadline and r.alive():
                 time.sleep(1)
         else:
-            log(f"measuring run {m['seq']} until the benchmark finishes ...")
-            deadline = time.time() + prof.timeout
+            # early abort (OtterTune lesson): a configuration that makes the run take far longer than usual is a failure
+            durs = sorted(x["summary"].get("duration_s") for x in sess["runs"] if (x.get("summary") or {}).get("duration_s"))
+            limit = min(prof.timeout, 2.5 * durs[len(durs) // 2]) if len(durs) >= 2 else prof.timeout
+            log(f"measuring run {m['seq']} until the benchmark finishes (abort after {limit:.0f}s) ...")
+            t_start = time.time()
+            deadline = t_start + limit
             while time.time() < deadline and r.alive():
                 time.sleep(2)
+            if r.alive():
+                raise TooSlow(f"run exceeded {limit:.0f}s (2.5x the typical run time): configuration rejected")
         b_snap = _end_snapshot(c)
         rc = r.wait(max(10, prof.timeout - (time.time() - r.t0)))
     except BaseException as exc:
@@ -917,7 +949,7 @@ def cmd_autotune(a):
         res = _recommend(c, sess)
         nxt = res.get("next")
         if nxt in (sess.get("failed_recs") or []):
-            log(f"== {nxt} failed to apply before; stopping")
+            log(f"== {nxt} failed before; stopping")
             break
         item = next((i for i in res["items"] if i["id"] == nxt), None)
         if not item:
@@ -939,6 +971,7 @@ def cmd_autotune(a):
         log(f"== experiment: {nxt} ({item['title']}) [{item.get('safety')}]")
         changes = [{"variable": ch["variable"], "value": None if ch.get("unset") else ch["proposed"], "reason": item["rationale"],
                     "source": f"rec:{nxt}"} for ch in item["changes"]]
+        before_exp = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
         resa = _apply_and_record(c, changes, "autotune")
         if resa.get("rolled_back"):
             log(f"   apply failed and was rolled back: {resa.get('errors')}")
@@ -953,7 +986,19 @@ def cmd_autotune(a):
         if _known_config(c, sess):
             log("   configuration already measured: no new run needed")
             continue
-        run, _ = _bench_run(c, prof, f"{nxt}")
+        try:
+            run, _ = _bench_run(c, prof, f"{nxt}")
+        except TooSlow as e:
+            log(f"   {e}; reverting {nxt}")
+            cur = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
+            undo = [{"variable": k, "value": before_exp.get(k), "reason": f"autotune: {nxt} made the benchmark too slow", "source": "rollback"}
+                    for k in set(cur) | set(before_exp) if normalize(k, cur.get(k)) != normalize(k, before_exp.get(k))]
+            _apply_and_record(c, undo, "rollback")
+            sess = c.session()
+            sess.setdefault("failed_recs", []).append(nxt)
+            c.state.set("session", sess)
+            measured += 1
+            continue
         measured += 1
         log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
         shift = (run.get("evaluation") or {}).get("environment_shift")
