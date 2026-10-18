@@ -172,7 +172,7 @@ class OSApplier:
     def __init__(self, datadir, device, service, log=print, originals=None, fs_device=None):
         self.datadir, self.device, self.service, self.log = datadir, device, service, log
         self.fs_device = fs_device
-        self.originals = originals or {}
+        self.originals = originals if originals is not None else {}
 
     def ensure_mysqld(self):
         subprocess.run(["systemctl", "start", self.service], capture_output=True)
