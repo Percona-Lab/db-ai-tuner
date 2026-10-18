@@ -424,7 +424,7 @@ def recommend(ctx):
         if _on(v, "innodb_adaptive_hash_index") and (ahi_wait > 0 or "btr0sea" in sem):
             b.add("ahi-off", "Disable the adaptive hash index (contention)", [("innodb_adaptive_hash_index", "OFF")],
                   "Threads are waiting on AHI latches.", {"ahi_wait_s": ahi_wait}, impact=2, confidence=2)
-    if have_run and "innodb_log_writer_threads" in v and _on(v, "innodb_log_writer_threads") and cpus <= 8 and busy >= 70:
+    if have_run and "innodb_log_writer_threads" in v and _on(v, "innodb_log_writer_threads") and cpus <= 16 and busy >= 60:
         b.add("log-writer-threads-off", "Disable dedicated redo log writer threads", [("innodb_log_writer_threads", "OFF")],
               f"On {cpus} CPUs that are {busy:.0f}% busy the dedicated log writer/flusher threads compete with user threads; "
               "MySQL docs suggest disabling them on small systems. Experiment.",

@@ -359,6 +359,18 @@ def test_io_bound_advanced_sweeps():
             VARS.pop(k)
 
 
+def test_parent_after_combined_revert_and_experiment():
+    from tuning_agent import evaluate
+    base = {"bp": "1G"}
+    h = [{"seq": 1, "managed": base, "goal_value": 100, "verdict": "reference", "summary": {}},
+         {"seq": 2, "managed": base, "goal_value": 100.2, "verdict": "repeat", "summary": {}},
+         {"seq": 3, "managed": dict(base, fs="btrfs"), "goal_value": 80, "verdict": "regressed", "summary": {}}]
+    run = {"managed": dict(base, wb="64M"), "goal_value": 100.1, "summary": {},
+           "changes": [{"variable": "fs", "source": "rollback"}, {"variable": "wb", "source": "rec:os-dirty-writeback"}]}
+    v, d = evaluate.verdict(run, h, "tps", {"noise_pct": 1.0})
+    assert d["parent_runs"] == [1, 2] and v == "neutral", (v, d.get("parent_runs"), d.get("goal_delta_pct"))
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)

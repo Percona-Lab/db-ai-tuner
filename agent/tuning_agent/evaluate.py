@@ -243,6 +243,26 @@ def verdict(run, history, goal, noise):
     return v, d
 
 
+def _parent_key(run, history, key):
+    """The configuration this run was derived from. When a revert to an earlier configuration and the next experiment are
+    applied together, the parent is the configuration reverted to (the measured one that differs from this run only in
+    the experiment's own variables), not the last one measured (which may be the regressed experiment just reverted)."""
+    own = {c["variable"] for c in run.get("changes") or [] if str(c.get("source") or "") != "rollback"}
+    cur = dict(run.get("managed") or {})
+    if own:
+        for r in reversed(history):
+            m = r.get("managed") or {}
+            if config_key(m) == key or r.get("goal_value") is None or r.get("verdict") == "unreliable":
+                continue
+            diff = {k for k in set(m) | set(cur) if normalize(k, m.get(k)) != normalize(k, cur.get(k))}
+            if diff and diff <= own:
+                return config_key(m)
+    for r in reversed(history):  # fallback: last different configuration measured
+        if config_key(r.get("managed")) != key:
+            return config_key(r.get("managed"))
+    return None
+
+
 def _verdict(run, history, goal, noise):
     """run: the new run dict (managed, goal_value, summary); history: earlier runs of the session.
     noise: session noise dict (calibration) or None."""
@@ -261,11 +281,7 @@ def _verdict(run, history, goal, noise):
                          f"±{goal_noise}% noise. The environment changed (data growth, noisy neighbour, caches?) — "
                          "re-calibrate or reset the data set before trusting small differences.")
         return "repeat", d
-    parent = None
-    for r in reversed(history):  # the configuration this run was derived from = last different config measured
-        if config_key(r.get("managed")) != key:
-            parent = config_key(r.get("managed"))
-            break
+    parent = _parent_key(run, history, key)
     pm = config_means(history, parent, recent=RECENT)
     if not pm:
         return "neutral", {}

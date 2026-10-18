@@ -620,7 +620,7 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     d_prev = _improvement(sess["goal"], gv, prev.get("goal_value")) if prev else None
     d_first = _improvement(sess["goal"], gv, first.get("goal_value")) if first else None
     _refresh_noise(c, sess, runs)
-    verdict, evaluation = evaluate.verdict({"managed": m["managed"], "goal_value": gv, "summary": summary}, runs, sess["goal"],
+    verdict, evaluation = evaluate.verdict({"managed": m["managed"], "goal_value": gv, "summary": summary, "changes": m.get("changes")}, runs, sess["goal"],
         sess.get("noise") or ({"noise_pct": sess["noise_pct"]} if sess.get("noise_pct") else None))
     if evaluation.get("parent_runs"):
         try:  # query-level view: which statements got faster / slower than under the parent configuration
@@ -1031,6 +1031,17 @@ def cmd_reevaluate(a):
 
 def _engine_ctx(c, sess):
     path = sess.get("last_inputs_path")
+    basis = None
+    if sess["runs"]:
+        cur = evaluate.config_key({k: v["value"] for k, v in c.state.get("managed", {}).items()})
+        if evaluate.config_key(sess["runs"][-1].get("managed")) != cur:
+            # the last run's configuration was reverted: its symptoms (e.g. swapping caused by a filesystem experiment)
+            # no longer apply; diagnose from the latest run of the configuration now in effect
+            same = [r for r in sess["runs"] if evaluate.config_key(r.get("managed")) == cur and r.get("goal_value") is not None]
+            if same:
+                p2 = os.path.join(c.state.dir, f"run{same[-1]['seq']}_inputs.json")
+                if os.path.exists(p2):
+                    path, basis = p2, same[-1]["seq"]
     if not sess["runs"] or not path or not os.path.exists(path):
         last = {"summary": {}, "inputs": {}}
     else:
@@ -1047,7 +1058,7 @@ def _engine_ctx(c, sess):
         experience = c.client.get(q).get("experience", {})
     except Exception as e:  # experience is a hint; never block a recommendation on it
         log(f"note: no experience data ({e})")
-    return {"goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
+    return {"diagnosis_basis_run": basis, "goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
             "os_tuning": c.os_tuning_allowed() and sess.get("os_tuning", True), "os_facts": osf, "experience": experience,
             "failed": sess.get("failed_recs") or [],
             "scope": sess.get("scope") or ["knobs", "os"], "fs_device": _ap.fs_device,
@@ -1490,7 +1501,11 @@ def cmd_autotune(a):
             measured += 1
             log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
         shift = (run.get("evaluation") or {}).get("environment_shift")
-        if shift and run["verdict"] in ("improved", "regressed", "efficiency-gain", "efficiency-loss"):
+        storage_change = any(ch["variable"].startswith(("os:datadir_fs", "os:scheduler", "os:read_ahead", "os:mount_"))
+                             for ch in item["changes"])
+        if shift and storage_change:
+            log("   environment probe changed because the experiment changed the storage stack itself: not re-measuring")
+        elif shift and run["verdict"] in ("improved", "regressed", "efficiency-gain", "efficiency-loss"):
             log(f"   environment probe shifted ({shift}): measuring the same configuration again before deciding")
             run, _ = _bench_run(c, prof, f"{nxt} (re-measure: environment shift)")
             measured += 1

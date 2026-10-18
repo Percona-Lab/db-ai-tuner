@@ -90,6 +90,8 @@ def sanitize(suggestions, ctx, res, model):
                 why = f"{var} does not exist on this server"
             elif var.startswith("os:") and not ctx.get("os_tuning"):
                 why = "OS tuning is disabled"
+            elif v.get("log_bin") in ("OFF", "0") and (var.startswith(("binlog_", "sync_binlog", "max_binlog")) or var == "log_replica_updates"):
+                why = f"{var} has no effect: the binary log is disabled"
             elif normalize(var, v.get(var)) == normalize(var, val):
                 why = f"{var} already {val}"
             elif (var, normalize(var, val)) in tried:
