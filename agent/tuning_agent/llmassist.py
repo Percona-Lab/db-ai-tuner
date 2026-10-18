@@ -45,12 +45,30 @@ def context(ctx, res, meta=None):
         "current_variables": keep,
         "os_settings": {k: v[k] for k in v if k.startswith("os:")} if ctx.get("os_tuning") else {},
         "history": [{"run": r.get("seq"), "changes": [f"{c['variable']}={c.get('new')}" for c in r.get("changes") or []],
-                     "verdict": r.get("verdict"), "goal_delta_pct": (r.get("evaluation") or {}).get("goal_delta_pct")}
+                     "verdict": r.get("verdict"), "goal_delta_pct": (r.get("evaluation") or {}).get("goal_delta_pct"),
+                     "drift_on_repeat": bool((r.get("evaluation") or {}).get("drift")),
+                     "environment_shift": (r.get("evaluation") or {}).get("environment_shift")}
                     for r in ctx.get("history") or []],
+        # per-configuration means across all runs: more reliable than single-run verdicts (repeats expose drift)
+        "configurations": _configs(ctx),
         "rule_candidates": [{"id": i["id"], "changes": [f"{c['variable']}={c['proposed']}" for c in i["changes"]], "kind": i["kind"]}
                             for i in res["items"] if i["changes"]],
         "noise_pct": ctx.get("noise_pct"),
     }
+
+
+def _configs(ctx):
+    from .engine import config_scores
+    hist = ctx.get("history") or []
+    if not hist:
+        return []
+    start = hist[0].get("managed") or {}
+    out = []
+    for c in config_scores(hist, ctx.get("goal", "tps")):
+        diff = {k: v for k, v in c["managed"].items() if start.get(k) != v}
+        diff.update({k: "(default)" for k in start if k not in c["managed"]})
+        out.append({"changes_vs_start": diff, "goal_mean": round(c["mean"], 3), "runs": c["seqs"]})
+    return out
 
 
 def sanitize(suggestions, ctx, res, model):

@@ -86,6 +86,8 @@ that address the diagnosed bottleneck for this exact server flavor and version. 
 so propose small, coherent changes. Use only variables present in "current_variables" or "os_settings".
 Never propose changes to: datadir, socket, port, server_id, read_only, sql_mode, character sets, replication topology.
 Mark durability/replication/observability/semantics trade-offs honestly in "risk".
+Judge past experiments by "configurations" (goal mean per configuration over all its runs) rather than by single-run
+verdicts in "history": single runs on cloud VMs drift, and repeats of the same configuration reveal it.
 If nothing is likely to help, return an empty list - do not guess."""
 
 SCHEMA = {
