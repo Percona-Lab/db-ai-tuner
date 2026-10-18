@@ -623,24 +623,25 @@ async function sessionPage(id) {
   const vsRef = v => refVal ? (lower ? (refVal - v) / refVal : (v - refVal) / refVal) * 100 : null;
   // best configuration known at each point of the session: a configuration takes the lead only when its mean beats the
   // current leader beyond the noise threshold (repeats of the leader keep it)
-  const bestAt = {};
-  { const acc = {}; let lead = null, leadMean = null;
-    done.filter(r => r.verdict !== "unreliable").forEach(r => {
+  const bestAt = {}, leadBefore = {};
+  { const acc = {}; let lead = null, leadMean = null, leadManaged = null;
+    d.runs.filter(r => r.status !== "aborted").forEach(r => { leadBefore[r.id] = leadManaged;
+      if (r.goal_value == null || r.verdict === "unreliable") return;
       const k = JSON.stringify(Object.entries(r.managed || {}).sort());
       const a = acc[k] = acc[k] || { sum: 0, n: 0 }; a.sum += r.goal_value; a.n += 1;
       const mean = a.sum / a.n;
       const better = leadMean == null || (lower ? (leadMean - mean) / leadMean : (mean - leadMean) / leadMean) * 100 > noiseP;
-      if (k === lead) leadMean = mean; else if (better) { lead = k; leadMean = mean; }
+      if (k === lead) leadMean = mean; else if (better) { lead = k; leadMean = mean; leadManaged = r.managed || {}; }
+      if (k === lead) leadManaged = r.managed || {};
       bestAt[r.id] = k === lead;
     }); }
   // what happened to each run's own changes afterwards: kept, or rolled back by a later run
   const later = d.runs.filter(x => x.status !== "aborted");
-  const fate = (r, c) => {
-    const mine = (r.managed || {})[c.variable];
-    const nxt = later.find(x => x.seq > r.seq);
-    if (!nxt) return { kept: true, pending: true };
-    const theirs = (nxt.managed || {})[c.variable];
-    return String(theirs) === String(mine) ? { kept: true } : { kept: false, by: nxt.seq };
+  const fate = (r, c) => {  // kept while every later run still has the value; else rolled back at the first one that changed it
+    const mine = String((r.managed || {})[c.variable]);
+    const nxt = later.filter(x => x.seq > r.seq);
+    const ch = nxt.find(x => String((x.managed || {})[c.variable]) !== mine);
+    return ch ? { kept: false, by: ch.seq } : { kept: true, pending: !nxt.length };
   };
   C.barChart(document.getElementById("bars"), {
     title: goalName(s.goal) + " per run (" + goalUnit(s.goal, s) + ") — green: best production-safe configuration · orange: runs with trade-offs · ▲ best configuration known at that point", unit: goalUnit(s.goal, s), metric: s.goal === "latency" ? "avg latency" : "goal value",
@@ -651,13 +652,13 @@ async function sessionPage(id) {
   });
   function changeLines(r, chs, fate) {
     // undo = a change that only returns a setting to its value before the previous run changed it
-    const idx = later.findIndex(x => x.seq === r.seq), prev = later[idx - 1], before = later[idx - 2];
-    const isUndo = c => c.source === "rollback" || (prev && before && (prev.changes || []).some(p => p.variable === c.variable)
-      && String((r.managed || {})[c.variable]) === String((before.managed || {})[c.variable]));
+    // undo = a change that returns a setting to the best configuration known before this run (reverts, sweep endings)
+    const lead = leadBefore[r.id];
+    const isUndo = c => c.source === "rollback" || (lead != null && String((r.managed || {})[c.variable]) === String(lead[c.variable]));
     const own = chs.filter(c => !isUndo(c)), undo = chs.filter(isUndo);
     const line = c => {
       const f = fate(r, c), txt = `${esc(c.variable.replace(/^innodb_/, ""))}=${esc(shortVal(c.variable, c.new))}`;
-      return f.kept ? `<span class="mono" data-tip="${esc(c.variable + "=" + val(c.variable, c.new))} · ${f.pending ? "in effect now" : "kept in the next runs"}">${txt}</span>`
+      return f.kept ? `<span class="mono" data-tip="${esc(c.variable + "=" + val(c.variable, c.new))} · ${f.pending ? "in effect now" : "kept: still in effect in the later runs"}">${txt}</span>`
         : `<span class="mono rolled" data-tip="${esc(c.variable + "=" + val(c.variable, c.new))} · rolled back before run #${f.by}">${txt}</span>`;
     };
     const parts = [];
