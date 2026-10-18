@@ -87,11 +87,45 @@ class Applier:
         os.chmod(tmp, 0o644)
         os.replace(tmp, self.cnf_path)
 
-    def restart(self, timeout=600):
+    def preflush(self, max_wait=900):
+        """Flush dirty pages before a restart so the shutdown does not have to (a large dirty buffer pool on slow storage
+        can take longer than systemd's stop timeout, which then kills mysqld)."""
+        try:
+            pct = self.db.scalar("SELECT @@innodb_max_dirty_pages_pct")
+            lwm = self.db.scalar("SELECT @@innodb_max_dirty_pages_pct_lwm")
+            total = int(self.db.scalar("SELECT variable_value FROM performance_schema.global_status WHERE variable_name='Innodb_buffer_pool_pages_total'") or 0)
+        except Exception:
+            return
+        def dirty():
+            return int(self.db.scalar("SELECT variable_value FROM performance_schema.global_status WHERE variable_name='Innodb_buffer_pool_pages_dirty'") or 0)
+        try:
+            d0 = dirty()
+            if not total or d0 < max(1000, total * 0.01):
+                return
+            self.log(f"flushing {d0} dirty pages before the restart ...")
+            self.db.execute("SET GLOBAL innodb_max_dirty_pages_pct_lwm = 0")
+            self.db.execute("SET GLOBAL innodb_max_dirty_pages_pct = 0")
+            t0 = time.time()
+            while time.time() - t0 < max_wait and dirty() > max(1000, total * 0.01):
+                time.sleep(5)
+        except Exception:
+            pass
+        finally:
+            try:  # restore (the restart applies the configured values anyway)
+                self.db.execute(f"SET GLOBAL innodb_max_dirty_pages_pct = {float(pct)}")
+                self.db.execute(f"SET GLOBAL innodb_max_dirty_pages_pct_lwm = {float(lwm)}")
+            except Exception:
+                pass
+
+    def restart(self, timeout=1800):
+        self.preflush()
         self.log(f"restarting {self.service} ...")
         self.db.close()
-        r = subprocess.run(["systemctl", "restart", self.service], capture_output=True, text=True, timeout=timeout)
-        if r.returncode != 0:
+        try:
+            r = subprocess.run(["systemctl", "restart", self.service], capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:  # still shutting down / recovering: keep waiting for it below instead of failing the session
+            r = None
+        if r is not None and r.returncode != 0:
             return False, (r.stderr or r.stdout).strip()[-800:]
         deadline = time.time() + timeout
         while time.time() < deadline:

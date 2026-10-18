@@ -43,10 +43,16 @@ case $F in
     apt-get update -q
     apt-get install -yq mariadb-server ;;
 esac
-# purging the previous flavour removes the my.cnf alternative; Percona/MySQL start scripts refuse to start without it
+# sysbench pulls in client libraries whose packages re-register my.cnf alternatives: install it before fixing them
+apt-get install -yq sysbench >/dev/null || { echo "COMPAT FAIL: sysbench could not be installed next to $F $V"; exit 1; }
+# alternatives left by the previous flavour can point at files that no longer exist (e.g. mariadb.cnf after a purge);
+# Percona/MySQL start scripts refuse to start without a real /etc/mysql/my.cnf
+for alt in $(update-alternatives --list my.cnf 2>/dev/null); do [ -e "$alt" ] || update-alternatives --remove my.cnf "$alt"; done
 if [ ! -e /etc/mysql/my.cnf ]; then
-  for c in /etc/mysql/mysql.cnf /etc/mysql/mariadb.cnf; do [ -e $c ] && update-alternatives --install /etc/mysql/my.cnf my.cnf $c 200 && break; done
+  rm -f /etc/mysql/my.cnf
+  for c in /etc/mysql/mysql.cnf /etc/mysql/mariadb.cnf /etc/mysql/my.cnf.fallback; do [ -e $c ] && update-alternatives --install /etc/mysql/my.cnf my.cnf $c 300 && break; done
 fi
+[ -e /etc/mysql/my.cnf ] || { echo "COMPAT FAIL: no usable /etc/mysql/my.cnf"; ls -la /etc/mysql; exit 1; }
 systemctl start mysql 2>/dev/null || systemctl start mariadb
 # a restart must work before the tuner relies on it
 systemctl restart mysql 2>/dev/null || systemctl restart mariadb || { echo "COMPAT FAIL: server does not survive a restart"; journalctl -u mysql -u mariadb -n 20 --no-pager; exit 1; }
@@ -57,7 +63,6 @@ mysql -e "SELECT VERSION(), @@version_comment" || { echo "COMPAT FAIL: cannot co
 GOT=$(mysql -N -e "SELECT CONCAT(VERSION(), ' ', @@version_comment)")
 case "$F" in percona) echo "$GOT" | grep -q "^$V\..*Percona" ;; mysql) echo "$GOT" | grep -q "^$V\..*MySQL Community" ;; mariadb) echo "$GOT" | grep -q "^$V\..*MariaDB" ;; esac \
   || { echo "COMPAT FAIL: wanted $F $V, got: $GOT"; exit 1; }
-apt-get install -yq sysbench >/dev/null || { echo "COMPAT FAIL: sysbench could not be installed next to $F $V"; exit 1; }
 mysql -e "CREATE DATABASE IF NOT EXISTS sbtest; CREATE USER IF NOT EXISTS sbtest@localhost IDENTIFIED BY 'sbtest'; GRANT ALL ON sbtest.* TO sbtest@localhost;"
 # agent: forget settings that belonged to the previous server
 /opt/tuning-agent/venv/bin/python - <<'PY'
