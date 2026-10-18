@@ -61,6 +61,10 @@ MECHANISMS = {
     "malloc-tcmalloc": (("cpu", "concurrency"), "Allocator variant."),
     "malloc-mimalloc": (("cpu", "concurrency"), "Allocator variant."),
     "malloc-glibc-tuned": (("memory", "cpu"), "Allocator variant."),
+    "sweep-bp": (("memory", "io"), "More pages cached: fewer disk reads."),
+    "sweep-redo": (("redo", "io"), "Fewer forced checkpoints."),
+    "sweep-io-capacity": (("io", "redo"), "Background flushing matched to the storage."),
+    "sweep-thread-concurrency": (("concurrency", "cpu-pressure"), "Caps threads inside InnoDB."),
     "os-nobarrier": (("commit", "io"), "fsync does not flush the device write cache."),
 }
 

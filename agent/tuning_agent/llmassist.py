@@ -111,8 +111,10 @@ def sanitize(suggestions, ctx, res, model):
             trade = [{"variable": ch[0]["variable"], "value": ch[0]["proposed"], "category": sg["risk"],
                       "lost": "Flagged as a trade-off by the model."}]
         slug = "-".join(re.sub(r"[^a-z0-9]+", "-", c["variable"].lower()).strip("-") for c in ch)[:48]
+        sv = [str(x) for x in (sg.get("sweep_values") or []) if str(x).strip()]
         items.append({
-            "id": f"llm-{slug}", "title": sg.get("title") or "LLM suggestion", "kind": "config", "changes": ch,
+            "id": f"llm-{slug}",
+            **({"sweep": {"variable": ch[0]["variable"], "values": sv[:6]}} if len(ch) == 1 and len(sv) >= 2 else {}), "title": sg.get("title") or "LLM suggestion", "kind": "config", "changes": ch,
             "rationale": f"{sg.get('rationale', '')} (suggested by {model})", "mechanism": sg.get("mechanism"),
             "evidence": {"model": model, "expected_effect": sg.get("expected_effect")}, "source": "llm",
             "impact": {"large": 2, "moderate": 2, "small": 1}.get(sg.get("expected_effect"), 1), "confidence": 1,

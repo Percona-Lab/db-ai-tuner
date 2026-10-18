@@ -535,6 +535,32 @@ def recommend(ctx):
                   "writes the database already acknowledged.", {"fsyncs_per_trx": s.get("fsyncs_per_trx"), "disk_await_ms": s.get("disk_await_ms")},
                   impact=2, confidence=1, kind="config" if policy == "benchmark" else "advice")
 
+    # ---------------- sweeps: measure several values where a single step is a guess ----
+    def sweep(id_, title, var, values, rationale, evidence, impact=2):
+        values = [x for x in dict.fromkeys(values) if x is not None and normalize(var, x) != normalize(var, v.get(var))]
+        if var in v and len(values) >= 2:
+            b.add(id_, title, [(var, values[0])], rationale + f" Values: {', '.join(map(str, values))}.", evidence, impact=impact, confidence=2)
+            if b.items and b.items[-1]["id"] == id_:
+                b.items[-1]["sweep"] = {"variable": var, "values": [str(x) for x in values]}
+    diag_types = {d["type"] for d in ctx.get("diagnosis") or [] if d.get("severity") in ("high", "medium")}
+    if have_run and diag_types & {"memory", "io"} and not swapping and mem_avail > 512 * MiB and bp:
+        top = int(min(ram * 0.80, bp + mem_avail - 512 * MiB)) // (128 * MiB) * (128 * MiB)
+        mid = (bp + top) // 2 // (128 * MiB) * (128 * MiB)
+        if top > bp * 1.15:
+            sweep("sweep-bp", "Sweep the buffer pool size", "innodb_buffer_pool_size", [fmt_size(mid), fmt_size(top)],
+                  "The working set misses memory and RAM is free: measure how throughput responds to more buffer pool.",
+                  {"bp_hit_pct": s.get("bp_hit_pct"), "mem_available": human_size(mem_avail)}, impact=3)
+    if have_run and "redo" in diag_types and cap:
+        sweep("sweep-redo", "Sweep the redo log capacity", "innodb_redo_log_capacity", [fmt_size(cap * 2), fmt_size(cap * 4)],
+              "Checkpoint pressure: measure 2x and 4x the redo capacity.", {"checkpoint_age_pct_max": ck})
+    if have_run and diag_types & {"io", "redo"} and ssd:
+        sweep("sweep-io-capacity", "Sweep the background flushing budget", "innodb_io_capacity", [str(ioc // 2), str(ioc * 2), str(ioc * 4)],
+              "I/O or redo pressure: find the flushing budget the storage sustains.", {"innodb_io_capacity": ioc, "disk_util": s.get("disk_util")})
+    if have_run and diag_types & {"concurrency", "cpu-pressure"} and "innodb_thread_concurrency" in v:
+        sweep("sweep-thread-concurrency", "Sweep InnoDB thread concurrency", "innodb_thread_concurrency", [str(cpus * 2), str(cpus * 4), "0"],
+              f"{s.get('threads_running_avg', 0):.0f} running threads on {cpus} CPUs: measure admission limits.",
+              {"threads_running_avg": s.get("threads_running_avg"), "cpus": cpus})
+
     # ---------------- filesystem experiments (opt-in scope) --------------------------
     if have_run and "filesystem" in (ctx.get("scope") or []) and ctx.get("fs_device") and v.get("os:datadir_fs") not in (None, "rootfs"):
         from .fslab import CANDIDATES

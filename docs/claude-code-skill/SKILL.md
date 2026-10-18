@@ -42,6 +42,12 @@ error (message in `error`), 3 = server/API error.
    model is consulted automatically only when it adds value (rule-based experiments exhausted, or no clear bottleneck);
    its suggestions are validated and appear with an "LLM" badge and ids `llm-...`. When you are the LLM driving the agent,
    you usually do not need this: propose your own ideas with `apply --set var=value --reason "..."`.
+   To validate a hypothesis across several values, queue an experiment instead of single changes:
+   `tuning-agent experiment add --sweep innodb_buffer_pool_size=1G,2G,3G --repeats 2 --reason "..."` or
+   `tuning-agent experiment add --try var=value --try var2=value2`; `experiment run --bench PROFILE` (or the next
+   `autotune` iteration) measures every value from the same parent configuration and keeps the best one only if it
+   beats the noise threshold. `experiment list --json` shows per-value results. The engine and the LLM queue sweeps
+   themselves when a numeric knob's best value is uncertain.
 8. `tuning-agent apply --next` or `--rec ID` or `--set var=value --reason "why"` (your own idea;
    always give a reason, it is shown in the web UI). `--unset var` stops managing a variable.
 9. Measure again with the same duration and load. The run is compared with the MEAN of its parent

@@ -1159,6 +1159,19 @@ def cmd_autotune(a):
                 log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}"
                     + (" (DRIFT)" if (run.get('evaluation') or {}).get('drift') else ""))
                 continue
+        if item.get("sweep"):  # measure several values as an experiment instead of a single step
+            body = {"kind": "sweep", "variable": item["sweep"]["variable"], "values": ",".join(item["sweep"]["values"]),
+                    "reason": item["rationale"][:400], "created_by": ("llm:" if item.get("source") == "llm" else "agent:") + nxt}
+            eid = c.client.post(f"/sessions/{sess['id']}/experiments", body)["id"]
+            exp = next((e for e in _queued_experiments(c, sess) if e["id"] == eid), None)
+            if exp:
+                log(f"== sweep {nxt}: {item['sweep']['variable']} = {', '.join(item['sweep']['values'])} (experiment #{eid})")
+                log("   " + _run_experiment(c, prof, exp))
+                measured += len(item["sweep"]["values"])
+            sess = c.session()
+            sess.setdefault("failed_recs", []).append(nxt)  # one sweep per rule and session
+            c.state.set("session", sess)
+            continue
         log(f"== experiment: {nxt} ({item['title']}) [{item.get('safety')}]")
         changes = [{"variable": ch["variable"], "value": None if ch.get("unset") else ch["proposed"], "reason": item["rationale"],
                     "source": f"rec:{nxt}"} for ch in item["changes"]]

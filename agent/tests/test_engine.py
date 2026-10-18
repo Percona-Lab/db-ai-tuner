@@ -162,6 +162,16 @@ def test_filesystem_scope_and_allocator_variants():
     assert ostune.allocator_env("jemalloc:background_thread:true")[0] == "# os:malloc=jemalloc:background_thread:true"
 
 
+def test_sweeps():
+    res = run(*OLTP, policy="safe")
+    it = {i["id"]: i for i in res["items"]}
+    assert "sweep-redo" in it and len(it["sweep-redo"]["sweep"]["values"]) == 2
+    items, _ = llmassist.sanitize([{"title": "s", "changes": [{"variable": "innodb_lru_scan_depth", "value": "512"}],
+                                    "sweep_values": ["256", "512", "2048"], "risk": "none"}],
+                                  {"variables": dict(VARS, innodb_lru_scan_depth="1024"), "hw": HW, "history": []}, {"items": []}, "m")
+    assert items[0]["sweep"]["values"] == ["256", "512", "2048"]
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)

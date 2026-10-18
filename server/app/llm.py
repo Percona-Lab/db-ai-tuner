@@ -83,7 +83,8 @@ SYSTEM = """You are a MySQL-family database performance engineer helping an auto
 The tuner has already tried or ruled out the changes listed in "history" and "rule_candidates".
 Propose at most 3 NEW knob experiments (server variables, or OS settings named "os:<name>" from the "os_settings" list)
 that address the diagnosed bottleneck for this exact server flavor and version. Each experiment is measured on its own,
-so propose small, coherent changes. Use only variables present in "current_variables" or "os_settings".
+so propose small, coherent changes. When the right value of a single numeric variable is uncertain, put 2-5 candidate
+values in "sweep_values" (the tuner measures each); otherwise return an empty "sweep_values". Use only variables present in "current_variables" or "os_settings".
 Never propose changes to: datadir, socket, port, server_id, read_only, sql_mode, character sets, replication topology.
 Mark durability/replication/observability/semantics trade-offs honestly in "risk".
 Judge past experiments by "configurations" (goal mean per configuration over all its runs) rather than by single-run
@@ -96,7 +97,7 @@ SCHEMA = {
         "notes": {"type": "string"},
         "suggestions": {"type": "array", "maxItems": 3, "items": {
             "type": "object", "additionalProperties": False,
-            "required": ["title", "changes", "mechanism", "expected_effect", "risk", "rationale"],
+            "required": ["title", "changes", "mechanism", "expected_effect", "risk", "rationale", "sweep_values"],
             "properties": {
                 "title": {"type": "string"},
                 "changes": {"type": "array", "minItems": 1, "maxItems": 4, "items": {
@@ -105,7 +106,8 @@ SCHEMA = {
                 "mechanism": {"type": "string"},
                 "expected_effect": {"type": "string", "enum": ["large", "moderate", "small"]},
                 "risk": {"type": "string", "enum": ["none", "low", "durability", "replication", "observability", "semantics"]},
-                "rationale": {"type": "string"}}}}},
+                "rationale": {"type": "string"},
+                "sweep_values": {"type": "array", "maxItems": 6, "items": {"type": "string"}}}}}},
 }
 
 
