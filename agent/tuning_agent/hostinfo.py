@@ -146,6 +146,68 @@ def mysqld_pid():
     return None
 
 
+SMAPS_KEYS = {"Pss": "pss", "Pss_Anon": "pss_anon", "Pss_File": "pss_file", "Pss_Shmem": "pss_shmem", "SwapPss": "swap_pss"}
+STATUS_KEYS = {"VmRSS": "rss", "VmSize": "vsz", "VmSwap": "swap", "RssShmem": "rss_shmem"}
+
+
+def service_pids(pid, cgroup=None, limit=1024):
+    """All processes of the database service: the cgroup members (a PostgreSQL postmaster plus its backends and
+    workers), or the process with its descendants when it is not in a dedicated cgroup."""
+    if cgroup and not cgroup.rstrip("/").endswith((".slice", "/sys/fs/cgroup")):
+        pids = [int(x) for x in _read(os.path.join(cgroup, "cgroup.procs")).split() if x.isdigit()]
+        if pid in pids:
+            return pids[:limit]
+    children, todo, out = {}, [pid], []
+    for d in os.listdir("/proc"):
+        if d.isdigit():
+            st = _read(f"/proc/{d}/stat")
+            if st:
+                children.setdefault(int(st.rsplit(")", 1)[1].split()[1]), []).append(int(d))
+    while todo and len(out) < limit:
+        p = todo.pop()
+        out.append(p)
+        todo.extend(children.get(p, []))
+    return out
+
+
+def process_memory(pids):
+    """Memory of a process group in bytes. RSS / VSZ are summed per process, so pages shared between processes
+    (shared buffers, libraries) count once per process; PSS splits each shared page between the processes mapping it,
+    so the PSS total is the group's real share of RAM. SwapPss does the same for swapped-out pages."""
+    tot = {v: 0 for v in list(SMAPS_KEYS.values()) + list(STATUS_KEYS.values())}
+    n = 0
+    for pid in pids:
+        roll = _read(f"/proc/{pid}/smaps_rollup")  # needs root (or the same user) for other processes
+        if not roll:
+            continue
+        n += 1
+        for line in roll.splitlines():
+            k, _, v = line.partition(":")
+            if k in SMAPS_KEYS:
+                tot[SMAPS_KEYS[k]] += int(v.split()[0]) * 1024
+        for line in _read(f"/proc/{pid}/status").splitlines():
+            k, _, v = line.partition(":")
+            if k in STATUS_KEYS:
+                tot[STATUS_KEYS[k]] += int(v.split()[0]) * 1024
+    if not n:
+        return None
+    tot["procs"] = n
+    return tot
+
+
+def cgroup_memory(cgroup):
+    out = {}
+    for f, k in (("memory.current", "cg_mem"), ("memory.swap.current", "cg_swap")):
+        v = _read(os.path.join(cgroup, f)).strip()
+        if v.isdigit():
+            out[k] = int(v)
+    for line in _read(os.path.join(cgroup, "memory.stat")).splitlines():
+        k, _, v = line.partition(" ")
+        if k in ("anon", "file", "shmem") and v.isdigit():
+            out["cg_" + k] = int(v)
+    return out
+
+
 class OSCounters:
     """Takes raw counters; rates computed between two snapshots."""
 
@@ -181,6 +243,17 @@ class OSCounters:
                 f = st.rsplit(")", 1)[1].split()
                 s["mysqld"] = (self.pid, int(f[11]) + int(f[12]))  # utime + stime (ticks)
                 s["mysqld_rss"] = int(f[21]) * os.sysconf("SC_PAGE_SIZE")
+            # PSS needs a page-table walk per process: every 30 s is plenty for a memory gauge
+            if time.time() - getattr(self, "_mem_t", 0) >= 30 or getattr(self, "_mem_pid", None) != self.pid:
+                self._mem_t, self._mem_pid = time.time(), self.pid
+                try:
+                    self._mem = process_memory(service_pids(self.pid, self.cgroup))
+                    if self._mem is not None and self.cgroup:
+                        self._mem.update(cgroup_memory(self.cgroup))
+                except Exception:  # best effort
+                    self._mem = None
+            if getattr(self, "_mem", None):
+                s["dbmem"] = self._mem
         la = _read("/proc/loadavg").split()
         s["load1"] = float(la[0]) if la else 0.0
         vm = {}
@@ -233,6 +306,8 @@ class OSCounters:
             out["mysqld_cpu_pct"] = round(100.0 * (b["mysqld"][1] - a["mysqld"][1]) / ticks / dt / (os.cpu_count() or 1), 2)
         if "mysqld_rss" in b:
             out["mysqld_rss_mb"] = round(b["mysqld_rss"] / 2 ** 20, 1)
+        for k, v in (b.get("dbmem") or {}).items():
+            out["dbproc_procs" if k == "procs" else f"dbproc_{k}_mb"] = v if k == "procs" else round(v / 2 ** 20, 1)
         # pressure stall information: % of wall time some (or all) tasks were stalled on the resource
         for key, prefix in (("psi", "psi_"), ("psi_mysqld", "mysqld_psi_")):
             pa, pb = a.get(key) or {}, b.get(key) or {}

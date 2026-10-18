@@ -298,6 +298,10 @@ def analyze_window(a, b, samples):
         "swap_out": os_rates.get("swap_out"),
         "mem_used_pct": os_rates.get("mem_used_pct"),
         "mem_available_mb": os_rates.get("mem_available_mb"),
+        **{k: os_rates.get(k) for k in ("dbproc_procs", "dbproc_rss_mb", "dbproc_vsz_mb", "dbproc_pss_mb", "dbproc_pss_anon_mb",
+                                         "dbproc_pss_file_mb", "dbproc_pss_shmem_mb", "dbproc_swap_pss_mb", "dbproc_swap_mb",
+                                         "dbproc_cg_mem_mb", "dbproc_cg_swap_mb")},
+        "dbproc_pss_mb_max": mx("os", "dbproc_pss_mb"), "dbproc_swap_pss_mb_max": mx("os", "dbproc_swap_pss_mb"),
         "samples": len(samples),
     }
     if not summary["tps"] and summary["qps"]:

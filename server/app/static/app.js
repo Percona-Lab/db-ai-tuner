@@ -247,6 +247,7 @@ const LIVE_CHARTS = [
   { title: "CPU", unit: "%", max100: true, series: [["os", "cpu_user", "user"], ["os", "cpu_sys", "system"], ["os", "cpu_iowait", "iowait"], ["os", "mysqld_cpu_pct", "mysqld process"]] },
   { title: "Disk IOPS", unit: "per s", series: [["os", "disk_r_iops", "reads"], ["os", "disk_w_iops", "writes"]] },
 ];
+const LIVE_MEM = { title: "Database process memory", unit: "MiB", series: [["os", "dbproc_rss_mb", "RSS"], ["os", "dbproc_pss_mb", "PSS"], ["os", "dbproc_swap_pss_mb", "swap PSS"]] };
 const LIVE_THREADS = { title: "Threads", unit: "", series: [["db", "threads_running", "running"], ["db", "threads_connected", "connected"]] };
 const LIVE_PSI = { title: "Pressure stall (host, some)", unit: "% time", max100: true, series: [["os", "psi_cpu_some", "CPU"], ["os", "psi_io_some", "I/O"], ["os", "psi_memory_some", "memory"]] };
 const RUN_CHARTS = [
@@ -257,6 +258,7 @@ const RUN_CHARTS = [
   { title: "Redo checkpoint age", unit: "% of capacity", max100: true, series: [["db", "checkpoint_age_pct", "checkpoint age"], ["db", "bp_dirty_pct", "dirty pages %"]] },
   { title: "Redo written", unit: "MiB/s", series: [["db", "redo_mbs", "redo"]] },
   { title: "fsyncs", unit: "per s", series: [["db", "data_fsyncs", "data fsyncs"], ["db", "log_fsyncs", "log fsyncs"]] },
+  { title: "Database process memory", unit: "MiB", series: [["os", "dbproc_rss_mb", "RSS"], ["os", "dbproc_pss_mb", "PSS"], ["os", "dbproc_pss_shmem_mb", "PSS shared memory"], ["os", "dbproc_swap_pss_mb", "swap PSS"], ["os", "dbproc_cg_mem_mb", "cgroup charge"]] },
   { title: "Disk throughput", unit: "MiB/s", series: [["os", "disk_r_mbs", "read"], ["os", "disk_w_mbs", "write"]] },
   { title: "Disk utilisation / latency", unit: "", series: [["os", "disk_util", "util %"], ["os", "disk_await_ms", "await ms"]] },
   { title: "Row lock waits", unit: "per s", series: [["db", "row_lock_waits", "waits"]] },
@@ -333,7 +335,7 @@ async function envPage(id) {
   const sessionMarkers = [];
   d.sessions.forEach(x => { sessionMarkers.push({ t: x.created, label: `#${x.id} start` }); if (x.ended) sessionMarkers.push({ t: x.ended, label: `#${x.id} end`, end: true }); });
   const live = document.getElementById("live"), range = document.getElementById("range");
-  const load = async () => { const span = +range.value; const now = Date.now() / 1000; const m = await api(`/api/environments/${id}/metrics?start=${now - span}&end=${now}&points=240`); chartsGrid(live, m, [...LIVE_CHARTS, LIVE_PSI, LIVE_THREADS], null, sessionMarkers); };
+  const load = async () => { const span = +range.value; const now = Date.now() / 1000; const m = await api(`/api/environments/${id}/metrics?start=${now - span}&end=${now}&points=240`); chartsGrid(live, m, [...LIVE_CHARTS, LIVE_PSI, LIVE_MEM], null, sessionMarkers); };
   range.onchange = load;
   await load();
   timers.push(setInterval(load, 15000));
@@ -581,7 +583,7 @@ async function runPage(id, tab) {
   ${r.notes ? `<div class="note" style="margin-bottom:12px">${esc(r.notes)}</div>` : ""}
   <div class="tiles">${tile("TPS", sm.tps, "/s", ps.tps, 1)}${tile("QPS", sm.qps, "/s", ps.qps, 1)}${tile("Avg statement latency", sm.avg_latency_ms, "ms", ps.avg_latency_ms, -1)}${tile("p95 statement latency", sm.p95_latency_ms, "ms", ps.p95_latency_ms, -1)}
    ${tile("CPU busy (host)", sm.cpu_busy, "%", ps.cpu_busy, 0)}${tile("mysqld CPU", sm.mysqld_cpu_pct, "% of host", ps.mysqld_cpu_pct, 0)}${tile("IO wait", sm.cpu_iowait, "%", ps.cpu_iowait, -1, "x")}${tile("BP hit ratio", sm.bp_hit_pct, "%", ps.bp_hit_pct, 1)}${tile("Disk IOPS", (sm.disk_r_iops || 0) + (sm.disk_w_iops || 0), "/s", ps.disk_r_iops != null ? (ps.disk_r_iops || 0) + (ps.disk_w_iops || 0) : null, 0)}
-   ${tile("CPU pressure", sm.mysqld_psi_cpu_some != null ? sm.mysqld_psi_cpu_some : sm.psi_cpu_some, "% stalled", ps.mysqld_psi_cpu_some != null ? ps.mysqld_psi_cpu_some : ps.psi_cpu_some, -1, "x")}${tile("I/O pressure", sm.mysqld_psi_io_some != null ? sm.mysqld_psi_io_some : sm.psi_io_some, "% stalled", ps.mysqld_psi_io_some != null ? ps.mysqld_psi_io_some : ps.psi_io_some, -1, "x")}${tile("Memory pressure", sm.psi_memory_some, "% stalled", ps.psi_memory_some, -1, "x")}
+   ${tile("CPU pressure", sm.mysqld_psi_cpu_some != null ? sm.mysqld_psi_cpu_some : sm.psi_cpu_some, "% stalled", ps.mysqld_psi_cpu_some != null ? ps.mysqld_psi_cpu_some : ps.psi_cpu_some, -1, "x")}${tile("I/O pressure", sm.mysqld_psi_io_some != null ? sm.mysqld_psi_io_some : sm.psi_io_some, "% stalled", ps.mysqld_psi_io_some != null ? ps.mysqld_psi_io_some : ps.psi_io_some, -1, "x")}${tile("Memory pressure", sm.psi_memory_some, "% stalled", ps.psi_memory_some, -1, "x")}${tile("DB memory (PSS)" + info(`Proportional set size of the database process(es): shared pages are split between the processes that map them, so this is their real share of RAM (RSS counts shared pages once per process). At the end of the run: RSS ${num(sm.dbproc_rss_mb)} MiB · VSZ ${num(sm.dbproc_vsz_mb)} MiB · swap PSS ${num(sm.dbproc_swap_pss_mb)} MiB · ${sm.dbproc_procs || 1} process(es). Peak PSS ${num(sm.dbproc_pss_mb_max)} MiB.`), sm.dbproc_pss_mb, "MiB", ps.dbproc_pss_mb, 0)}
    ${tile("mysqld CPU / trx", sm.mysqld_cpu_ms_per_trx, "ms", ps.mysqld_cpu_ms_per_trx, -1, "mysqld_cpu_ms_per_trx")}${tile("Disk IOs / trx", sm.disk_ios_per_trx, "", ps.disk_ios_per_trx, -1, "disk_ios_per_trx")}
    ${tile("Redo written", sm.redo_mbs, "MiB/s", ps.redo_mbs, 0)}${tile("Ckpt age max", sm.checkpoint_age_pct_max, "%", ps.checkpoint_age_pct_max, -1, "x")}${tile("Threads running", sm.threads_running_avg, "avg", ps.threads_running_avg, 0)}${tile("TPS variation", sm.tps_cv_pct, "% CV", ps.tps_cv_pct, -1, "x")}</div>
   ${Object.keys(r.external || {}).length ? `<h3>Benchmark-reported values</h3><div class="row">${Object.entries(r.external).map(([k, v]) => `<span class="badge plain">${esc(k)} = ${esc(v)}</span>`).join("")}</div>` : ""}
