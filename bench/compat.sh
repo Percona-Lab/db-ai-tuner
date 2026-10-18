@@ -43,7 +43,13 @@ case $F in
     apt-get update -q
     apt-get install -yq mariadb-server ;;
 esac
+# purging the previous flavour removes the my.cnf alternative; Percona/MySQL start scripts refuse to start without it
+if [ ! -e /etc/mysql/my.cnf ]; then
+  for c in /etc/mysql/mysql.cnf /etc/mysql/mariadb.cnf; do [ -e $c ] && update-alternatives --install /etc/mysql/my.cnf my.cnf $c 200 && break; done
+fi
 systemctl start mysql 2>/dev/null || systemctl start mariadb
+# a restart must work before the tuner relies on it
+systemctl restart mysql 2>/dev/null || systemctl restart mariadb || { echo "COMPAT FAIL: server does not survive a restart"; journalctl -u mysql -u mariadb -n 20 --no-pager; exit 1; }
 command -v mysql >/dev/null || ln -sf "$(command -v mariadb)" /usr/local/bin/mysql
 command -v mysqladmin >/dev/null || ln -sf "$(command -v mariadb-admin)" /usr/local/bin/mysqladmin
 mysql -e "SELECT VERSION(), @@version_comment" || { echo "COMPAT FAIL: cannot connect as root"; exit 1; }
