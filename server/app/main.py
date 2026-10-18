@@ -266,6 +266,8 @@ def environments(request: Request):
         b["active_session"] = dict(act) if act else None
         m = store.q1("SELECT data FROM metrics WHERE env_id=? ORDER BY ts DESC LIMIT 1", (e["id"],))
         b["latest"] = store.uj(m["data"]) if m else None
+        b["clients"] = [{"id": h["id"], "name": h["name"], "online": bool(h["last_seen"] and now() - h["last_seen"] < ONLINE_S)}
+                        for h in store.q("SELECT id, name, last_seen FROM hosts WHERE env_id=? ORDER BY name", (e["id"],))]
         out.append(b)
     return {"environments": out}
 
