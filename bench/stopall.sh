@@ -1,7 +1,8 @@
 #!/bin/bash
-# stop queues, sessions, benchmarks on this host (run as a file so patterns never match the caller's command line)
-for p in $(ps -eo pid,cmd | awk '/queue-compat\.sh|queue-db[0-9]*\.sh|compat\.sh|session\.sh|tuning-agent autotune|tuning-agent measure|sysbench |go-tpc |hammerdbcli/ && !/awk/ {print $1}'); do
-  [ "$p" != "$$" ] && kill $p 2>/dev/null
+# stop queues, sessions and benchmarks (prefix match on each process's own command line)
+ps -eo pid=,args= | while read -r pid args; do
+  case "$args" in
+    "/bin/bash /root/bench/"*|"/opt/tuning-agent/venv/bin/python3 /usr/local/bin/tuning-agent autotune"*|"/opt/tuning-agent/venv/bin/python3 /usr/local/bin/tuning-agent measure"*|sysbench\ *|/opt/go-tpc/go-tpc\ *|./hammerdbcli\ *) kill "$pid" 2>/dev/null;;
+  esac
 done
-sleep 2; ps -eo pid,etime,cmd | grep -E "queue|compat|session\.sh|autotune|sysbench|go-tpc|hammerdb" | grep -v grep | grep -v stopall
 echo stopped

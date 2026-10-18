@@ -9,6 +9,7 @@ systemctl stop tuning-agent
 for s in mysql mysqld mariadb; do systemctl stop $s 2>/dev/null; done
 apt-get purge -yq 'percona-server-*' 'mysql-server*' 'mysql-community-*' 'mysql-client*' 'mariadb-*' 'libmariadb3' 'galera-*' 2>/dev/null
 apt-get autoremove -yq
+rm -f /usr/local/bin/mysql /usr/local/bin/mysqladmin
 rm -rf /var/lib/mysql /var/lib/mysql_base /etc/mysql /var/log/mysql /etc/apt/sources.list.d/mysql*.list /etc/apt/sources.list.d/mariadb*.list
 for f in /etc/apt/sources.list.d/percona-*.list; do [ -e "$f" ] && percona-release disable all >/dev/null 2>&1; break; done
 case $F in
