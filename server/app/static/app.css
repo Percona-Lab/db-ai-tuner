@@ -58,7 +58,7 @@ h3 { font-size: 14px; margin: 14px 0 6px; font-weight: 600; }
 .tile .k { color: var(--ink-2); font-size: 12px; }
 .tile .v { font-size: 22px; font-weight: 600; margin-top: 2px; }
 .tile .d { font-size: 12px; margin-top: 2px; color: var(--ink-2); }
-.up { color: var(--good-text); } .down { color: var(--crit); }
+.up, .tile .d.up { color: var(--good-text); } .down, .tile .d.down { color: var(--crit); }
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
 th { color: var(--ink-2); font-weight: 600; font-size: 12px; white-space: nowrap; }
