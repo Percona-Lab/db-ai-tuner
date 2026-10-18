@@ -437,7 +437,8 @@ async function envPage(id) {
   const cpus = hw.cpus || 1;
   const load = async () => {
     const span = +range.value; const now = Date.now() / 1000;
-    const m = await api(`/api/environments/${id}/metrics?start=${now - span}&end=${now}&points=240`);
+    const [m, w] = await Promise.all([api(`/api/environments/${id}/metrics?start=${now - span}&end=${now}&points=240`), api(`/api/environments/${id}/waits?start=${now - span}&end=${now}`)]);
+    m._waits = w;
     renderLive(live, m, cpus, e.name, sessionMarkers);
   };
   range.onchange = load;
@@ -451,6 +452,8 @@ const LIVE_DB = [
   { title: "Statement mix", unit: "per s", series: [["db", "selects", "SELECT"], ["db", "inserts", "INSERT"], ["db", "updates", "UPDATE"], ["db", "deletes", "DELETE"]] },
   { title: "Commits and rollbacks", unit: "per s", series: [["db", "commits", "commits"], ["db", "rollbacks", "rollbacks"]] },
   { title: "Threads", unit: "", series: [["db", "threads_running", "running"], ["db", "threads_connected", "connected"]], tip: "Running threads above the CPU count usually mean contention or waiting; connected minus running = idle connections." },
+  { title: "Wait time by class", unit: "threads waiting", series: [["db", "wait_table_io_s", "table I/O"], ["db", "wait_data_io_s", "data file I/O"], ["db", "wait_redo_io_s", "redo I/O"], ["db", "wait_binlog_io_s", "binlog I/O"], ["db", "wait_sync_s", "mutex / rwlock"], ["db", "wait_table_lock_s", "table locks"], ["db", "wait_metadata_lock_s", "metadata locks"], ["db", "wait_socket_s", "socket"], ["db", "wait_other_file_io_s", "other files"]],
+    tip: "performance_schema wait time per second = average number of threads waiting on that class. Table I/O is time in storage-engine row calls (including buffer pool hits). Mutex / rwlock waits are only timed when enabled (tuning-agent diag waits on)." },
   { title: "Cost per transaction", unit: "", series: [
       { name: "mysqld CPU ms", fn: m => perTrx(m, c => c * m._cpus * 10, ["os", "mysqld_cpu_pct"]) },
       { name: "disk IOs", fn: m => perTrx(m, (r, w) => r + w, ["os", "disk_r_iops"], ["os", "disk_w_iops"]) },
@@ -520,6 +523,13 @@ function renderLive(el, m, cpus, hostName, markers) {
   const prev = {}; el.querySelectorAll("details[data-k]").forEach(d => { prev[d.dataset.k] = d.open; });
   el.innerHTML = sections.map(([k, title]) => `<details class="livesec" data-k="${k}" ${(k in prev ? prev[k] : open[k] !== false) ? "open" : ""}><summary><h3 style="display:inline">${esc(title)}</h3></summary><div class="grid g3" data-grid="${k}"></div></details>`).join("");
   sections.forEach(([k, , defs, mm]) => chartsGrid(el.querySelector(`[data-grid="${k}"]`), mm, defs, null, markers, { skipEmpty: true }));
+  const dbGrid = el.querySelector('[data-grid="db"]');
+  if (dbGrid && m._waits && m._waits.events && m._waits.events.length) {
+    const card = document.createElement("div"); card.className = "card";
+    card.innerHTML = `<div class="chart"><div class="title">Top wait events (selected range)${info("Average number of threads waiting on each performance_schema wait event over the selected range, and its share of all wait time.")}</div>
+      <table class="kvt"><tbody>${m._waits.events.slice(0, 10).map(w => `<tr><td class="mono" style="word-break:break-all">${esc(w.event.replace(/^wait\//, ""))}</td><td class="num">${num(w.avg_threads)}</td><td class="num muted">${w.pct}%</td></tr>`).join("")}</tbody></table></div>`;
+    dbGrid.insertBefore(card, dbGrid.children[3] || null);
+  }
   el.querySelectorAll("details[data-k]").forEach(d => d.addEventListener("toggle", () => {
     open[d.dataset.k] = d.open; try { localStorage.setItem("liveOpen", JSON.stringify(open)); } catch (e) { }
   }));
@@ -671,6 +681,20 @@ function sourceText(m) {
   return src + (m.path ? " · " + m.path : "");
 }
 function isDefault(m) { return m && (m.source === "COMPILED" || m.source === "COMPILE-TIME" || m.source === "OS"); }
+const WAIT_CLASS_NAMES = { table_io: "table I/O", data_io: "data file I/O", redo_io: "redo I/O", binlog_io: "binlog I/O", sync: "mutex / rwlock", table_lock: "table lock", metadata_lock: "metadata lock", socket: "socket", other_file_io: "other files", other: "other" };
+const WAIT_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "#8a6fd1", "#4aa3a3", "#c45c8a", "#7a8a99", "#a0a0a0"];
+function waitsTable(inp, r) {
+  const dur = (r && r.summary && r.summary.duration_s) || null;
+  const cov = inp.wait_instruments;
+  const classes = Object.entries(inp.wait_classes || {});
+  const tot = classes.reduce((a, [, v]) => a + v, 0) || 1;
+  const bar = classes.length ? `<div class="waitbar">${classes.map(([k, v], i) => `<span style="width:${(100 * v / tot).toFixed(2)}%;background:${WAIT_COLORS[i % WAIT_COLORS.length]}" data-tip="${esc(WAIT_CLASS_NAMES[k] || k)}: ${num(v)} s (${(100 * v / tot).toFixed(1)}%)"></span>`).join("")}</div>
+    <div class="row" style="gap:4px 14px;font-size:12px;margin:4px 0 8px">${classes.map(([k, v], i) => `<span><i class="dot" style="background:${WAIT_COLORS[i % WAIT_COLORS.length]}"></i>${esc(WAIT_CLASS_NAMES[k] || k)} ${(100 * v / tot).toFixed(0)}%</span>`).join("")}</div>` : "";
+  return `<h3>Where threads waited${info("performance_schema wait events during the run window. Threads waiting = total wait time / run duration. Table I/O is time spent in storage-engine row calls (including buffer pool hits), not only disk." +
+    (cov ? ` Instrumentation: ${cov.enabled} of ${cov.instruments} wait instruments timed${cov.sync_enabled ? "" : "; mutex/rwlock waits are not timed (enable with tuning-agent diag waits on)"}.` : ""))}</h3>
+    <div class="card">${bar}<div class="tablewrap"><table><thead><tr><th>Event</th><th>Class</th><th class="num">% of wait time</th><th class="num">threads waiting</th><th class="num">count</th><th class="num">avg µs</th></tr></thead><tbody>` +
+    inp.top_waits.slice(0, 15).map(w => `<tr><td class="mono" style="word-break:break-all">${esc(w.event.replace(/^wait\//, ""))}</td><td>${esc(WAIT_CLASS_NAMES[w.class] || w.class || "")}</td><td class="num">${w.pct != null ? w.pct : "–"}</td><td class="num">${dur ? num(w.time_s / dur) : "–"}</td><td class="num">${num(w.count)}</td><td class="num">${w.avg_us != null ? num(w.avg_us) : num(w.time_s * 1e6 / Math.max(w.count, 1))}</td></tr>`).join("") + "</tbody></table></div></div>";
+}
 function cnfBlock(managed) {
   // MySQL option file only: can be copied into my.cnf as is
   const my = Object.entries(managed || {}).filter(([k]) => !/^(os|rg|client):/.test(k));
@@ -897,10 +921,7 @@ function renderInputs(el, r) {
     h += `<h3>Top statements in the window${info("From performance_schema digests and server-side prepared statements (marked prepared). The agent's own monitoring queries are excluded.")}</h3><div class="card tablewrap"><table><thead><tr><th>Statement</th><th class="num">% time</th><th class="num">per s</th><th class="num">avg ms</th><th class="num">rows exam.</th><th class="num">rows sent</th><th class="num">no index</th><th class="num">tmp disk</th></tr></thead><tbody>` +
       inp.top_statements.map(q => `<tr><td class="mono" style="max-width:520px;word-break:break-all">${q.prepared ? '<span class="badge plain">prepared</span> ' : ""}${esc(q.query)}</td><td class="num">${q.pct_time}</td><td class="num">${num(q.per_s)}</td><td class="num">${num(q.avg_ms)}</td><td class="num">${num(q.rows_examined_avg)}</td><td class="num">${num(q.rows_sent_avg)}</td><td class="num">${q.no_index_used}</td><td class="num">${q.tmp_disk_tables}</td></tr>`).join("") + "</tbody></table></div>";
   }
-  if (inp.top_waits && inp.top_waits.length) {
-    h += `<h3>Top wait events in the window</h3><div class="card tablewrap"><table><thead><tr><th>Event</th><th class="num">count</th><th class="num">total s</th></tr></thead><tbody>` +
-      inp.top_waits.map(w => `<tr><td class="mono">${esc(w.event)}</td><td class="num">${num(w.count)}</td><td class="num">${num(w.time_s)}</td></tr>`).join("") + "</tbody></table></div>";
-  }
+  if (inp.top_waits && inp.top_waits.length) h += waitsTable(inp, r);
   const st = inp.status_rates || {};
   if (Object.keys(st).length) {
     h += `<h3>Status counter rates in the window (per second)</h3><input id="sflt" placeholder="filter" style="max-width:260px"><div class="card tablewrap" style="margin-top:8px;max-height:420px;overflow:auto"><table><tbody id="st"></tbody></table></div>`;

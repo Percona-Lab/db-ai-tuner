@@ -334,6 +334,26 @@ def env_metrics(env_id: int, request: Request, start: float = None, end: float =
     return m
 
 
+@app.get("/api/environments/{env_id}/waits")
+def env_waits(env_id: int, request: Request, start: float = None, end: float = None, limit: int = 15):
+    """Top performance_schema wait events over a time range (average seconds waited per second = threads waiting)."""
+    u = auth.current_user(request)
+    own_env(env_id, u["id"])
+    end = end or now()
+    start = start or end - 3600
+    tot, n = {}, 0
+    for r in store.q("SELECT data FROM metrics WHERE env_id=? AND ts>=? AND ts<=?", (env_id, start, end)):
+        w = (store.uj(r["data"], {}) or {}).get("waits")
+        if not w:
+            continue
+        n += 1
+        for k, v in w.items():
+            tot[k] = tot.get(k, 0) + v
+    rows = sorted(tot.items(), key=lambda x: -x[1])[:limit]
+    allw = sum(tot.values()) or 1
+    return {"samples": n, "events": [{"event": k, "avg_threads": round(v / n, 4), "pct": round(100 * v / allw, 1)} for k, v in rows] if n else []}
+
+
 def _delete_session(sid):
     store.ex("DELETE FROM runs WHERE session_id=?", (sid,))
     store.ex("DELETE FROM recommendations WHERE session_id=?", (sid,))
@@ -550,7 +570,7 @@ def agent_metrics(body: dict = Body(...), key=Depends(auth.agent_key)):
     rows = []
     for s in (body.get("samples") or [])[:2000]:
         if isinstance(s, dict) and isinstance(s.get("ts"), (int, float)):
-            rows.append((e["id"], float(s["ts"]), store.j({k: s.get(k) for k in ("os", "db", "db_up", "db_error", "session_id", "run_id")})))
+            rows.append((e["id"], float(s["ts"]), store.j({k: s.get(k) for k in ("os", "db", "db_up", "db_error", "session_id", "run_id", "waits")})))
     c = store.conn()
     c.execute("BEGIN")
     c.executemany("INSERT OR REPLACE INTO metrics(env_id, ts, data) VALUES (?,?,?)", rows)

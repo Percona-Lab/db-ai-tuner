@@ -154,6 +154,13 @@ class Sampler:
             if self.prev_db:
                 out["db"] = self.dbs.rates(self.prev_db, now_db)
             self.prev_db = now_db
+            # performance_schema wait summary: one in-memory table read per sample
+            w, wt = self.dbs.db.waits(), time.time()
+            if w and getattr(self, "prev_waits", None) and wt > self.prev_waits[1]:
+                cls, top = wait_rates(self.prev_waits[0], w, wt - self.prev_waits[1])
+                out["db"].update(cls)
+                out["waits"] = top
+            self.prev_waits = (w, wt) if w else None
         except Exception as e:  # database down / restarting
             out["db_up"] = False
             out["db_error"] = str(e)[:200]
@@ -163,6 +170,37 @@ class Sampler:
             except Exception:
                 pass
         return out
+
+
+WAIT_CLASSES = (  # (prefix, class) - first match wins
+    ("wait/io/file/innodb/innodb_log_file", "redo_io"), ("wait/io/file/innodb/innodb_redo", "redo_io"),
+    ("wait/io/file/innodb/", "data_io"), ("wait/io/file/sql/binlog", "binlog_io"), ("wait/io/file/", "other_file_io"),
+    ("wait/io/table/", "table_io"), ("wait/lock/metadata/", "metadata_lock"), ("wait/lock/", "table_lock"),
+    ("wait/synch/", "sync"), ("wait/io/socket/", "socket"),
+)
+
+
+def wait_class(event):
+    for prefix, cls in WAIT_CLASSES:
+        if event.startswith(prefix):
+            return cls
+    return "other"
+
+
+def wait_rates(a, b, dt, top=10):
+    """Seconds waited per second (= average number of threads waiting) per class, and the top events."""
+    classes, events = {}, {}
+    for name, (cnt, tm) in b.items():
+        c0, t0 = a.get(name, (0, 0))
+        if tm < t0 or cnt < c0:  # counters truncated
+            continue
+        sec = (tm - t0) / 1e12 / dt
+        if sec <= 0:
+            continue
+        classes[wait_class(name)] = classes.get(wait_class(name), 0) + sec
+        events[name] = sec
+    return ({f"wait_{k}_s": round(v, 4) for k, v in classes.items()},
+            {k: round(v, 5) for k, v in sorted(events.items(), key=lambda x: -x[1])[:top]})
 
 
 # ---- measurement windows -------------------------------------------------------
@@ -188,8 +226,13 @@ def full_snapshot(db, device):
             d["SCHEMA_NAME"] = d.get("SCHEMA_NAME") or ""
             snap["digests"].append(d)
         snap["waits"] = db.waits()
+        snap["wait_coverage"] = db.wait_coverage()
     snap["data_bytes"], snap["tables"] = db.table_sizes()
     return snap
+
+
+def db_wait_coverage(snap):
+    return snap.get("wait_coverage")
 
 
 def _own_query(text):
@@ -332,9 +375,18 @@ def analyze_window(a, b, samples):
         for name, (cnt, tm) in b["waits"].items():
             c0, t0 = a["waits"].get(name, (0, 0))
             if tm - t0 > 0:
-                wd.append({"event": name, "count": cnt - c0, "time_s": round((tm - t0) / 1e12, 3)})
+                wd.append({"event": name, "class": wait_class(name), "count": cnt - c0, "time_s": round((tm - t0) / 1e12, 3),
+                           "avg_us": round((tm - t0) / 1e6 / max(cnt - c0, 1), 2)})
         wd.sort(key=lambda r: -r["time_s"])
+        total = sum(r["time_s"] for r in wd) or 1
+        for r in wd:
+            r["pct"] = round(100 * r["time_s"] / total, 1)
         inputs["top_waits"] = wd[:25]
+        by = {}
+        for r in wd:
+            by[r["class"]] = by.get(r["class"], 0) + r["time_s"]
+        inputs["wait_classes"] = {k: round(v, 3) for k, v in sorted(by.items(), key=lambda x: -x[1])}
+        inputs["wait_instruments"] = db_wait_coverage(b)
     # top statements in window
     if a.get("digests") is not None and b.get("digests"):
         prev = {(d["SCHEMA_NAME"], d["DIGEST"]): d for d in a["digests"]}

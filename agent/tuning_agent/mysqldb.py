@@ -152,6 +152,20 @@ class DB:
         except pymysql.MySQLError:
             return {}
 
+    def wait_coverage(self):
+        """How much of the wait instrumentation is on: {instruments, enabled, sync_enabled}."""
+        try:
+            r = self.rows("SELECT COUNT(*), SUM(ENABLED='YES' AND TIMED='YES'), SUM(NAME LIKE 'wait/synch/%%' AND ENABLED='YES' AND TIMED='YES') "
+                          "FROM performance_schema.setup_instruments WHERE NAME LIKE 'wait/%%'")[0]
+            return {"instruments": int(r[0] or 0), "enabled": int(r[1] or 0), "sync_enabled": int(r[2] or 0)}
+        except pymysql.MySQLError:
+            return None
+
+    def set_sync_waits(self, on):
+        """Runtime only (lost at restart): mutex / rwlock / condition wait instruments. Costs some throughput."""
+        v = "YES" if on else "NO"
+        return self.execute(f"UPDATE performance_schema.setup_instruments SET ENABLED='{v}', TIMED='{v}' WHERE NAME LIKE 'wait/synch/%%'")
+
     def variables_meta(self):
         """{name: {source, path}} - where each global value came from."""
         out = {}

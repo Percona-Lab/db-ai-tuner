@@ -1171,6 +1171,25 @@ def _queued_experiments(c, sess):
         return []
 
 
+def cmd_diag(a):
+    """Diagnostic instrumentation switches (runtime only, reset by a mysqld restart)."""
+    c = Ctx(need_server=False)
+    if a.what == "waits":
+        if a.state == "status":
+            emit(c.db.wait_coverage() or {}, json.dumps(c.db.wait_coverage()))
+            return
+        sess = c.state.get("session")
+        if sess and not a.force:
+            raise Fail(f"session #{sess['id']} is active: changing instrumentation changes performance and would skew its runs "
+                       "(pass --force to do it anyway)")
+        c.db.set_sync_waits(a.state == "on")
+        cov = c.db.wait_coverage() or {}
+        emit({"ok": True, "coverage": cov},
+             f"mutex/rwlock/condition wait instruments {'enabled' if a.state == 'on' else 'disabled'} until the next restart: "
+             f"{cov.get('enabled')} of {cov.get('instruments')} wait instruments timed ({cov.get('sync_enabled')} synchronisation)."
+             + (" Expect a few % lower throughput while on." if a.state == "on" else ""))
+
+
 def cmd_study(a):
     c = Ctx()
     if a.action == "create":
@@ -1590,6 +1609,12 @@ def main(argv=None):
                                    "sessions across environments (hardware scaling, minimum hardware for a target)")
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_session)
+
+    s = sp.add_parser("diag", help="diagnostic instrumentation (runtime only)")
+    s.add_argument("what", choices=["waits"])
+    s.add_argument("state", choices=["on", "off", "status"], help="waits on = also time mutex/rwlock/condition waits (costs a few %%)")
+    s.add_argument("--force", action="store_true")
+    s.set_defaults(fn=cmd_diag)
 
     s = sp.add_parser("study", help="studies: compare tuning sessions across environments")
     s.add_argument("action", choices=["create", "list", "show"])
