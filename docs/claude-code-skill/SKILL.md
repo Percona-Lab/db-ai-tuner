@@ -38,6 +38,10 @@ error (message in `error`), 3 = server/API error.
    the goal (`tps`, `nopm`, `latency`) becomes the goal value.
 7. `tuning-agent recommend --json` — diagnosis + ranked items (`id`, `changes`, `rationale`,
    `evidence`, `risk`, `restart`, `impact`, `confidence`) and `next` (suggested experiment).
+   Add `--llm` to also ask the account's configured LLM (OpenRouter, set in the web app) for knob ideas. Without it, the
+   model is consulted automatically only when it adds value (rule-based experiments exhausted, or no clear bottleneck);
+   its suggestions are validated and appear with an "LLM" badge and ids `llm-...`. When you are the LLM driving the agent,
+   you usually do not need this: propose your own ideas with `apply --set var=value --reason "..."`.
 8. `tuning-agent apply --next` or `--rec ID` or `--set var=value --reason "why"` (your own idea;
    always give a reason, it is shown in the web UI). `--unset var` stops managing a variable.
 9. Measure again with the same duration and load. The run is compared with the MEAN of its parent
