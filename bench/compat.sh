@@ -12,6 +12,10 @@ apt-get purge -yq mysql-common mariadb-common 2>/dev/null
 update-alternatives --remove-all my.cnf 2>/dev/null || true
 apt-get autoremove -yq
 rm -f /usr/local/bin/mysql /usr/local/bin/mysqladmin
+export DEBIAN_FRONTEND=noninteractive
+# never stop at a dpkg config-file prompt (e.g. an AppArmor profile left by the previous flavour)
+echo 'Dpkg::Options { "--force-confnew"; "--force-confdef"; }' > /etc/apt/apt.conf.d/90compat-noninteractive
+rm -f /etc/apparmor.d/usr.sbin.mysqld /etc/apparmor.d/usr.sbin.mariadbd
 rm -rf /var/lib/mysql /var/lib/mysql_base /etc/mysql /var/log/mysql /etc/apt/sources.list.d/mysql*.list /etc/apt/sources.list.d/mariadb*.list
 for f in /etc/apt/sources.list.d/percona-*.list; do [ -e "$f" ] && percona-release disable all >/dev/null 2>&1; break; done
 case $F in
