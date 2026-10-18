@@ -18,7 +18,9 @@ def current(db):
         if str(db.scalar("SELECT @@performance_schema")) not in ("1", "ON"):
             return {}
         on = db.scalar("SELECT ENABLED FROM performance_schema.setup_consumers WHERE NAME='events_statements_history'")
-        mem = db.scalar("SELECT COUNT(*) FROM performance_schema.setup_instruments WHERE NAME LIKE 'memory/%%' AND ENABLED='YES'")
+        # memory/performance_schema/* instruments are built in and cannot be disabled
+        mem = db.scalar("SELECT COUNT(*) FROM performance_schema.setup_instruments WHERE NAME LIKE 'memory/%%' "
+                        "AND NAME NOT LIKE 'memory/performance_schema/%%' AND ENABLED='YES'")
     except Exception:
         return {}
     return {VAR: "lite" if on == "NO" and not int(mem or 0) else "full"}
