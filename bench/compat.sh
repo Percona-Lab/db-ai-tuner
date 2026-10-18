@@ -8,6 +8,8 @@ export DEBIAN_FRONTEND=noninteractive
 systemctl stop tuning-agent
 for s in mysql mysqld mariadb; do systemctl stop $s 2>/dev/null; done
 apt-get purge -yq 'percona-server-*' 'mysql-server*' 'mysql-community-*' 'mysql-client*' 'mariadb-*' 'libmariadb3' 'galera-*' 2>/dev/null
+apt-get purge -yq mysql-common mariadb-common 2>/dev/null
+update-alternatives --remove-all my.cnf 2>/dev/null || true
 apt-get autoremove -yq
 rm -f /usr/local/bin/mysql /usr/local/bin/mysqladmin
 rm -rf /var/lib/mysql /var/lib/mysql_base /etc/mysql /var/log/mysql /etc/apt/sources.list.d/mysql*.list /etc/apt/sources.list.d/mariadb*.list
