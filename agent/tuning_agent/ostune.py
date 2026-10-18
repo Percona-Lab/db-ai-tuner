@@ -198,7 +198,11 @@ def current(datadir, device, service, fs_device=None):
     out["os:malloc"] = m.group(1).strip() if m else ("jemalloc" if "jemalloc" in dropin else "glibc")
     out["os:hugepages"] = _read("/proc/sys/vm/nr_hugepages")
     swaps = _read("/proc/swaps")
-    out["os:swapfile"] = f"{os.path.getsize(SWAPFILE) // 2 ** 20}M" if SWAPFILE in swaps and os.path.exists(SWAPFILE) else "0"
+    if SWAPFILE in swaps and os.path.exists(SWAPFILE):
+        mb = os.path.getsize(SWAPFILE) // 2 ** 20
+        out["os:swapfile"] = f"{mb // 1024}G" if mb % 1024 == 0 else f"{mb}M"
+    else:
+        out["os:swapfile"] = "0"
     if os.path.exists("/sys/module/zswap/parameters/enabled"):
         on = _read("/sys/module/zswap/parameters/enabled") in ("Y", "1")
         out["os:zswap"] = f"on:{_read('/sys/module/zswap/parameters/compressor')}" if on else "off"

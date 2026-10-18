@@ -1418,6 +1418,7 @@ def cmd_daemon(a):
     device = None
     sampler = None
     last_prune = last_rg = 0
+    rg_err = None
     log(f"tuning-agent {__version__} daemon: sampling every {interval:.0f}s, server {c.cfg['server']}")
     while not stop["flag"]:
         t0 = time.time()
@@ -1433,8 +1434,13 @@ def cmd_daemon(a):
             if "rg:innodb_bg_cpus" in (st.get("managed") or {}) and time.time() - last_rg > 60:
                 last_rg = time.time()
                 from . import resgroups
-                if resgroups.ensure(c.db):  # mysqld was restarted outside the agent (e.g. a benchmark reset)
-                    log("re-assigned InnoDB background threads to their resource group")
+                try:
+                    if resgroups.ensure(c.db):  # mysqld was restarted outside the agent (e.g. a benchmark reset)
+                        log("re-assigned InnoDB background threads to their resource group")
+                except Exception as e:  # never let it break sampling
+                    if str(e) != rg_err:
+                        log(f"resource group: {e}")
+                    rg_err = str(e)
             s["session_id"] = (st.get("session") or {}).get("id")
             s["run_id"] = (st.get("measurement") or {}).get("run_id")
             store.add(s)

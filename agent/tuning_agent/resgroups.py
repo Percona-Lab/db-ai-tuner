@@ -51,7 +51,17 @@ def apply(db, value):
 
 
 def ensure(db):
-    """(Re)assign InnoDB background threads to the group; returns how many were moved."""
+    """(Re)assign InnoDB background threads to the group; returns how many were moved.
+    mysqld disables a group at startup when its CPUs are not all usable (e.g. the process affinity was narrowed)."""
+    row = db.dict_rows(f"SELECT RESOURCE_GROUP_ENABLED e, VCPU_IDS v FROM information_schema.RESOURCE_GROUPS WHERE RESOURCE_GROUP_NAME='{GROUP}'")
+    if not row:
+        return 0
+    if not int(row[0]["e"]):
+        try:
+            db.execute(f"ALTER RESOURCE GROUP {GROUP} ENABLE")
+        except Exception as e:
+            raise RuntimeError(f"resource group {GROUP} (CPUs {row[0]['v']}) is disabled and cannot be enabled: {e}. "
+                               "Its CPUs must be within the CPUs mysqld may use (os:cpu_affinity).")
     ids = _bg_threads(db)
     if not ids:
         return 0
