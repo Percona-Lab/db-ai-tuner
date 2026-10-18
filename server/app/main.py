@@ -502,6 +502,7 @@ def agent_experience(workload: str = None, cpus: int = None, exclude_session: in
         if cpus and r["cpus"] and cpu_class(r["cpus"]) != cpu_class(cpus):
             continue
         ids = {c.get("source", "")[4:] for c in (store.uj(r["changes"], []) or []) if str(c.get("source", "")).startswith("rec:")}
+        ids = {i for i in ids if not i.startswith(("revert", "rollback"))}
         delta = (store.uj(r["evaluation"], {}) or {}).get("goal_delta_pct")
         for rid in ids:
             e = out.setdefault(rid, {"n": 0, "wins": 0, "losses": 0, "neutral": 0, "deltas": []})

@@ -78,6 +78,23 @@ def _cv(vals):
     return 100.0 * sd / abs(m)
 
 
+PROBE_KEYS = ("probe_cpu_events_s", "probe_read_iops", "probe_write_iops", "probe_fsync_per_s")
+PROBE_SHIFT_PCT = 15.0
+
+
+def environment_shift(run_summary, noise):
+    """Compare a run's environment probe with the calibration runs' probe means."""
+    ref = (noise or {}).get("probe") or {}
+    out = {}
+    for k in PROBE_KEYS:
+        a, b = ref.get(k), (run_summary or {}).get(k)
+        if a and b:
+            d = round(100.0 * (b - a) / a, 1)
+            if abs(d) > PROBE_SHIFT_PCT:
+                out[k[6:]] = d
+    return out
+
+
 def calibrate(runs):
     """Noise thresholds from repeated runs of one configuration."""
     goal_vals = [r["goal_value"] for r in runs if r.get("goal_value") is not None]
@@ -90,6 +107,12 @@ def calibrate(runs):
         "goal_range_pct": round(100.0 * (max(goal_vals) - min(goal_vals)) / abs(m), 2),
         "noise_pct": round(max(MIN_GOAL_NOISE, NOISE_K * cv), 2), "k": NOISE_K, "efficiency": {},
     }
+    probe = {}
+    for key in PROBE_KEYS:
+        vals = [r["summary"][key] for r in runs if (r.get("summary") or {}).get(key)]
+        if vals:
+            probe[key] = round(_mean(vals), 2)
+    out["probe"] = probe
     for key in EFFICIENCY:
         vals = [r["summary"][key] for r in runs if (r.get("summary") or {}).get(key) is not None]
         c = _cv(vals)
@@ -140,6 +163,15 @@ def relevant_resources(*summaries):
 
 
 def verdict(run, history, goal, noise):
+    v, d = _verdict(run, history, goal, noise)
+    shift = environment_shift(run.get("summary"), noise)
+    if shift:
+        d = dict(d)
+        d["environment_shift"] = shift
+    return v, d
+
+
+def _verdict(run, history, goal, noise):
     """run: the new run dict (managed, goal_value, summary); history: earlier runs of the session.
     noise: session noise dict (calibration) or None."""
     if not history:

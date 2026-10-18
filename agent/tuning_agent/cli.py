@@ -471,6 +471,8 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     summary, inputs = collector.analyze_window(a_snap, b_snap, samples)
     if extra_inputs:
         inputs.update(extra_inputs)
+        for k, v in (extra_inputs.get("probe") or {}).items():
+            summary["probe_" + k] = v
     summary["tradeoffs"] = tradeoffs_in(m["managed"])
     external = external or {}
     gv, src = _goal_value(sess["goal"], summary, external, goal_value)
@@ -593,6 +595,13 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         if rc != 0:
             raise Fail(f"reset command failed ({rc}): {out[-500:]}")
         c.db.connect(retries=30, delay=2)
+    env_probe = {}
+    if prof.probe:
+        log("environment probe (CPU, storage) ...")
+        try:
+            env_probe = bench.probe(c.datadir(), log)
+        except Exception as e:  # never fail a run because of the probe
+            log(f"probe failed: {e}")
     log(f"benchmark: {prof.name}")
     r = bench.Running(prof.run, logfile)
     try:
@@ -644,7 +653,7 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         else:
             goal_value = metrics[prof.goal_metric] * prof.goal_scale
             goal_src = f"benchmark:{prof.goal_metric}" + (f" x{prof.goal_scale:g}" if prof.goal_scale != 1 else "")
-    extra = {"bench": {**prof.describe(), "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:]}}
+    extra = {"bench": {**prof.describe(), "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:]}, "probe": env_probe}
     if goal_value is not None and sess.get("goal_metric") != prof.goal_metric:
         sess["goal_metric"] = prof.goal_metric
         c.state.set("session", sess)
@@ -947,6 +956,12 @@ def cmd_autotune(a):
         run, _ = _bench_run(c, prof, f"{nxt}")
         measured += 1
         log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
+        shift = (run.get("evaluation") or {}).get("environment_shift")
+        if shift and run["verdict"] in ("improved", "regressed", "efficiency-gain", "efficiency-loss"):
+            log(f"   environment probe shifted ({shift}): measuring the same configuration again before deciding")
+            run, _ = _bench_run(c, prof, f"{nxt} (re-measure: environment shift)")
+            measured += 1
+            log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
     def goto(target, why):
         run = next(r for r in c.session()["runs"] if r["seq"] == target["seq"])
         cur = {k: v["value"] for k, v in c.state.get("managed", {}).items()}

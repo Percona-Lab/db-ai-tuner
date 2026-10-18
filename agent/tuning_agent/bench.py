@@ -40,6 +40,7 @@ class Profile:
         self.goal_metric = b.get("goal_metric")
         self.goal_scale = float(b.get("goal_scale", "1"))
         self.metrics = dict(cp["metrics"]) if cp.has_section("metrics") else {}
+        self.probe = b.get("probe", "true").lower() == "true"
 
     def describe(self):
         return {"name": self.name, "profile": self.path, "reset": self.reset, "run": self.run, "warmup": self.warmup,
@@ -115,3 +116,41 @@ class Running:
                 return f.read()
         except OSError:
             return ""
+
+
+# ---- environment probe ------------------------------------------------------------------
+def _run_json(cmd, timeout=60):
+    import json as _json
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    return _json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip().startswith("{") else None
+
+
+def probe(datadir, log=print):
+    """~20 s of micro-benchmarks with the database idle: single-thread CPU speed and storage IOPS / fsync rate on the
+    data filesystem. Comparing probes between runs separates "the VM got slower" from "the configuration got worse"."""
+    import shutil
+    out = {}
+    if shutil.which("sysbench"):
+        r = subprocess.run(["sysbench", "cpu", "--threads=1", "--time=5", "run"], capture_output=True, text=True, timeout=30)
+        m = re.search(r"events per second:\s+([\d.]+)", r.stdout)
+        if m:
+            out["cpu_events_s"] = float(m.group(1))
+    if not shutil.which("fio") and shutil.which("apt-get"):
+        subprocess.run(["apt-get", "install", "-yq", "fio"], capture_output=True, timeout=300)
+    if shutil.which("fio"):
+        f = os.path.join(datadir, ".tuning-agent-probe")
+        base = ["fio", "--name=probe", f"--filename={f}", "--size=256M", "--direct=1", "--time_based", "--runtime=5",
+                "--output-format=json", "--ioengine=libaio"]
+        try:
+            for name, extra, key in (("read_iops", ["--rw=randread", "--bs=4k", "--iodepth=16"], "read"),
+                                     ("write_iops", ["--rw=randwrite", "--bs=4k", "--iodepth=16"], "write"),
+                                     ("fsync_per_s", ["--rw=write", "--bs=4k", "--iodepth=1", "--fsync=1"], "write")):
+                j = _run_json(base + extra)
+                if j:
+                    out[name] = round(j["jobs"][0][key]["iops"], 1)
+        finally:
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+    return out
