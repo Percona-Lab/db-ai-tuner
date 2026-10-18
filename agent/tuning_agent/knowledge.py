@@ -253,6 +253,18 @@ KB["binlog_cache_size"] = dict(kind="size", dynamic=True, risk="none", cat="memo
                                desc="Per-session binlog cache.")
 
 
+# ideas from docs/research/mysql-tuning-ideas.md
+KB.setdefault("innodb_max_purge_lag", dict(kind="int", dynamic=True, risk="none", cat="purge",
+              desc="History list length above which DML is delayed so purge can catch up (0 = never)."))
+KB.setdefault("innodb_max_purge_lag_delay", dict(kind="int", dynamic=True, risk="none", cat="purge",
+              desc="Maximum delay in microseconds imposed by innodb_max_purge_lag."))
+KB.setdefault("binlog_transaction_dependency_history_size", dict(kind="int", dynamic=True, risk="none", cat="binlog",
+              desc="Rows kept in the WRITESET dependency history for parallel replication."))
+TRADEOFFS["innodb_flush_method"] = (lambda v: str(v).upper() == "O_DIRECT_NO_FSYNC", "durability",
+                                    "Skips fsync() after data file writes; safe only when the filesystem persists metadata on its own "
+                                    "(XFS/ext4 with O_DIRECT); a crash on other setups can lose file-size changes.", "O_DIRECT_NO_FSYNC")
+
+
 # operating-system pseudo-variables (see ostune.py)
 from .ostune import OS_KB  # noqa: E402
 for _k, (_desc, _restart, _cat) in OS_KB.items():

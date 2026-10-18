@@ -364,6 +364,27 @@ def recommend(ctx):
         b.add("o-direct", "Use O_DIRECT", [("innodb_flush_method", "O_DIRECT")],
               "Avoid double buffering data pages in the OS cache.", {"innodb_flush_method": v.get("innodb_flush_method")}, impact=2, confidence=3)
 
+    # ---------------- ideas from blogs / benchmarks (docs/research/mysql-tuning-ideas.md) ----------------
+    hll = s.get("history_list_length_max") or 0
+    if have_run and hll > 200000 and "innodb_max_purge_lag" in v and _int(v, "innodb_max_purge_lag", 0) == 0 and wtype in ("oltp-write", "mixed"):
+        b.add("purge-lag", "Throttle DML when purge falls behind", [("innodb_max_purge_lag", str(max(200000, int(hll * 0.8)))),
+                                                                     ("innodb_max_purge_lag_delay", "1000000")],
+              f"History list peaked at {hll:,.0f} undo records: purge cannot keep up, so reads walk ever longer version chains. "
+              "A purge lag limit slows writers slightly to keep history bounded (Percona / Mark Callaghan insert-benchmark advice). "
+              "Experiment: it trades write throughput for stable read latency.", {"history_list_length_max": hll}, impact=1, confidence=1)
+    if have_run and v.get("log_bin") == "ON" and _int(v, "binlog_transaction_dependency_history_size", 25000) > 1000 and (s.get("cpu_busy") or 0) >= 80 \
+            and wtype in ("oltp-write", "mixed") and "binlog_transaction_dependency_history_size" in v:
+        b.add("writeset-history", "Smaller WRITESET dependency history", [("binlog_transaction_dependency_history_size", "1000")],
+              "Every commit hashes its rows into the WRITESET history used by parallel replicas; on CPU-bound write loads a smaller history "
+              "cut that cost (Percona measured up to 17% on 8.4). Replicas may apply less in parallel. Experiment.",
+              {"cpu_busy": busy}, impact=1, confidence=1)
+    if policy == "benchmark" and have_run and v.get("innodb_flush_method") == "O_DIRECT" and flavor != "mariadb" \
+            and str(hw.get("filesystem") or "") in ("ext4", "xfs") and (s.get("data_fsyncs") or 0) > 50:
+        b.add("o-direct-no-fsync", "Skip fsync after O_DIRECT data writes (TRADE-OFF)", [("innodb_flush_method", "O_DIRECT_NO_FSYNC")],
+              f"{s.get('data_fsyncs'):.0f} data-file fsyncs/s. With O_DIRECT the data is already on the device; the extra fsync only "
+              "persists file metadata, which XFS/ext4 handle on their own in most cases. Durability trade-off; needs a restart.",
+              {"data_fsyncs": s.get("data_fsyncs"), "filesystem": hw.get("filesystem")}, impact=1, confidence=1)
+
     # ---------------- best practices --------------------------------------------
     # Settings that are not the default for compatibility reasons but are generally better. MySQL 8.4 changed these
     # defaults ("new defaults for InnoDB", WL#15660); older servers keep the 8.0 values. Applied as one bundle, kept
@@ -377,6 +398,7 @@ def recommend(ctx):
                 ("innodb_use_fdatasync", "ON", "fdatasync() skips needless metadata flushes (MySQL 8.4 default: ON)."),
                 ("innodb_doublewrite_pages", "128", "Larger doublewrite batches (MySQL 8.4 default: 128)."),
                 ("innodb_buffer_pool_in_core_file", "OFF", "Keeps the buffer pool out of core dumps (MySQL 8.4 default: OFF)."),
+                ("innodb_page_cleaners", str(_int(v, "innodb_buffer_pool_instances", 1)), "One page cleaner per buffer pool instance (MySQL 8.4 default)."),
         ):
             if var in v:
                 b.add(f"practice-{var}", why.split(" (")[0], [(var, val)], why, {var: v.get(var)}, impact=1, confidence=2)
@@ -819,6 +841,11 @@ def recommend(ctx):
     if have_run and diag_types & {"io", "redo"} and ssd:
         sweep("sweep-io-capacity", "Sweep the background flushing budget", "innodb_io_capacity", [str(ioc // 2), str(ioc * 2), str(ioc * 4)],
               "I/O or redo pressure: find the flushing budget the storage sustains.", {"innodb_io_capacity": ioc, "disk_util": s.get("disk_util")})
+    if have_run and "cpu-spin" in diag_types and "innodb_spin_wait_delay" in v:
+        sweep("sweep-spin-wait-delay", "Sweep the spin-wait delay", "innodb_spin_wait_delay", ["2", "12", "24"],
+              "The CPU profile shows threads spinning on InnoDB latches. The pause between spin rounds trades CPU for wake-up latency; "
+              "its best value depends on the CPU (PAUSE instruction cost differs a lot between generations - MySQL bug 116463).",
+              {"cpu_profile_categories": ((inp.get("cpu_profile") or {}).get("categories") or {})}, impact=1)
     if have_run and diag_types & {"concurrency", "cpu-pressure", "sched-delay"} and "innodb_thread_concurrency" in v:
         sweep("sweep-thread-concurrency", "Sweep InnoDB thread concurrency", "innodb_thread_concurrency", [str(cpus * 2), str(cpus * 4), "0"],
               f"{s.get('threads_running_avg', 0):.0f} running threads on {cpus} CPUs: measure admission limits.",

@@ -305,6 +305,17 @@ def test_steal_flags_and_invalidates():
     assert engine.best_config(h, "tps", 2.0)["managed"] == {}
 
 
+def test_research_rules():
+    VARS.update({"innodb_max_purge_lag": "0", "innodb_spin_wait_delay": "6"})
+    try:
+        summ = dict(OLTP[0], history_list_length_max=900000)
+        it = ids(run(summ, dict(OLTP[1], cpu_profile={"categories": {"spin / mutex wait": 18}}), policy="benchmark"))
+        assert "purge-lag" in it and "sweep-spin-wait-delay" in it, sorted(it)
+    finally:
+        for k in ("innodb_max_purge_lag", "innodb_spin_wait_delay"):
+            VARS.pop(k)
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)
