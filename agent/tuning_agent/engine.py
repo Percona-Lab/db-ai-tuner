@@ -331,6 +331,28 @@ def recommend(ctx):
         b.add("o-direct", "Use O_DIRECT", [("innodb_flush_method", "O_DIRECT")],
               "Avoid double buffering data pages in the OS cache.", {"innodb_flush_method": v.get("innodb_flush_method")}, impact=2, confidence=3)
 
+    # ---------------- best practices --------------------------------------------
+    # Settings that are not the default for compatibility reasons but are generally better. MySQL 8.4 changed these
+    # defaults ("new defaults for InnoDB", WL#15660); older servers keep the 8.0 values. Applied as one bundle, kept
+    # unless they regress (see practice_bundle()).
+    ver = str(v.get("version") or "")
+    old_mysql = flavor != "mariadb" and ver[:3] in ("8.0", "5.7")
+    if old_mysql:
+        for var, val, why in (
+                ("innodb_change_buffering", "none", "Change buffering rarely pays off on SSD and adds merge work (MySQL 8.4 default: none)."),
+                ("innodb_adaptive_hash_index", "OFF", "The adaptive hash index causes latch contention under concurrency (MySQL 8.4 default: OFF)."),
+                ("innodb_use_fdatasync", "ON", "fdatasync() skips needless metadata flushes (MySQL 8.4 default: ON)."),
+                ("innodb_doublewrite_pages", "128", "Larger doublewrite batches (MySQL 8.4 default: 128)."),
+                ("innodb_buffer_pool_in_core_file", "OFF", "Keeps the buffer pool out of core dumps (MySQL 8.4 default: OFF)."),
+        ):
+            if var in v:
+                b.add(f"practice-{var}", why.split(" (")[0], [(var, val)], why, {var: v.get(var)}, impact=1, confidence=2)
+    if flavor == "mariadb" and v.get("innodb_autoinc_lock_mode") == "1" and (v.get("log_bin") != "ON" or v.get("binlog_format") == "ROW"):
+        b.add("practice-autoinc-lock", "Interleaved auto-increment locking", [("innodb_autoinc_lock_mode", "2")],
+              "Mode 2 lets concurrent inserts allocate auto-increment values without a table-level lock; safe with row-based "
+              "binary logging (MySQL 8.0+ default).", {"innodb_autoinc_lock_mode": v.get("innodb_autoinc_lock_mode"), "binlog_format": v.get("binlog_format")},
+              impact=1, confidence=2)
+
     # ---------------- concurrency (experiments) ----------------------------------
     busy = s.get("cpu_busy") or 0
     tr = s.get("threads_running_avg") or 0
@@ -873,6 +895,67 @@ def config_scores(history, goal="tps"):
 
 KEEP = ("improved", "efficiency-gain", "reference")
 
+# rules whose changes are best practices: applied as a bundle and kept unless they regress
+PRACTICE_IDS = {"flush-neighbors", "o-direct", "os-swappiness", "os-thp-off", "os-scheduler", "os-noatime", "os-numa", "os-aio", "os-governor"}
+BUNDLE = "best-practices"
+
+
+def is_practice_run(r):
+    return str(r.get("label") or "").startswith(BUNDLE)
+
+
+def _practice_vars(r):
+    return sorted({c["variable"] for c in r.get("changes") or [] if str(c.get("source") or "").startswith("rec:" + BUNDLE)})
+
+
+def accepted_practices(history):
+    """Variables of practice runs that did not regress: they stay."""
+    return {v for r in history if is_practice_run(r) and r.get("verdict") not in ("regressed", "efficiency-loss") for v in _practice_vars(r)}
+
+
+def practice_bundle(items, history):
+    """Replace individual best-practice items with one bundle. A bundle that regresses is split in halves (bisection)
+    until the offending setting is found; that setting is then excluded, the others are kept."""
+    prac = [i for i in items if (i["id"] in PRACTICE_IDS or i["id"].startswith("practice-")) and i["kind"] == "config"
+            and i["safety"] == "safe" and i.get("confidence", 0) > 0]
+    if not prac:
+        return items
+    rest = [i for i in items if i not in prac]
+    changes = {c["variable"]: (c, i) for i in prac for c in i["changes"]}
+    runs = [r for r in history if is_practice_run(r)]
+    bad = [r for r in runs if r.get("verdict") in ("regressed", "efficiency-loss")]
+    tested = {tuple(_practice_vars(r)) for r in runs}
+    excluded, pending = set(), None
+    for r in bad:
+        vs = _practice_vars(r)
+        if len(vs) == 1:
+            excluded.update(vs)
+            continue
+        halves = (vs[:len(vs) // 2], vs[len(vs) // 2:])
+        excluded.update(vs)  # suspects until their half passes
+        for h in halves:
+            if tuple(h) not in tested:
+                pending = pending or [x for x in h if x in changes]
+    excluded -= accepted_practices(history)
+    if pending:
+        chosen, bid, title = pending, BUNDLE + "-bisect", "Re-test half of the regressed best-practice bundle"
+        why = "The best-practice bundle regressed; measuring half of it finds the setting responsible and keeps the others."
+    else:
+        chosen, bid, title = [k for k in changes if k not in excluded], BUNDLE, "Apply best-practice settings"
+        why = ("Settings that are not the default (mostly for compatibility) but are generally better for database servers. "
+               "Each alone is usually within the noise, so they are applied together and kept unless the bundle measurably "
+               "regresses the goal or efficiency; a regressing bundle is bisected.")
+    if not chosen:
+        return rest
+    src = [changes[k][1] for k in chosen]
+    bundle = {"id": bid, "title": title, "kind": "config", "changes": [changes[k][0] for k in chosen],
+              "rationale": why + " " + " ".join(f"{changes[k][0]['variable']}: {changes[k][1]['rationale']}" for k in chosen)[:3000],
+              "safety": "safe", "tradeoffs": [], "evidence": {"settings": len(chosen), "rules": sorted({i["id"] for i in src}),
+                                                             "excluded_after_regression": sorted(excluded) or None},
+              "impact": 2, "confidence": 3, "risk": max((i.get("risk", "none") for i in src), key=["none", "low", "compat", "observability", "durability"].index),
+              "restart": any(i.get("restart") for i in src), "goals": ["tps", "latency"], "priority": True, "practice": True}
+    return [bundle] + rest
+
 
 def best_config(history, goal="tps", noise=2.0):
     """Highest mean wins only when it beats the others beyond noise; within noise prefer configurations that were
@@ -882,9 +965,12 @@ def best_config(history, goal="tps", noise=2.0):
         return None
     top = scores[0]["mean"]
     tied = [c for c in scores if abs(c["mean"] - top) / abs(top) * 100 <= noise]
+    acc = accepted_practices(history)
     for c in tied:
-        c["kept"] = any(r.get("verdict") in KEEP for r in history if config_key(r.get("managed")) == c["key"])
-    tied.sort(key=lambda c: (not c["kept"], -c["n"], c["mean"] if goal == "latency" else -c["mean"]))
+        runs = [r for r in history if config_key(r.get("managed")) == c["key"]]
+        c["kept"] = any(r.get("verdict") in KEEP or (is_practice_run(r) and r.get("verdict") == "neutral") for r in runs)
+        c["practices"] = len(acc & set(c["managed"] or {}))
+    tied.sort(key=lambda c: (not c["kept"], -c["practices"], -c["n"], c["mean"] if goal == "latency" else -c["mean"]))
     return tied[0]
 
 
@@ -915,7 +1001,8 @@ def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
     first_eval = next((r.get("evaluation") for r in cur_runs if (r.get("evaluation") or {}).get("parent_runs")), None)
     verdicts = {r.get("verdict") for r in cur_runs}
     just_measured = bool(history) and config_key(history[-1].get("managed")) == cur_key
-    if just_measured and first_eval and not verdicts & {"improved", "efficiency-gain"} and verdicts & {"neutral", "efficiency-loss"}:
+    practice_kept = any(is_practice_run(r) for r in cur_runs) and "efficiency-loss" not in verdicts
+    if just_measured and first_eval and not practice_kept and not verdicts & {"improved", "efficiency-gain"} and verdicts & {"neutral", "efficiency-loss"}:
         parent_run = next((r for r in history if r["seq"] == first_eval["parent_runs"][-1]), None)
         if parent_run is not None:
             items.append(_revert_item(f"revert-to-run-{parent_run['seq']}", "Revert the last experiment: no measurable benefit",
@@ -975,6 +1062,7 @@ def run_engine(ctx):
     ctx["diagnosis"] = diagnose(ctx) if ctx.get("summary") else []
     items = recommend(ctx)
     items = apply_history(items, ctx.get("history") or [])
+    items = practice_bundle(items, ctx.get("history") or [])
     items = items + per_query_hints(ctx.get("history") or [], ctx["variables"])
     items = revert_suggestions(ctx.get("history") or [], ctx["variables"], ctx.get("goal", "tps"),
                                float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0), ctx.get("managed")) + items

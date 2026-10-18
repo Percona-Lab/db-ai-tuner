@@ -88,8 +88,11 @@ def test_olap_rules():
 
 def test_os_rules():
     it = ids(run(*OLTP, policy="safe"))
-    for k in ("os-swappiness", "os-thp-off", "os-scheduler", "os-noatime", "os-dirty-writeback", "os-jemalloc", "os-autogroup", "os-aio"):
+    for k in ("os-dirty-writeback", "os-jemalloc", "os-autogroup"):
         assert k in it, (k, list(it))
+    # best practices are bundled
+    assert {"os-swappiness", "os-thp-off", "os-scheduler", "os-noatime", "os-aio"} <= set(it["best-practices"]["evidence"]["rules"])
+    assert it["best-practices"]["priority"] and not {"os-swappiness", "os-noatime"} & set(it)
     assert it["os-nobarrier"]["kind"] == "advice" and it["os-nobarrier"]["safety"] == "trade-off"
     assert "os-hugepages" not in it  # only proposed on >= 16 GB hosts with >= 8 GB buffer pool
     assert it["os-jemalloc"]["restart"]
@@ -245,6 +248,36 @@ def test_bp_overcommit_with_cold_memory():
     assert "bp-overcommit" in it, sorted(it)
     ch = dict((c["variable"], c["proposed"]) for c in it["bp-overcommit"]["changes"])
     assert ch.get("os:swapfile") == "1G" and "innodb_buffer_pool_size" in ch
+
+
+def test_practice_bundle_bisect_and_keep():
+    from tuning_agent.engine import practice_bundle, best_config, revert_suggestions
+    items = [{"id": f"practice-{x}", "kind": "config", "safety": "safe", "confidence": 2, "risk": "low", "restart": False,
+              "changes": [{"variable": x, "current": "a", "proposed": "b"}], "rationale": x} for x in ("v1", "v2", "v3", "v4")]
+    def run_(seq, label, vs, verdict, managed, goal=100):
+        return {"seq": seq, "label": label, "verdict": verdict, "goal_value": goal, "managed": managed,
+                "changes": [{"variable": x, "new": "b", "source": "rec:" + label} for x in vs]}
+    base = {"seq": 1, "label": "calibration", "verdict": "reference", "goal_value": 100, "managed": {}, "changes": []}
+    first = practice_bundle(items, [base])
+    assert first[0]["id"] == "best-practices" and len(first[0]["changes"]) == 4
+    # neutral bundle is kept: no within-noise revert, and the best config is the one with the practices
+    allb = {x: "b" for x in ("v1", "v2", "v3", "v4")}
+    h = [base, dict(base, seq=2), dict(base, seq=3), run_(4, "best-practices", allb, "neutral", allb, 99.5)]
+    assert not revert_suggestions(h, allb, "tps", 2.0, allb)
+    assert best_config(h, "tps", 2.0)["managed"] == allb
+    # regressed bundle: bisect, then exclude the culprit and keep the rest
+    h = [base, run_(2, "best-practices", allb, "regressed", allb, 90)]
+    nxt = practice_bundle(items, h)[0]
+    assert nxt["id"] == "best-practices-bisect" and [c["variable"] for c in nxt["changes"]] == ["v1", "v2"]
+    h.append(run_(3, "best-practices-bisect", ["v1", "v2"], "neutral", {"v1": "b", "v2": "b"}))
+    nxt = practice_bundle(items, h)[0]
+    assert [c["variable"] for c in nxt["changes"]] == ["v3", "v4"]
+    h.append(run_(4, "best-practices-bisect", ["v3", "v4"], "regressed", {"v3": "b", "v4": "b"}, 90))
+    nxt = practice_bundle(items, h)[0]
+    assert [c["variable"] for c in nxt["changes"]] == ["v3"]
+    h.append(run_(5, "best-practices-bisect", ["v3"], "neutral", {"v3": "b"}))
+    nxt = practice_bundle(items, h)[0]
+    assert [c["variable"] for c in nxt["changes"]] == ["v4"] or nxt["id"] == "best-practices", nxt
 
 
 def test_no_run_yet():
