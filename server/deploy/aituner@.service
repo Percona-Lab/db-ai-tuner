@@ -1,0 +1,13 @@
+[Unit]
+Description=AI DB Tuner web app (port %i)
+After=network.target
+
+[Service]
+User=aituner
+WorkingDirectory=/opt/aituner/server
+EnvironmentFile=/etc/aituner.env
+ExecStart=/opt/aituner/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port %i --workers 2 --proxy-headers
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
