@@ -535,6 +535,41 @@ def recommend(ctx):
                   "writes the database already acknowledged.", {"fsyncs_per_trx": s.get("fsyncs_per_trx"), "disk_await_ms": s.get("disk_await_ms")},
                   impact=2, confidence=1, kind="config" if policy == "benchmark" else "advice")
 
+    # ---------------- filesystem experiments (opt-in scope) --------------------------
+    if have_run and "filesystem" in (ctx.get("scope") or []) and ctx.get("fs_device") and v.get("os:datadir_fs") not in (None, "rootfs"):
+        from .fslab import CANDIDATES
+        cur_fs = str(v.get("os:datadir_fs"))
+        for val, why in CANDIDATES:
+            if cur_fs.split(":")[0] == val.split(":")[0] and cur_fs == val:
+                continue
+            b.add(f"fs-{val.split(':')[0]}", f"Filesystem: {val.split(':')[0]}", [("os:datadir_fs", val)],
+                  why + " The data set is moved onto a freshly formatted experiment device and restored from the pristine copy.",
+                  {"current": cur_fs, "candidate": val}, impact=2, confidence=1)
+        if cur_fs.startswith("zfs") and str(v.get("innodb_doublewrite", "")).upper() == "ON":
+            b.add("zfs-doublewrite-off", "ZFS: doublewrite buffer is redundant", [("innodb_doublewrite", "OFF")],
+                  "ZFS writes records atomically (copy-on-write), so torn pages cannot happen; Percona/OpenZFS guidance disables "
+                  "InnoDB doublewrite on ZFS. Not a durability trade-off on ZFS.", {"filesystem": cur_fs}, impact=2, confidence=2)
+            b.items[-1]["safety"], b.items[-1]["tradeoffs"], b.items[-1]["risk"] = "safe", [], "none"
+
+    # ---------------- allocator sensitivity: try variants once an allocator change mattered ----
+    if ctx.get("os_tuning") and have_run:
+        sensitive = None
+        for r in ctx.get("history") or []:
+            if any(ch["variable"] == "os:malloc" for ch in r.get("changes") or []) and r.get("verdict") in (
+                    "improved", "regressed", "efficiency-gain", "efficiency-loss"):
+                sensitive = r
+        if sensitive:
+            cur = str(v.get("os:malloc", "glibc"))
+            variants = [("jemalloc:background_thread:true,dirty_decay_ms:5000", "jemalloc with a background purge thread and slower page return"),
+                        ("tcmalloc", "gperftools tcmalloc: per-thread caches, low lock contention"),
+                        ("mimalloc", "Microsoft mimalloc: free-list sharding, good small-object throughput"),
+                        ("glibc:arena_max=4", "glibc malloc with fewer arenas: less fragmentation / RSS growth")]
+            for val, why in variants:
+                if val != cur:
+                    b.add(f"malloc-{val.split(':')[0]}{'-tuned' if ':' in val else ''}", f"Allocator variant: {val}", [("os:malloc", val)],
+                          f"Run #{sensitive['seq']} showed this workload is allocator-sensitive ({sensitive['verdict']}); {why}. Needs a mysqld restart.",
+                          {"allocator_run": sensitive.get("seq"), "verdict": sensitive.get("verdict"), "current": cur}, impact=2, confidence=1)
+
     # ---------------- query advice -------------------------------------------------
     for q in (inp.get("top_statements") or [])[:10]:
         if q["pct_time"] < 5:

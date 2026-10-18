@@ -65,16 +65,17 @@ class Applier:
         self.cnf_path = cfg.get("cnf_path") or detect_cnf_path()
         self.service = cfg.get("service_name") or detect_service()
         self.os_allowed = str(cfg.get("allow_os_tuning", "true")).lower() == "true"
+        self.fs_device = cfg.get("fs_device") if str(cfg.get("allow_fs_experiments", "false")).lower() == "true" else None
 
     def _os(self):
         from .hostinfo import device_for_path
         datadir = (self.db.scalar("SELECT @@datadir") or "/var/lib/mysql").rstrip("/")
-        return ostune.OSApplier(datadir, device_for_path(datadir), self.service, self.log)
+        return ostune.OSApplier(datadir, device_for_path(datadir), self.service, self.log, fs_device=self.fs_device)
 
     def all_settings(self):
         v = self.db.variables()
         osa = self._os()
-        v.update(ostune.current(osa.datadir, osa.device, self.service))
+        v.update(ostune.current(osa.datadir, osa.device, self.service, self.fs_device))
         return v
 
     def write_cnf(self, managed):

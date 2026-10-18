@@ -141,6 +141,27 @@ def test_llm_trigger_and_sanitize():
     assert "datadir" not in ctxt["current_variables"] and ctxt["summary"]["tps"] == 600
 
 
+def test_filesystem_scope_and_allocator_variants():
+    v = dict(VARS, **{"os:datadir_fs": "ext4"})
+    base = {"goal": "tps", "policy": "safe", "hw": HW, "flavor": "percona", "version": (8, 4, 11), "summary": OLTP[0], "inputs": OLTP[1],
+            "noise_pct": 2.0, "managed": {}, "os_tuning": True, "os_facts": {}}
+    ids0 = {i["id"] for i in engine.run_engine({**base, "variables": v, "history": []})["items"]}
+    assert not any(i.startswith("fs-") for i in ids0)  # filesystem not in scope -> no fs experiments
+    ids1 = {i["id"] for i in engine.run_engine({**base, "variables": v, "history": [], "scope": ["knobs", "os", "filesystem"],
+                                                "fs_device": "/dev/sdc"})["items"]}
+    assert {"fs-xfs", "fs-zfs", "fs-btrfs"} <= ids1
+    zres = engine.run_engine({**base, "variables": dict(v, **{"os:datadir_fs": "zfs:recordsize=16k"}), "history": [],
+                              "scope": ["filesystem"], "fs_device": "/dev/sdc"})
+    z = {i["id"]: i for i in zres["items"]}["zfs-doublewrite-off"]
+    assert z["safety"] == "safe"
+    hist = [{"seq": 5, "changes": [{"variable": "os:malloc", "new": "jemalloc"}], "verdict": "improved", "managed": {}}]
+    ids2 = {i["id"] for i in engine.run_engine({**base, "variables": dict(v, **{"os:malloc": "jemalloc"}), "history": hist})["items"]}
+    assert {"malloc-tcmalloc", "malloc-mimalloc", "malloc-jemalloc-tuned", "malloc-glibc-tuned"} <= ids2
+    from tuning_agent import ostune
+    assert ostune.allocator_env("glibc:arena_max=4")[-1] == "Environment=GLIBC_TUNABLES=glibc.malloc.arena_max=4"
+    assert ostune.allocator_env("jemalloc:background_thread:true")[0] == "# os:malloc=jemalloc:background_thread:true"
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)

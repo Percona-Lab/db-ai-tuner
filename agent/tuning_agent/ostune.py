@@ -13,6 +13,32 @@ SYSCTL_FILE = "/etc/sysctl.d/99-tuning-agent.conf"
 UDEV_FILE = "/etc/udev/rules.d/99-tuning-agent.rules"
 BOOT_UNIT = "/etc/systemd/system/tuning-agent-os.service"
 JEMALLOC_CANDIDATES = ["/usr/lib/x86_64-linux-gnu/libjemalloc.so.2", "/usr/lib64/libjemalloc.so.2", "/usr/lib/aarch64-linux-gnu/libjemalloc.so.2"]
+ALLOCATORS = {  # name -> (library candidates, apt package, dnf package)
+    "jemalloc": (JEMALLOC_CANDIDATES, "libjemalloc2", "jemalloc"),
+    "tcmalloc": (["/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4", "/usr/lib64/libtcmalloc_minimal.so.4"], "libtcmalloc-minimal4", "gperftools-libs"),
+    "mimalloc": (["/usr/lib/x86_64-linux-gnu/libmimalloc.so.2", "/usr/lib64/libmimalloc.so.2"], "libmimalloc2.0", "mimalloc"),
+}
+
+
+def allocator_lib(name):
+    libs = ALLOCATORS.get(name, ([], None, None))[0]
+    return next((p for p in libs if os.path.exists(p)), None)
+
+
+def allocator_env(value):
+    """os:malloc value -> systemd Environment= lines."""
+    name, _, conf = str(value or "glibc").partition(":")
+    lines = [f"# os:malloc={value}"]
+    if name == "glibc":
+        if conf.startswith("arena_max="):
+            lines.append(f"Environment=GLIBC_TUNABLES=glibc.malloc.arena_max={conf.split('=', 1)[1]}")
+        return lines if len(lines) > 1 else []
+    lib = allocator_lib(name)
+    if lib:
+        lines.append(f"Environment=LD_PRELOAD={lib}")
+    if name == "jemalloc" and conf:
+        lines.append(f"Environment=MALLOC_CONF={conf}")
+    return lines
 
 SYSCTLS = ["vm.swappiness", "vm.dirty_background_bytes", "vm.dirty_bytes", "vm.dirty_ratio", "vm.dirty_background_ratio", "vm.dirty_expire_centisecs", "vm.dirty_writeback_centisecs",
            "kernel.numa_balancing", "kernel.sched_autogroup_enabled", "fs.aio-max-nr"]
@@ -34,7 +60,8 @@ OS_KB = {
     "os:vm.dirty_bytes": ("Dirty page cache at which writers are throttled.", False, "io"),
     "os:mount_noatime": ("Mount the data directory filesystem with noatime.", False, "io"),
     "os:mount_barrier": ("ext4 write barriers (OFF = nobarrier: DURABILITY TRADE-OFF).", False, "durability"),
-    "os:malloc": ("Memory allocator for mysqld (glibc / jemalloc via LD_PRELOAD).", True, "memory"),
+    "os:malloc": ("Memory allocator for mysqld: glibc[:arena_max=N], jemalloc[:MALLOC_CONF], tcmalloc, mimalloc (LD_PRELOAD).", True, "memory"),
+    "os:datadir_fs": ("Filesystem of the data directory on the experiment device (scope 'filesystem' only).", True, "io"),
     "os:hugepages": ("Number of 2 MiB huge pages reserved (used by the buffer pool when large_pages=ON).", True, "memory"),
     "os:cpu_governor": ("CPU frequency governor.", False, "cpu"),
 }
@@ -71,9 +98,12 @@ def service_dropin(service):
     return f"/etc/systemd/system/{service}.service.d/zz-tuning-agent.conf"
 
 
-def current(datadir, device, service):
+def current(datadir, device, service, fs_device=None):
     """{os:<name>: value} as currently in effect."""
     out = {}
+    if fs_device:
+        from . import fslab
+        out["os:datadir_fs"] = fslab.current(fs_device)
     for k in SYSCTLS:
         val = _read("/proc/sys/" + k.replace(".", "/"))
         if val != "":
@@ -89,7 +119,8 @@ def current(datadir, device, service):
         if m[2] == "ext4":
             out["os:mount_barrier"] = "OFF" if ("nobarrier" in opts or "barrier=0" in opts) else "ON"
     dropin = _read(service_dropin(service))
-    out["os:malloc"] = "jemalloc" if "jemalloc" in dropin else "glibc"
+    m = re.search(r"^# os:malloc=(.+)$", dropin, re.M)
+    out["os:malloc"] = m.group(1).strip() if m else ("jemalloc" if "jemalloc" in dropin else "glibc")
     out["os:hugepages"] = _read("/proc/sys/vm/nr_hugepages")
     gov = sorted(set(_read(p) for p in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor")))
     if gov:
@@ -97,8 +128,8 @@ def current(datadir, device, service):
     return {k: v for k, v in out.items() if v != ""}
 
 
-def facts(datadir, device, service):
-    f = current(datadir, device, service)
+def facts(datadir, device, service, fs_device=None):
+    f = current(datadir, device, service, fs_device)
     m = _mount_of(datadir)
     f["os:filesystem"] = m[2] if m else None
     f["os:jemalloc_available"] = any(os.path.exists(p) for p in JEMALLOC_CANDIDATES)
@@ -108,8 +139,9 @@ def facts(datadir, device, service):
 
 
 class OSApplier:
-    def __init__(self, datadir, device, service, log=print, originals=None):
+    def __init__(self, datadir, device, service, log=print, originals=None, fs_device=None):
         self.datadir, self.device, self.service, self.log = datadir, device, service, log
+        self.fs_device = fs_device
         self.originals = originals or {}
 
     def ensure_mysqld(self):
@@ -175,14 +207,24 @@ class OSApplier:
                                    "huge pages not enabled")
             return True
         if name == "os:malloc":
-            if value == "jemalloc" and not any(os.path.exists(p) for p in JEMALLOC_CANDIDATES):
-                if shutil.which("apt-get"):
-                    subprocess.run(["apt-get", "install", "-yq", "libjemalloc2"], capture_output=True)
-                elif shutil.which("dnf"):
-                    subprocess.run(["dnf", "install", "-yq", "jemalloc"], capture_output=True)
-                if not any(os.path.exists(p) for p in JEMALLOC_CANDIDATES):
-                    raise RuntimeError("jemalloc library not available")
+            alloc = str(value).partition(":")[0]
+            if alloc != "glibc":
+                if alloc not in ALLOCATORS:
+                    raise RuntimeError(f"unknown allocator {alloc}")
+                if not allocator_lib(alloc):
+                    _, apt, dnf = ALLOCATORS[alloc]
+                    if shutil.which("apt-get"):
+                        subprocess.run(["apt-get", "install", "-yq", apt], capture_output=True)
+                    elif shutil.which("dnf"):
+                        subprocess.run(["dnf", "install", "-yq", dnf], capture_output=True)
+                    if not allocator_lib(alloc):
+                        raise RuntimeError(f"{alloc} library not available")
             return True  # takes effect at the next mysqld start (drop-in written by persist())
+        if name == "os:datadir_fs":
+            from . import fslab
+            if not self.fs_device:
+                raise RuntimeError("no filesystem experiment device configured (fs_device / allow_fs_experiments)")
+            return fslab.apply(value, self.fs_device, self.service, self.log)
         if name == "os:cpu_governor":
             for p in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"):
                 _write(p, value)
@@ -235,9 +277,8 @@ class OSApplier:
             self._file(BOOT_UNIT, None)
         # mysqld service drop-in: allocator, memlock for huge pages
         lines = []
-        if osm.get("os:malloc") == "jemalloc":
-            lib = next((p for p in JEMALLOC_CANDIDATES if os.path.exists(p)), JEMALLOC_CANDIDATES[0])
-            lines.append(f"Environment=LD_PRELOAD={lib}")
+        if osm.get("os:malloc") and osm["os:malloc"] != "glibc":
+            lines += allocator_env(osm["os:malloc"])
         if int(osm.get("os:hugepages", 0) or 0) > 0:
             lines.append("LimitMEMLOCK=infinity")
         self._file(service_dropin(self.service), "# Managed by tuning-agent\n[Service]\n" + "\n".join(lines) + "\n" if lines else None)

@@ -52,6 +52,15 @@ MECHANISMS = {
     "os-numa": (("cpu", "memory"), "No cross-node page migration."),
     "os-autogroup": (("cpu-pressure", "cpu"), "mysqld threads compete for CPU individually, not as one group."),
     "os-aio": (("io",), "Native async I/O stays available."),
+    "fs-xfs": (("io", "commit"), "Different allocation/journaling behaviour for data and redo files."),
+    "fs-ext4": (("io", "commit"), "Fewer journal commits."),
+    "fs-zfs": (("io", "commit", "memory"), "Atomic writes, compression, different caching."),
+    "fs-btrfs": (("io",), "Extent-based allocation without copy-on-write."),
+    "zfs-doublewrite-off": (("io", "commit"), "Pages written once instead of twice."),
+    "malloc-jemalloc-tuned": (("cpu", "memory", "concurrency"), "Allocator variant."),
+    "malloc-tcmalloc": (("cpu", "concurrency"), "Allocator variant."),
+    "malloc-mimalloc": (("cpu", "concurrency"), "Allocator variant."),
+    "malloc-glibc-tuned": (("memory", "cpu"), "Allocator variant."),
     "os-nobarrier": (("commit", "io"), "fsync does not flush the device write cache."),
 }
 

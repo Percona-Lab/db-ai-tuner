@@ -76,7 +76,7 @@ class Ctx:
 
     def os_settings(self):
         ap = Applier(self.cfg, self.state, self.db)
-        return ostune.current(self.datadir(), hostinfo.device_for_path(self.datadir()), ap.service)
+        return ostune.current(self.datadir(), hostinfo.device_for_path(self.datadir()), ap.service, ap.fs_device)
 
     def all_settings(self):
         v = dict(self.variables)
@@ -162,6 +162,10 @@ def cmd_init(a):
     sec.setdefault("allow_restart", "true" if not a.no_restart else "false")
     if a.no_os_tuning:
         sec["allow_os_tuning"] = "false"
+    if a.fs_device:
+        sec["fs_device"] = a.fs_device
+    if a.allow_fs_experiments:
+        sec["allow_fs_experiments"] = "true"
     sec.setdefault("allow_os_tuning", "true")
     sec.setdefault("interval", "10")
     if "server" not in sec or "api_key" not in sec:
@@ -341,7 +345,10 @@ def cmd_session(a):
         if c.state.get("pending_changes"):
             log("note: changes applied before this session are part of its starting configuration")
             c.state.data["pending_changes"] = []
-        sess = {"id": r["session_id"], "name": a.name or r.get("name"), "goal": a.goal, "policy": a.policy,
+        scope = [x.strip() for x in (a.scope or "knobs,os").split(",") if x.strip()]
+        if "filesystem" in scope and not (c.cfg.get("fs_device") and str(c.cfg.get("allow_fs_experiments")).lower() == "true"):
+            raise Fail("scope 'filesystem' needs a dedicated device: tuning-agent init --fs-device /dev/... --allow-fs-experiments")
+        sess = {"id": r["session_id"], "name": a.name or r.get("name"), "goal": a.goal, "policy": a.policy, "scope": scope,
                 "noise_pct": a.noise_pct, "started": time.time(), "runs": [], "best": None, "os_tuning": os_tuning}
         c.state.set("session", sess)
         emit({"ok": True, "session": sess, "url": r.get("url")},
@@ -834,7 +841,8 @@ def _engine_ctx(c, sess):
         with open(path) as f:
             last = json.load(f)
     flavor, vt, ver, _ = mysqldb.flavor_of(c.variables)
-    osf = ostune.facts(c.datadir(), hostinfo.device_for_path(c.datadir()), Applier(c.cfg, c.state, c.db).service)
+    _ap = Applier(c.cfg, c.state, c.db)
+    osf = ostune.facts(c.datadir(), hostinfo.device_for_path(c.datadir()), _ap.service, _ap.fs_device)
     experience = {}
     try:
         from .engine import classify_workload
@@ -846,6 +854,7 @@ def _engine_ctx(c, sess):
     return {"goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
             "os_tuning": c.os_tuning_allowed() and sess.get("os_tuning", True), "os_facts": osf, "experience": experience,
             "failed": sess.get("failed_recs") or [],
+            "scope": sess.get("scope") or ["knobs", "os"], "fs_device": _ap.fs_device,
             "variables": c.all_settings(), "summary": last.get("summary"), "inputs": last.get("inputs"),
             "history": sess["runs"], "noise_pct": sess.get("noise_pct"), "noise": sess.get("noise"),
             "managed": {k: v["value"] for k, v in c.state.get("managed", {}).items()}}
@@ -1098,6 +1107,10 @@ def cmd_autotune(a):
     prof = bench.Profile(a.bench)
     if a.tradeoffs and sess["policy"] != "benchmark":
         raise Fail("--tradeoffs needs a session with --policy benchmark")
+    if "filesystem" in (sess.get("scope") or []) and c.all_settings().get("os:datadir_fs") == "rootfs":
+        log("== scope includes filesystem: moving the data directory to ext4 on the experiment device first (fair baseline)")
+        _apply_and_record(c, [{"variable": "os:datadir_fs", "value": "ext4", "reason": "filesystem scope: common baseline device",
+                               "source": "fs-baseline"}], "autotune")
     if not sess.get("noise"):
         log(f"== calibration: {a.calibrate} runs of the current configuration")
         runs = []
@@ -1385,6 +1398,8 @@ def main(argv=None):
     s.add_argument("--state-dir", dest="state_dir")
     s.add_argument("--no-restart", action="store_true", help="never restart the database server")
     s.add_argument("--no-os-tuning", action="store_true", help="never change operating-system settings")
+    s.add_argument("--fs-device", help="dedicated block device for filesystem experiments (it is reformatted!)")
+    s.add_argument("--allow-fs-experiments", action="store_true", help="allow filesystem experiments on --fs-device")
     s.set_defaults(fn=cmd_init)
 
     sp.add_parser("facts", help="hardware and server facts").set_defaults(fn=cmd_facts)
@@ -1408,6 +1423,7 @@ def main(argv=None):
     s.add_argument("--notes")
     s.add_argument("--noise-pct", type=float, default=None, help="fixed noise threshold (default: 2%% until calibrated)")
     s.add_argument("--no-os-tuning", action="store_true", help="do not tune operating-system settings in this session")
+    s.add_argument("--scope", help="what may be tuned: knobs,os (default); add 'filesystem' for filesystem experiments")
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_session)
 
