@@ -127,3 +127,8 @@ details.livesec { margin: 6px 0 14px; }
 details.livesec > summary { cursor: pointer; padding: 4px 0; list-style-position: outside; }
 details.livesec > summary h3 { margin: 0; }
 details.livesec > .grid { margin-top: 8px; }
+.cfgsplit { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; align-items: start; }
+@media (max-width: 760px) { .cfgsplit { grid-template-columns: minmax(0, 1fr); } }
+table.kvt { width: 100%; }
+table.kvt td { padding: 3px 6px; border: 0; }
+table.kvt td:first-child { color: var(--ink-2); }

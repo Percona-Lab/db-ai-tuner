@@ -413,7 +413,7 @@ async function envPage(id) {
      return `<tr><td><b>${esc(h.name)}</b></td><td>${h.online ? '<span class="badge good">online</span>' : `<span class="badge plain">offline · ${ago(h.last_seen)}</span>`}</td>
        <td>${hw.cpus || "?"} CPU · ${bytes(hw.ram_bytes)}</td><td class="num">${o.rtt_avg_ms != null ? num(o.rtt_avg_ms) + " ms" : "–"}</td>
        <td class="num">${num(o.net_conn_per_s)}</td><td class="num">${num(o.net_time_wait)}</td><td class="num">${o.cpu_busy != null ? Math.round(o.cpu_busy) + "%" : "–"}</td></tr>`; }).join("")}</tbody></table></div>` : ""}
-  <div class="card" style="margin-top:10px"><details><summary style="margin:0">Current agent-applied configuration (${Object.keys((f.agent || {}).managed || {}).length} settings)${info("The settings the tuning-agent currently enforces on this server: MySQL variables written to its own option file (shown below) and operating-system settings. Everything not listed is the server default or comes from your own option files. As of the agent's last report.")}</summary>${Object.keys((f.agent || {}).managed || {}).length ? `<p class="muted" style="margin:0 0 6px">${esc((f.agent || {}).cnf_path || "")} · restarts ${(f.agent || {}).allow_restart === false ? "disabled" : "allowed"}</p><pre><code>${cnfBlock(f.agent.managed)}</code></pre>` : '<span class="muted">None yet: <code>tuning-agent baseline --apply</code> writes the first set.</span>'}</details></div>
+  <div class="card" style="margin-top:10px"><details><summary style="margin:0">Current agent-applied configuration (${Object.keys((f.agent || {}).managed || {}).length} settings)${info("The settings the tuning-agent currently enforces on this server: MySQL variables written to its own option file (shown below) and operating-system settings. Everything not listed is the server default or comes from your own option files. As of the agent's last report.")}</summary>${Object.keys((f.agent || {}).managed || {}).length ? `<p class="muted" style="margin:0 0 6px">${esc((f.agent || {}).cnf_path || "")} · restarts ${(f.agent || {}).allow_restart === false ? "disabled" : "allowed"}</p>${configBlocks(f.agent.managed)}` : '<span class="muted">None yet: <code>tuning-agent baseline --apply</code> writes the first set.</span>'}</details></div>
   <div class="row"><h2>Live metrics</h2><span class="spacer"></span><select id="range" style="width:auto"><option value="900">15 min</option><option value="3600" selected>1 hour</option><option value="21600">6 hours</option><option value="86400">24 hours</option></select></div>
   <div id="live"></div>
   <h2>Tuning sessions</h2><div class="card tablewrap"><table><thead><tr><th>#</th><th>Session</th><th>Goal</th><th>Policy</th><th>Status</th><th class="num">Runs</th><th class="num">First run</th><th class="num">Best</th><th class="num">Best gain</th><th>Started</th></tr></thead><tbody id="sess"></tbody></table></div>
@@ -672,15 +672,25 @@ function sourceText(m) {
 }
 function isDefault(m) { return m && (m.source === "COMPILED" || m.source === "COMPILE-TIME" || m.source === "OS"); }
 function cnfBlock(managed) {
-  // grouped by where the setting lives: MySQL option file, MySQL runtime objects, database host OS, client hosts
+  // MySQL option file only: can be copied into my.cnf as is
+  const my = Object.entries(managed || {}).filter(([k]) => !/^(os|rg|client):/.test(k));
+  return my.length ? `[mysqld]\n${my.map(([k, v]) => esc(k) + (v === "" ? "" : " = " + esc(v))).join("\n")}` : "";
+}
+function otherChanges(managed) {
   const e = Object.entries(managed || {});
-  const groups = [
-    ["[mysqld]", e.filter(([k]) => !/^(os|rg|client):/.test(k)), k => k],
-    ["# MySQL resource groups (runtime)", e.filter(([k]) => k.startsWith("rg:")), k => k.slice(3)],
-    ["# operating system: database host", e.filter(([k]) => k.startsWith("os:")), k => k.slice(3)],
-    ["# operating system: client hosts", e.filter(([k]) => k.startsWith("client:")), k => k.replace(/^client:os:/, "")],
+  return [
+    ["Operating system (database host)", e.filter(([k]) => k.startsWith("os:")), k => k.slice(3)],
+    ["MySQL resource groups (runtime)", e.filter(([k]) => k.startsWith("rg:")), k => k.slice(3)],
+    ["Operating system (client hosts)", e.filter(([k]) => k.startsWith("client:")), k => k.replace(/^client:os:/, "")],
   ].filter(g => g[1].length);
-  return groups.map(([h, rows, name]) => `${h}\n${rows.map(([k, v]) => esc(name(k)) + (v === "" ? "" : " = " + esc(v))).join("\n")}`).join("\n\n");
+}
+function configBlocks(managed) {
+  // side by side: the copyable option file, and everything that is not MySQL configuration
+  const my = cnfBlock(managed), other = otherChanges(managed);
+  const right = other.map(([h, rows, name]) => `<h4 style="margin:0 0 4px">${h}</h4><table class="kvt"><tbody>${rows.map(([k, v]) => `<tr><td class="mono">${esc(name(k))}</td><td class="mono">${esc(v)}</td></tr>`).join("")}</tbody></table>`).join('<div style="height:10px"></div>');
+  if (!other.length) return `<pre><code>${my}</code></pre>`;
+  return `<div class="cfgsplit"><div><div class="muted" style="margin-bottom:4px">MySQL option file${info("Can be copied into a my.cnf [mysqld] section as is.")}</div><pre style="margin:0"><code>${my || "# no MySQL settings"}</code></pre></div>
+    <div><div class="muted" style="margin-bottom:4px">Other changes${info("Settings outside the MySQL option file: kernel and filesystem settings of the database host, MySQL runtime objects, and client-host settings. The agent applies and persists them itself.")}</div><div class="card" style="padding:10px 12px">${right}</div></div></div>`;
 }
 async function renderKeySettings(el, runId) {
   const c = await api(`/api/runs/${runId}/config`);
@@ -868,7 +878,7 @@ function renderDiff(el, r) {
   else if (r.diff.length) h += `<h3>Changed since run #${prev.seq} ${esc(prev.label)}${info("Source and reasoning come from the agent. “outside the agent” means the value changed some other way: manual edit, server default after restart, automatic sizing.")}</h3>
    <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Run #${prev.seq}</th><th>This run</th><th>Source</th><th>Reason</th></tr></thead><tbody>${r.diff.map(d => `<tr><td class="mono">${esc(d.variable)}</td><td class="mono diff-old" style="word-break:break-all">${esc(val(d.variable, d.before))}</td><td class="mono diff-new" style="word-break:break-all">${esc(val(d.variable, d.after))}</td><td>${esc(d.source)}</td><td class="reason">${esc(d.reason || "")}</td></tr>`).join("")}</tbody></table></div>`;
   const managed = r.managed || {};
-  if (Object.keys(managed).length) h += `<h3>Agent-applied configuration during this run${info("The settings the tuning-agent enforced while this run was measured: its MySQL option file plus operating-system settings. Everything else was the server default or came from other option files (see Key settings).")}</h3><pre><code>${cnfBlock(managed)}</code></pre>`;
+  if (Object.keys(managed).length) h += `<h3>Agent-applied configuration during this run${info("The settings the tuning-agent enforced while this run was measured: its MySQL option file plus operating-system settings. Everything else was the server default or came from other option files (see Key settings).")}</h3>${configBlocks(managed)}`;
   el.innerHTML = h;
 }
 
