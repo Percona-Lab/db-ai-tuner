@@ -674,12 +674,40 @@ def _revert_item(id_, title, managed, target, variables, rationale, evidence, pr
             "priority": priority}
 
 
+def per_query_hints(history, variables):
+    """A global change helped some statements and hurt others: suggest applying it per statement with a SET_VAR hint."""
+    if not history:
+        return []
+    last = history[-1]
+    qi = (last.get("evaluation") or {}).get("query_impact") or {}
+    if not qi.get("mixed") or last.get("verdict") in ("improved", "efficiency-gain"):
+        return []
+    hintable = [c for c in (last.get("changes") or []) if not c["variable"].startswith("os:")
+                and KB.get(c["variable"], {}).get("cat") in ("optimizer", "memory") and KB.get(c["variable"], {}).get("dynamic")]
+    if not hintable:
+        return []
+    winners = [r for r in qi["rows"] if r["faster_pct"] > qi["noise_pct"]]
+    sv = ", ".join(f"{c['variable']}={c['new']}" if c["variable"] != "optimizer_switch" else f"optimizer_switch='{c.get('new')}'" for c in hintable)
+    return [{
+        "id": f"per-query-{hintable[0]['variable']}", "title": "Apply the change only to the statements it helps (SET_VAR hint)",
+        "kind": "advice", "changes": [], "safety": "safe", "tradeoffs": [],
+        "rationale": f"Run #{last['seq']} changed {', '.join(c['variable'] for c in hintable)} globally: {qi['winners']} top statement(s) got "
+                     f">{qi['noise_pct']:.0f}% faster but {qi['losers']} got slower, so the workload as a whole did not improve. "
+                     f"MySQL can scope the setting to single statements: SELECT /*+ SET_VAR({sv}) */ ... "
+                     "(per-statement settings, as in CMU's query-level tuning work).",
+        "evidence": {"faster": [f"{r['faster_pct']:+.0f}% {r['query'][:70]}" for r in winners[:4]],
+                     "slower": [f"{r['faster_pct']:+.0f}% {r['query'][:70]}" for r in qi["rows"] if r["faster_pct"] < -qi["noise_pct"]][:4]},
+        "impact": 2, "confidence": 2, "risk": "none", "restart": False, "goals": ["tps", "latency"],
+    }]
+
+
 def run_engine(ctx):
     ctx = dict(ctx)
     ctx["workload"] = classify_workload(ctx.get("summary"), ctx.get("inputs")) if ctx.get("summary") else {"type": None}
     ctx["diagnosis"] = diagnose(ctx) if ctx.get("summary") else []
     items = recommend(ctx)
     items = apply_history(items, ctx.get("history") or [])
+    items = items + per_query_hints(ctx.get("history") or [], ctx["variables"])
     items = revert_suggestions(ctx.get("history") or [], ctx["variables"], ctx.get("goal", "tps"),
                                float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0), ctx.get("managed")) + items
     benchmark = ctx.get("policy") == "benchmark"

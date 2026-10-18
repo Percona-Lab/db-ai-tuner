@@ -547,6 +547,15 @@ async function runPage(id, tab) {
   show(tabs.some(t => t[0] === tab) ? tab : "changes");
 }
 
+function queryImpact(qi) {
+  if (!qi || !qi.rows || !qi.rows.length) return "";
+  const row = q => `<tr><td class="mono" style="max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-tip="${esc(q.query)}">${esc(q.query)}</td>
+    <td class="num">${q.pct_time != null ? q.pct_time + "%" : ""}</td><td class="num">${num(q.avg_ms_parent)}</td><td class="num">${num(q.avg_ms)}</td>
+    <td class="num ${Math.abs(q.faster_pct) > qi.noise_pct ? (q.faster_pct > 0 ? "up" : "down") : ""}">${q.faster_pct > 0 ? "−" : "+"}${Math.abs(q.faster_pct).toFixed(0)}%</td></tr>`;
+  return `<details ${qi.mixed ? "open" : ""} style="margin:4px 0 10px"><summary>Per-query impact: ${qi.winners} faster, ${qi.losers} slower${qi.mixed ? " — mixed" : ""}${info(`Average latency of the top statements under the parent configuration vs this run. Changes within ±${qi.noise_pct}% are treated as noise. When a global change helps some statements and hurts others, the tuner suggests applying it per statement with a SET_VAR optimizer hint.`)}</summary>
+   <div class="tablewrap"><table><thead><tr><th>Statement</th><th class="num">% time</th><th class="num">Parent ms</th><th class="num">This run ms</th><th class="num">Latency</th></tr></thead><tbody>${qi.rows.map(row).join("")}</tbody></table></div></details>`;
+}
+
 function renderEvaluation(r) {
   const ev = r.evaluation || {};
   if (ev.same_config_runs) return `<div class="note" style="margin-bottom:12px">${ev.drift ? '<span class="badge warn">drift</span> ' : ""}Repeat of runs ${ev.same_config_runs.map(x => "#" + x).join(", ")}: <b>${pct(ev.deviation_pct)}</b> vs their mean${info((ev.drift ? ev.note + " " : "") + `Same configuration measured again (mean of earlier runs ${num(ev.same_config_mean)}, noise ±${ev.goal_noise_pct}%). Repeats are averaged into that configuration's mean.`)}</div>`;
@@ -554,6 +563,7 @@ function renderEvaluation(r) {
   const rows = Object.entries(ev.efficiency || {}).map(([k, e]) => `<tr><td>${esc(EFF_LABELS[k] || e.label)}</td><td class="num">${num(e.parent)}</td><td class="num">${num(e.now)}</td><td class="num ${Math.abs(e.improvement_pct) > e.noise_pct ? (e.improvement_pct > 0 ? "up" : "down") : ""}">${e.improvement_pct > 0 ? "−" : "+"}${Math.abs(e.improvement_pct).toFixed(1)}%</td><td class="num muted">±${e.noise_pct}%</td></tr>`).join("");
   return `<div class="card" style="margin-bottom:14px"><h3 style="margin-top:0">Evaluation ${verdictBadge(r.verdict)}</h3>
    <p style="margin:0 0 8px">Goal <b class="${deltaCls(ev.goal_delta_pct)}">${pct(ev.goal_delta_pct)}</b> vs parent configuration (±${ev.goal_noise_pct}% noise)${info(`Parent configuration = the one this run was changed from; compared with the mean of its most recent runs (${ev.parent_runs.map(x => "#" + x).join(", ")} = ${num(ev.parent_goal_mean)}). Noise threshold ${ev.calibrated ? "calibrated" : "not calibrated"}. improved/regressed: goal beyond noise. efficiency-gain/-loss: goal within noise but CPU or I/O per transaction measurably lower/higher (only resources under load count).`)}</p>
+   ${queryImpact(ev.query_impact)}
    ${rows ? `<div class="tablewrap"><table><thead><tr><th>Work per transaction</th><th class="num">Parent mean</th><th class="num">This run</th><th class="num">Change</th><th class="num">Noise</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}</div>`;
 }
 

@@ -107,6 +107,18 @@ def test_no_revert_chain():
     assert not engine.revert_suggestions(h, v, "tps", 3.0, {"x": "1"})       # already reverted to run 2's config: stop
 
 
+def test_per_query_hint():
+    a = [{"schema": "t", "digest": "q1", "avg_ms": 100, "query": "SELECT q1"}, {"schema": "t", "digest": "q2", "avg_ms": 50, "query": "SELECT q2"}]
+    b = [{"schema": "t", "digest": "q1", "avg_ms": 40, "query": "SELECT q1", "pct_time": 30}, {"schema": "t", "digest": "q2", "avg_ms": 80, "query": "SELECT q2", "pct_time": 30}]
+    qi = evaluate.query_impact(b, a)
+    assert qi["mixed"] and qi["winners"] == 1 and qi["losers"] == 1
+    h = [{"seq": 1, "managed": {}, "goal_value": 100, "verdict": "reference"},
+         {"seq": 2, "managed": {"join_buffer_size": "8M"}, "goal_value": 101, "verdict": "neutral",
+          "changes": [{"variable": "join_buffer_size", "old": "262144", "new": "8388608"}], "evaluation": {"query_impact": qi, "parent_runs": [1]}}]
+    items = engine.per_query_hints(h, VARS)
+    assert items and "SET_VAR(join_buffer_size=8388608)" in items[0]["rationale"]
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)

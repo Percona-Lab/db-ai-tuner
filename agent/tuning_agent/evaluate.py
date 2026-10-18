@@ -236,3 +236,29 @@ def _verdict(run, history, goal, noise):
 
 
 KEEP_VERDICTS = ("improved", "efficiency-gain", "reference")
+
+
+# ---- per-query impact (query-level view of an experiment, after CMU's Booster) -------------
+QUERY_NOISE_PCT = 10.0  # single statements are noisier than the whole workload
+
+
+def query_impact(stmts_now, stmts_parent, top=12):
+    """Compare per-statement average latency of this run with the parent configuration's run.
+    stmts_*: inputs["top_statements"] lists. Returns rows sorted by time share plus a winners/losers summary."""
+    if not stmts_now or not stmts_parent:
+        return None
+    prev = {(s.get("schema"), s.get("digest")): s for s in stmts_parent}
+    rows = []
+    for q in stmts_now[:top]:
+        p = prev.get((q.get("schema"), q.get("digest")))
+        if not p or not p.get("avg_ms") or q.get("avg_ms") is None:
+            continue
+        ch = round(100.0 * (p["avg_ms"] - q["avg_ms"]) / p["avg_ms"], 1)  # positive = faster
+        rows.append({"digest": q.get("digest"), "query": (q.get("query") or "")[:160], "pct_time": q.get("pct_time"),
+                     "avg_ms_parent": p["avg_ms"], "avg_ms": q["avg_ms"], "faster_pct": ch})
+    if not rows:
+        return None
+    winners = [r for r in rows if r["faster_pct"] > QUERY_NOISE_PCT]
+    losers = [r for r in rows if r["faster_pct"] < -QUERY_NOISE_PCT]
+    return {"rows": rows, "winners": len(winners), "losers": len(losers), "noise_pct": QUERY_NOISE_PCT,
+            "mixed": bool(winners and losers)}

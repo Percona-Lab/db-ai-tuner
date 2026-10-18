@@ -513,6 +513,15 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     d_first = _improvement(sess["goal"], gv, first.get("goal_value")) if first else None
     verdict, evaluation = evaluate.verdict({"managed": m["managed"], "goal_value": gv, "summary": summary}, runs, sess["goal"],
         sess.get("noise") or ({"noise_pct": sess["noise_pct"]} if sess.get("noise_pct") else None))
+    if evaluation.get("parent_runs"):
+        try:  # query-level view: which statements got faster / slower than under the parent configuration
+            with open(os.path.join(c.state.dir, f"run{evaluation['parent_runs'][-1]}_inputs.json")) as f:
+                parent_inputs = json.load(f).get("inputs", {})
+            qi = evaluate.query_impact(inputs.get("top_statements"), parent_inputs.get("top_statements"))
+            if qi:
+                evaluation["query_impact"] = qi
+        except (OSError, ValueError):
+            pass
     ctx = {"goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "variables": b_snap["variables"],
            "summary": summary, "inputs": inputs}
     diagnosis = engine.diagnose(ctx)
