@@ -7,7 +7,7 @@ diagnosis types from engine.diagnose().
 
 MECHANISMS = {
     "bp-grow": (("memory", "io"), "More pages cached: fewer disk reads."),
-    "bp-shrink": (("swap", "memory-pressure"), "Gives memory back to the OS: no swapping/reclaim stalls."),
+    "bp-shrink": (("swap", "memory-pressure", "oom"), "Gives memory back to the OS: no swapping/reclaim stalls."),
     "bp-instances": (("concurrency", "cpu", "cpu-pressure"), "Splits buffer pool mutexes."),
     "redo-grow": (("redo", "io"), "Fewer forced checkpoints; pages absorb more changes before being written."),
     "log-buffer": (("redo", "commit"), "Fewer waits for redo log buffer space."),

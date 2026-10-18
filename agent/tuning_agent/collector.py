@@ -294,6 +294,7 @@ def analyze_window(a, b, samples):
         "disk_util": os_rates.get("disk_util"),
         "disk_await_ms": os_rates.get("disk_await_ms"),
         "swap_in": os_rates.get("swap_in"),
+        "oom_kills": os_rates.get("oom_kills"),
         "swap_out": os_rates.get("swap_out"),
         "mem_used_pct": os_rates.get("mem_used_pct"),
         "mem_available_mb": os_rates.get("mem_available_mb"),

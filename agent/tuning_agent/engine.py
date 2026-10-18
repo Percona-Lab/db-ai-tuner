@@ -128,6 +128,9 @@ def diagnose(ctx):
         add("locks", "medium" if lw / tps < 0.1 else "high",
             f"Row lock contention: {lw:.1f} waits/s (avg {s.get('row_lock_wait_avg_ms', 0):.1f} ms) for {tps:.0f} tps. "
             "Usually a workload/schema property; config helps little.", {"row_lock_waits": lw, "row_lock_wait_avg_ms": s.get("row_lock_wait_avg_ms")})
+    if (s.get("oom_kills") or 0) > 0:
+        add("oom", "high", f"The kernel OOM killer fired {s['oom_kills']} time(s) during the measurement: memory is over-committed "
+            "(buffer pool + per-connection memory + other processes on the host).", {"oom_kills": s.get("oom_kills")})
     if (s.get("swap_in", 0) or 0) + (s.get("swap_out", 0) or 0) > 10:
         add("swap", "high", "The host is swapping: memory is over-committed.", {"swap_in": s.get("swap_in"), "swap_out": s.get("swap_out")})
     tr = s.get("threads_running_avg") or 0
@@ -220,7 +223,7 @@ def recommend(ctx):
     max_conn = _int(v, "max_connections", 151)
     mem_avail = (s.get("mem_available_mb") or 0) * MiB
     mem_psi = s.get("psi_memory_some") or 0
-    swapping = (s.get("swap_in", 0) or 0) + (s.get("swap_out", 0) or 0) > 10 or mem_psi >= 10
+    swapping = (s.get("swap_in", 0) or 0) + (s.get("swap_out", 0) or 0) > 10 or mem_psi >= 10 or (s.get("oom_kills") or 0) > 0
 
     # ---------------- memory -----------------------------------------------------
     if swapping and bp > 512 * MiB:

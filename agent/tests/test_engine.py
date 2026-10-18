@@ -207,6 +207,12 @@ def test_client_rules():
     assert any(d["type"] == "client-bound" for d in res["diagnosis"])
 
 
+def test_oom():
+    res = run(dict(OLTP[0], oom_kills=1), OLTP[1], policy="safe")
+    assert any(d["type"] == "oom" for d in res["diagnosis"])
+    assert "bp-shrink" in {i["id"] for i in res["items"]}
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)

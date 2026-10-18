@@ -564,6 +564,12 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     restarted = int(float(b_snap["status"].get("Uptime", 0))) < (b_snap["t"] - a_snap["t"])
     if restarted:
         why = "mysqld restarted during the measurement window: counters are not comparable"
+        try:
+            ooms = int(b_snap["os"]["vm"].get("oom_kill", 0)) - int(a_snap["os"]["vm"].get("oom_kill", 0))
+            if ooms > 0:
+                why = f"mysqld was killed by the kernel OOM killer ({ooms}x) during the measurement window: memory is over-committed"
+        except (KeyError, TypeError, ValueError):
+            pass
         c.client.post(f"/runs/{m['run_id']}/abort", {"reason": why})
         c.state.data["pending_changes"] = (m.get("changes") or []) + (c.state.get("pending_changes") or [])
         c.state.data["measurement"] = None

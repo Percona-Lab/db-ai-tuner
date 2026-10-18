@@ -186,7 +186,7 @@ class OSCounters:
         vm = {}
         for line in _read("/proc/vmstat").splitlines():
             k, _, v = line.partition(" ")
-            if k in ("pswpin", "pswpout", "pgmajfault"):
+            if k in ("pswpin", "pswpout", "pgmajfault", "oom_kill"):
                 vm[k] = int(v)
         s["vm"] = vm
         mi = meminfo()
@@ -248,6 +248,8 @@ class OSCounters:
         for k, name in (("pswpin", "swap_in"), ("pswpout", "swap_out"), ("pgmajfault", "major_faults")):
             if k in va and k in vb:
                 out[name] = round((vb[k] - va[k]) / dt, 2)
+        if "oom_kill" in va and "oom_kill" in vb:
+            out["oom_kills"] = vb["oom_kill"] - va["oom_kill"]
         m = b.get("mem", {})
         if m.get("MemTotal"):
             out["mem_used_pct"] = round(100.0 * (1 - m["MemAvailable"] / m["MemTotal"]), 2)
