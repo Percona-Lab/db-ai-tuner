@@ -115,8 +115,8 @@ details summary { cursor: pointer; color: var(--ink-2); margin: 6px 0; }
   .g2, .g3, .g4 { grid-template-columns: minmax(0, 1fr); }
   .ev { grid-template-columns: 1fr; gap: 0; } .kv { grid-template-columns: 1fr; }
 }
-.info { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--axis); color: var(--muted); font: italic 600 10px/1 Georgia, serif; cursor: help; vertical-align: 2px; margin-left: 4px; user-select: none; }
-.info:hover, .info:focus { color: var(--accent); border-color: var(--accent); outline: none; }
+.itip { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--axis); color: var(--muted); font: italic 600 10px/1 Georgia, serif; cursor: help; vertical-align: 2px; margin-left: 4px; user-select: none; }
+.itip:hover, .itip:focus { color: var(--accent); border-color: var(--accent); outline: none; }
 .diag .mono, .kv .mono { overflow-wrap: anywhere; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-right: 8px; }
 .seg button { border: none; border-radius: 0; padding: 6px 12px; background: var(--surface); color: var(--ink-2); }

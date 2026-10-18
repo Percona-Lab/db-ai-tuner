@@ -98,12 +98,8 @@ def config_diff(before, after, changes):
 
 
 def previous_run(r):
+    """Previous run of the same session (runs of other sessions measure other workloads and are not comparable)."""
     p = store.q1("SELECT * FROM runs WHERE session_id=? AND seq<? AND status<>'aborted' ORDER BY seq DESC LIMIT 1", (r["session_id"], r["seq"]))
-    if p:
-        return dict(p)
-    s = store.q1("SELECT env_id FROM tsessions WHERE id=?", (r["session_id"],))
-    p = store.q1("SELECT r.* FROM runs r JOIN tsessions s ON s.id=r.session_id WHERE s.env_id=? AND r.started<? AND r.status='done' "
-                 "ORDER BY r.started DESC LIMIT 1", (s["env_id"], r["started"] or 0))
     return dict(p) if p else None
 
 
@@ -336,7 +332,8 @@ def run_detail(run_id: int, request: Request, vs: int = None):
     out.update({
         "inputs": store.uj(r["inputs"], {}), "diagnosis": store.uj(r["diagnosis"], []), "managed": store.uj(r["managed"], {}),
         "config_count": len(cfg), "diff": diff, "compared_with": run_brief(prev) if prev else None,
-        "session": {k: s[k] for k in ("id", "name", "goal", "policy", "noise_pct", "env_id", "status", "goal_metric")},
+        "session": {**{k: s[k] for k in ("id", "name", "goal", "policy", "noise_pct", "env_id", "status", "goal_metric")},
+                    "calibration": store.uj(s.get("calibration"))},
         "evaluation": store.uj(r["evaluation"], {}),
         "recommendations": recs, "runs": siblings,
         "environment": {"id": s["env_id"], "name": (store.q1("SELECT name FROM environments WHERE id=?", (s["env_id"],)) or {"name": ""})["name"]},

@@ -6,7 +6,7 @@ let ME = null, SERVER = location.origin, timers = [];
 const WORKLOAD = { "oltp-write": "OLTP, write-heavy", "oltp-read": "OLTP, read-mostly", olap: "Analytical", mixed: "Mixed", idle: "Idle" };
 const PHASE = { safe: "production-safe experiments", "trade-offs": "trade-off experiments", done: "no further experiments" };
 function kvText(o) { return Object.entries(o || {}).map(([k, v]) => `${k.replace(/_/g, " ")}: ${typeof v === "object" ? JSON.stringify(v) : v}`).join(" · "); }
-function info(text) { return ` <span class="info" tabindex="0" role="note" aria-label="${esc(text)}" data-tip="${esc(text)}">i</span>`; }
+function info(text) { return ` <span class="itip" tabindex="0" role="note" aria-label="${esc(text)}" data-tip="${esc(text)}">i</span>`; }
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 async function api(path, opts = {}) {
   const r = await fetch(path, { method: opts.method || "GET", headers: opts.body ? { "Content-Type": "application/json" } : {}, body: opts.body ? JSON.stringify(opts.body) : undefined, credentials: "same-origin" });
@@ -466,10 +466,17 @@ async function runPage(id, tab) {
   const r = await api("/api/runs/" + id + (vs ? "?vs=" + vs : ""));
   const s = r.session, sm = r.summary || {}, prev = r.compared_with;
   const ps = (prev && prev.summary) || {};
-  const tile = (k, v, unit, pv, lowerBetter) => {
+  // colour a change only when it is beyond the noise threshold; dir: 1 = higher is better, -1 = lower is better, 0 = no direction
+  const cal = s.calibration || {}, goalNoise = (cal.noise_pct || s.noise_pct || 2);
+  const effNoise = k => ((cal.efficiency || {})[k] || {}).noise_pct || Math.max(goalNoise, 3);
+  const tile = (k, v, unit, pv, dir, noiseKey) => {
     if (v == null) return "";
     let d = "";
-    if (pv != null && v != null && pv !== 0) { const ch = (v - pv) / Math.abs(pv) * 100; const good = lowerBetter ? ch < 0 : ch > 0; d = `<div class="d ${Math.abs(ch) < 0.05 ? "" : good ? "up" : "down"}">${ch > 0 ? "+" : ""}${ch.toFixed(1)}% vs prev</div>`; }
+    if (pv != null && pv !== 0) {
+      const ch = (v - pv) / Math.abs(pv) * 100, thr = noiseKey ? effNoise(noiseKey) : goalNoise;
+      const cls = !dir || Math.abs(ch) <= thr ? "" : (ch * dir > 0 ? "up" : "down");
+      d = `<div class="d ${cls}" ${dir ? `title="noise threshold ±${thr}%"` : ""}>${ch > 0 ? "+" : ""}${ch.toFixed(1)}% vs prev</div>`;
+    }
     return `<div class="tile"><div class="k">${k}</div><div class="v">${num(v)}<span style="font-size:13px;color:var(--ink-2)"> ${unit}</span></div>${d}</div>`;
   };
   $view.innerHTML = `<div class="crumbs"><a href="#/">Environments</a> / <a href="#/env/${s.env_id}">${esc(r.environment.name)}</a> / <a href="#/session/${s.id}">#${s.id} ${esc(s.name)}</a> /</div>
@@ -479,11 +486,11 @@ async function runPage(id, tab) {
    ${r.delta_pct != null ? ` · <span class="${deltaCls(r.delta_pct)}">${pct(r.delta_pct)}</span> vs previous, <span class="${deltaCls(r.delta_vs_first_pct)}">${pct(r.delta_vs_first_pct)}</span> vs first` : ""}${prev ? ` · compared with run #${prev.seq} ${esc(prev.label)}` : ""}</p>
   ${r.status === "aborted" ? `<div class="note" style="margin-bottom:12px"><span class="badge warn">aborted</span> ${esc(r.abort_reason || "no reason recorded")}. Its changes were handed to the next run.</div>` : ""}
   ${r.notes ? `<div class="note" style="margin-bottom:12px">${esc(r.notes)}</div>` : ""}
-  <div class="tiles">${tile("TPS", sm.tps, "/s", ps.tps)}${tile("QPS", sm.qps, "/s", ps.qps)}${tile("Avg statement latency", sm.avg_latency_ms, "ms", ps.avg_latency_ms, true)}${tile("p95 statement latency", sm.p95_latency_ms, "ms", ps.p95_latency_ms, true)}
-   ${tile("CPU busy (host)", sm.cpu_busy, "%", ps.cpu_busy, true)}${tile("mysqld CPU", sm.mysqld_cpu_pct, "% of host", ps.mysqld_cpu_pct, true)}${tile("IO wait", sm.cpu_iowait, "%", ps.cpu_iowait, true)}${tile("BP hit ratio", sm.bp_hit_pct, "%", ps.bp_hit_pct)}${tile("Disk IOPS", (sm.disk_r_iops || 0) + (sm.disk_w_iops || 0), "/s", ps.disk_r_iops != null ? (ps.disk_r_iops || 0) + (ps.disk_w_iops || 0) : null, true)}
-   ${tile("CPU pressure", sm.mysqld_psi_cpu_some != null ? sm.mysqld_psi_cpu_some : sm.psi_cpu_some, "% stalled", ps.mysqld_psi_cpu_some != null ? ps.mysqld_psi_cpu_some : ps.psi_cpu_some, true)}${tile("I/O pressure", sm.mysqld_psi_io_some != null ? sm.mysqld_psi_io_some : sm.psi_io_some, "% stalled", ps.mysqld_psi_io_some != null ? ps.mysqld_psi_io_some : ps.psi_io_some, true)}${tile("Memory pressure", sm.psi_memory_some, "% stalled", ps.psi_memory_some, true)}
-   ${tile("mysqld CPU / trx", sm.mysqld_cpu_ms_per_trx, "ms", ps.mysqld_cpu_ms_per_trx, true)}${tile("Disk IOs / trx", sm.disk_ios_per_trx, "", ps.disk_ios_per_trx, true)}
-   ${tile("Redo written", sm.redo_mbs, "MiB/s", ps.redo_mbs)}${tile("Ckpt age max", sm.checkpoint_age_pct_max, "%", ps.checkpoint_age_pct_max, true)}${tile("Threads running", sm.threads_running_avg, "avg", ps.threads_running_avg, true)}${tile("TPS variation", sm.tps_cv_pct, "% CV", ps.tps_cv_pct, true)}</div>
+  <div class="tiles">${tile("TPS", sm.tps, "/s", ps.tps, 1)}${tile("QPS", sm.qps, "/s", ps.qps, 1)}${tile("Avg statement latency", sm.avg_latency_ms, "ms", ps.avg_latency_ms, -1)}${tile("p95 statement latency", sm.p95_latency_ms, "ms", ps.p95_latency_ms, -1)}
+   ${tile("CPU busy (host)", sm.cpu_busy, "%", ps.cpu_busy, 0)}${tile("mysqld CPU", sm.mysqld_cpu_pct, "% of host", ps.mysqld_cpu_pct, 0)}${tile("IO wait", sm.cpu_iowait, "%", ps.cpu_iowait, -1, "x")}${tile("BP hit ratio", sm.bp_hit_pct, "%", ps.bp_hit_pct, 1)}${tile("Disk IOPS", (sm.disk_r_iops || 0) + (sm.disk_w_iops || 0), "/s", ps.disk_r_iops != null ? (ps.disk_r_iops || 0) + (ps.disk_w_iops || 0) : null, 0)}
+   ${tile("CPU pressure", sm.mysqld_psi_cpu_some != null ? sm.mysqld_psi_cpu_some : sm.psi_cpu_some, "% stalled", ps.mysqld_psi_cpu_some != null ? ps.mysqld_psi_cpu_some : ps.psi_cpu_some, -1, "x")}${tile("I/O pressure", sm.mysqld_psi_io_some != null ? sm.mysqld_psi_io_some : sm.psi_io_some, "% stalled", ps.mysqld_psi_io_some != null ? ps.mysqld_psi_io_some : ps.psi_io_some, -1, "x")}${tile("Memory pressure", sm.psi_memory_some, "% stalled", ps.psi_memory_some, -1, "x")}
+   ${tile("mysqld CPU / trx", sm.mysqld_cpu_ms_per_trx, "ms", ps.mysqld_cpu_ms_per_trx, -1, "mysqld_cpu_ms_per_trx")}${tile("Disk IOs / trx", sm.disk_ios_per_trx, "", ps.disk_ios_per_trx, -1, "disk_ios_per_trx")}
+   ${tile("Redo written", sm.redo_mbs, "MiB/s", ps.redo_mbs, 0)}${tile("Ckpt age max", sm.checkpoint_age_pct_max, "%", ps.checkpoint_age_pct_max, -1, "x")}${tile("Threads running", sm.threads_running_avg, "avg", ps.threads_running_avg, 0)}${tile("TPS variation", sm.tps_cv_pct, "% CV", ps.tps_cv_pct, -1, "x")}</div>
   ${Object.keys(r.external || {}).length ? `<h3>Benchmark-reported values</h3><div class="row">${Object.entries(r.external).map(([k, v]) => `<span class="badge plain">${esc(k)} = ${esc(v)}</span>`).join("")}</div>` : ""}
   <div class="tabs" id="tabs"></div><div id="tab"></div>`;
   document.getElementById("vs").onchange = e => { location.hash = "#/run/" + id + (e.target.value ? "?vs=" + e.target.value : ""); };
