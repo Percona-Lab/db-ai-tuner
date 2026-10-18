@@ -5,7 +5,7 @@ import time
 
 import pymysql
 
-from . import ostune
+from . import ostune, resgroups
 from .knowledge import KB, OPTIONS, flags_subset, normalize, parse_size
 
 HEADER = """# Managed by tuning-agent. Do not edit by hand: changes are overwritten.
@@ -33,7 +33,7 @@ def detect_service():
 def render(managed):
     lines = [HEADER, "[mysqld]"]
     for var in sorted(managed):
-        if var.startswith("os:"):
+        if var.startswith(("os:", "rg:")):
             continue
         m = managed[var]
         if m.get("reason"):
@@ -76,6 +76,7 @@ class Applier:
         v = self.db.variables()
         osa = self._os()
         v.update(ostune.current(osa.datadir, osa.device, self.service, self.fs_device))
+        v.update(resgroups.current(self.db))
         return v
 
     def write_cnf(self, managed):
@@ -97,11 +98,20 @@ class Applier:
             try:
                 self.db.connect()
                 self.db.scalar("SELECT 1")
+                self.reapply_runtime()
                 return True, ""
             except Exception as e:  # noqa
                 last = str(e)
                 time.sleep(2)
         return False, "server did not accept connections: " + last
+
+    def reapply_runtime(self):
+        """Settings that live only in the running server (resource group thread assignments)."""
+        if resgroups.VAR in self.state["managed"]:
+            try:
+                resgroups.ensure(self.db)
+            except Exception as e:  # noqa
+                self.log(f"resource group re-assignment failed: {e}")
 
     def _verify_huge_pages(self):
         """mysqld must actually use the reserved huge pages; otherwise they only take memory away from it."""
@@ -183,7 +193,15 @@ class Applier:
         if osa or any(k.startswith("os:") for k in old_managed):
             (osa or self._os()).persist(managed)
             self.state.save()
-        for c in [c for c in changes if not c["variable"].startswith("os:")]:
+        for c in [c for c in changes if c["variable"].startswith("rg:")]:
+            var, val = c["variable"], c.get("value")
+            if var not in originals:
+                originals[var] = before_vars.get(var)
+            try:
+                resgroups.apply(self.db, originals.get(var) or "off" if val is None else val)
+            except pymysql.MySQLError as e:
+                result["errors"].append(f"{var}: {e.args[-1] if e.args else e}")
+        for c in [c for c in changes if not c["variable"].startswith(("os:", "rg:"))]:
             var, val = c["variable"], c.get("value")
             if val is not None and (flags_subset(val, before_vars.get(var)) if KB.get(var, {}).get("kind") == "flags"
                                     else normalize(var, before_vars.get(var)) == normalize(var, val)):
@@ -240,7 +258,7 @@ class Applier:
         after = self.all_settings()
         for c in changes:
             var = c["variable"]
-            if var.startswith("os:") and c.get("value") is None:
+            if var.startswith(("os:", "rg:")) and c.get("value") is None:
                 c["value"] = originals.get(var)
             if var in OPTIONS:  # verify via the variable the option controls
                 shown = after.get(OPTIONS[var])

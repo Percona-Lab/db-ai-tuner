@@ -270,6 +270,11 @@ TRADEOFFS["os:datadir_fs"] = (lambda v: any(x in str(v) for x in ("barrier=0", "
                               "options barrier=0 / nobarrier / data=writeback / sync=disabled")
 
 
+from .resgroups import RG_KB  # noqa: E402
+for _k, (_desc, _restart, _cat) in RG_KB.items():
+    KB[_k] = dict(kind="str", dynamic=True, risk="low", cat="mysql/" + _cat, desc=_desc)
+
+
 # client-host settings (applied through the client role); same semantics as the os:* entries
 for _k, (_desc, _restart, _cat) in list(OS_KB.items()):
     KB["client:" + _k] = dict(kind="str", dynamic=True, risk="low", cat="client/" + _cat, desc="Client host: " + _desc)

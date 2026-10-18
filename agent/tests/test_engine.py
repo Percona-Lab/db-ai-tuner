@@ -216,13 +216,35 @@ def test_oom():
 def test_bp_rounding_and_mariadb_chunk():
     v = dict(VARS, innodb_buffer_pool_chunk_size=str(128 * 2 ** 20), innodb_buffer_pool_instances="2")
     assert engine.bp_round(v, 1920 * 2 ** 20) == 1792 * 2 ** 20 and engine.bp_round(v, 1920 * 2 ** 20, up=True) == 2048 * 2 ** 20
-    res = run(dict(OLTP[0], swap_in=50, swap_out=50), OLTP[1], policy="safe")
+    res = run(dict(OLTP[0], swap_in=500, swap_out=50), OLTP[1], policy="safe")
     it = {i["id"]: i for i in res["items"]}
     assert int(it["bp-shrink"]["changes"][0]["proposed"].rstrip("M")) % 256 == 0
     from tuning_agent import baseline
     items, calc = baseline.generate(HW, {"innodb_buffer_pool_size": "134217728", "innodb_buffer_pool_chunk_size": "0", "innodb_log_file_size": "1"},
                                     "mariadb", (11, 8, 0))
     assert calc["buffer_pool"] > 0
+
+
+def test_swap_cold_is_not_harmful():
+    from tuning_agent.engine import harmful_swap
+    assert not harmful_swap({"swap_out": 300, "swap_in": 2, "swap_used_mb": 400})
+    assert harmful_swap({"swap_in": 500})
+    d = engine.diagnose({"summary": {"swap_out": 300, "swap_in": 2, "swap_used_mb": 400}, "hw": HW})
+    assert {x["type"] for x in d} >= {"swap-cold"} and "swap" not in {x["type"] for x in d}
+
+
+def test_bp_overcommit_with_cold_memory():
+    summ = dict(OLTP[0], bp_hit_pct=97.0, bp_disk_reads=400, cpu_busy=40, mem_available_mb=300, inactive_anon_mb=600,
+                swap_total_mb=512, swap_used_mb=20, swap_in=0)
+    inp = dict(OLTP[1], data_bytes=8 * GiB)
+    VARS["os:swapfile"] = "0"
+    try:
+        it = {i["id"]: i for i in run(summ, inp, policy="safe")["items"]}
+    finally:
+        VARS.pop("os:swapfile")
+    assert "bp-overcommit" in it, sorted(it)
+    ch = dict((c["variable"], c["proposed"]) for c in it["bp-overcommit"]["changes"])
+    assert ch.get("os:swapfile") == "1G" and "innodb_buffer_pool_size" in ch
 
 
 def test_no_run_yet():

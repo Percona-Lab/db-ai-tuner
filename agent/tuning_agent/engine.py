@@ -66,6 +66,13 @@ def classify_workload(summary, inputs):
     return {"type": kind, "evidence": ev}
 
 
+def harmful_swap(s):
+    """Swap that costs performance: pages read back in at a meaningful rate, memory stalls, or OOM kills.
+    Swap-out alone (cold pages parked in swap) is not harmful: it frees RAM for caches."""
+    return ((s.get("swap_in") or 0) > 64 or (s.get("psi_memory_full") or 0) >= 2 or (s.get("psi_memory_some") or 0) >= 10
+            or (s.get("oom_kills") or 0) > 0)
+
+
 def bp_round(v, n, up=False):
     """MySQL sizes the buffer pool in multiples of chunk_size x instances (and silently rounds up otherwise)."""
     chunk = _int(v, "innodb_buffer_pool_chunk_size", 0) or 128 * MiB
@@ -148,8 +155,14 @@ def diagnose(ctx):
     if (s.get("oom_kills") or 0) > 0:
         add("oom", "high", f"The kernel OOM killer fired {s['oom_kills']} time(s) during the measurement: memory is over-committed "
             "(buffer pool + per-connection memory + other processes on the host).", {"oom_kills": s.get("oom_kills")})
-    if (s.get("swap_in", 0) or 0) + (s.get("swap_out", 0) or 0) > 10:
-        add("swap", "high", "The host is swapping: memory is over-committed.", {"swap_in": s.get("swap_in"), "swap_out": s.get("swap_out")})
+    sw_ev = {k: s.get(k) for k in ("swap_in", "swap_out", "swap_in_mbs", "swap_out_mbs", "swap_used_mb", "dbproc_swap_mb",
+                                   "dbproc_pgmajfault_per_s", "psi_memory_some", "psi_memory_full")}
+    if harmful_swap(s):
+        add("swap", "high", f"Pages are being swapped back in ({s.get('swap_in') or 0:.0f} pages/s, {s.get('swap_in_mbs') or 0:.2f} MiB/s) "
+            f"or memory stalls are high: memory is over-committed for this workload.", sw_ev)
+    elif (s.get("swap_used_mb") or 0) > 64:
+        add("swap-cold", "low", f"{s['swap_used_mb']:.0f} MiB swapped out but hardly read back ({s.get('swap_in') or 0:.1f} pages/s): "
+            "cold memory parked in swap leaves more RAM for caches. Not a problem.", sw_ev)
     tr = s.get("threads_running_avg") or 0
     if tr > cpus * 4 and busy > 60:
         add("concurrency", "medium", f"{tr:.0f} threads running on {cpus} CPUs: heavy oversubscription, mutex convoys likely.",
@@ -240,7 +253,7 @@ def recommend(ctx):
     max_conn = _int(v, "max_connections", 151)
     mem_avail = (s.get("mem_available_mb") or 0) * MiB
     mem_psi = s.get("psi_memory_some") or 0
-    swapping = (s.get("swap_in", 0) or 0) + (s.get("swap_out", 0) or 0) > 10 or mem_psi >= 10 or (s.get("oom_kills") or 0) > 0
+    swapping = harmful_swap(s)
 
     # ---------------- memory -----------------------------------------------------
     if swapping and bp > 512 * MiB:
@@ -507,6 +520,19 @@ def recommend(ctx):
                   "(e.g. TPC-C district/warehouse rows); shorter transactions, consistent lock order or fewer concurrent clients on the same rows can.",
                   {"row_lock_waits_per_s": lw, "hot_statements": [q["query"][:80] for q in hot]}, impact=1, confidence=2, kind="advice")
 
+    diag_types_early = {d["type"] for d in ctx.get("diagnosis") or [] if d.get("severity") in ("high", "medium")}
+    # InnoDB background threads on their own CPUs (MySQL resource groups): flushing bursts stop preempting queries.
+    if have_run and "rg:innodb_bg_cpus" in v and v.get("rg:innodb_bg_cpus") == "off" and cpus >= 4 and wtype in ("oltp-write", "mixed") \
+            and ("sched-delay" in diag_types_early or (ctx.get("goal") == "latency" and (s.get("dbproc_runq_wait_pct") or 0) >= 5)):
+        n = max(1, cpus // 4)
+        bg = f"{cpus - n}-{cpus - 1}" if n > 1 else str(cpus - 1)
+        b.add("rg-innodb-bg", "Run InnoDB background threads on dedicated CPUs", [("rg:innodb_bg_cpus", bg)],
+              f"Query threads wait for CPU ({s.get('dbproc_runq_wait_pct') or 0:.0f}% of runnable time) on a write-heavy load. A MySQL "
+              f"resource group keeps page cleaners, purge and log threads on CPU(s) {bg}, so flushing bursts do not preempt queries. "
+              "Background work gets fewer CPUs: watch checkpoint age. Experiment.",
+              {"dbproc_runq_wait_pct": s.get("dbproc_runq_wait_pct"), "cpus": cpus, "checkpoint_age_pct_max": s.get("checkpoint_age_pct_max")},
+              impact=1, confidence=1)
+
     # ---------------- operating system ---------------------------------------------
     if ctx.get("os_tuning") and have_run:
         osf = ctx.get("os_facts") or {}
@@ -626,6 +652,14 @@ def recommend(ctx):
                       f"One CPU spends {s['softirq_max_cpu_pct']:.0f}% in softirq while the average is {s['softirq_avg_cpu_pct']:.0f}%: "
                       "the NIC has fewer queues than CPUs. RPS/RFS steer packets to the CPU running the consuming thread.",
                       {"softirq_max_cpu_pct": s.get("softirq_max_cpu_pct")}, impact=2, confidence=2)
+            if cpus >= 4 and (s.get("softirq_max_cpu_pct") or 0) > 30 and v.get("os:net_irq_cpus") == "auto" \
+                    and v.get("os:cpu_affinity") == "all" and "os:rps" in v and v.get("os:rps") == "off":
+                last = f"1-{cpus - 1}"
+                b.add("os-irq-split", "Separate network interrupts from database threads", [("os:net_irq_cpus", "0"), ("os:cpu_affinity", last)],
+                      f"One CPU spends {s['softirq_max_cpu_pct']:.0f}% in packet processing. Pinning the NIC interrupts to CPU 0 and mysqld "
+                      f"to CPUs {last} stops interrupts from preempting query threads (lower tail latency) at the cost of one CPU "
+                      "for the database. Alternative to RPS. Experiment.",
+                      {"softirq_max_cpu_pct": s.get("softirq_max_cpu_pct"), "cpus": cpus}, impact=1, confidence=1)
             if (s.get("conntrack_fill_pct") or 0) > 80:
                 cur = _int(v, "os:net.netfilter.nf_conntrack_max", 262144)
                 b.add("net-conntrack", "Larger connection tracking table", [("os:net.netfilter.nf_conntrack_max", str(cur * 4))],
@@ -693,6 +727,29 @@ def recommend(ctx):
             if b.items and b.items[-1]["id"] == id_:
                 b.items[-1]["sweep"] = {"variable": var, "values": [str(x) for x in values]}
     diag_types = {d["type"] for d in ctx.get("diagnosis") or [] if d.get("severity") in ("high", "medium")}
+    # Memory overcommit with swap: when the working set misses memory and RAM is used up, a larger buffer pool can win
+    # even if cold memory (idle processes, unused allocations) moves to swap: the cache saves more reads than swap costs.
+    # The run's swap-in rate and the goal decide (harmful swap triggers bp-shrink on the next round).
+    swap_free = ((s.get("swap_total_mb") or 0) - (s.get("swap_used_mb") or 0)) * MiB
+    cold = (s.get("inactive_anon_mb") or 0) * MiB
+    if have_run and diag_types & {"memory", "io"} and not swapping and bp and mem_avail <= max(768 * MiB, ram * 0.12) \
+            and s.get("bp_hit_pct", 100) < 99.5 and (not data_bytes or bp < data_bytes):
+        extra_swap = []
+        room = min(int(ram * 0.15), cold + swap_free // 2)
+        if ctx.get("os_tuning") and swap_free < 1 * GiB and ram >= 2 * GiB:
+            size = 1 * GiB if ram <= 8 * GiB else 2 * GiB
+            extra_swap = [("os:swapfile", fmt_size(size))]
+            room = min(int(ram * 0.15), cold + (swap_free + size) // 2)
+        new = bp_round(v, bp + room)
+        if new >= bp + max(128 * MiB, bp * 0.05):
+            b.add("bp-overcommit", "Grow the buffer pool into memory freed by swapping out cold pages",
+                  [("innodb_buffer_pool_size", fmt_size(new))] + extra_swap,
+                  f"Working set misses memory ({s.get('bp_hit_pct', 0):.2f}% hit ratio) and only {human_size(mem_avail)} RAM is available. "
+                  f"{human_size(cold)} of anonymous memory is inactive and {human_size(swap_free)} swap is free"
+                  f"{' (plus a new swap file)' if extra_swap else ''}: letting cold pages go to swap gives the buffer pool "
+                  f"{human_size(new - bp)} more. Kept only if the goal improves and pages are not swapped back in heavily. Experiment.",
+                  {"bp_hit_pct": s.get("bp_hit_pct"), "mem_available": human_size(mem_avail), "inactive_anon": human_size(cold),
+                   "swap_free": human_size(swap_free), "swap_in": s.get("swap_in")}, impact=2, confidence=1)
     if have_run and diag_types & {"memory", "io"} and not swapping and mem_avail > 512 * MiB and bp:
         top = bp_round(v, min(ram * 0.80, bp + mem_avail - 512 * MiB))
         mid = bp_round(v, (bp + top) // 2)

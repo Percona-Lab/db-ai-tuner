@@ -305,6 +305,10 @@ def analyze_window(a, b, samples):
         **{k: avg("os", k) for k in ("dbproc_runq_wait_threads", "dbproc_sched_delay_us", "dbproc_runq_wait_pct", "dbproc_nvcsw_per_s", "dbproc_threads")},
         **{k: os_rates.get(k) if os_rates.get(k) is not None else avg("os", k) for k in ("host_runq_wait_threads", "host_sched_delay_us", "host_runq_wait_pct")},
         "dbproc_sched_delay_us_max": mx("os", "dbproc_sched_delay_us"), "dbproc_runq_wait_pct_max": mx("os", "dbproc_runq_wait_pct"),
+        **{k: os_rates.get(k) for k in ("swap_in_mbs", "swap_out_mbs", "swap_used_mb", "swap_total_mb", "inactive_anon_mb",
+                                         "dbproc_pgmajfault_per_s", "dbproc_workingset_refault_anon_per_s", "dbproc_zswpin_per_s",
+                                         "dbproc_zswpout_per_s")},
+        "swap_in_mbs_max": mx("os", "swap_in_mbs"), "swap_used_mb_max": mx("os", "swap_used_mb"),
         "dbproc_pss_mb_max": mx("os", "dbproc_pss_mb"), "dbproc_swap_pss_mb_max": mx("os", "dbproc_swap_pss_mb"),
         "samples": len(samples),
     }

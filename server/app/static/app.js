@@ -261,6 +261,8 @@ const RUN_CHARTS = [
   { title: "fsyncs", unit: "per s", series: [["db", "data_fsyncs", "data fsyncs"], ["db", "log_fsyncs", "log fsyncs"]] },
   LIVE_SCHED,
   { title: "Run-queue wait", unit: "% of runnable time", series: [["os", "dbproc_runq_wait_pct", "database threads"], ["os", "host_runq_wait_pct", "all tasks"]] },
+  { title: "Swap traffic", unit: "MiB/s", series: [["os", "swap_in_mbs", "swap-in"], ["os", "swap_out_mbs", "swap-out"]] },
+  { title: "Swap used", unit: "MiB", series: [["os", "swap_used_mb", "host"], ["os", "dbproc_swap_mb", "database process(es)"]] },
   { title: "Database process memory", unit: "MiB", series: [["os", "dbproc_rss_mb", "RSS"], ["os", "dbproc_pss_mb", "PSS"], ["os", "dbproc_pss_shmem_mb", "PSS shared memory"], ["os", "dbproc_swap_pss_mb", "swap PSS"], ["os", "dbproc_cg_mem_mb", "cgroup charge"]] },
   { title: "Disk throughput", unit: "MiB/s", series: [["os", "disk_r_mbs", "read"], ["os", "disk_w_mbs", "write"]] },
   { title: "Disk utilisation / latency", unit: "", series: [["os", "disk_util", "util %"], ["os", "disk_await_ms", "await ms"]] },

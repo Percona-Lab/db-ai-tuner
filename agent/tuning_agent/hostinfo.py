@@ -236,6 +236,24 @@ def sched_rates(d_run, d_wait, d_slices, dt, prefix):
     return out
 
 
+def swap_top(n=8):
+    """Processes holding the most swapped-out memory: [(name, pid, bytes)]."""
+    out = []
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        sw = name = None
+        for line in _read(f"/proc/{d}/status").splitlines():
+            if line.startswith("Name:"):
+                name = line.split(None, 1)[1] if len(line.split()) > 1 else "?"
+            elif line.startswith("VmSwap:"):
+                sw = int(line.split()[1]) * 1024
+                break
+        if sw:
+            out.append((name, int(d), sw))
+    return sorted(out, key=lambda x: -x[2])[:n]
+
+
 def cgroup_memory(cgroup):
     out = {}
     for f, k in (("memory.current", "cg_mem"), ("memory.swap.current", "cg_swap")):
@@ -278,6 +296,12 @@ class OSCounters:
         s["psi"] = read_psi("/proc/pressure")
         if getattr(self, "cgroup", None):
             s["psi_mysqld"] = read_psi(self.cgroup)
+            cg = {}
+            for line in _read(os.path.join(self.cgroup, "memory.stat")).splitlines():
+                k, _, v = line.partition(" ")
+                if k in ("pgmajfault", "workingset_refault_anon", "zswpin", "zswpout", "pswpin", "pswpout") and v.isdigit():
+                    cg[k] = int(v)
+            s["cgvm"] = cg
         if self.pid:
             st = _read(f"/proc/{self.pid}/stat")
             if st:
@@ -322,7 +346,8 @@ class OSCounters:
                 vm[k] = int(v)
         s["vm"] = vm
         mi = meminfo()
-        s["mem"] = {k: mi.get(k, 0) for k in ("MemTotal", "MemAvailable", "Cached", "SwapTotal", "SwapFree", "Dirty")}
+        s["mem"] = {k: mi.get(k, 0) for k in ("MemTotal", "MemAvailable", "Cached", "SwapTotal", "SwapFree", "Dirty",
+                                               "Inactive(anon)", "AnonPages", "SwapCached")}
         if self.device:
             for line in _read("/proc/diskstats").splitlines():
                 p = line.split()
@@ -395,6 +420,17 @@ class OSCounters:
             out["mem_available_mb"] = round(m["MemAvailable"] / 2 ** 20, 1)
             out["page_cache_mb"] = round(m["Cached"] / 2 ** 20, 1)
             out["swap_used_mb"] = round((m["SwapTotal"] - m["SwapFree"]) / 2 ** 20, 1)
+            out["swap_total_mb"] = round(m["SwapTotal"] / 2 ** 20, 1)
+            out["inactive_anon_mb"] = round(m.get("Inactive(anon)", 0) / 2 ** 20, 1)  # cold anonymous memory: swap candidates
+        for k, name in (("pswpin", "swap_in_mbs"), ("pswpout", "swap_out_mbs")):
+            if k in va and k in vb:
+                out[name] = round((vb[k] - va[k]) * 4096 / dt / 2 ** 20, 3)
+        # database service's share of swapping: its cgroup's major faults (with O_DIRECT data files these are mostly
+        # swap-ins), refaults of evicted anonymous pages, zswap traffic, and the growth of its swapped-out memory
+        ca, cb = a.get("cgvm") or {}, b.get("cgvm") or {}
+        for k in ("pgmajfault", "workingset_refault_anon", "zswpin", "zswpout", "pswpin", "pswpout"):
+            if k in ca and k in cb and cb[k] >= ca[k]:
+                out[f"dbproc_{k}_per_s"] = round((cb[k] - ca[k]) / dt, 2)
         if "disk" in a and "disk" in b:
             d = [y - x for x, y in zip(a["disk"], b["disk"])]
             # fields: reads, rmerged, rsect, rms, writes, wmerged, wsect, wms, inflight, io_ms, wio_ms

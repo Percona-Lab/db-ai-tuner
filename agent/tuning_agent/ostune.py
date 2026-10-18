@@ -12,6 +12,7 @@ import subprocess
 SYSCTL_FILE = "/etc/sysctl.d/99-tuning-agent.conf"
 UDEV_FILE = "/etc/udev/rules.d/99-tuning-agent.rules"
 BOOT_UNIT = "/etc/systemd/system/tuning-agent-os.service"
+SWAPFILE = "/swapfile.tuning-agent"
 JEMALLOC_CANDIDATES = ["/usr/lib/x86_64-linux-gnu/libjemalloc.so.2", "/usr/lib64/libjemalloc.so.2", "/usr/lib/aarch64-linux-gnu/libjemalloc.so.2"]
 ALLOCATORS = {  # name -> (library candidates, apt package, dnf package)
     "jemalloc": (JEMALLOC_CANDIDATES, "libjemalloc2", "jemalloc"),
@@ -90,7 +91,51 @@ OS_KB = {
     "os:datadir_fs": ("Filesystem of the data directory on the experiment device (scope 'filesystem' only).", True, "io"),
     "os:hugepages": ("Number of 2 MiB huge pages reserved (used by the buffer pool when large_pages=ON).", True, "memory"),
     "os:cpu_governor": ("CPU frequency governor.", False, "cpu"),
+    "os:swapfile": ("Extra swap file managed by the agent (size, 0 = none): room for cold memory so caches can grow.", False, "memory"),
+    "os:zswap": ("Compressed in-memory cache for swapped pages (off / on[:compressor]): cheaper swap-ins.", False, "memory"),
+    "os:cpu_affinity": ("CPUs the database process may run on (all / CPU list such as 1-3), e.g. to keep it off the CPUs handling network interrupts.", False, "cpu"),
+    "os:net_irq_cpus": ("CPUs that handle the network card interrupts (auto / CPU list); irqbalance is stopped while managed.", False, "network"),
 }
+
+
+def parse_bytes(v):
+    m = re.match(r"^\s*(\d+(?:\.\d+)?)\s*([kmgt]?)i?b?\s*$", str(v), re.I)
+    if not m:
+        raise ValueError(f"bad size {v}")
+    return int(float(m.group(1)) * 1024 ** "bkmgt".index((m.group(2) or "b").lower()))
+
+
+def online_cpus():
+    return _read("/sys/devices/system/cpu/online") or f"0-{(os.cpu_count() or 1) - 1}"
+
+
+def cpu_list(spec):
+    """'0-2,5' -> {0,1,2,5}"""
+    out = set()
+    for part in str(spec).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        a, _, b = part.partition("-")
+        out.update(range(int(a), int(b or a) + 1))
+    return out
+
+
+def nic_irqs():
+    """IRQ numbers of the network interfaces (MSI vectors of the NIC; virtio-net queues by name)."""
+    irqs = set()
+    names = []
+    for dev in glob.glob("/sys/class/net/*/device"):
+        real = os.path.realpath(dev)
+        names.append(os.path.basename(real))  # e.g. virtio1 (its queues are named virtio1-input.0 / -output.0)
+        msi = os.path.join(real, "msi_irqs")
+        if not os.path.basename(real).startswith("virtio") and os.path.isdir(msi):
+            irqs.update(int(x) for x in os.listdir(msi) if x.isdigit())
+    for line in _read("/proc/interrupts").splitlines():
+        p = line.split()
+        if p and p[0].rstrip(":").isdigit() and any(re.search(rf"\b{n}-(input|output)", line) for n in names if n.startswith("virtio")):
+            irqs.add(int(p[0].rstrip(":")))
+    return sorted(i for i in irqs if os.path.exists(f"/proc/irq/{i}/smp_affinity_list"))
 
 
 def _read(path, default=""):
@@ -152,6 +197,22 @@ def current(datadir, device, service, fs_device=None):
     m = re.search(r"^# os:malloc=(.+)$", dropin, re.M)
     out["os:malloc"] = m.group(1).strip() if m else ("jemalloc" if "jemalloc" in dropin else "glibc")
     out["os:hugepages"] = _read("/proc/sys/vm/nr_hugepages")
+    swaps = _read("/proc/swaps")
+    out["os:swapfile"] = f"{os.path.getsize(SWAPFILE) // 2 ** 20}M" if SWAPFILE in swaps and os.path.exists(SWAPFILE) else "0"
+    if os.path.exists("/sys/module/zswap/parameters/enabled"):
+        on = _read("/sys/module/zswap/parameters/enabled") in ("Y", "1")
+        out["os:zswap"] = f"on:{_read('/sys/module/zswap/parameters/compressor')}" if on else "off"
+    from .hostinfo import mysqld_pid
+    pid = mysqld_pid()
+    if pid:
+        allowed = re.search(r"^Cpus_allowed_list:\s*(\S+)", _read(f"/proc/{pid}/status"), re.M)
+        if allowed:
+            out["os:cpu_affinity"] = "all" if cpu_list(allowed.group(1)) == cpu_list(online_cpus()) else allowed.group(1)
+    irqs = nic_irqs()
+    if irqs:
+        aff = {_read(f"/proc/irq/{i}/smp_affinity_list") for i in irqs}
+        managed_irq = os.path.exists(BOOT_UNIT) and "smp_affinity_list" in _read(BOOT_UNIT)
+        out["os:net_irq_cpus"] = aff.pop() if managed_irq and len(aff) == 1 else "auto"
     gov = sorted(set(_read(p) for p in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor")))
     if gov:
         out["os:cpu_governor"] = ",".join(gov)
@@ -263,6 +324,58 @@ class OSApplier:
             if not self.fs_device:
                 raise RuntimeError("no filesystem experiment device configured (fs_device / allow_fs_experiments)")
             return fslab.apply(value, self.fs_device, self.service, self.log)
+        if name == "os:swapfile":
+            size = 0 if str(value) in ("0", "", "off") else parse_bytes(value)
+            if SWAPFILE in _read("/proc/swaps"):
+                r = subprocess.run(["swapoff", SWAPFILE], capture_output=True, text=True, timeout=1800)
+                if r.returncode != 0:
+                    raise RuntimeError(f"swapoff failed (not enough free memory to take swapped pages back?): {r.stderr.strip()}")
+            if os.path.exists(SWAPFILE):
+                os.remove(SWAPFILE)
+            if size:
+                st = os.statvfs("/")
+                if st.f_bavail * st.f_frsize < size + 2 * 2 ** 30:
+                    raise RuntimeError(f"not enough free disk space on / for a {value} swap file")
+                for cmd in (["fallocate", "-l", str(size), SWAPFILE], ["chmod", "600", SWAPFILE], ["mkswap", "-q", SWAPFILE], ["swapon", SWAPFILE]):
+                    r = subprocess.run(cmd, capture_output=True, text=True)
+                    if r.returncode != 0:
+                        if os.path.exists(SWAPFILE) and SWAPFILE not in _read("/proc/swaps"):
+                            os.remove(SWAPFILE)
+                        raise RuntimeError(f"{' '.join(cmd)}: {(r.stderr or r.stdout).strip()}")
+            return False
+        if name == "os:zswap":
+            if not os.path.exists("/sys/module/zswap/parameters/enabled"):
+                raise RuntimeError("zswap is not available in this kernel")
+            on, _, comp = str(value).partition(":")
+            if on == "on" and comp:
+                subprocess.run(["modprobe", comp], capture_output=True)
+                _write("/sys/module/zswap/parameters/compressor", comp)
+            _write("/sys/module/zswap/parameters/enabled", "Y" if on == "on" else "N")
+            return False
+        if name == "os:cpu_affinity":
+            from .hostinfo import mysqld_pid
+            cpus = online_cpus() if value in ("all", "", None) else str(value)
+            if not cpu_list(cpus) <= cpu_list(online_cpus()):
+                raise RuntimeError(f"CPU list {cpus} is not within the online CPUs {online_cpus()}")
+            pid = mysqld_pid()
+            if pid:  # all existing threads now; new threads inherit from their creator; the drop-in covers restarts
+                r = subprocess.run(["taskset", "-a", "-cp", cpus, str(pid)], capture_output=True, text=True)
+                if r.returncode != 0:
+                    raise RuntimeError(f"taskset failed: {r.stderr.strip()}")
+            return False
+        if name == "os:net_irq_cpus":
+            irqs = nic_irqs()
+            if not irqs:
+                raise RuntimeError("no network interface interrupts found")
+            cpus = online_cpus() if value in ("auto", "", None) else str(value)
+            if value not in ("auto", "", None):
+                subprocess.run(["systemctl", "stop", "irqbalance"], capture_output=True)
+            for i in irqs:
+                try:
+                    _write(f"/proc/irq/{i}/smp_affinity_list", cpus)
+                except OSError:
+                    pass  # some vectors (e.g. config) cannot be moved
+            return False
         if name == "os:cpu_governor":
             for p in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"):
                 _write(p, value)
@@ -316,6 +429,14 @@ class OSApplier:
             ncpu = os.cpu_count() or 1
             cmds.append("/bin/sh -c 'for q in /sys/class/net/*/queues/rx-*; do case $q in */lo/*) continue;; esac; "
                         f"echo {format((1 << ncpu) - 1, 'x')} > $q/rps_cpus; echo 8192 > $q/rps_flow_cnt; done; echo 32768 > /proc/sys/net/core/rps_sock_flow_entries'")
+        if "os:zswap" in osm:
+            on, _, comp = osm["os:zswap"].partition(":")
+            if on == "on" and comp:
+                cmds.append(f"/bin/sh -c 'modprobe {comp}; echo {comp} > /sys/module/zswap/parameters/compressor'")
+            cmds.append(f"/bin/sh -c 'echo {'Y' if on == 'on' else 'N'} > /sys/module/zswap/parameters/enabled'")
+        if osm.get("os:net_irq_cpus") not in (None, "auto"):
+            irqs = " ".join(str(i) for i in nic_irqs())
+            cmds.append(f"/bin/sh -c 'systemctl stop irqbalance; for i in {irqs}; do echo {osm['os:net_irq_cpus']} > /proc/irq/$i/smp_affinity_list; done; true'")
         if "os:cpu_governor" in osm:
             cmds.append(f"/bin/sh -c 'for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo {osm['os:cpu_governor']} > $g; done'")
         if cmds:
@@ -335,6 +456,8 @@ class OSApplier:
             lines += allocator_env(osm["os:malloc"])
         if int(osm.get("os:hugepages", 0) or 0) > 0:
             lines.append("LimitMEMLOCK=infinity")
+        if osm.get("os:cpu_affinity") not in (None, "all"):
+            lines.append(f"CPUAffinity={osm['os:cpu_affinity'].replace(',', ' ')}")
         self._file(service_dropin(self.service), "# Managed by tuning-agent\n[Service]\n" + "\n".join(lines) + "\n" if lines else None)
         subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
         # fstab mount options for the data directory filesystem; settings no longer managed go back to their originals
@@ -343,6 +466,7 @@ class OSApplier:
             if k not in fs and self.originals.get(k) is not None:
                 fs[k] = self.originals[k]
         self._fstab(fs)
+        self._fstab_swap(osm.get("os:swapfile") not in (None, "0", "off", ""))
 
     def _file(self, path, content):
         if content is None:
@@ -351,6 +475,20 @@ class OSApplier:
             return
         os.makedirs(os.path.dirname(path), exist_ok=True)
         _write(path, content)
+
+    @staticmethod
+    def _fstab_swap(on):
+        if not os.path.exists("/etc/fstab"):
+            return
+        cur = _read("/etc/fstab").splitlines()
+        lines = [l for l in cur if not l.startswith(SWAPFILE + " ")]
+        if on:
+            lines.append(f"{SWAPFILE} none swap sw 0 0")
+        if lines == cur:
+            return
+        tmp = "/etc/fstab.tuning-agent.tmp"
+        _write(tmp, "\n".join(lines) + "\n")
+        os.replace(tmp, "/etc/fstab")
 
     def _fstab(self, osm):
         m = _mount_of(self.datadir)

@@ -576,6 +576,12 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
         c.state.save()
         raise Fail(why + " (run aborted; measure again)")
     summary, inputs = collector.analyze_window(a_snap, b_snap, samples)
+    try:  # who holds swapped-out memory at the end of the window
+        top = hostinfo.swap_top()
+        if top:
+            inputs["swap_top"] = [{"process": n, "pid": p, "swap_mb": round(b / 2 ** 20, 1)} for n, p, b in top]
+    except Exception:
+        pass
     if extra_inputs:
         inputs.update(extra_inputs)
         for k, v in (extra_inputs.get("probe") or {}).items():
@@ -1411,7 +1417,7 @@ def cmd_daemon(a):
     last_hello = 0
     device = None
     sampler = None
-    last_prune = 0
+    last_prune = last_rg = 0
     log(f"tuning-agent {__version__} daemon: sampling every {interval:.0f}s, server {c.cfg['server']}")
     while not stop["flag"]:
         t0 = time.time()
@@ -1424,6 +1430,11 @@ def cmd_daemon(a):
                 time.sleep(1)
             s = sampler.sample()
             st = c.state.load()
+            if "rg:innodb_bg_cpus" in (st.get("managed") or {}) and time.time() - last_rg > 60:
+                last_rg = time.time()
+                from . import resgroups
+                if resgroups.ensure(c.db):  # mysqld was restarted outside the agent (e.g. a benchmark reset)
+                    log("re-assigned InnoDB background threads to their resource group")
             s["session_id"] = (st.get("session") or {}).get("id")
             s["run_id"] = (st.get("measurement") or {}).get("run_id")
             store.add(s)
