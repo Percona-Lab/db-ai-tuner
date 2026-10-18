@@ -403,7 +403,7 @@ async function envPage(id) {
     <span><b>${esc(e.db_short || e.db)}</b></span>
     <span>data ${bytes(db.data_bytes)}</span>
     <span>buffer pool ${bytes(kv.innodb_buffer_pool_size)}</span>
-    ${(d.hosts || []).length ? `<a href="#" id="clientsJump">+ ${d.hosts.length} client host${d.hosts.length > 1 ? "s" : ""}</a>` : ""}
+    ${(d.hosts || []).filter(h => !h.destroyed_at).length ? `<a href="#" id="clientsJump">+ ${d.hosts.filter(h => !h.destroyed_at).length} client host${d.hosts.filter(h => !h.destroyed_at).length > 1 ? "s" : ""}</a>` : ""}
     <span class="spacer"></span><a href="#" id="detailsToggle">Details ▸</a></div>
   <div id="envDetails" hidden style="margin-top:12px">
   <div class="grid g2"><div><h3 style="margin-top:0">Hardware &amp; OS</h3><div class="kv">
@@ -420,7 +420,7 @@ async function envPage(id) {
   ${(d.hosts || []).length ? `<h2 id="clientHosts">Client hosts${info("Application or benchmark hosts running the tuning-agent in client role. They report OS and network metrics and accept OS/network setting changes from the session driver.")}</h2>
    <div class="card tablewrap"><table><thead><tr><th>Host</th><th>Status</th><th>Hardware</th><th class="num">RTT to DB</th><th class="num">Connections/s</th><th class="num">TIME_WAIT</th><th class="num">CPU</th></tr></thead><tbody>
    ${d.hosts.map(h => { const o = (h.latest && h.latest.os) || {}, hw = (h.facts || {}).hardware || {};
-     return `<tr><td><b>${esc(h.name)}</b></td><td>${h.online ? '<span class="badge good">online</span>' : `<span class="badge plain">offline · ${ago(h.last_seen)}</span>`}</td>
+     return `<tr><td><b>${esc(h.name)}</b></td><td>${h.destroyed_at ? `<span class="badge plain" data-tip="Machine deleted ${ago(h.destroyed_at)}; its metrics stay with the runs.">decommissioned</span>` : h.online ? '<span class="badge good">online</span>' : `<span class="badge warn">offline · ${ago(h.last_seen)}</span>`}</td>
        <td>${hw.cpus || "?"} CPU · ${bytes(hw.ram_bytes)}</td><td class="num">${o.rtt_avg_ms != null ? num(o.rtt_avg_ms) + " ms" : "–"}</td>
        <td class="num">${num(o.net_conn_per_s)}</td><td class="num">${num(o.net_time_wait)}</td><td class="num">${o.cpu_busy != null ? Math.round(o.cpu_busy) + "%" : "–"}</td></tr>`; }).join("")}</tbody></table></div>` : ""}
   <div class="card" style="margin-top:10px"><details><summary style="margin:0">Current agent-applied configuration (${Object.keys((f.agent || {}).managed || {}).length} settings)${info("The settings the tuning-agent currently enforces on this server: MySQL variables written to its own option file (shown below) and operating-system settings. Everything not listed is the server default or comes from your own option files. As of the agent's last report.")}</summary>${Object.keys((f.agent || {}).managed || {}).length ? `<p class="muted" style="margin:0 0 6px">${esc((f.agent || {}).cnf_path || "")} · restarts ${(f.agent || {}).allow_restart === false ? "disabled" : "allowed"}</p>${configBlocks(f.agent.managed)}` : '<span class="muted">None yet: <code>tuning-agent baseline --apply</code> writes the first set.</span>'}</details></div>

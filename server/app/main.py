@@ -269,7 +269,7 @@ def environments(request: Request):
         m = store.q1("SELECT data FROM metrics WHERE env_id=? ORDER BY ts DESC LIMIT 1", (e["id"],))
         b["latest"] = store.uj(m["data"]) if m else None
         b["clients"] = [{"id": h["id"], "name": h["name"], "online": bool(h["last_seen"] and now() - h["last_seen"] < ONLINE_S)}
-                        for h in store.q("SELECT id, name, last_seen FROM hosts WHERE env_id=? ORDER BY name", (e["id"],))]
+                        for h in store.q("SELECT id, name, last_seen FROM hosts WHERE env_id=? AND destroyed_at IS NULL ORDER BY name", (e["id"],))]
         out.append(b)
     return {"environments": out}
 
@@ -295,6 +295,17 @@ def environment(env_id: int, request: Request):
     events = [store.row(r, ("data",)) for r in store.q("SELECT * FROM events WHERE env_id=? ORDER BY ts DESC LIMIT 50", (env_id,))]
     hosts = [host_brief(dict(h)) for h in store.q("SELECT * FROM hosts WHERE env_id=? ORDER BY name", (env_id,))]
     return {"environment": env_brief(e), "facts": store.uj(e["facts"], {}), "sessions": sessions, "events": events, "hosts": hosts}
+
+
+@app.patch("/api/hosts/{host_id}")
+def update_host(host_id: int, request: Request, body: dict = Body(...)):
+    u = auth.current_user(request)
+    h = store.q1("SELECT * FROM hosts WHERE id=? AND user_id=?", (host_id, u["id"]))
+    if not h:
+        raise HTTPException(404, "host not found")
+    if "destroyed_at" in body:
+        store.ex("UPDATE hosts SET destroyed_at=? WHERE id=?", (float(body["destroyed_at"]) if body["destroyed_at"] else None, host_id))
+    return {"ok": True}
 
 
 @app.patch("/api/environments/{env_id}")
@@ -746,6 +757,7 @@ def host_brief(h):
     f = store.uj(h["facts"], {}) or {}
     m = store.q1("SELECT data FROM host_metrics WHERE host_id=? ORDER BY ts DESC LIMIT 1", (h["id"],))
     return {"id": h["id"], "name": h["name"], "role": h["role"], "env_id": h["env_id"], "last_seen": h["last_seen"],
+            "destroyed_at": h["destroyed_at"] if "destroyed_at" in h.keys() else None,
             "online": bool(h["last_seen"] and now() - h["last_seen"] < ONLINE_S), "facts": f, "latest": store.uj(m["data"]) if m else None}
 
 
