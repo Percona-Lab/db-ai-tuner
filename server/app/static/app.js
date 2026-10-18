@@ -696,7 +696,7 @@ async function renderKeySettings(el, runId) {
   const c = await api(`/api/runs/${runId}/config`);
   const meta = c.meta || {};
   if (!Object.keys(meta).length) { el.innerHTML = ""; return; }
-  const rows = KEY_VARS.filter(k => k in c.config).map(k => {
+  const rows = KEY_VARS.filter(k => k in c.config && !/^(os|rg):/.test(k)).map(k => {
     const m = meta[k] || {}, def = isDefault(m);
     return `<tr><td class="mono">${esc(k)}</td><td class="mono ${def ? "" : "diff-new"}">${esc(val(k, c.config[k]))}</td><td class="mono muted">${m.default != null ? esc(val(k, m.default)) : ""}</td><td>${def ? '<span class="muted">compiled default</span>' : esc(sourceText(m))}</td></tr>`;
   }).join("");
