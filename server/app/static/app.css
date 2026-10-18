@@ -135,3 +135,4 @@ table.kvt td:first-child { color: var(--ink-2); }
 .waitbar { display: flex; height: 14px; border-radius: 4px; overflow: hidden; background: var(--grid); }
 .waitbar span { display: block; height: 100%; }
 i.dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.rolled { text-decoration: line-through; color: var(--muted); }

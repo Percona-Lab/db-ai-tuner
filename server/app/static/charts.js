@@ -177,9 +177,10 @@
         lab.textContent = text.length > maxc ? text.slice(0, maxc - 1) + "…" : text;
       }
       if (b.sub && !dense) { const s2 = el("text", { x: cx, y: H - 5, "text-anchor": "middle", "font-size": 10.5, fill: "var(--muted)" }, svg); s2.textContent = b.sub; }
+      if (b.mark) { const tw = Math.min(10, bw); el("path", { d: `M${cx - tw / 2},${y - 3} L${cx + tw / 2},${y - 3} L${cx},${y - 3 - tw * 0.8} Z`, fill: "var(--ink)" }, svg); }
       if (b.highlight && slot > 40) { const v = el("text", { x: cx, y: y - 4, "text-anchor": "middle", "font-size": 11, fill: "var(--ink)" }, svg); v.textContent = fmtNum(b.value); }
       const hit = el("rect", { x: cx - slot / 2, y: m.t, width: slot, height: H - m.t, fill: "transparent", style: b.href ? "cursor:pointer" : "" }, svg);
-      hit.addEventListener("mousemove", ev => showTip(`<div class="t">${b.label}</div><div>${opts.metric || "value"}<b>${fmtNum(b.value)} ${opts.unit || ""}</b></div>${b.sub ? `<div>${opts.subLabel || "change"}<b>${b.sub}</b></div>` : ""}${b.tip || ""}`, ev.clientX, ev.clientY));
+      hit.addEventListener("mousemove", ev => showTip(`<div class="t">${b.label}</div><div>${opts.metric || "value"}<b>${fmtNum(b.value)} ${opts.unit || ""}</b></div>${b.sub ? `<div>${opts.subLabel || "change"}<b>${b.sub}</b></div>` : ""}${b.mark ? "<div><b>best configuration known at this point</b></div>" : ""}${b.tip || ""}`, ev.clientX, ev.clientY));
       hit.addEventListener("mouseleave", hideTip);
       if (b.href) hit.addEventListener("click", () => { hideTip(); location.hash = b.href; });
     });

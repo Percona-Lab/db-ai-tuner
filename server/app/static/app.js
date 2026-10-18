@@ -601,7 +601,7 @@ async function sessionPage(id) {
    ${cfgTile("Best safe", bestSafe, firstCfg, lower, s.goal, false, s)}
    ${bestTrade ? cfgTile("Best with trade-offs", bestTrade, firstCfg, lower, s.goal, true, s) : ""}</div>
   <div class="card" style="margin-top:14px" id="bars"></div>
-  <h2>Runs</h2><div class="card tablewrap"><table class="runs"><thead><tr><th>#</th><th>Run</th><th>Changes</th><th class="num">${goalUnit(s.goal, s) === "ms" ? "Avg ms" : "Goal"}</th><th class="num">Δ${info("Change of the goal vs the mean of the parent configuration (the configuration this run was changed from). Coloured only beyond the noise threshold.")}</th><th>Verdict</th>
+  <h2>Runs</h2><div class="card tablewrap"><table class="runs"><thead><tr><th>#</th><th>Run</th><th>Changes</th><th class="num">${goalUnit(s.goal, s) === "ms" ? "Avg ms" : "Goal"}</th><th class="num">Δ parent${info("Change of the goal vs the mean of the parent configuration (the configuration this run was changed from). Coloured only beyond the noise threshold.")}</th><th class="num">vs start${info("Change vs the calibrated starting configuration. Bold: the best configuration known at that point of the session (it took the lead by beating the previous best beyond the noise threshold). Changes shown struck through were rolled back afterwards; ↩ marks settings undone before the run.")}</th><th>Verdict</th>
    <th class="num">TPS</th><th class="num">Avg ms</th><th class="num">CPU ms/trx</th><th class="num">IOs/trx</th><th class="num">Time</th></tr></thead><tbody id="runs"></tbody></table></div>
   <h2>Experiments${info("Your own experiments: try a set of settings, or sweep one variable over several values (e.g. buffer pool 1G, 2G, 3G). They run before the tuner's own ideas, each value measured from the same parent configuration with the session's benchmark. The best value is kept only if it beats the parent beyond the noise threshold.")}</h2><div class="card" id="exps"></div>
   <h2>Latest recommendations</h2><div class="card" id="recs"></div>
@@ -621,15 +621,51 @@ async function sessionPage(id) {
   const refVal = (s.calibration && s.calibration.goal_mean) || (first ? first.goal_value : null);
   const refName = s.calibration && s.calibration.goal_mean ? "starting config (calibration mean)" : "first run";
   const vsRef = v => refVal ? (lower ? (refVal - v) / refVal : (v - refVal) / refVal) * 100 : null;
+  // best configuration known at each point of the session: a configuration takes the lead only when its mean beats the
+  // current leader beyond the noise threshold (repeats of the leader keep it)
+  const bestAt = {};
+  { const acc = {}; let lead = null, leadMean = null;
+    done.filter(r => r.verdict !== "unreliable").forEach(r => {
+      const k = JSON.stringify(Object.entries(r.managed || {}).sort());
+      const a = acc[k] = acc[k] || { sum: 0, n: 0 }; a.sum += r.goal_value; a.n += 1;
+      const mean = a.sum / a.n;
+      const better = leadMean == null || (lower ? (leadMean - mean) / leadMean : (mean - leadMean) / leadMean) * 100 > noiseP;
+      if (k === lead) leadMean = mean; else if (better) { lead = k; leadMean = mean; }
+      bestAt[r.id] = k === lead;
+    }); }
+  // what happened to each run's own changes afterwards: kept, or rolled back by a later run
+  const later = d.runs.filter(x => x.status !== "aborted");
+  const fate = (r, c) => {
+    const mine = (r.managed || {})[c.variable];
+    const nxt = later.find(x => x.seq > r.seq);
+    if (!nxt) return { kept: true, pending: true };
+    const theirs = (nxt.managed || {})[c.variable];
+    return String(theirs) === String(mine) ? { kept: true } : { kept: false, by: nxt.seq };
+  };
   C.barChart(document.getElementById("bars"), {
-    title: goalName(s.goal) + " per run (" + goalUnit(s.goal, s) + ") — green: best production-safe configuration · orange: runs with trade-offs", unit: goalUnit(s.goal, s), metric: s.goal === "latency" ? "avg latency" : "goal value",
+    title: goalName(s.goal) + " per run (" + goalUnit(s.goal, s) + ") — green: best production-safe configuration · orange: runs with trade-offs · ▲ best configuration known at that point", unit: goalUnit(s.goal, s), metric: s.goal === "latency" ? "avg latency" : "goal value",
     ref: refVal, refLabel: refName, subLabel: "vs " + refName,
-    bars: done.map(r => ({ label: "#" + r.seq + " " + r.label, short: "#" + r.seq, value: r.goal_value, sub: vsRef(r.goal_value) != null ? pct(vsRef(r.goal_value)) : "", href: "#/run/" + r.id,
+    bars: done.map(r => ({ label: "#" + r.seq + " " + r.label, short: "#" + r.seq, value: r.goal_value, sub: vsRef(r.goal_value) != null ? pct(vsRef(r.goal_value)) : "", href: "#/run/" + r.id, mark: bestAt[r.id],
       highlight: (r.tradeoffs || []).length ? "trade" : bestSafe && bestSafe.runs.includes(r) ? "best" : false,
       tip: `<div>vs previous<b>${pct(r.delta_pct)}</b></div><div>verdict<b>${esc(r.verdict || "")}</b></div>` })),
   });
+  function changeLines(r, chs, fate) {
+    const own = chs.filter(c => c.source !== "rollback"), undo = chs.filter(c => c.source === "rollback");
+    const line = c => {
+      const f = fate(r, c), txt = `${esc(c.variable.replace(/^innodb_/, ""))}=${esc(shortVal(c.variable, c.new))}`;
+      return f.kept ? `<span class="mono" data-tip="${esc(c.variable + "=" + val(c.variable, c.new))} · ${f.pending ? "in effect now" : "kept in the next runs"}">${txt}</span>`
+        : `<span class="mono rolled" data-tip="${esc(c.variable + "=" + val(c.variable, c.new))} · rolled back before run #${f.by}">${txt}</span>`;
+    };
+    const parts = [];
+    if (own.length > 3) {
+      const back = own.filter(c => !fate(r, c).kept).length;
+      parts.push(`<span data-tip="${esc(own.map(c => c.variable + "=" + val(c.variable, c.new) + (fate(r, c).kept ? "" : " (rolled back)")).join("\n"))}" tabindex="0">${own.length} settings${back ? ` · <span class="rolled">${back === own.length ? "all" : back} rolled back</span>` : ""}</span>`);
+    } else parts.push(...own.map(line));
+    if (undo.length) parts.push(`<span class="muted" data-tip="${esc("Undone before this run (returning to a measured configuration):\n" + undo.map(c => c.variable + "=" + val(c.variable, c.new)).join("\n"))}" tabindex="0">↩ undo ${undo.length === 1 ? esc(undo[0].variable.replace(/^innodb_/, "")) : undo.length + " settings"}</span>`);
+    return parts.join("<br>") || '<span class="muted">none</span>';
+  }
   const tb = document.getElementById("runs");
-  if (!d.runs.length) tb.innerHTML = `<tr><td colspan="11" class="muted">No runs yet: <code>tuning-agent measure start</code> … <code>measure stop</code>.</td></tr>`;
+  if (!d.runs.length) tb.innerHTML = `<tr><td colspan="12" class="muted">No runs yet: <code>tuning-agent measure start</code> … <code>measure stop</code>.</td></tr>`;
   d.runs.forEach(r => {
     const sm = r.summary || {};
     const chs = r.changes || [];
@@ -637,13 +673,12 @@ async function sessionPage(id) {
     const ch = r.status === "aborted" ? `<span class="muted">${esc((r.abort_reason || "aborted").split(":")[0])}</span>${r.abort_reason ? info(r.abort_reason) : ""}`
       : r.seq === 1 ? `<a href="#/run/${r.id}">starting configuration</a>`
       : !chs.length ? '<span class="muted">none</span>'
-      : chs.length > 2 ? `<span data-tip="${esc(chTip)}" tabindex="0">${chs.length} settings</span>`
-      : chs.map(c => `<span class="mono" data-tip="${esc(c.variable + "=" + val(c.variable, c.new))}">${esc(c.variable.replace(/^innodb_/, ""))}=${esc(shortVal(c.variable, c.new))}</span>`).join("<br>");
+      : changeLines(r, chs, fate);
     const costOf = x => d.cost && d.cost.per_run ? d.cost.per_run[x.id] : null;
     const tr = document.createElement("tr"); tr.className = "click"; tr.onclick = () => location.hash = "#/run/" + r.id;
     const ev = r.evaluation || {};
     tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${r.status !== "done" ? " " + statusBadge(r.status, r.abort_reason) : ""}${tradeBadge(r.tradeoffs)}</td><td class="chg">${ch}</td>
-     <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaClsN(ev.goal_delta_pct, noiseP)}">${pct(ev.goal_delta_pct)}</td>
+     <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaClsN(ev.goal_delta_pct, noiseP)}">${pct(ev.goal_delta_pct)}</td><td class="num ${deltaClsN(r.goal_value != null ? vsRef(r.goal_value) : null, noiseP)}">${r.goal_value != null && vsRef(r.goal_value) != null ? (bestAt[r.id] ? `<b data-tip="Best configuration known at this point">${pct(vsRef(r.goal_value))}</b>` : pct(vsRef(r.goal_value))) : "–"}</td>
      <td>${verdictBadge(r.verdict)}${ev.drift ? ' <span class="badge warn">drift</span>' : ""}${ev.environment_shift ? ` <span class="badge warn" data-tip="Environment probe differs from calibration: ${esc(kvText(ev.environment_shift))} %">env shift</span>` : ""}${ev.steal && ev.steal.level === "flag" ? ` <span class="badge warn" data-tip="Hypervisor CPU steal ${ev.steal.avg_pct}% average, ${ev.steal.peak_pct}% peak${ev.steal.client_avg_pct ? `, client ${ev.steal.client_avg_pct}%` : ""}: treat small differences with caution.">steal</span>` : ""}</td>
      <td class="num">${num(sm.tps)}</td><td class="num">${num(sm.avg_latency_ms)}</td><td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td><td class="num">${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}${costOf(r) != null ? `<div class="muted" style="font-size:11px" data-tip="Machine cost of this run: wall time since the previous run ended (data reset, warm-up, measurement) × $${(d.cost.rate_hourly).toFixed(4)}/hour">$${costOf(r).toFixed(costOf(r) < 0.1 ? 3 : 2)}</div>` : ""}</td>`;
     tb.appendChild(tr);
