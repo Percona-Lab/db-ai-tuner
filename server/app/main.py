@@ -286,6 +286,20 @@ def _delete_session(sid):
     store.ex("DELETE FROM tsessions WHERE id=?", (sid,))
 
 
+@app.get("/api/events")
+def events_page(request: Request, env: int = None, session: int = None, offset: int = 0, limit: int = 20):
+    u = auth.current_user(request)
+    if session:
+        own_session(session, u["id"])
+        where, arg = "session_id=?", session
+    else:
+        own_env(env, u["id"])
+        where, arg = "env_id=?", env
+    total = store.q1(f"SELECT COUNT(*) n FROM events WHERE {where}", (arg,))["n"]
+    rows = store.q(f"SELECT * FROM events WHERE {where} ORDER BY ts DESC LIMIT ? OFFSET ?", (arg, min(max(limit, 1), 200), max(offset, 0)))
+    return {"total": total, "events": [store.row(r, ("data",)) for r in rows]}
+
+
 @app.get("/api/sessions/{sid}")
 def session(sid: int, request: Request):
     u = auth.current_user(request)

@@ -291,7 +291,7 @@ async function envPage(id) {
      <td class="num">${num(s.first_value)}</td><td class="num">${num(s.best_value)}</td><td class="num ${deltaCls(s.best_gain_pct)}">${pct(s.best_gain_pct)}</td><td>${fmtTime(s.created)}</td>`;
     tb.appendChild(tr);
   });
-  renderEvents(document.getElementById("events"), d.events);
+  renderEvents(document.getElementById("events"), null, false, { env: id });
   document.getElementById("rename").onclick = async () => { const n = prompt("Environment name", e.name); if (n) { await api("/api/environments/" + id, { method: "PATCH", body: { name: n } }); envPage(id); } };
   document.getElementById("detailsToggle").onclick = ev => { ev.preventDefault(); const d = document.getElementById("envDetails"); d.hidden = !d.hidden; ev.target.textContent = d.hidden ? "Details ▸" : "Details ▾"; };
   document.getElementById("del").onclick = async () => { if (confirm("Delete this environment with all sessions, runs and metrics? The agent will re-register it on its next report.")) { await api("/api/environments/" + id, { method: "DELETE" }); location.hash = "#/"; } };
@@ -304,11 +304,21 @@ async function envPage(id) {
   timers.push(setInterval(load, 15000));
 }
 
-function renderEvents(el, events, all) {
-  if (!events.length) { el.innerHTML = '<span class="muted">No activity yet.</span>'; return; }
-  const shown = all ? events : events.slice(0, 10);
-  el.innerHTML = (events.length > 10 ? `<div class="muted" style="font-size:12.5px;margin-bottom:4px">${all ? `All ${events.length} events` : `Latest 10 of ${events.length}`} · <a href="#" class="evtoggle">${all ? "Show latest only" : "Show all"}</a></div>` : "") + shown.map(ev => `<div class="ev"><span class="muted">${fmtTime(ev.ts)}</span><span><span class="badge plain">${esc(ev.type)}</span></span><span>${esc(ev.message)}</span></div>`).join("");
-  const t = el.querySelector(".evtoggle"); if (t) t.onclick = e => { e.preventDefault(); renderEvents(el, events, !all); };
+async function renderEvents(el, _events, _all, scope) {
+  // scope: {env} or {session}; shows the latest 10, "Show 20 more" fetches older events on demand
+  const q = scope && scope.session ? `session=${scope.session}` : `env=${scope && scope.env}`;
+  let shown = [], total = 0;
+  const head = el.previousElementSibling && el.previousElementSibling.tagName === "H2" ? el.previousElementSibling : null;
+  const draw = () => {
+    if (head) head.textContent = total > 10 ? `Recent activity (${shown.length} of ${total})` : "Recent activity";
+    if (!shown.length) { el.innerHTML = '<span class="muted">No activity yet.</span>'; return; }
+    el.innerHTML = shown.map(ev => `<div class="ev"><span class="muted">${fmtTime(ev.ts)}</span><span><span class="badge plain">${esc(ev.type)}</span></span><span>${esc(ev.message)}</span></div>`).join("") +
+      (shown.length < total ? `<div style="margin-top:10px"><button class="more">Show ${Math.min(20, total - shown.length)} more</button></div>` : "");
+    const b = el.querySelector(".more");
+    if (b) b.onclick = async () => { b.disabled = true; const d = await api(`/api/events?${q}&offset=${shown.length}&limit=20`); shown = shown.concat(d.events); total = d.total; draw(); };
+  };
+  const d = await api(`/api/events?${q}&offset=0&limit=10`);
+  shown = d.events; total = d.total; draw();
 }
 
 async function sessionPage(id) {
@@ -351,7 +361,7 @@ async function sessionPage(id) {
    <th class="num">vs parent cfg</th><th class="num">TPS</th><th class="num">Avg lat ms</th><th class="num">mysqld CPU ms/trx</th><th class="num">Disk IOs/trx</th><th class="num">CPU %</th><th>Duration</th></tr></thead><tbody id="runs"></tbody></table></div>
   <h2>Latest recommendations</h2><div class="card" id="recs"></div>
   <h2>Notes</h2><div class="card"><textarea id="notes" rows="3" placeholder="Notes about this session (workload, hypotheses, conclusions)">${esc(s.notes || "")}</textarea><div class="row" style="margin-top:6px"><button id="savenotes">Save notes</button><span id="saved" class="muted"></span></div></div>
-  <h2>Activity</h2><div class="card" id="events"></div>`;
+  <h2>Recent activity</h2><div class="card" id="events"></div>`;
   C.barChart(document.getElementById("bars"), {
     title: goalName(s.goal) + " per run (" + goalUnit(s.goal, s) + ") — green: best production-safe configuration · orange: runs with trade-offs", unit: goalUnit(s.goal, s), metric: s.goal === "latency" ? "avg latency" : "goal value",
     ref: first ? first.goal_value : null,
@@ -372,7 +382,7 @@ async function sessionPage(id) {
     tb.appendChild(tr);
   });
   renderRecs(document.getElementById("recs"), d.recommendations[0], runs);
-  renderEvents(document.getElementById("events"), d.events);
+  renderEvents(document.getElementById("events"), null, false, { session: id });
   document.getElementById("savenotes").onclick = async () => { await api("/api/sessions/" + id, { method: "PATCH", body: { notes: document.getElementById("notes").value } }); document.getElementById("saved").textContent = "Saved."; };
   document.getElementById("rename").onclick = async () => { const n = prompt("Session name", s.name); if (n) { await api("/api/sessions/" + id, { method: "PATCH", body: { name: n } }); sessionPage(id); } };
   document.getElementById("del").onclick = async () => { if (confirm("Delete this session and its runs?")) { await api("/api/sessions/" + id, { method: "DELETE" }); location.hash = "#/env/" + d.environment.id; } };
