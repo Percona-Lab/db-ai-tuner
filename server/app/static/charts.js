@@ -147,7 +147,7 @@
     const bars = opts.bars.filter(b => b.value != null);
     if (!bars.length) { const p = document.createElement("div"); p.className = "muted"; p.textContent = "No measured runs yet."; wrap.appendChild(p); return; }
     const W = Math.max(wrap.clientWidth || 300, 240), H = opts.height || 220;
-    const m = { l: 48, r: 8, t: 16, b: 34 };
+    const m = { l: 48, r: 8, t: 16, b: (W - 56) / Math.max(bars.length, 1) < 70 ? 24 : 34 };
     const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": opts.title });
     wrap.appendChild(svg);
     const ticks = niceTicks(0, Math.max(...bars.map(b => b.value), opts.ref != null ? opts.ref : 0), 4);
@@ -167,13 +167,19 @@
       const p = el("path", { d, fill: b.highlight ? "var(--s1)" : "var(--axis)" }, svg);
       if (b.highlight === "best") p.setAttribute("fill", "var(--s3)");
       if (b.highlight === "trade") p.setAttribute("fill", "var(--s2)");
-      const lab = el("text", { x: cx, y: H - 18, "text-anchor": "middle", "font-size": 11, fill: "var(--ink-2)" }, svg);
-      const maxc = Math.max(4, Math.floor((slot - 6) / 6.3));
-      lab.textContent = b.label.length > maxc ? b.label.slice(0, maxc - 1) + "…" : b.label;
-      if (b.sub) { const s2 = el("text", { x: cx, y: H - 5, "text-anchor": "middle", "font-size": 10.5, fill: "var(--muted)" }, svg); s2.textContent = b.sub; }
+      // dense charts (many runs): short labels only, thinned so they never overlap; details are in the tooltip
+      const dense = slot < 70;
+      const every = dense ? Math.max(1, Math.ceil(28 / slot)) : 1;
+      if (i % every === 0 || i === bars.length - 1 && slot * ((bars.length - 1) % every) >= 28) {
+        const lab = el("text", { x: cx, y: H - 18, "text-anchor": "middle", "font-size": 11, fill: "var(--ink-2)" }, svg);
+        const text = dense ? (b.short || b.label) : b.label;
+        const maxc = Math.max(3, Math.floor((slot * every - 6) / 6.3));
+        lab.textContent = text.length > maxc ? text.slice(0, maxc - 1) + "…" : text;
+      }
+      if (b.sub && !dense) { const s2 = el("text", { x: cx, y: H - 5, "text-anchor": "middle", "font-size": 10.5, fill: "var(--muted)" }, svg); s2.textContent = b.sub; }
       if (b.highlight && slot > 40) { const v = el("text", { x: cx, y: y - 4, "text-anchor": "middle", "font-size": 11, fill: "var(--ink)" }, svg); v.textContent = fmtNum(b.value); }
       const hit = el("rect", { x: cx - slot / 2, y: m.t, width: slot, height: H - m.t, fill: "transparent", style: b.href ? "cursor:pointer" : "" }, svg);
-      hit.addEventListener("mousemove", ev => showTip(`<div class="t">${b.label}</div><div>${opts.metric || "value"}<b>${fmtNum(b.value)} ${opts.unit || ""}</b></div>${b.tip || ""}`, ev.clientX, ev.clientY));
+      hit.addEventListener("mousemove", ev => showTip(`<div class="t">${b.label}</div><div>${opts.metric || "value"}<b>${fmtNum(b.value)} ${opts.unit || ""}</b></div>${b.sub ? `<div>${opts.subLabel || "change"}<b>${b.sub}</b></div>` : ""}${b.tip || ""}`, ev.clientX, ev.clientY));
       hit.addEventListener("mouseleave", hideTip);
       if (b.href) hit.addEventListener("click", () => { hideTip(); location.hash = b.href; });
     });

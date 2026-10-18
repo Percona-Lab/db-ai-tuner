@@ -616,10 +616,15 @@ async function sessionPage(id) {
       await api("/api/sessions/" + id, { method: "PATCH", body: { study_id: v ? +v : null } }); sessionPage(id);
     };
   });
+  // reference = the calibrated starting configuration (mean of its runs); server defaults are usually far below and
+  // percentages against them say little
+  const refVal = (s.calibration && s.calibration.goal_mean) || (first ? first.goal_value : null);
+  const refName = s.calibration && s.calibration.goal_mean ? "starting config (calibration mean)" : "first run";
+  const vsRef = v => refVal ? (lower ? (refVal - v) / refVal : (v - refVal) / refVal) * 100 : null;
   C.barChart(document.getElementById("bars"), {
     title: goalName(s.goal) + " per run (" + goalUnit(s.goal, s) + ") — green: best production-safe configuration · orange: runs with trade-offs", unit: goalUnit(s.goal, s), metric: s.goal === "latency" ? "avg latency" : "goal value",
-    ref: first ? first.goal_value : null,
-    bars: done.map(r => ({ label: "#" + r.seq + " " + r.label, value: r.goal_value, sub: r.delta_vs_first_pct != null ? pct(r.delta_vs_first_pct) : "", href: "#/run/" + r.id,
+    ref: refVal, refLabel: refName, subLabel: "vs " + refName,
+    bars: done.map(r => ({ label: "#" + r.seq + " " + r.label, short: "#" + r.seq, value: r.goal_value, sub: vsRef(r.goal_value) != null ? pct(vsRef(r.goal_value)) : "", href: "#/run/" + r.id,
       highlight: (r.tradeoffs || []).length ? "trade" : bestSafe && bestSafe.runs.includes(r) ? "best" : false,
       tip: `<div>vs previous<b>${pct(r.delta_pct)}</b></div><div>verdict<b>${esc(r.verdict || "")}</b></div>` })),
   });
