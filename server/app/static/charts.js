@@ -84,6 +84,13 @@
     const lo = ticks[0], hi = ticks[ticks.length - 1];
     const X = t => m.l + (W - m.l - m.r) * (t - x0) / Math.max(x1 - x0, 1);
     const Y = v => m.t + (H - m.t - m.b) * (1 - (v - lo) / Math.max(hi - lo, 1e-9));
+    (opts.markers || []).forEach(mk => {
+      if (mk.t < x0 || mk.t > x1) return;
+      const x = X(mk.t);
+      el("line", { x1: x, x2: x, y1: m.t, y2: H - m.b, stroke: "var(--ink-2)", "stroke-dasharray": "3 3", "stroke-width": 1, opacity: 0.7 }, svg);
+      const lab = el("text", { x: x + (mk.end ? -3 : 3), y: m.t + 9, "text-anchor": mk.end ? "end" : "start", "font-size": 10, fill: "var(--ink-2)" }, svg);
+      lab.textContent = mk.label;
+    });
     if (opts.window && opts.window[0]) {
       const a = X(Math.max(opts.window[0], x0)), b = X(Math.min(opts.window[1] || x1, x1));
       if (b > a) el("rect", { x: a, y: m.t, width: b - a, height: H - m.t - m.b, fill: "var(--window)" }, svg);
