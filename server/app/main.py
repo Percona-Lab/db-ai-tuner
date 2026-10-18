@@ -65,6 +65,7 @@ def env_brief(e):
         "db_short": f"{FLAVOR_NAMES.get(db.get('flavor'), db.get('flavor') or '')} {str(db.get('version', '')).split('-log')[0]}".strip(),
         "cpus": hw.get("cpus"), "ram_bytes": hw.get("ram_bytes"), "disk": "HDD" if hw.get("disk_rotational") else "SSD",
         "data_bytes": db.get("data_bytes"), "cost_month": e["cost_month"] if "cost_month" in e.keys() else None,
+        **{k: (e[k] if k in e.keys() else None) for k in ("cost_hourly", "provisioned_at", "destroyed_at", "plan")},
         "cpu_model": hw.get("cpu_model"),
     }
 
@@ -302,9 +303,12 @@ def rename_environment(env_id: int, request: Request, body: dict = Body(...)):
     own_env(env_id, u["id"])
     if body.get("name"):
         store.ex("UPDATE environments SET name=? WHERE id=?", (body["name"][:80], env_id))
-    if "cost_month" in body:
-        c = body.get("cost_month")
-        store.ex("UPDATE environments SET cost_month=? WHERE id=?", (float(c) if c not in (None, "") else None, env_id))
+    for f in ("cost_month", "cost_hourly", "provisioned_at", "destroyed_at"):
+        if f in body:
+            c = body.get(f)
+            store.ex(f"UPDATE environments SET {f}=? WHERE id=?", (float(c) if c not in (None, "") else None, env_id))
+    if "plan" in body:
+        store.ex("UPDATE environments SET plan=? WHERE id=?", ((body.get("plan") or "")[:80] or None, env_id))
     return {"ok": True}
 
 
@@ -386,7 +390,7 @@ def session(sid: int, request: Request):
     recs = [store.row(r, ("items", "diagnosis", "workload", "llm")) for r in store.q("SELECT * FROM recommendations WHERE session_id=? ORDER BY id DESC", (sid,))]
     events = [store.row(r, ("data",)) for r in store.q("SELECT * FROM events WHERE session_id=? ORDER BY ts DESC LIMIT 200", (sid,))]
     st = store.q1("SELECT id, name, kind FROM studies WHERE id=?", (s.get("study_id"),)) if s.get("study_id") else None
-    return {"session": s, "environment": env_brief(e), "runs": runs, "recommendations": recs, "events": events,
+    return {"session": s, "environment": env_brief(e), "runs": runs, "recommendations": recs, "events": events, "cost": session_costs(s, e),
             "study": dict(st) if st else None}
 
 
@@ -997,6 +1001,41 @@ def session_results(s):
     return out
 
 
+def hourly_rate(e):
+    e = dict(e)
+    if e.get("cost_hourly"):
+        return float(e["cost_hourly"])
+    return float(e["cost_month"]) / 730.0 if e.get("cost_month") else None
+
+
+def session_costs(s, e):
+    """Machine cost of a session and of each of its runs: wall time x the environment's hourly price. A run's time is
+    everything since the previous run ended (data reset, warm-up, measurement)."""
+    rate = hourly_rate(e)
+    if not rate:
+        return None
+    runs = store.q("SELECT id, seq, started, ended, status FROM runs WHERE session_id=? ORDER BY seq, id", (s["id"],))
+    prev, per_run = s["created"], {}
+    for r in runs:
+        end = r["ended"] or (now() if r["status"] == "measuring" else None)
+        if end:
+            per_run[r["id"]] = round((end - prev) / 3600 * rate, 4)
+            prev = end
+    end = s.get("ended") or (now() if s.get("status") == "active" else prev)
+    return {"rate_hourly": rate, "hours": round((end - s["created"]) / 3600, 2), "total": round((end - s["created"]) / 3600 * rate, 3),
+            "per_run": per_run}
+
+
+def env_cost(e):
+    rate = hourly_rate(e)
+    e = dict(e)
+    if not rate or not e.get("provisioned_at"):
+        return None
+    end = e.get("destroyed_at") or now()
+    return {"rate_hourly": rate, "hours": round((end - e["provisioned_at"]) / 3600, 2), "total": round((end - e["provisioned_at"]) / 3600 * rate, 3),
+            "destroyed": bool(e.get("destroyed_at"))}
+
+
 def study_view(st, user_id):
     sessions = []
     for s in store.q("SELECT s.*, e.name env_name FROM tsessions s JOIN environments e ON e.id=s.env_id "
@@ -1005,7 +1044,8 @@ def study_view(st, user_id):
         e = own_env(s["env_id"], user_id)
         sessions.append({"id": s["id"], "name": s["name"], "status": s["status"], "goal": s["goal"], "policy": s["policy"],
                          "goal_metric": s.get("goal_metric"), "noise_pct": s["noise_pct"], "workload": s["workload"],
-                         "created": s["created"], "environment": env_brief(e), "results": session_results(s)})
+                         "created": s["created"], "environment": env_brief(e), "results": session_results(s),
+                         "cost": session_costs(s, e), "env_cost": env_cost(e)})
     return sessions
 
 
@@ -1046,6 +1086,27 @@ def study(study_id: int, request: Request):
                                         "WHERE e.user_id=? AND (s.study_id IS NULL OR s.study_id<>?) ORDER BY s.id DESC LIMIT 200",
                                         (u["id"], study_id))]
     return {"study": st, "sessions": study_view(st, u["id"]), "other_sessions": others}
+
+
+@app.get("/api/studies/{study_id}/costs")
+def study_costs(study_id: int, request: Request, format: str = "json"):
+    """Cost of a study: per environment (machine lifetime), per session and per run."""
+    u = auth.current_user(request)
+    st = own_study(study_id, u["id"])
+    rows, envs = [], {}
+    for x in study_view(st, u["id"]):
+        e = x["environment"]
+        envs[e["id"]] = {"environment": e["name"], "plan": e.get("plan"), "rate_hourly": (x["cost"] or {}).get("rate_hourly"), "machine": x["env_cost"]}
+        for r in store.q("SELECT id, seq, label, goal_value, verdict FROM runs WHERE session_id=? ORDER BY seq", (x["id"],)):
+            rows.append({"environment": e["name"], "session": x["id"], "run": r["seq"], "label": r["label"], "goal": r["goal_value"],
+                         "verdict": r["verdict"], "cost_usd": ((x["cost"] or {}).get("per_run") or {}).get(r["id"])})
+    total = round(sum((v["machine"] or {}).get("total") or 0 for v in envs.values()), 3)
+    if format == "csv":
+        from fastapi.responses import PlainTextResponse
+        lines = ["environment,session,run,label,goal,verdict,cost_usd"] + [
+            ",".join(str(r[k]).replace(",", ";") if r[k] is not None else "" for k in ("environment", "session", "run", "label", "goal", "verdict", "cost_usd")) for r in rows]
+        return PlainTextResponse("\n".join(lines) + "\n", media_type="text/csv")
+    return {"study": st["name"], "total_usd": total, "environments": list(envs.values()), "runs": rows}
 
 
 @app.patch("/api/studies/{study_id}")

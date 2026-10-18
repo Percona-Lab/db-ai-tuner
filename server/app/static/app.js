@@ -211,14 +211,16 @@ async function studyPage(id) {
   <div class="note" style="margin-bottom:12px">${verdict}</div>
   <div class="card" id="sbars"></div>
   <h2>Results by environment${info("Start = first run of each session (usually server defaults). Tuned = best production-safe configuration; with trade-offs = best configuration that gives up durability, replication or observability guarantees. Values are means of all runs of a configuration. Click a cost to edit it.")}</h2>
-  <div class="card tablewrap"><table><thead><tr><th>Environment</th><th>Hardware</th><th class="num">Cost / month</th><th>Session</th><th class="num">Start</th><th class="num">Tuned</th><th class="num">Gain</th><th class="num">With trade-offs</th><th class="num">Per CPU</th>${rows.some(x => x.cost) ? '<th class="num">Per $</th>' : ""}${st.target != null ? "<th>Target</th>" : ""}<th></th></tr></thead><tbody>
+  <div class="card tablewrap"><table><thead><tr><th>Environment</th><th>Hardware</th><th class="num">Cost / month</th><th>Session</th><th class="num">Start</th><th class="num">Tuned</th><th class="num">Gain</th><th class="num">With trade-offs</th><th class="num">Per CPU</th>${rows.some(x => x.cost) ? '<th class="num">Per $</th>' : ""}${rows.some(x => x.s.cost || x.s.env_cost) ? `<th class="num">Study cost${info("Machine cost: hourly price × time the machine existed (setup and data load included) when its lifetime is recorded, otherwise the session's wall time. Per-run costs: session pages and the CSV.")}</th>` : ""}${st.target != null ? "<th>Target</th>" : ""}<th></th></tr></thead><tbody>
   ${rows.length ? rows.map(x => `<tr><td><a href="#/env/${x.e.id}"><b>${esc(x.e.name)}</b></a></td><td>${x.e.cpus || "?"} CPU · ${bytes(x.e.ram_bytes)} · ${x.e.disk}</td>
     <td class="num"><a href="#" class="cost" data-env="${x.e.id}" data-cost="${x.cost != null ? x.cost : ""}">${x.cost ? "$" + Math.round(x.cost) : "set"}</a></td>
     <td><a href="#/session/${x.s.id}">#${x.s.id} ${esc(x.s.name)}</a> ${statusBadge(x.s.status)}</td><td class="num">${num(x.first)}</td><td class="num"><b>${num(x.bs)}</b></td>
     <td class="num ${deltaCls((x.r.best_safe || {}).gain_pct)}">${pct((x.r.best_safe || {}).gain_pct)}</td><td class="num">${x.bt != null ? num(x.bt) : "–"}</td>
     <td class="num">${x.bs != null && x.cpus ? num(lat ? x.bs * x.cpus : x.bs / x.cpus) : "–"}</td>${rows.some(y => y.cost) ? `<td class="num">${x.bs != null && x.cost ? num(lat ? x.bs * x.cost : x.bs / x.cost) : "–"}</td>` : ""}
-    ${st.target != null ? `<td>${x.meets == null ? "–" : x.meets ? '<span class="badge good">meets</span>' : '<span class="badge plain">below</span>'}</td>` : ""}
+${rows.some(y => y.s.cost || y.s.env_cost) ? `<td class="num">${(() => { const c = x.s.env_cost || x.s.cost; return c ? `<span data-tip="${c.hours} h × $${c.rate_hourly.toFixed(4)}/h${x.s.env_cost && x.s.env_cost.destroyed ? " · machine destroyed" : ""}${x.s.cost ? ` · session ${x.s.cost.hours} h = $${x.s.cost.total.toFixed(2)}` : ""}">$${c.total.toFixed(2)}</span>` : "–"; })()}</td>` : ""}
+        ${st.target != null ? `<td>${x.meets == null ? "–" : x.meets ? '<span class="badge good">meets</span>' : '<span class="badge plain">below</span>'}</td>` : ""}
     <td><a href="#" class="detach" data-sid="${x.s.id}" title="Remove from study">×</a></td></tr>`).join("") : `<tr><td colspan="12" class="muted">No sessions yet.</td></tr>`}</tbody></table></div>
+  ${rows.some(x => x.s.cost || x.s.env_cost) ? `<p class="muted" style="margin:6px 0 0">Total machine cost $${rows.reduce((a, x) => a + ((x.s.env_cost || x.s.cost || {}).total || 0), 0).toFixed(2)} · <a href="/api/studies/${id}/costs?format=csv" download="study-${id}-costs.csv">cost per run (CSV)</a></p>` : ""}
   <div class="row" style="margin-top:8px"><select id="addSess" style="width:auto"><option value="">Add a session…</option>${d.other_sessions.map(o => `<option value="${o.id}">#${o.id} ${esc(o.env_name)} · ${esc(o.name)}</option>`).join("")}</select>
    <span class="muted">or <code>tuning-agent session start --study "${esc(st.name)}" ...</code> on each environment</span></div>
   <h2>Notes</h2><div class="card"><textarea id="snotes" rows="3" placeholder="Hypothesis, method, conclusions">${esc(st.notes || "")}</textarea><div class="row" style="margin-top:6px"><button id="savesn">Save notes</button><span id="snsaved" class="muted"></span></div></div>`;
@@ -588,6 +590,7 @@ async function sessionPage(id) {
   <p class="sub" style="margin-top:-6px">Study${info("A study groups sessions from several environments running the same workload, e.g. to compare hardware or find the smallest hardware that reaches a target.")}: <select id="studySel" style="width:auto"><option value="">none</option></select>${d.study ? ` <a href="#/study/${d.study.id}">open study</a>` : ""}</p>
   <div class="tiles"><div class="tile"><div class="k">Runs measured</div><div class="v">${done.length}</div></div>
    <div class="tile"><div class="k">Start${info(`Starting configuration: first run of the session (${goalUnit(s.goal, s)}).`)}</div><div class="v">${first ? num(first.goal_value) : "–"}</div><div class="d">${first ? esc(first.label) : ""}</div></div>
+   ${d.cost ? `<div class="tile"><div class="k">Machine cost${info(`Session wall time ${d.cost.hours} h × $${d.cost.rate_hourly.toFixed(4)}/hour (the environment's price). Per-run costs are shown under each run's time.`)}</div><div class="v">$${d.cost.total.toFixed(2)}</div><div class="d">${d.cost.hours} h</div></div>` : ""}
    ${cfgTile("Best safe", bestSafe, firstCfg, lower, s.goal, false, s)}
    ${bestTrade ? cfgTile("Best with trade-offs", bestTrade, firstCfg, lower, s.goal, true, s) : ""}</div>
   <div class="card" style="margin-top:14px" id="bars"></div>
@@ -624,12 +627,13 @@ async function sessionPage(id) {
       : !chs.length ? '<span class="muted">none</span>'
       : chs.length > 2 ? `<span data-tip="${esc(chTip)}" tabindex="0">${chs.length} settings</span>`
       : chs.map(c => `<span class="mono" data-tip="${esc(c.variable + "=" + val(c.variable, c.new))}">${esc(c.variable.replace(/^innodb_/, ""))}=${esc(shortVal(c.variable, c.new))}</span>`).join("<br>");
+    const costOf = x => d.cost && d.cost.per_run ? d.cost.per_run[x.id] : null;
     const tr = document.createElement("tr"); tr.className = "click"; tr.onclick = () => location.hash = "#/run/" + r.id;
     const ev = r.evaluation || {};
     tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${r.status !== "done" ? " " + statusBadge(r.status, r.abort_reason) : ""}${tradeBadge(r.tradeoffs)}</td><td class="chg">${ch}</td>
      <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaClsN(ev.goal_delta_pct, noiseP)}">${pct(ev.goal_delta_pct)}</td>
      <td>${verdictBadge(r.verdict)}${ev.drift ? ' <span class="badge warn">drift</span>' : ""}${ev.environment_shift ? ` <span class="badge warn" data-tip="Environment probe differs from calibration: ${esc(kvText(ev.environment_shift))} %">env shift</span>` : ""}${ev.steal && ev.steal.level === "flag" ? ` <span class="badge warn" data-tip="Hypervisor CPU steal ${ev.steal.avg_pct}% average, ${ev.steal.peak_pct}% peak${ev.steal.client_avg_pct ? `, client ${ev.steal.client_avg_pct}%` : ""}: treat small differences with caution.">steal</span>` : ""}</td>
-     <td class="num">${num(sm.tps)}</td><td class="num">${num(sm.avg_latency_ms)}</td><td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td><td class="num">${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}</td>`;
+     <td class="num">${num(sm.tps)}</td><td class="num">${num(sm.avg_latency_ms)}</td><td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td><td class="num">${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}${costOf(r) != null ? `<div class="muted" style="font-size:11px" data-tip="Machine cost of this run: wall time since the previous run ended (data reset, warm-up, measurement) × $${(d.cost.rate_hourly).toFixed(4)}/hour">$${costOf(r).toFixed(costOf(r) < 0.1 ? 3 : 2)}</div>` : ""}</td>`;
     tb.appendChild(tr);
   });
   renderRecs(document.getElementById("recs"), d.recommendations[0], runs);

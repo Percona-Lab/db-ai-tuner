@@ -88,6 +88,10 @@ MIGRATIONS = [
     ("recommendations", "llm", "TEXT"),
     ("tsessions", "study_id", "INTEGER"),
     ("environments", "cost_month", "REAL"),
+    ("environments", "cost_hourly", "REAL"),
+    ("environments", "provisioned_at", "REAL"),
+    ("environments", "destroyed_at", "REAL"),
+    ("environments", "plan", "TEXT"),
 ]
 
 
