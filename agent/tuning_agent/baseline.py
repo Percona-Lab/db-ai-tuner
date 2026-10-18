@@ -32,7 +32,7 @@ def generate(hw, variables, flavor, version, opts=None):
         instances = 8 if bp >= 8 * GiB else max(1, bp // GiB)
         add("innodb_buffer_pool_instances", str(instances),
             f"{instances} instance(s) for a {human_size(bp)} pool (~1 GiB per instance, max 8) to spread mutex contention.")
-    chunk = int(variables.get("innodb_buffer_pool_chunk_size") or 128 * MiB)
+    chunk = int(variables.get("innodb_buffer_pool_chunk_size") or 0) or 128 * MiB  # MariaDB 10.11+ reports 0 (auto)
     bp = _round_down(bp, chunk * instances)
     add("innodb_buffer_pool_size", fmt_size(bp),
         f"{human_size(ram)} RAM - {human_size(reserve)} OS reserve - {human_size(overhead)} server/connection overhead "

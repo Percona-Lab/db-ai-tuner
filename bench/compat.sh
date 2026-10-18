@@ -28,7 +28,7 @@ case $F in
     apt-get install -yq percona-server-server ;;
   mysql)
     case $V in 8.4) R=mysql-8.4-lts;; 9.7) R=mysql-9.7-lts;; esac
-    curl -fsSL https://repo.mysql.com/RPM-GPG-KEY-mysql-2023 | gpg --dearmor -o /usr/share/keyrings/mysql.gpg --yes
+    curl -fsSL https://repo.mysql.com/RPM-GPG-KEY-mysql-2025 | gpg --dearmor -o /usr/share/keyrings/mysql.gpg --yes
     echo "deb [signed-by=/usr/share/keyrings/mysql.gpg] http://repo.mysql.com/apt/ubuntu noble $R" > /etc/apt/sources.list.d/mysql.list
     apt-get update -q
     debconf-set-selections <<< "mysql-community-server mysql-community-server/root-pass password"
@@ -43,6 +43,11 @@ systemctl start mysql 2>/dev/null || systemctl start mariadb
 command -v mysql >/dev/null || ln -sf "$(command -v mariadb)" /usr/local/bin/mysql
 command -v mysqladmin >/dev/null || ln -sf "$(command -v mariadb-admin)" /usr/local/bin/mysqladmin
 mysql -e "SELECT VERSION(), @@version_comment" || { echo "COMPAT FAIL: cannot connect as root"; exit 1; }
+# the installed server must be the requested one (a broken repo silently falls back to the distribution package)
+GOT=$(mysql -N -e "SELECT CONCAT(VERSION(), ' ', @@version_comment)")
+case "$F" in percona) echo "$GOT" | grep -q "^$V\..*Percona" ;; mysql) echo "$GOT" | grep -q "^$V\..*MySQL Community" ;; mariadb) echo "$GOT" | grep -q "^$V\..*MariaDB" ;; esac \
+  || { echo "COMPAT FAIL: wanted $F $V, got: $GOT"; exit 1; }
+apt-get install -yq sysbench >/dev/null || { echo "COMPAT FAIL: sysbench could not be installed next to $F $V"; exit 1; }
 mysql -e "CREATE DATABASE IF NOT EXISTS sbtest; CREATE USER IF NOT EXISTS sbtest@localhost IDENTIFIED BY 'sbtest'; GRANT ALL ON sbtest.* TO sbtest@localhost;"
 # agent: forget settings that belonged to the previous server
 /opt/tuning-agent/venv/bin/python - <<'PY'

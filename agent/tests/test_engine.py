@@ -213,6 +213,18 @@ def test_oom():
     assert "bp-shrink" in {i["id"] for i in res["items"]}
 
 
+def test_bp_rounding_and_mariadb_chunk():
+    v = dict(VARS, innodb_buffer_pool_chunk_size=str(128 * 2 ** 20), innodb_buffer_pool_instances="2")
+    assert engine.bp_round(v, 1920 * 2 ** 20) == 1792 * 2 ** 20 and engine.bp_round(v, 1920 * 2 ** 20, up=True) == 2048 * 2 ** 20
+    res = run(dict(OLTP[0], swap_in=50, swap_out=50), OLTP[1], policy="safe")
+    it = {i["id"]: i for i in res["items"]}
+    assert int(it["bp-shrink"]["changes"][0]["proposed"].rstrip("M")) % 256 == 0
+    from tuning_agent import baseline
+    items, calc = baseline.generate(HW, {"innodb_buffer_pool_size": "134217728", "innodb_buffer_pool_chunk_size": "0", "innodb_log_file_size": "1"},
+                                    "mariadb", (11, 8, 0))
+    assert calc["buffer_pool"] > 0
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)

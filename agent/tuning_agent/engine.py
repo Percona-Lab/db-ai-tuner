@@ -66,6 +66,14 @@ def classify_workload(summary, inputs):
     return {"type": kind, "evidence": ev}
 
 
+def bp_round(v, n, up=False):
+    """MySQL sizes the buffer pool in multiples of chunk_size x instances (and silently rounds up otherwise)."""
+    chunk = _int(v, "innodb_buffer_pool_chunk_size", 0) or 128 * MiB
+    unit = chunk * max(1, _int(v, "innodb_buffer_pool_instances", 1))
+    k = int(n) // unit + (1 if up and int(n) % unit else 0)
+    return max(unit, k * unit)
+
+
 def diagnose(ctx):
     """Classify the bottleneck of the last run."""
     s = ctx.get("summary") or {}
@@ -227,14 +235,16 @@ def recommend(ctx):
 
     # ---------------- memory -----------------------------------------------------
     if swapping and bp > 512 * MiB:
-        new = int(bp * 0.85) // (128 * MiB) * (128 * MiB)
+        new = bp_round(v, bp * 0.85)
+        if new >= bp:
+            new = bp_round(v, bp - 1)
         b.add("bp-shrink", "Shrink the buffer pool: host is under memory pressure", [("innodb_buffer_pool_size", fmt_size(new))],
               "Swapping / memory reclaim stalls make every page access unpredictable; giving memory back to the OS is the first fix.",
               {"swap_in": s.get("swap_in"), "swap_out": s.get("swap_out"), "psi_memory_some": mem_psi, "innodb_buffer_pool_size": human_size(bp)}, impact=3, confidence=3)
     elif have_run and s.get("bp_hit_pct", 100) < 99.5 and (s.get("bp_disk_reads") or 0) > 20:
         headroom = mem_avail - max(512 * MiB, int(ram * 0.05))
         want = min(data_bytes * 1.1 if data_bytes else bp * 2, bp + headroom, ram * 0.85)
-        new = int(want) // (128 * MiB) * (128 * MiB)
+        new = bp_round(v, want)
         if new > bp * 1.05:
             b.add("bp-grow", "Grow the buffer pool: working set misses memory",
                   [("innodb_buffer_pool_size", fmt_size(new))],
@@ -673,8 +683,8 @@ def recommend(ctx):
                 b.items[-1]["sweep"] = {"variable": var, "values": [str(x) for x in values]}
     diag_types = {d["type"] for d in ctx.get("diagnosis") or [] if d.get("severity") in ("high", "medium")}
     if have_run and diag_types & {"memory", "io"} and not swapping and mem_avail > 512 * MiB and bp:
-        top = int(min(ram * 0.80, bp + mem_avail - 512 * MiB)) // (128 * MiB) * (128 * MiB)
-        mid = (bp + top) // 2 // (128 * MiB) * (128 * MiB)
+        top = bp_round(v, min(ram * 0.80, bp + mem_avail - 512 * MiB))
+        mid = bp_round(v, (bp + top) // 2)
         if top > bp * 1.15:
             sweep("sweep-bp", "Sweep the buffer pool size", "innodb_buffer_pool_size", [fmt_size(mid), fmt_size(top)],
                   "The working set misses memory and RAM is free: measure how throughput responds to more buffer pool.",

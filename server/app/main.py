@@ -871,11 +871,11 @@ def agent_guide():
 
 
 def _knowledge():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("ta_knowledge", os.path.join(AGENT_DIR, "tuning_agent", "knowledge.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    import importlib
+    import sys
+    if AGENT_DIR not in sys.path:
+        sys.path.insert(0, os.path.abspath(AGENT_DIR))
+    return importlib.import_module("tuning_agent.knowledge")
 
 
 @app.get("/api/policies")

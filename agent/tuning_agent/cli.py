@@ -1432,9 +1432,14 @@ def cmd_daemon(a):
             sampler = None
         try:
             if time.time() - last_hello > 600:
-                c.refresh()
-                c.hello()
-                last_hello = time.time()
+                try:
+                    c.refresh()
+                    c.hello()
+                    last_hello = time.time()
+                except APIError:
+                    raise
+                except Exception:  # database restarting: refresh facts on a later round
+                    last_hello = time.time() - 540
             batch = store.unsent()
             if batch:
                 c.client.post("/metrics", {"environment_id": c.env_id(), "samples": batch})
