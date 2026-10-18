@@ -8,7 +8,9 @@ tuning-agent session stop >/dev/null 2>&1 || true   # a finished earlier session
 tuning-agent rollback --reset || exit 1
 if grep -q "^reset.*reset_datadir" $PROF; then
   # pristine data set: snapshot once, restore before the session
-  if [ ! -d /var/lib/mysql_base ]; then systemctl stop mysql && rsync -a /var/lib/mysql/ /var/lib/mysql_base/ && systemctl start mysql; fi
+  # an empty (or missing) base would wipe the data set at the first reset
+  if [ -z "$(ls -A /var/lib/mysql_base/ 2>/dev/null)" ]; then mkdir -p /var/lib/mysql_base/ && systemctl stop mysql && rsync -a /var/lib/mysql/ /var/lib/mysql_base/ && systemctl start mysql || exit 1; fi
+  [ -d /var/lib/mysql_base/mysql ] || { echo "pristine copy /var/lib/mysql_base is not a data directory"; exit 1; }
   /root/bench/reset_datadir.sh || exit 1
 fi
 for kv in $PRE_APPLY; do tuning-agent apply --set "$kv" --reason "session setup" || exit 1; done  # e.g. PRE_APPLY="os:datadir_fs=ext4"

@@ -4,6 +4,7 @@ set -e
 # the data set is replaced anyway: skip the shutdown flush of dirty pages (minutes on a large buffer pool)
 mysql -e "SET GLOBAL innodb_fast_shutdown = 2" 2>/dev/null || true
 systemctl stop mysql
+[ -d /var/lib/mysql_base/mysql ] || { echo "no pristine data set in /var/lib/mysql_base: refusing to reset"; exit 1; }
 rsync -a --delete /var/lib/mysql_base/ /var/lib/mysql/
 sync; echo 3 > /proc/sys/vm/drop_caches
 systemctl start mysql
