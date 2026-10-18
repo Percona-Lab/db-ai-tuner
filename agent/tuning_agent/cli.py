@@ -785,8 +785,16 @@ def _engine_ctx(c, sess):
             last = json.load(f)
     flavor, vt, ver, _ = mysqldb.flavor_of(c.variables)
     osf = ostune.facts(c.datadir(), hostinfo.device_for_path(c.datadir()), Applier(c.cfg, c.state, c.db).service)
+    experience = {}
+    try:
+        from .engine import classify_workload
+        wl = classify_workload(last.get("summary"), last.get("inputs")).get("type") if last.get("summary") else None
+        q = f"/experience?cpus={os.cpu_count()}&exclude_session={sess['id']}" + (f"&workload={wl}" if wl else "")
+        experience = c.client.get(q).get("experience", {})
+    except Exception as e:  # experience is a hint; never block a recommendation on it
+        log(f"note: no experience data ({e})")
     return {"goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
-            "os_tuning": c.os_tuning_allowed() and sess.get("os_tuning", True), "os_facts": osf,
+            "os_tuning": c.os_tuning_allowed() and sess.get("os_tuning", True), "os_facts": osf, "experience": experience,
             "variables": c.all_settings(), "summary": last.get("summary"), "inputs": last.get("inputs"),
             "history": sess["runs"], "noise_pct": sess.get("noise_pct"), "noise": sess.get("noise"),
             "managed": {k: v["value"] for k, v in c.state.get("managed", {}).items()}}

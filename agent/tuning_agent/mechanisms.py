@@ -1,0 +1,72 @@
+"""What each recommendation physically changes and which bottlenecks it can relieve.
+
+Used to rank experiments: a change whose mechanism matches the diagnosed bottleneck is tried first; a change that
+cannot touch the bottleneck is tried last (it may still help, but it is unlikely to). Bottleneck names are the
+diagnosis types from engine.diagnose().
+"""
+
+MECHANISMS = {
+    "bp-grow": (("memory", "io"), "More pages cached: fewer disk reads."),
+    "bp-shrink": (("swap", "memory-pressure"), "Gives memory back to the OS: no swapping/reclaim stalls."),
+    "bp-instances": (("concurrency", "cpu", "cpu-pressure"), "Splits buffer pool mutexes."),
+    "redo-grow": (("redo", "io"), "Fewer forced checkpoints; pages absorb more changes before being written."),
+    "log-buffer": (("redo", "commit"), "Fewer waits for redo log buffer space."),
+    "io-capacity-up": (("redo", "io"), "Page cleaners flush harder: keeps redo free."),
+    "io-capacity-down": (("io",), "Fewer background writes competing with foreground I/O."),
+    "lru-depth": (("io", "memory"), "More free pages ready: no single-page flushes in user threads."),
+    "flush-neighbors": (("io",), "No extra neighbour page writes."),
+    "o-direct": (("io", "memory"), "No double buffering in the OS page cache."),
+    "ahi-on": (("cpu", "cpu-pressure"), "Hash lookups skip B-tree descents for hot point reads."),
+    "ahi-off": (("concurrency", "cpu"), "Removes AHI latch contention."),
+    "log-writer-threads-off": (("cpu", "cpu-pressure", "commit"), "No dedicated log threads competing for few CPUs."),
+    "spin-loops": (("cpu", "cpu-pressure", "concurrency"), "Less CPU burned spinning on contended latches."),
+    "thread-pool": (("concurrency", "cpu-pressure"), "Caps active threads: less context switching."),
+    "table-open-cache": (("cpu",), "Avoids reopening tables."),
+    "table-def-cache": (("cpu",), "Avoids re-reading table definitions."),
+    "thread-cache": (("cpu",), "Avoids thread creation per connection."),
+    "max-connections": ((), "Admits more clients."),
+    "tmp-tables": (("io", "cpu"), "Temporary tables stay in memory."),
+    "tmp-olap": (("io", "cpu"), "Analytical temporary tables stay in memory."),
+    "sort-buffer": (("io", "cpu"), "Sorts finish in memory."),
+    "sort-buffer-olap": (("io", "cpu"), "Large analytical sorts finish in memory."),
+    "join-buffer": (("io", "cpu"), "Hash joins build in memory instead of spilling."),
+    "read-ahead": (("io",), "Larger sequential reads for scans."),
+    "subquery-to-derived": (("cpu", "io"), "Correlated subqueries computed once instead of per row."),
+    "bka-mrr": (("io",), "Index lookups fetched in primary-key order."),
+    "group-commit-delay": (("commit",), "More transactions share one binlog fsync."),
+    "change-buffer": (("io",), "Secondary index updates without reading the page."),
+    "trx-commit-2": (("commit", "io"), "No fsync per commit."),
+    "sync-binlog": (("commit", "io"), "No binlog fsync per commit group."),
+    "doublewrite-off": (("io", "commit"), "Pages written once instead of twice."),
+    "binlog-off": (("commit", "io", "cpu"), "No binary log writes, fsyncs or two-phase commit."),
+    "ps-off": (("cpu", "cpu-pressure"), "No instrumentation overhead."),
+    "binlog-minimal": (("io",), "Smaller binary log writes for updates (helps only when binlog I/O volume matters)."),
+    "os-swappiness": (("swap", "memory-pressure"), "Kernel keeps database memory resident."),
+    "os-thp-off": (("memory", "cpu"), "No compaction / khugepaged stalls."),
+    "os-scheduler": (("io",), "No request reordering overhead on SSD."),
+    "os-noatime": (("io",), "No access-time metadata writes."),
+    "os-dirty-writeback": (("commit", "io"), "Small, steady writeback: shorter fsyncs."),
+    "os-jemalloc": (("cpu", "cpu-pressure", "concurrency"), "Less allocator lock contention."),
+    "os-hugepages": (("cpu", "memory"), "Fewer TLB misses."),
+    "os-governor": (("cpu",), "Full clock speed."),
+    "os-numa": (("cpu", "memory"), "No cross-node page migration."),
+    "os-autogroup": (("cpu-pressure", "cpu"), "mysqld threads compete for CPU individually, not as one group."),
+    "os-aio": (("io",), "Native async I/O stays available."),
+    "os-nobarrier": (("commit", "io"), "fsync does not flush the device write cache."),
+}
+
+SEVERITY = {"high": 3, "medium": 2, "low": 1}
+
+
+def relevance(item_id, diagnosis):
+    """(score 0..3, list of matched bottlenecks) - how directly the change addresses the diagnosed bottlenecks."""
+    if item_id.startswith("revert") or item_id.startswith("rollback"):
+        return None, []
+    m = MECHANISMS.get(item_id)
+    if not m:
+        return None, []
+    relieves = m[0]
+    matched = [(d["type"], SEVERITY.get(d.get("severity"), 1)) for d in diagnosis or [] if d["type"] in relieves]
+    if not matched:
+        return 0, []
+    return max(w for _, w in matched), [t for t, _ in matched]

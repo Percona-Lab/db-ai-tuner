@@ -12,6 +12,7 @@ Inputs (ctx):
 
 Every recommendation carries the evidence it was derived from so the decision can be audited.
 """
+from .mechanisms import MECHANISMS, relevance
 from .knowledge import KB, flags_subset, fmt_size, human_size, normalize, parse_size, tradeoff_of
 
 GiB = 1024 ** 3
@@ -682,13 +683,33 @@ def run_engine(ctx):
     items = revert_suggestions(ctx.get("history") or [], ctx["variables"], ctx.get("goal", "tps"),
                                float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0), ctx.get("managed")) + items
     benchmark = ctx.get("policy") == "benchmark"
+    has_major = any(d.get("severity") in ("high", "medium") and d["type"] != "none" for d in ctx["diagnosis"])
+    exp = ctx.get("experience") or {}
     for it in items:
         it.setdefault("safety", "safe")
         it.setdefault("tradeoffs", [])
+        # mechanism prior: does this change act on what is actually limiting the server?
+        rel, matched = relevance(it["id"], ctx["diagnosis"])
+        if rel is not None:
+            it["mechanism"] = MECHANISMS[it["id"]][1]
+            it["addresses"] = matched
+            it["relevance"] = rel
+        # experience prior: how did this change do in earlier sessions with a similar workload?
+        e = exp.get(it["id"])
+        if e and e.get("n"):
+            it["experience"] = e
         if it["safety"] == "trade-off" and it["kind"] == "config" and not benchmark:
             it["kind"] = "advice"
             it["note"] = (it.get("note", "") + " Trade-off: not applied under policy=safe.").strip()
-        it["score"] = 100 if it.get("priority") else score(it, ctx.get("goal", "tps")) + (2 if it["kind"] == "revert" else 0)
+        sc = score(it, ctx.get("goal", "tps")) + (2 if it["kind"] == "revert" else 0)
+        if it.get("relevance") is not None:
+            sc += 2 * it["relevance"] if it["relevance"] else (-3 if has_major else 0)
+        if it.get("experience"):
+            e = it["experience"]
+            sc += round(3 * (e.get("wins", 0) - e.get("losses", 0)) / max(e["n"], 1) * min(e["n"], 3) / 3, 2)
+            if e.get("losses", 0) >= 2 and not e.get("wins"):
+                it["confidence"] = min(it["confidence"], 1)
+        it["score"] = 100 if it.get("priority") else sc
     items.sort(key=lambda i: (i["safety"] == "trade-off" and i["kind"] != "revert", -i["score"]))
     for n, it in enumerate(items, 1):
         it["rank"] = n

@@ -480,6 +480,46 @@ def agent_session_update(sid: int, body: dict = Body(...), key=Depends(auth.agen
     return {"ok": True}
 
 
+def cpu_class(n):
+    n = int(n or 0)
+    return "1-2" if n <= 2 else "3-8" if n <= 8 else "9-32" if n <= 32 else "33+"
+
+
+@app.get("/api/v1/agent/experience")
+def agent_experience(workload: str = None, cpus: int = None, exclude_session: int = None, key=Depends(auth.agent_key)):
+    """Outcomes of each recommendation in this account's earlier sessions with a similar workload and CPU class."""
+    rows = store.q(
+        "SELECT r.changes, r.verdict, r.evaluation, json_extract(r.inputs, '$.workload.type') AS wl, "
+        "json_extract(e.facts, '$.hardware.cpus') AS cpus, r.session_id FROM runs r JOIN tsessions s ON s.id=r.session_id "
+        "JOIN environments e ON e.id=s.env_id WHERE e.user_id=? AND r.status='done' AND r.verdict IN "
+        "('improved','efficiency-gain','neutral','regressed','efficiency-loss')", (key["user_id"],))
+    out = {}
+    for r in rows:
+        if exclude_session and r["session_id"] == exclude_session:
+            continue
+        if workload and r["wl"] and r["wl"] != workload:
+            continue
+        if cpus and r["cpus"] and cpu_class(r["cpus"]) != cpu_class(cpus):
+            continue
+        ids = {c.get("source", "")[4:] for c in (store.uj(r["changes"], []) or []) if str(c.get("source", "")).startswith("rec:")}
+        delta = (store.uj(r["evaluation"], {}) or {}).get("goal_delta_pct")
+        for rid in ids:
+            e = out.setdefault(rid, {"n": 0, "wins": 0, "losses": 0, "neutral": 0, "deltas": []})
+            e["n"] += 1
+            if r["verdict"] in ("improved", "efficiency-gain"):
+                e["wins"] += 1
+            elif r["verdict"] in ("regressed", "efficiency-loss"):
+                e["losses"] += 1
+            else:
+                e["neutral"] += 1
+            if delta is not None:
+                e["deltas"].append(delta)
+    for e in out.values():
+        d = e.pop("deltas")
+        e["mean_delta_pct"] = round(sum(d) / len(d), 2) if d else None
+    return {"workload": workload, "cpu_class": cpu_class(cpus) if cpus else None, "experience": out}
+
+
 @app.post("/api/v1/agent/runs")
 def agent_run_create(body: dict = Body(...), key=Depends(auth.agent_key)):
     s = agent_session(body.get("session_id"), key)
