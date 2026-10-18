@@ -147,6 +147,21 @@ def diagnose(ctx):
     if tps > 0 and fsyncs / tps > 0.5 and s.get("disk_await_ms", 0) > 0.5:
         add("commit", "medium", f"Commit-bound: {fsyncs:.0f} fsyncs/s for {tps:.0f} tps, disk await {s.get('disk_await_ms', 0):.2f} ms.",
             {"data_fsyncs": fsyncs, "tps": tps, "disk_await_ms": s.get("disk_await_ms")})
+    # CPU profile (perf sampling of a slice of the run): which kind of work burns the database's CPU
+    cp = (inp.get("cpu_profile") or {}).get("categories") or {}
+    if cp and busy >= 50:
+        rules = (("spin / mutex wait", 10, "cpu-spin", "Threads burn CPU spinning on InnoDB mutexes / rw-locks: contention, not useful work."),
+                 ("memory allocator", 8, "cpu-allocator", "malloc/free is a large share of CPU: an allocator with less locking (jemalloc/tcmalloc) may help."),
+                 ("performance_schema", 6, "cpu-pfs", "performance_schema instrumentation costs a noticeable share of CPU."),
+                 ("parser / optimizer", 15, "cpu-parse", "Parsing and optimising statements is a large share of CPU: prepared statements or simpler queries help more than knobs."),
+                 ("memory management (kernel)", 6, "cpu-mm", "Kernel page-fault / compaction work (transparent huge pages, reclaim) takes noticeable CPU."),
+                 ("scheduler / futex", 12, "cpu-futex", "Much CPU goes to sleeping and waking threads (futex): too many runnable threads for the CPUs."),
+                 ("network / protocol", 20, "cpu-network", "Network stack and protocol handling are a large share of CPU."))
+        for cat, thr, kind, why in rules:
+            if cp.get(cat, 0) >= thr:
+                add(kind, "medium", f"CPU profile: {cat} {cp[cat]:.0f}% of database CPU samples. {why}",
+                    {"cpu_profile_categories": dict(list(cp.items())[:6])})
+
     # wait profile (performance_schema): which class of waits dominates, excluding table I/O (row calls incl. buffer hits)
     wc = inp.get("wait_classes") or {}
     real = {k: v for k, v in wc.items() if k != "table_io"}
@@ -603,7 +618,8 @@ def recommend(ctx):
                   "Binary log and redo are written through the page cache and fsync'ed at commit. With the default ratios gigabytes can "
                   "accumulate, turning periodic writeback and fsyncs into stalls; small byte limits keep fsync work small and steady. Experiment.",
                   {"redo_mbs": redo_mbs, "fsyncs_per_trx": s.get("fsyncs_per_trx"), "disk_await_ms": s.get("disk_await_ms")}, impact=1, confidence=1)
-        if v.get("os:malloc") == "glibc" and busy_ >= 70 and (s.get("threads_running_avg") or 0) >= cpus:
+        alloc_pct = ((inp.get("cpu_profile") or {}).get("categories") or {}).get("memory allocator", 0)
+        if v.get("os:malloc") == "glibc" and busy_ >= 70 and ((s.get("threads_running_avg") or 0) >= cpus or alloc_pct >= 8):
             b.add("os-jemalloc", "Run mysqld with jemalloc", [("os:malloc", "jemalloc")],
                   f"CPU-bound ({busy_:.0f}%) with {s.get('threads_running_avg', 0):.0f} running threads: jemalloc has less allocator lock "
                   "contention and fragmentation than glibc malloc (Percona recommendation). Needs a mysqld restart. Experiment.",

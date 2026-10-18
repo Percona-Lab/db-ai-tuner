@@ -723,6 +723,53 @@ def _warmup(c, spec):
             return round(el)
 
 
+def _maybe_profile(c, sess, prof):
+    """CPU profile for a slice of this run when the workload is CPU-bound and this configuration was not profiled yet.
+    agent.ini: cpu_profiling = auto (default) | always | off, profile_hz (49), profile_seconds (20)."""
+    from . import cpuprof
+    mode = str(c.cfg.get("cpu_profiling", "auto")).lower()
+    if mode == "off" or prof.duration < 60:
+        return None
+    key = evaluate.config_key({k: v["value"] for k, v in c.state.get("managed", {}).items()})
+    done = sess.get("profiled_configs") or []
+    if mode == "auto":
+        runs = [x for x in sess.get("runs", []) if (x.get("summary") or {}).get("cpu_busy") is not None]
+        if not runs or runs[-1]["summary"]["cpu_busy"] < 60 or repr(key) in done:
+            return None
+    if not cpuprof.ensure_perf(log):
+        log("CPU profiling skipped: perf is not available")
+        return None
+    secs = min(int(c.cfg.get("profile_seconds", 20)), max(10, prof.duration // 3))
+    p = cpuprof.Profiler(c.state.dir, secs, int(sess.get("profile_hz") or c.cfg.get("profile_hz", 49)))
+    p.start(delay=max(5, int(prof.duration * 0.4)))
+    sess.setdefault("profiled_configs", []).append(repr(key))
+    c.state.set("session", sess)
+    log(f"   CPU profile: {secs}s at {p.hz} Hz in the middle of the run")
+    return p
+
+
+def _finish_profile(c, p, t_meas0):
+    from . import cpuprof
+    p.join(timeout=p.seconds + 120)
+    try:
+        pids = set(hostinfo.service_pids(hostinfo.mysqld_pid() or 0) or [])
+        res = p.process(pids)
+    except Exception as e:  # never fail a run because of the profiler
+        return {"error": str(e)[:300]}
+    if p.t0 and p.t1:
+        samples = SampleStore(c.state.dir).window(t_meas0, time.time())
+        res["overhead_pct"] = cpuprof.overhead_pct(samples, p.t0, p.t1)
+        if (res["overhead_pct"] or 0) > 2:  # be gentler next time
+            sess = c.session()
+            sess["profile_hz"] = max(9, p.hz // 2)
+            c.state.set("session", sess)
+    cats = res.get("categories") or {}
+    if cats:
+        log("   CPU profile: " + ", ".join(f"{k} {v}%" for k, v in list(cats.items())[:5])
+            + (f" (overhead {res['overhead_pct']:+.1f}%)" if res.get("overhead_pct") is not None else ""))
+    return res
+
+
 def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     """reset -> start benchmark -> warm-up -> measure -> wait for exit -> parse metrics -> finish run."""
     sess = c.session()
@@ -760,6 +807,8 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         if not r.alive():
             raise Fail(f"benchmark exited during warm-up (code {r.p.returncode}); tail:\n{r.output()[-1500:]}")
         m, warn, url = _measure_start(c, label, notes, warmed=True)
+        t_meas0 = time.time()
+        profiler = _maybe_profile(c, sess, prof)
         if prof.duration > 0:
             log(f"measuring run {m['seq']} for {prof.duration}s ...")
             deadline = time.time() + prof.duration
@@ -802,6 +851,8 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
             goal_value = metrics[prof.goal_metric] * prof.goal_scale
             goal_src = f"benchmark:{prof.goal_metric}" + (f" x{prof.goal_scale:g}" if prof.goal_scale != 1 else "")
     extra = {"bench": {**prof.describe(), "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:]}, "probe": env_probe}
+    if profiler:
+        extra["cpu_profile"] = _finish_profile(c, profiler, t_meas0)
     if goal_value is not None and sess.get("goal_metric") != prof.goal_metric:
         sess["goal_metric"] = prof.goal_metric
         c.state.set("session", sess)
@@ -1169,6 +1220,28 @@ def _queued_experiments(c, sess):
         return c.client.get(f"/sessions/{sess['id']}/experiments?status=queued").get("experiments", [])
     except Exception:
         return []
+
+
+def cmd_profile(a):
+    """Ad-hoc CPU profile of the database (and the host) for N seconds."""
+    from . import cpuprof
+    c = Ctx(need_server=False)
+    if not cpuprof.ensure_perf(log):
+        raise Fail("perf is not available (install linux-tools for this kernel)")
+    p = cpuprof.Profiler(c.state.dir, a.seconds, a.hz)
+    log(f"profiling for {a.seconds}s at {a.hz} Hz per CPU ...")
+    p.start()
+    p.join(a.seconds + 120)
+    res = p.process(set(hostinfo.service_pids(hostinfo.mysqld_pid() or 0) or []))
+    if a.folded:
+        with open(a.folded, "w") as f:
+            for k, v in res.get("folded") or []:
+                f.write(f"{k} {v}\n")
+    lines = [f"{res.get('samples')} samples, {res.get('db_samples')} in the database; call stacks: {res.get('call_stacks')}",
+             "Host: " + ", ".join(f"{k} {v}%" for k, v in (res.get("by_process") or {}).items()),
+             "Database CPU by category:"] + [f"  {v:5.1f}%  {k}" for k, v in (res.get("categories") or {}).items()] + \
+            ["Top functions (self):"] + [f"  {x['pct']:5.1f}%  {x['fn']}" for x in (res.get("top_self") or [])[:15]]
+    emit({k: v for k, v in res.items() if k != "folded" or a.json_folded}, "\n".join(lines) if not res.get("error") else res["error"])
 
 
 def cmd_diag(a):
@@ -1609,6 +1682,13 @@ def main(argv=None):
                                    "sessions across environments (hardware scaling, minimum hardware for a target)")
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_session)
+
+    s = sp.add_parser("profile", help="CPU profile of the database for a few seconds (perf sampling, low overhead)")
+    s.add_argument("--seconds", type=int, default=20)
+    s.add_argument("--hz", type=int, default=49, help="samples per second per CPU")
+    s.add_argument("--folded", help="also write folded stacks (for flamegraph.pl / speedscope) to this file")
+    s.add_argument("--json-folded", action="store_true", help="include folded stacks in --json output")
+    s.set_defaults(fn=cmd_profile)
 
     s = sp.add_parser("diag", help="diagnostic instrumentation (runtime only)")
     s.add_argument("what", choices=["waits"])
