@@ -185,6 +185,10 @@ class DB:
 
     def table_sizes(self):
         try:
+            try:  # MySQL 8.0+ caches table statistics for 24 h by default: a freshly loaded data set would read as empty
+                self.execute("SET SESSION information_schema_stats_expiry = 0")
+            except pymysql.MySQLError:
+                pass  # MariaDB / older servers: no cache
             r = self.rows(
                 "SELECT COALESCE(SUM(data_length+index_length),0), COUNT(*) FROM information_schema.TABLES "
                 "WHERE ENGINE='InnoDB' AND TABLE_SCHEMA NOT IN ('mysql','sys','performance_schema','information_schema')")

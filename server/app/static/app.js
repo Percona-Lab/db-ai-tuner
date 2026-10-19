@@ -192,7 +192,7 @@ async function envList() {
           <div class="muted" style="margin:4px 0 10px">${esc(e.db_short || e.db)}${(e.clients || []).length ? ` · + ${e.clients.length} client${e.clients.length > 1 ? "s" : ""}` : ""}<br>${e.cpus || "?"} CPUs · ${bytes(e.ram_bytes)} RAM · ${e.disk} · data ${bytes(e.data_bytes)}</div>
           <div class="row" style="gap:18px"><div><div class="muted" style="font-size:12px">TPS</div><b>${m.tps}</b></div><div><div class="muted" style="font-size:12px">Avg latency</div><b>${m.lat}</b></div>
           <div><div class="muted" style="font-size:12px">CPU busy</div><b>${m.cpu}</b></div><div data-tip="${m.diskTip}"><div class="muted" style="font-size:12px">Disk</div><b>${m.disk}</b></div><div><div class="muted" style="font-size:12px">Sessions</div><b>${e.sessions}</b></div></div>
-          ${e.active_session ? `<div style="margin-top:10px"><span class="badge info">active: ${esc(e.active_session.name)}</span>${activityLine(e.active_session.activity)}</div>` : ""}</a>`; }).join("")}</div>`;
+          ${e.active_session ? `<div style="margin-top:10px;font-size:13px;overflow-wrap:anywhere"><span class="muted">Session</span> #${e.active_session.id} ${esc(e.active_session.name)}${activityLine(e.active_session.activity)}</div>` : ""}</a>`; }).join("")}</div>`;
     }
   };
   box.parentElement.querySelectorAll("#viewSeg button").forEach(b => b.onclick = () => { mode = b.dataset.v; try { localStorage.setItem("envView", mode); } catch (e) { } draw(); });
