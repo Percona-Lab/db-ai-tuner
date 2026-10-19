@@ -162,11 +162,14 @@ async function envList() {
     <div class="card"><h3>No environment connected yet</h3><p>Install the agent on the database host to see it here.</p><a class="btn primary" href="#/connect">Connect an agent</a></div>`;
     return;
   }
-  const envs = d.environments.slice().sort((a, b) => (!!a.destroyed_at - !!b.destroyed_at) || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
-  let mode = "list";
-  try { mode = localStorage.getItem("envView") || "list"; } catch (e) { }
+  const allEnvs = d.environments.slice().sort((a, b) => (!!a.destroyed_at - !!b.destroyed_at) || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+  let mode = "list", scope = "active";
+  try { mode = localStorage.getItem("envView") || "list"; scope = localStorage.getItem("envScope") || "active"; } catch (e) { }
+  const nActive = allEnvs.filter(e => !e.destroyed_at).length;
+  let envs = scope === "all" ? allEnvs : allEnvs.filter(e => !e.destroyed_at);
   $view.innerHTML = `<div class="row"><div><h1>Environments</h1><p class="sub">Database servers with a connected tuning-agent.</p></div><span class="spacer"></span>
-    <div class="seg" role="group" aria-label="View"><button data-v="list">List</button><button data-v="cards">Cards</button></div><a class="btn" href="#/connect">Connect another</a></div><div id="envs"></div>`;
+    ${allEnvs.length > nActive ? `<div class="seg" role="group" aria-label="Show" id="scopeSeg"><button data-s="active">Active (${nActive})</button><button data-s="all">All (${allEnvs.length})</button></div>` : ""}
+    <div class="seg" role="group" aria-label="View" id="viewSeg"><button data-v="list">List</button><button data-v="cards">Cards</button></div><a class="btn" href="#/connect">Connect another</a></div><div id="envs"></div>`;
   const box = document.getElementById("envs");
   const metrics = e => { const l = (e.latest && e.latest.db) || {}, o = (e.latest && e.latest.os) || {};
     const dmb = o.disk_r_mbs != null ? (o.disk_r_mbs || 0) + (o.disk_w_mbs || 0) : null;
@@ -175,7 +178,8 @@ async function envList() {
   const clients = e => (e.clients || []).length ? `<div class="muted" style="font-size:12px" data-tip="Client hosts linked to this database server: ${esc(e.clients.map(c => c.name + (c.online ? " (online)" : " (offline)")).join(", "))}">+ ${e.clients.length} client${e.clients.length > 1 ? "s" : ""}: ${esc(e.clients.map(c => c.name).join(", "))}</div>` : "";
   const status = e => envStatus(e);
   const draw = () => {
-    box.parentElement.querySelectorAll(".seg button").forEach(b => b.classList.toggle("on", b.dataset.v === mode));
+    box.parentElement.querySelectorAll("#viewSeg button").forEach(b => b.classList.toggle("on", b.dataset.v === mode));
+    box.parentElement.querySelectorAll("#scopeSeg button").forEach(b => b.classList.toggle("on", b.dataset.s === scope));
     if (mode === "list") {
       box.innerHTML = `<div class="card tablewrap"><table><thead><tr><th>Name</th><th>Status</th><th>Database</th><th>Hardware</th><th class="num">Data</th><th class="num">TPS</th><th class="num">Avg latency</th><th class="num">CPU</th><th class="num">Disk</th><th>Active session</th><th class="num">Sessions</th></tr></thead><tbody>${envs.map(e => {
         const m = metrics(e);
@@ -191,12 +195,17 @@ async function envList() {
           ${e.active_session ? `<div style="margin-top:10px"><span class="badge info">active: ${esc(e.active_session.name)}</span>${activityLine(e.active_session.activity)}</div>` : ""}</a>`; }).join("")}</div>`;
     }
   };
-  box.parentElement.querySelectorAll(".seg button").forEach(b => b.onclick = () => { mode = b.dataset.v; try { localStorage.setItem("envView", mode); } catch (e) { } draw(); });
+  box.parentElement.querySelectorAll("#viewSeg button").forEach(b => b.onclick = () => { mode = b.dataset.v; try { localStorage.setItem("envView", mode); } catch (e) { } draw(); });
+  box.parentElement.querySelectorAll("#scopeSeg button").forEach(b => b.onclick = () => {
+    scope = b.dataset.s; try { localStorage.setItem("envScope", scope); } catch (e) { }
+    envs = scope === "all" ? allEnvs : allEnvs.filter(e => !e.destroyed_at); draw();
+  });
   draw();
   timers.push(setInterval(async () => {
     if (!document.getElementById("envs")) return;
     const d2 = await api("/api/environments"); const byId = Object.fromEntries(d2.environments.map(e => [e.id, e]));
-    envs.forEach((e, i) => { if (byId[e.id]) envs[i] = byId[e.id]; }); draw();
+    allEnvs.forEach((e, i) => { if (byId[e.id]) allEnvs[i] = byId[e.id]; });
+    envs = scope === "all" ? allEnvs : allEnvs.filter(e => !e.destroyed_at); draw();
   }, 15000));
 }
 
