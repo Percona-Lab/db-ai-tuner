@@ -29,6 +29,7 @@ tuning-agent baseline --apply $([ "$T" = O3 ] && echo "--max-connections 1100")
 SB="sysbench oltp_read_write --mysql-user=sbtest --mysql-password=sbtest --mysql-db=sbtest"
 GT="/opt/go-tpc/go-tpc"; HDB="cd /opt/HammerDB-6.0 && LD_LIBRARY_PATH=/opt/mysqlclient TMP=/tmp"
 P=/root/bench/battery.ini; RESET="reset = /root/bench/reset_datadir.sh"; MAX=20; GOAL=tps
+tuning-agent activity "loading data" "battery $T: preparing the benchmark data set"
 case $T in
   O1|O2|O3) TH=$(case $T in O1) echo 4;; O2) echo 64;; O3) echo 1024;; esac)
     mysql -e "CREATE DATABASE IF NOT EXISTS sbtest"; $SB --tables=16 --table-size=1500000 --threads=8 prepare > /root/bench/prep.log 2>&1
