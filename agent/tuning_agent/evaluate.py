@@ -184,6 +184,39 @@ def noise_plan(runs, cal, duration, max_duration=None, target=NOISE_TARGET):
                      + (" (capped by max_duration)" if capped else "") + ".")
 
 
+def trend_pct(values, xs=None):
+    """Least-squares slope as % of the mean per unit of x (default: per run)."""
+    n = len(values)
+    if n < 3:
+        return None
+    xs = xs or list(range(n))
+    mx, my = sum(xs) / n, sum(values) / n
+    den = sum((x - mx) ** 2 for x in xs)
+    if not den or not my:
+        return None
+    return 100.0 * sum((x - mx) * (y - my) for x, y in zip(xs, values)) / den / my
+
+
+def data_state_check(runs, data_state):
+    """Writing benchmark without a data reset or seasoning: every run changes the data the next one starts from, so
+    differences between runs can come from the data, not the configuration."""
+    w = [(r.get("summary") or {}).get("rows_changed_per_s") for r in runs]
+    w = [x for x in w if x is not None]
+    writes = bool(w) and sum(w) / len(w) > 1
+    vals = [r["goal_value"] for r in runs if r.get("goal_value") is not None]
+    t = trend_pct(vals)
+    out = {"data_state": data_state, "writes": writes, "rows_changed_per_s": round(sum(w) / len(w), 1) if w else None,
+           "trend_pct_per_run": round(t, 2) if t is not None else None}
+    if writes and data_state not in ("reset", "seasoned"):
+        out["status"] = "drifting"
+        out["text"] = ("The benchmark changes data and the profile neither restores it before each run (reset) nor seasons it to a "
+                       "steady state first: each run starts from the data the previous one left, so results can move with the data "
+                       "rather than the configuration" + (f" (calibration trend {t:+.1f}% per run)" if t is not None else "") + ".")
+    else:
+        out["status"] = "ok"
+    return out
+
+
 def calibrate(runs):
     """Noise thresholds from repeated runs of one configuration."""
     runs = [r for r in runs if r.get("verdict") not in EXCLUDED] or runs

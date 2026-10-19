@@ -505,3 +505,20 @@ def test_profile_run_length_placeholders(tmp_path=None):
     assert b.command() == "sysbench --time=1050 run; hdb 2 15"
     open(p, "w").write("[bench]\nname=x\nrun = sysbench --time=430 run\nwarmup = 120\nduration = 300\n")
     assert not bench.Profile(p).can_resize()
+
+
+def test_data_state():
+    runs = [{"goal_value": v, "summary": {"rows_changed_per_s": 900}} for v in (877, 818, 799)]
+    d = evaluate.data_state_check(runs, "unspecified")
+    assert d["status"] == "drifting" and d["trend_pct_per_run"] < -4
+    assert evaluate.data_state_check(runs, "reset")["status"] == "ok"
+    assert evaluate.data_state_check([dict(r, summary={"rows_changed_per_s": 0}) for r in runs], "unspecified")["status"] == "ok"
+    assert abs(evaluate.trend_pct([100, 101, 102, 103], [0, 1, 2, 3]) - 0.985) < 0.01
+    import tempfile
+    from tuning_agent import bench
+    p = os.path.join(tempfile.mkdtemp(), "b.ini")
+    open(p, "w").write("[bench]\nname=x\nrun=true\ndata_state = seasoned\n")
+    b = bench.Profile(p)
+    assert b.data_state == "seasoned" and b.season_hours == 12 and b.season_min_hours == 1
+    open(p, "w").write("[bench]\nname=x\nrun=true\nreset=/r.sh\n")
+    assert bench.Profile(p).data_state == "reset" and bench.Profile(p).season_hours == 0

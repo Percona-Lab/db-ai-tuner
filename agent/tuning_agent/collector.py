@@ -309,6 +309,7 @@ def analyze_window(a, b, samples):
         "duration_s": round(dt, 1),
         "tps": db_rates.get("tps"),
         "within_se_pct": batch_se_pct("db", "tps") or batch_se_pct("db", "qps"),
+        "rows_changed_per_s": avg("db", "rows_changed"),
         "qps": db_rates.get("qps"),
         "handler_commits": db_rates.get("handler_commits"),
         "statements_per_s": db_rates.get("statements"),

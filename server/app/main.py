@@ -515,6 +515,8 @@ def session(sid: int, request: Request):
     s["activity"] = session_activity(e, sid) if s.get("status") == "active" else None
     if s["calibration"] and not s["calibration"].get("plan"):
         s["calibration"]["plan"] = noise_breakdown(sid, e["id"], s["calibration"])
+    if s["calibration"] and not s["calibration"].get("data_state"):
+        s["calibration"]["data_state"] = data_state_derived(sid, s["calibration"])
     st = store.q1("SELECT id, name, kind FROM studies WHERE id=?", (s.get("study_id"),)) if s.get("study_id") else None
     return {"session": s, "environment": env_brief(e), "runs": runs, "recommendations": recs, "events": events, "cost": session_costs(s, e),
             "study": dict(st) if st else None, "requirements": session_requirements(sid)}
@@ -564,6 +566,32 @@ def noise_breakdown(sid, env_id, cal):
                 out.update(action="longer-runs", seconds=int(math.ceil(out["run_seconds"] * (within / need) ** 2 / 60) * 60))
     _nb_cache[ck] = out
     return out
+
+
+def data_state_derived(sid, cal):
+    """Older sessions: does the benchmark write while its profile has no reset? (from the calibration runs)"""
+    seqs = [int(x) for x in (cal.get("runs") or [])]
+    if not seqs:
+        return None
+    rows = store.q(f"SELECT goal_value, inputs FROM runs WHERE session_id=? AND seq IN ({','.join('?' * len(seqs))}) ORDER BY seq", (sid, *seqs))
+    w, reset, vals = [], None, []
+    for r in rows:
+        inp = store.uj(r["inputs"]) or {}
+        b = inp.get("bench") or {}
+        reset = reset or b.get("reset") or (b.get("data_state") in ("reset", "seasoned", "read-only") and b.get("data_state"))
+        sr = inp.get("status_rates") or {}
+        w.append(sum(float(sr.get(k) or 0) for k in ("Innodb_rows_inserted", "Innodb_rows_updated", "Innodb_rows_deleted")))
+        if r["goal_value"] is not None:
+            vals.append(r["goal_value"])
+    if not rows or not any(store.uj(r["inputs"]) for r in rows):
+        return None
+    writes = sum(w) / len(w) > 1
+    t = None
+    if len(vals) >= 3:
+        n, mx, my = len(vals), (len(vals) - 1) / 2, sum(vals) / len(vals)
+        t = 100 * sum((i - mx) * (v - my) for i, v in enumerate(vals)) / sum((i - mx) ** 2 for i in range(n)) / my
+    return {"writes": writes, "rows_changed_per_s": round(sum(w) / len(w), 1), "trend_pct_per_run": round(t, 2) if t is not None else None,
+            "status": "drifting" if writes and not reset else "ok", "derived": True}
 
 
 def session_requirements(sid):

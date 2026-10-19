@@ -15,6 +15,9 @@ Profile (INI):
     nopm = achieved (\\d+) NOPM
     tpm = from (\\d+) MySQL TPM
 
+    data_state = reset                  ; how runs start from a comparable data set: reset (the reset command restores it),
+                                        ; seasoned (one long pre-run to steady state, then runs continue on it), read-only
+    season_hours = 12                   ; seasoned: maximum seasoning time (stops earlier once throughput is steady)
     adaptive_duration = auto            ; auto: lengthen runs when calibration shows mostly within-run noise | off
     max_duration = 1200                 ; upper limit for that (default: 4 x duration, at most 30 min)
 
@@ -52,6 +55,11 @@ class Profile:
         # settings the benchmark needs just to run (e.g. max_connections for 1024 client threads): applied before every
         # run, including the server-defaults run; numeric values are minimums. Never tuned, shown apart from tuning.
         self.requires = dict(cp["requires"]) if cp.has_section("requires") else {}
+        ds = b.get("data_state", "").strip().lower()
+        self.data_state = ds if ds in ("reset", "seasoned", "read-only") else ("reset" if self.reset else "unspecified")
+        self.season_hours = float(b.get("season_hours", "12" if self.data_state == "seasoned" else "0"))
+        self.season_min_hours = float(b.get("season_min_hours", str(min(1.0, self.season_hours))))
+        self.season_slope = float(b.get("season_slope_pct_per_hour", "0.5"))  # steady: |trend| below this
         self.adaptive = b.get("adaptive_duration", "auto").lower() not in ("off", "false", "no", "0")
         self.max_duration = int(b["max_duration"]) if b.get("max_duration") else None
         self.base_duration = self.duration
@@ -77,6 +85,7 @@ class Profile:
     def describe(self):
         return {"name": self.name, "profile": self.path, "reset": self.reset, "run": self.run, "warmup": self.warmup,
                 "duration": self.duration, "goal_metric": self.goal_metric, "metrics": list(self.metrics), "command": self.command(),
+                "data_state": self.data_state,
                 "requires": self.requires}
 
     def parse(self, text):
