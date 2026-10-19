@@ -13,7 +13,7 @@ import sys
 import time
 import uuid
 
-from . import __version__, baseline, bench, clientrole, collector, engine, evaluate, hostinfo, llmassist, mysqldb, ostune
+from . import __version__, baseline, bench, bottleneck, clientrole, collector, engine, evaluate, hostinfo, llmassist, mysqldb, ostune
 from .knowledge import tradeoffs_in
 from .applier import Applier
 from .client import APIError, Client
@@ -568,6 +568,41 @@ def _end_snapshot(c):
     return collector.full_snapshot(c.db, hostinfo.device_for_path(c.datadir()))
 
 
+def _assess_hypothesis(c, sess, seq, verdict, evaluation, summary, inputs):
+    """Did the run confirm the hypothesis it was meant to test? Goal verdict + whether the targeted part of the
+    database's time shrank per unit of work (vs the parent run's breakdown)."""
+    h = dict(sess.pop("pending_hypothesis"))
+    out = dict(h, run=seq)
+    targets = set(h.get("target") or [])
+    change = None
+    if targets and evaluation.get("parent_runs"):
+        try:
+            with open(os.path.join(c.state.dir, f"run{evaluation['parent_runs'][-1]}_inputs.json")) as f:
+                par = json.load(f)
+            pb = par["inputs"].get("time_breakdown") or bottleneck.breakdown(par["summary"], par["inputs"], (c.hw() or {}).get("cpus"))
+            work = lambda s: (s.get("tps") or 0) or (s.get("qps") or 0) or 1.0  # per unit of work: transactions (queries)
+            before = sum(p["threads"] for p in pb if p["name"] in targets) / work(par["summary"])
+            after = sum(p["threads"] for p in inputs["time_breakdown"] if p["name"] in targets) / work(summary)
+            if before > 0:
+                change = round(100.0 * (after - before) / before, 1)
+                out["evidence"] = {"targeted_time_per_unit_change_pct": change}
+        except (OSError, ValueError, KeyError):
+            pass
+    shrank = change is not None and change <= -10
+    better = verdict in ("improved", "efficiency-gain")
+    if h.get("kind") in ("revert", "validation", "requested"):
+        out["outcome"] = "done"
+    elif better:
+        out["outcome"] = "supported" if shrank or change is None else "improved-other-mechanism"
+    elif shrank:
+        out["outcome"] = "moved"  # the mechanism worked, but that part of the time was not what limited the goal
+    else:
+        out["outcome"] = "refuted"
+    sess.setdefault("hypotheses", []).append({k: out.get(k) for k in ("id", "run", "kind", "target", "tags", "outcome")})
+    log(f"   hypothesis ({h.get('id')}): {out['outcome']}" + (f", targeted time per unit {change:+.0f}%" if change is not None else ""))
+    return out
+
+
 def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, extra_inputs=None, goal_source=None):
     sess = c.session()
     m = c.state.get("measurement")
@@ -653,6 +688,9 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
            "summary": summary, "inputs": inputs}
     diagnosis = engine.diagnose(ctx)
     inputs["workload"] = engine.classify_workload(summary, inputs)
+    inputs["time_breakdown"] = bottleneck.breakdown(summary, inputs, (c.hw() or {}).get("cpus"))
+    if verdict not in ("repeat", "reference") and sess.get("pending_hypothesis"):
+        evaluation["hypothesis"] = _assess_hypothesis(c, sess, m["seq"], verdict, evaluation, summary, inputs)
     run = {"id": m["run_id"], "seq": m["seq"], "label": m["label"], "started": m["started"], "ended": b_snap["t"],
            "changes": m["changes"], "managed": m["managed"], "goal_value": gv, "delta_pct": d_prev, "delta_vs_first_pct": d_first,
            "verdict": verdict, "evaluation": evaluation, "summary": summary}
@@ -1242,6 +1280,7 @@ def _engine_ctx(c, sess):
     _ap = Applier(c.cfg, c.state, c.db)
     osf = ostune.facts(c.datadir(), hostinfo.device_for_path(c.datadir()), _ap.service, _ap.fs_device)
     experience = {}
+    hyp_exp = {}
     try:
         from .engine import classify_workload
         wl = classify_workload(last.get("summary"), last.get("inputs")).get("type") if last.get("summary") else None
@@ -1250,6 +1289,7 @@ def _engine_ctx(c, sess):
              + (f"&conns={int(conns)}" if conns else ""))
         ex = c.client.get(q)
         experience = ex.get("experience", {})
+        hyp_exp = {"similar": ex.get("hypotheses") or [], "all": ex.get("hypotheses_all") or []}
         for rid, e in (ex.get("experience_all") or {}).items():  # thin same-class evidence: fall back to all sessions
             if e.get("n", 0) >= 3 and (experience.get(rid) or {}).get("n", 0) < 2:
                 experience[rid] = dict(e, scope="other workloads / machine sizes / concurrency")
@@ -1263,6 +1303,7 @@ def _engine_ctx(c, sess):
             "scope": sess.get("scope") or ["knobs", "os"], "fs_device": _ap.fs_device,
             "variables": c.all_settings(), "summary": last.get("summary"), "inputs": last.get("inputs"),
             "history": sess["runs"], "noise_pct": sess.get("noise_pct"), "noise": sess.get("noise"),
+            "hypotheses": sess.get("hypotheses") or [], "hypothesis_experience": hyp_exp,
             "managed": {k: v["value"] for k, v in c.state.get("managed", {}).items()}}
 
 
@@ -1300,6 +1341,9 @@ def _recommend(c, sess, llm=False):
         its, rj = llmassist.sanitize([sg], ctx, res, sg.get("_model") or model)
         its = [i for i in its if i["id"] not in done_ids]
         if its:
+            for it in its:
+                it["hypothesis"] = {"kind": "llm", "text": f"LLM ({sg.get('_model') or model}): {sg.get('rationale') or it.get('title')}"
+                                    + (f" Mechanism: {sg['mechanism']}" if sg.get("mechanism") else "")}
             extra += its
             keep.append(sg)
         elif sg in fresh:
@@ -1667,6 +1711,10 @@ def cmd_autotune(a):
         if queued:  # human / agent specified experiments go first
             e = queued[0]
             log(f"== experiment #{e['id']} ({e['kind']}, from {e.get('created_by')}): {json.dumps(e['spec'])[:120]}")
+            if not str(e.get("created_by") or "").startswith(("agent:", "llm:")):  # a person asked for it
+                sess["pending_hypothesis"] = {"id": f"exp#{e['id']}", "kind": "requested",
+                                              "text": f"Requested by {e.get('created_by') or 'a user'}" + (f": {e['reason']}" if e.get("reason") else "")}
+                c.state.set("session", sess)
             log("   " + _run_experiment(c, prof, e))
             measured += len(e["spec"].get("values") or [1]) * int(e.get("repeats") or 1)
             continue
@@ -1710,6 +1758,11 @@ def cmd_autotune(a):
                 log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}"
                     + (" (DRIFT)" if (run.get('evaluation') or {}).get('drift') else ""))
                 continue
+        if item.get("sweep") and item.get("hypothesis"):
+            log(f"   why: {item['hypothesis']['text']}")
+            sess = c.session()
+            sess["pending_hypothesis"] = dict(item["hypothesis"], id=nxt)
+            c.state.set("session", sess)
         if item.get("sweep"):  # measure several values as an experiment instead of a single step
             body = {"kind": "sweep", "variable": item["sweep"]["variable"], "values": ",".join(item["sweep"]["values"]),
                     "reason": item["rationale"][:400], "created_by": ("llm:" if item.get("source") == "llm" else "agent:") + nxt}
@@ -1740,6 +1793,11 @@ def cmd_autotune(a):
             c.state.set("session", sess)
             continue
         log(f"== experiment: {nxt} ({item['title']}) [{item.get('safety')}]")
+        if item.get("hypothesis"):
+            log(f"   why: {item['hypothesis']['text']}")
+            sess = c.session()
+            sess["pending_hypothesis"] = dict(item["hypothesis"], id=nxt)
+            c.state.set("session", sess)
         c.activity("applying changes", f"{nxt}: {item['title']}" + (" (restart)" if item.get("restart") else ""))
         changes = [{"variable": ch["variable"], "value": None if ch.get("unset") else ch["proposed"], "reason": item["rationale"],
                     "source": f"rec:{nxt}"} for ch in item["changes"]]
@@ -1748,6 +1806,7 @@ def cmd_autotune(a):
         if resa.get("rolled_back"):
             log(f"   apply failed and was rolled back: {resa.get('errors')}")
             sess = c.session()
+            sess.pop("pending_hypothesis", None)
             sess.setdefault("failed_recs", []).append(nxt)
             c.state.set("session", sess)
             continue
@@ -1757,10 +1816,11 @@ def cmd_autotune(a):
             c.state.set("session", sess)
         if _known_config(c, sess):
             log("   configuration already measured: no new run needed")
+            sess = c.session()
+            sess.pop("pending_hypothesis", None)
             if item["kind"] != "revert":  # an experiment that only leads back to a measured configuration is done
-                sess = c.session()
                 sess.setdefault("failed_recs", []).append(nxt)
-                c.state.set("session", sess)
+            c.state.set("session", sess)
             continue
         try:
             run, _ = _bench_run(c, prof, f"{nxt}")

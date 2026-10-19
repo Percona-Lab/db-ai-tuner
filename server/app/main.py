@@ -919,22 +919,37 @@ def agent_experience(workload: str = None, cpus: int = None, conns: int = None, 
         "json_extract(e.facts, '$.hardware.cpus') AS cpus, json_extract(r.summary, '$.threads_connected_avg') AS conns, r.session_id FROM runs r JOIN tsessions s ON s.id=r.session_id "
         "JOIN environments e ON e.id=s.env_id WHERE e.user_id=? AND r.status='done' AND r.verdict IN "
         "('improved','efficiency-gain','neutral','regressed','efficiency-loss')", (key["user_id"],))
-    out, wide = {}, {}
+    out, wide, hyp, hyp_wide = {}, {}, {}, {}
     for r in rows:
         if exclude_session and r["session_id"] == exclude_session:
             continue
         similar = (not (workload and r["wl"] and r["wl"] != workload) and not (cpus and r["cpus"] and cpu_class(r["cpus"]) != cpu_class(cpus))
                    and not (conns and r["conns"] and conc_class(r["conns"]) != conc_class(conns)))
         _experience_add(wide, r)  # every workload and machine size: a weaker prior when similar sessions are few
+        _hypothesis_add(hyp_wide, r)
         if not similar:
             continue
         _experience_add(out, r)
+        _hypothesis_add(hyp, r)
     for d in (out, wide):
         for e in d.values():
             x = e.pop("deltas")
             e["mean_delta_pct"] = round(sum(x) / len(x), 2) if x else None
     return {"workload": workload, "cpu_class": cpu_class(cpus) if cpus else None, "concurrency_class": conc_class(conns) if conns else None,
-            "experience": out, "experience_all": wide}
+            "experience": out, "experience_all": wide, "hypotheses": list(hyp.values()), "hypotheses_all": list(hyp_wide.values())}
+
+
+def _hypothesis_add(out, r):
+    """Learning from hypotheses: how often 'change X acts on bottleneck component C' held. Keyed by the idea and the
+    component it targeted, so the same setting can be credible for one bottleneck and not for another."""
+    h = (store.uj(r["evaluation"], {}) or {}).get("hypothesis") or {}
+    if h.get("outcome") in (None, "done") or not h.get("id"):
+        return
+    for tgt in (h.get("target") or ["-"])[:1]:
+        e = out.setdefault(f"{h['id']}|{tgt}", {"id": h["id"], "target": tgt, "n": 0, "supported": 0, "moved": 0, "refuted": 0,
+                                                 "improved-other-mechanism": 0})
+        e["n"] += 1
+        e[h["outcome"]] = e.get(h["outcome"], 0) + 1
 
 
 def _experience_add(out, r):

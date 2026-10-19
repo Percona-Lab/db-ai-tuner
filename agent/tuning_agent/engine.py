@@ -16,6 +16,7 @@ import math
 import re
 
 from .evaluate import mean_noise
+from . import bottleneck
 from .mechanisms import MECHANISMS, missing_mechanism, relevance
 from .knowledge import KB, flags_subset, fmt_size, human_size, normalize, parse_size, tradeoff_of
 
@@ -1322,10 +1323,81 @@ def _breaks_requirement(it, requires):
     return False
 
 
+def hypothesis(it, ctx):
+    """Why the tuner wants to test this change, stated as a testable claim about the last run."""
+    first = (it.get("rationale") or "").split(". ")[0].strip().rstrip(".")
+    if it["kind"] == "revert":
+        return {"text": f"{it.get('title')}: {first}.", "kind": "revert"}
+    if it.get("no_mechanism"):
+        return {"text": f"Validation only - {it['no_mechanism']}.", "kind": "validation"}
+    tags = list(MECHANISMS.get(it["id"], ((), ""))[0])
+    parts = [p for p in ctx.get("breakdown") or [] if set(tags) & set(p["tags"]) and "network" not in p["tags"]]
+    mech = MECHANISMS.get(it["id"], ((), ""))[1]
+    if parts:
+        top = parts[0]
+        share = sum(p["share_pct"] for p in parts)
+        names = ", ".join(p["name"] for p in parts[:3])
+        return {"kind": "bottleneck", "target": [p["name"] for p in parts], "tags": tags, "share_pct": round(share, 1),
+                "text": f"{names} take{'s' if len(parts) == 1 else ''} {share:.0f}% of database time in the last run; "
+                        f"{mech[:1].lower() + mech[1:] if mech else first} "
+                        f"Prediction: the goal improves beyond noise and {top['name']} shrinks per transaction."}
+    diag = [d["type"] for d in ctx.get("diagnosis") or [] if d["type"] in tags]
+    if diag:
+        return {"kind": "diagnosis", "tags": tags, "target": diag,
+                "text": f"Diagnosis {', '.join(diag)}: {first}. Prediction: the goal improves beyond noise."}
+    return {"kind": "exploratory", "tags": tags,
+            "text": f"Exploratory - no measured bottleneck points at it: {first}. Tried after better-founded ideas."}
+
+
+def credibility(it, hexp):
+    """How often this idea's hypothesis (same change, same targeted component) held in earlier sessions:
+    (score delta, note). Similar sessions (workload, machine size, concurrency) count fully, others half."""
+    h = it.get("hypothesis") or {}
+    tgt = (h.get("target") or ["-"])[0]
+    for scope, w in (("similar", 1.0), ("all", 0.5)):
+        e = next((x for x in (hexp or {}).get(scope) or [] if x["id"] == it["id"] and x["target"] == tgt), None)
+        if e and e["n"] >= 2:
+            held = e.get("supported", 0) + e.get("improved-other-mechanism", 0)
+            rate = held / e["n"]
+            delta = round(w * 4 * (rate - 0.5) * min(e["n"], 4) / 4, 2)
+            where = "similar sessions" if scope == "similar" else "other workloads / machines"
+            return delta, (f"held in {held} of {e['n']} earlier tests in {where}"
+                           + (f"; {e.get('moved', 0)} times the targeted time shrank without a gain" if e.get("moved") else ""))
+    return 0.0, None
+
+
+def rescore(it, hyps):
+    """Adjust an idea by what earlier hypotheses in this session showed: (score delta, notes)."""
+    tags = set(MECHANISMS.get(it["id"], ((), ""))[0])
+    targets = set((it.get("hypothesis") or {}).get("target") or [])
+    delta, notes = 0.0, []
+    for h in hyps or []:
+        if h.get("id") == it["id"]:
+            continue
+        ht, htags = set(h.get("target") or []), set(h.get("tags") or [])
+        o = h.get("outcome")
+        if o == "supported" and tags & htags:
+            delta += 1
+            notes.append(f"run {h['run']} supported acting on {', '.join(sorted(ht)) or 'this bottleneck'}: related lever")
+        elif o == "moved" and targets & ht:
+            delta -= 2
+            notes.append(f"run {h['run']} shrank {', '.join(sorted(targets & ht))} without a gain: not what limits the goal now")
+        elif o == "refuted" and tags == htags and tags:
+            delta -= 1
+            notes.append(f"run {h['run']} refuted the same mechanism")
+    return delta, notes
+
+
+ALSO_FROM_DIAGNOSIS = {"io-read", "io-flush"}  # status / OS evidence (read vs write split) the wait classes cannot separate
+
+
 def run_engine(ctx):
     ctx = dict(ctx)
     ctx["workload"] = classify_workload(ctx.get("summary"), ctx.get("inputs")) if ctx.get("summary") else {"type": None}
     ctx["diagnosis"] = diagnose(ctx) if ctx.get("summary") else []
+    # where the database's time goes (on CPU by profile category, waiting for CPU / I/O / locks / latches / the client)
+    inp = ctx.get("inputs") or {}
+    ctx["breakdown"] = inp.get("time_breakdown") or bottleneck.breakdown(ctx.get("summary"), inp, (ctx.get("hw") or {}).get("cpus"))
     items = recommend(ctx)
     items = apply_history(items, ctx.get("history") or [])
     items = practice_bundle(items, ctx.get("history") or [])
@@ -1340,8 +1412,14 @@ def run_engine(ctx):
     for it in items:
         it.setdefault("safety", "safe")
         it.setdefault("tradeoffs", [])
-        # mechanism prior: does this change act on what is actually limiting the server?
+        # mechanism prior: how much of what keeps the workload from going faster can this change act on? From the time
+        # breakdown when there is one; diagnoses the breakdown cannot see (flush pressure, redo capacity, memory / swap)
+        # still count through the diagnosis
         rel, matched = relevance(it["id"], ctx["diagnosis"])
+        if it["id"] in MECHANISMS and ctx["breakdown"]:
+            rb, mb = bottleneck.relevance(MECHANISMS[it["id"]][0], ctx["breakdown"])
+            rd, md = relevance(it["id"], [d for d in ctx["diagnosis"] if d["type"] not in bottleneck.TAGS or d["type"] in ALSO_FROM_DIAGNOSIS])
+            rel, matched = max(rb or 0, rd or 0), mb + md
         if rel is not None:
             it["mechanism"] = MECHANISMS[it["id"]][1]
             it["addresses"] = matched
@@ -1351,6 +1429,15 @@ def run_engine(ctx):
             it["no_mechanism"] = nomech
             it["note"] = (it.get("note", "") + f" Validation only: {nomech}.").strip()
             it.pop("sweep", None)  # one point at most, after everything with a mechanism
+        if it["kind"] in ("config", "revert"):
+            it["hypothesis"] = hypothesis(it, ctx)
+            rd_, rn_ = rescore(it, ctx.get("hypotheses"))
+            cd_, cn_ = credibility(it, ctx.get("hypothesis_experience"))
+            if cn_:
+                rd_, rn_ = rd_ + cd_, rn_ + [cn_]
+                it["hypothesis"]["track_record"] = cn_
+            if rn_:
+                it["rescore"] = {"delta": round(rd_, 2), "why": rn_}
         if it.get("sweep") and (it.get("relevance") or 0) < 2:
             # Battery 1: 33 sweep runs, no real gain; without a corroborated mechanism start with two points only
             it["sweep"]["values"] = it["sweep"]["values"][:2]
@@ -1366,7 +1453,7 @@ def run_engine(ctx):
             it["kind"] = "advice"
             it["note"] = (it.get("note", "") + " Trade-off: not applied under policy=safe.").strip()
         sc = score(it, ctx.get("goal", "tps")) + (2 if it["kind"] == "revert" else 0) - (2 if it.get("score_note") else 0) \
-            - (10 if it.get("no_mechanism") else 0)
+            - (10 if it.get("no_mechanism") else 0) + (it.get("rescore") or {}).get("delta", 0)
         if it.get("relevance") is not None:
             sc += 2 * it["relevance"] if it["relevance"] else (-3 if has_major else 0)
         if it.get("experience"):
@@ -1388,5 +1475,5 @@ def run_engine(ctx):
     safe_next = next((i for i in actionable if i["safety"] == "safe"), None)
     trade_next = next((i for i in actionable if i["safety"] == "trade-off"), None)
     nxt = safe_next or (trade_next if benchmark else None)
-    return {"workload": ctx["workload"], "diagnosis": ctx["diagnosis"], "items": items, "next": nxt["id"] if nxt else None,
+    return {"workload": ctx["workload"], "diagnosis": ctx["diagnosis"], "breakdown": ctx["breakdown"], "items": items, "next": nxt["id"] if nxt else None,
             "phase": "safe" if safe_next else ("trade-offs" if nxt else "done")}

@@ -690,3 +690,45 @@ def test_noise_estimate_robust_to_one_wild_pair():
     assert est["noise_pct"] < 7 and est.get("outlier_groups") == [[5, 6]], est  # was 12.6% without the cap
     plan = evaluate.noise_plan([{"summary": {"within_se_pct": 0.9}}] * 3, {"goal_cv_pct": 1.49, "noise_pct": 3.73}, 300)
     assert plan["repeats"] >= 2
+
+
+def test_time_breakdown_drives_relevance():
+    from tuning_agent import bottleneck
+    from tuning_agent.mechanisms import MECHANISMS
+    rel = lambda item, parts: bottleneck.relevance(MECHANISMS[item][0], parts)[0]
+    # CPU-bound, but a third of the CPU is spinning on latches: contention levers first, not memory or I/O
+    spin = bottleneck.breakdown({"mysqld_cpu_pct": 90, "duration_s": 300, "dbproc_runq_wait_threads": 0.3},
+                                {"cpu_profile": {"categories": {"spin / mutex wait": 35, "B-tree / row access": 40, "SQL executor": 25}}}, 8)
+    assert spin[0]["name"].startswith("CPU: B-tree") or spin[0]["name"].startswith("CPU: spinning")
+    assert rel("spin-loops", spin) == 3 and rel("bp-grow", spin) == 0 and rel("thread-pool", spin) >= 2
+    # half the time waiting for data file reads: buffer pool / read path first
+    io = bottleneck.breakdown({"mysqld_cpu_pct": 10, "duration_s": 300}, {"wait_classes": {"data_io": 1500, "redo_io": 60}}, 8)
+    assert io[0]["name"] == "Waiting: data file I/O" and rel("bp-grow", io) == 3 and rel("spin-loops", io) <= 1  # 13% unprofiled CPU
+    # the server mostly waits for the client: no server-side change gets credit for that time
+    cl = bottleneck.breakdown({"mysqld_cpu_pct": 5, "duration_s": 300}, {"wait_classes": {"socket": 3000}}, 8)
+    assert cl[0]["name"].startswith("Client / network") and rel("spin-loops", cl) == 0 and rel("bp-grow", cl) == 0
+    # in the engine: the spin-heavy profile puts spin-loops ahead of an equally scored memory change
+    ctx = {"goal": "tps", "policy": "safe", "os_tuning": True, "os_facts": {"os:filesystem": "ext4"}, "hw": HW, "flavor": "percona",
+           "version": (8, 4, 11), "variables": dict(VARS), "summary": dict(OLTP[0], mysqld_cpu_pct=90, cpu_busy=95),
+           "inputs": dict(OLTP[1], cpu_profile={"categories": {"spin / mutex wait": 35, "B-tree / row access": 65}}),
+           "history": [], "noise_pct": 2.0, "managed": {}}
+    res = engine.run_engine(ctx)
+    assert res["breakdown"] and any(p["name"] == "CPU: spinning on latches" for p in res["breakdown"])
+    sl = next((i for i in res["items"] if i["id"] == "spin-loops"), None)
+    assert sl is None or sl["relevance"] >= 2
+
+
+def test_hypotheses_rescore_and_learn():
+    from tuning_agent.engine import hypothesis, rescore, credibility
+    parts = [{"name": "CPU: spinning on latches", "threads": 3.0, "share_pct": 35.0, "tags": ["cpu-spin", "concurrency"]},
+             {"name": "CPU: B-tree / row access", "threads": 5.0, "share_pct": 58.0, "tags": ["cpu"]}]
+    it = {"id": "spin-loops", "kind": "config", "rationale": "Spinning wastes CPU. More text.", "title": "Spin loops"}
+    h = hypothesis(it, {"breakdown": parts, "diagnosis": []})
+    assert h["kind"] == "bottleneck" and "CPU: spinning on latches" in h["target"] and "Prediction" in h["text"]
+    it["hypothesis"] = h
+    # in-session: an earlier run shrank the spinning time without a gain -> ideas aimed at it rank lower
+    d, why = rescore(it, [{"id": "thread-pool", "run": 7, "target": ["CPU: spinning on latches"], "tags": ["concurrency"], "outcome": "moved"}])
+    assert d < 0 and "not what limits" in why[0]
+    # across sessions: the same idea against the same component held 3 of 4 times in similar sessions
+    d, note = credibility(it, {"similar": [{"id": "spin-loops", "target": "CPU: spinning on latches", "n": 4, "supported": 3, "refuted": 1}]})
+    assert d > 0 and "3 of 4" in note

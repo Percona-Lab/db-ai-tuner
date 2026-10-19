@@ -63,6 +63,9 @@ def context(ctx, res, meta=None):
             "binlog_*, sync_binlog and replication settings have no effect when server_facts.log_bin is OFF.",
             "Each proposal is measured against its parent configuration; differences smaller than noise_pct are treated as noise.",
             "Only variables listed in current_variables, os_settings or available_pseudo_variables can be changed.",
+            "Target the largest components of time_breakdown: in each rationale state the hypothesis - which component it acts "
+            "on, why, and what should change. Build on hypotheses_tested (do not repeat refuted mechanisms; when an outcome is "
+            "'moved', that component no longer limits the goal).",
             "Propose only settings whose mechanism is active in this workload (see load): no flushing, redo, commit or purge "
             "settings when writes_active is false; no read-path settings when disk_reads_active is false.",
         ],
@@ -78,6 +81,10 @@ def context(ctx, res, meta=None):
                      "disk": "HDD" if hw.get("disk_rotational") else "SSD", "filesystem": hw.get("filesystem")},
         "goal": ctx.get("goal"), "policy": ctx.get("policy"), "workload": res.get("workload"),
         "diagnosis": [{"type": d["type"], "severity": d["severity"], "text": d["text"]} for d in res.get("diagnosis") or []],
+        # what keeps the workload from going faster: average database threads per state, largest first
+        "time_breakdown": [{k: p[k] for k in ("name", "threads", "share_pct", "source")} for p in (res.get("breakdown") or [])[:10]],
+        # hypotheses tested so far: supported / refuted / moved (the targeted time shrank but the goal did not improve)
+        "hypotheses_tested": [{k: h.get(k) for k in ("id", "run", "target", "outcome")} for h in (ctx.get("hypotheses") or [])[-12:]],
         "summary": {k: s.get(k) for k in SUMMARY_KEYS if s.get(k) is not None},
         "top_waits": (inp.get("top_waits") or [])[:8],
         "top_statements": [{"query": q.get("query", "")[:200], "pct_time": q.get("pct_time"), "avg_ms": q.get("avg_ms"),
