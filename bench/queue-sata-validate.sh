@@ -38,7 +38,11 @@ recheck() { n=$((n + 1)); [ $((n % 2)) = 0 ] && tuning-agent measure run --bench
 one() {  # one <reason> <var> <values...>: sweep one variable, then put it back to the baseline value
   local why=$1 var=$2; shift 2
   local base; base=$(cur $var)
-  tuning-agent experiment add --sweep "$var=$(IFS=,; echo "$*")" --repeats 2 --force --reason "validation: $why"
+  if [ $# -eq 1 ]; then  # one value: a "try" (a sweep needs at least two values)
+    tuning-agent experiment add --try "$var=$1" --repeats 2 --force --reason "validation: $why"
+  else
+    tuning-agent experiment add --sweep "$var=$(IFS=,; echo "$*")" --repeats 2 --force --reason "validation: $why"
+  fi
   tuning-agent experiment run --bench $P
   [ "$(cur $var)" = "$base" ] || tuning-agent apply --set "$var=$base" --reason "validation: back to the baseline value"
   recheck
