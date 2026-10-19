@@ -1293,8 +1293,10 @@ def _recommend(c, sess, llm=False):
             seen.add(k)
             allsg.append(sg)
     extra, keep, rejected = [], [], []
-    for sg in allsg:  # re-checked every time: dropped once tried, already in effect or no longer valid
+    done_ids = set(sess.get("failed_recs") or [])
+    for sg in allsg:  # re-checked every time: dropped once tried (incl. as a sweep), already in effect or no longer valid
         its, rj = llmassist.sanitize([sg], ctx, res, sg.get("_model") or model)
+        its = [i for i in its if i["id"] not in done_ids]
         if its:
             extra += its
             keep.append(sg)
@@ -1317,7 +1319,7 @@ def _recommend(c, sess, llm=False):
         for n, it in enumerate(res["items"], 1):
             it["rank"] = n
         if not res.get("next") or why == "rules-exhausted":
-            nxt = next((i for i in res["items"] if i["kind"] in ("config", "revert") and i["confidence"] > 0
+            nxt = next((i for i in res["items"] if i["kind"] in ("config", "revert") and i["confidence"] > 0 and i["id"] not in done_ids
                         and (i.get("safety") == "safe" or ctx.get("policy") == "benchmark")), None)
             res["next"] = nxt["id"] if nxt else None
     res.pop("_ctx", None)
@@ -1670,8 +1672,13 @@ def cmd_autotune(a):
         res = _recommend(c, sess)
         nxt = res.get("next")
         if nxt in (sess.get("failed_recs") or []):
-            log(f"== {nxt} failed before; stopping")
-            break
+            alt = next((i for i in res["items"] if i["kind"] in ("config", "revert") and i.get("confidence", 0) > 0
+                        and i["id"] not in (sess.get("failed_recs") or []) and (i.get("safety") == "safe" or a.tradeoffs)), None)
+            if not alt:
+                log(f"== {nxt} failed before and nothing else is left; stopping")
+                break
+            log(f"== {nxt} failed before; next candidate: {alt['id']}")
+            nxt = alt["id"]
         item = next((i for i in res["items"] if i["id"] == nxt), None)
         # benchmark policy: keep the last 30% of the budget for trade-offs, otherwise safe experiments use it all up
         if a.tradeoffs and measured >= int(a.max_runs * 0.7) and (not item or item.get("safety") == "safe" and item["kind"] != "revert"):
