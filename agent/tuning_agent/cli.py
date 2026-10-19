@@ -617,8 +617,15 @@ def _assess_hypothesis(c, sess, seq, verdict, evaluation, summary, inputs):
                 par = json.load(f)
             pb = par["inputs"].get("time_breakdown") or bottleneck.breakdown(par["summary"], par["inputs"], (c.hw() or {}).get("cpus"))
             work = lambda s: (s.get("tps") or 0) or (s.get("qps") or 0) or 1.0  # per unit of work: transactions (queries)
-            before = sum(p["threads"] for p in pb if p["name"] in targets) / work(par["summary"])
-            after = sum(p["threads"] for p in inputs["time_breakdown"] if p["name"] in targets) / work(summary)
+            nb = inputs["time_breakdown"]
+            # same granularity on both sides: when one run has no CPU profile, its CPU is one component - compare total CPU
+            profiled = lambda b: any(p["name"].startswith("CPU: ") for p in b)
+            cpu_key = (lambda n: "CPU" if n.startswith("CPU") else n) if profiled(pb) != profiled(nb) else (lambda n: n)
+            tk = {cpu_key(n) for n in targets}
+            before = sum(p["threads"] for p in pb if cpu_key(p["name"]) in tk) / work(par["summary"])
+            after = sum(p["threads"] for p in nb if cpu_key(p["name"]) in tk) / work(summary)
+            if any(cpu_key(n) != n for n in targets):
+                out["evidence_note"] = "CPU compared as a whole (only one of the two runs has a CPU profile)"
             if before > 0:
                 change = round(100.0 * (after - before) / before, 1)
                 out["evidence"] = {"targeted_time_per_unit_change_pct": change}
