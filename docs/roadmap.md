@@ -59,6 +59,11 @@ machines as well, at 64 and 1024 connections, and report each rule's outcome per
 
 ## Three kinds of I/O-bound InnoDB (user guidance, 2026-10-19)
 
+Principle (user guidance): workload classes - I/O-bound and its kind, CPU-bound, concurrency class, OLTP/analytical -
+are a convenience. Which settings are best is more complicated (hardware, data, access pattern, interactions), so
+classes may only order experiments (relevance, experience weight, sweep size) and never exclude a candidate; every
+conclusion comes from measurement.
+
 An I/O-bound InnoDB workload is bound by one of: **commits** (redo fsync per transaction), **reads** (working set
 misses the buffer pool) or **flushing dirty pages** (page cleaners cannot keep up: free-page waits, checkpoint age,
 dirty pages at the limit). Each calls for different experiments.
