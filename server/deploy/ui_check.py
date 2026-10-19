@@ -11,8 +11,9 @@ with sync_playwright() as p:
     pg.on("pageerror", lambda e: errs.append(str(e)))
     pg.goto(url)
     pg.wait_for_timeout(1500)
-    if pg.locator("input[name=email]").count() == 0 and not errs:  # the login form must render for a logged-out visitor
-        errs.append("login form did not render")
+    body = pg.inner_text("body")
+    if not errs and ("Loading..." in body or "Log in" not in body):  # the app must get past its loading placeholder
+        errs.append("the page did not render past 'Loading...'")
     b.close()
 print("\n".join(errs) or "ui ok")
 sys.exit(1 if errs else 0)
