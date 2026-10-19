@@ -15,6 +15,7 @@ Every recommendation carries the evidence it was derived from so the decision ca
 import math
 import re
 
+from .evaluate import mean_noise
 from .mechanisms import MECHANISMS, relevance
 from .knowledge import KB, flags_subset, fmt_size, human_size, normalize, parse_size, tradeoff_of
 
@@ -101,6 +102,13 @@ def diagnose(ctx):
             "or reducing contention, not from more I/O capacity.", {"cpu_busy": busy, "mysqld_cpu_pct": my, "cpus": cpus})
     elif busy >= 65:
         add("cpu", "medium", f"CPU fairly busy ({busy:.0f}%).", {"cpu_busy": busy})
+    else:
+        # few query threads (analytical streams): each can saturate one core while the host looks idle
+        tr = s.get("threads_running_avg") or 0
+        if cpus >= 4 and 0.5 <= tr <= 4 and busy >= 0.8 * 100.0 * max(1.0, tr) / cpus:
+            add("cpu", "medium", f"CPU-bound per query: {tr:.1f} running thread(s) keep about {busy * cpus / 100:.1f} of {cpus} cores busy "
+                f"({busy:.0f}% of the host). Single-threaded execution: gains come from less work per query (optimizer, buffers, "
+                "parallel reads), not from more I/O.", {"cpu_busy": busy, "threads_running_avg": tr, "cpus": cpus})
     if steal >= 3 or (s.get("cpu_steal_max") or 0) >= 15:
         add("steal", "high" if steal >= 8 else "medium",
             f"Hypervisor CPU steal {steal:.1f}% on average (peak {s.get('cpu_steal_max') or steal:.0f}% in a 10 s sample): noisy neighbours "
@@ -176,7 +184,11 @@ def diagnose(ctx):
         share, threads = 100 * top_v / tot, top_v / dur
         names = {"redo_io": "redo log I/O (commit fsyncs)", "data_io": "data file I/O", "binlog_io": "binary log I/O", "sync": "mutex / rwlock contention",
                  "table_lock": "table locks", "metadata_lock": "metadata locks", "socket": "client sockets"}
-        if threads >= 0.5 and share >= 40 and top_cls in names:
+        # a share of a tiny wait total is not a bottleneck: the waiting threads must be a meaningful part of the load
+        # (O3: 4 of 829 running threads waiting on data I/O with the disk 8% busy was diagnosed as I/O-bound)
+        floor = max(0.5, 0.05 * (s.get("threads_running_avg") or 0), 0.25 * cpus)
+        io_ok = top_cls != "data_io" or (s.get("psi_io_some") or 0) >= 5 or (s.get("disk_util") or 0) >= 30 or (s.get("cpu_iowait") or 0) >= 5
+        if threads >= floor and io_ok and share >= 40 and top_cls in names:
             kind = {"redo_io": "commit", "binlog_io": "commit", "data_io": "io", "sync": "concurrency"}.get(top_cls, "wait-" + top_cls)
             if not any(d["type"] == kind for d in out):
                 add(kind, "medium", f"Wait profile: {names[top_cls]} accounts for {share:.0f}% of non-row wait time "
@@ -871,11 +883,15 @@ def recommend(ctx):
             sweep("sweep-read-io-threads", "Sweep InnoDB read I/O threads", "innodb_read_io_threads", [str(x) for x in vals],
                   f"{s.get('bp_disk_reads'):.0f} page reads/s from disk on {cpus} CPUs: more read threads keep more asynchronous reads "
                   "(read-ahead, prefetch) in flight on NVMe. Needs a restart.", {"bp_disk_reads": s.get("bp_disk_reads")}, impact=1)
-    if have_run and (s.get("history_list_length_max") or 0) > 100000 and "innodb_purge_threads" in v:
+    hll_max = s.get("history_list_length_max") or 0
+    if have_run and hll_max > 100000 and "innodb_purge_threads" in v:
         pt = _int(v, "innodb_purge_threads", 4)
-        sweep("sweep-purge-threads", "Sweep purge threads", "innodb_purge_threads", [x for x in ("1", "8") if x != str(pt)] + [str(pt * 2)],
-              "Undo history keeps growing. More purge threads help large I/O-bound boxes and hurt small CPU-bound ones "
-              "(opposite results in Mark Callaghan's benchmarks): measure.", {"history_list_length_max": s.get("history_list_length_max")}, impact=1)
+        # a large backlog is a strong signal (O4: 1.68 M with 1 purge thread never got to run at impact 1): more threads first
+        vals = [str(pt * 2), "8", "1"] if hll_max > 300000 else [x for x in ("1", "8") if x != str(pt)] + [str(pt * 2)]
+        sweep("sweep-purge-threads", "Sweep purge threads", "innodb_purge_threads", vals,
+              f"Undo history reached {hll_max:,.0f} entries with {pt} purge thread(s). More purge threads help large I/O-bound boxes "
+              "and hurt small CPU-bound ones (opposite results in Mark Callaghan's benchmarks): measure.",
+              {"history_list_length_max": hll_max}, impact=3 if hll_max > 1000000 else 2 if hll_max > 300000 else 1)
     if have_run and ck >= 75 and _on(v, "innodb_flush_sync"):
         b.add("flush-sync-off", "Respect io_capacity_max during sync flushing", [("innodb_flush_sync", "OFF")],
               f"Checkpoint age reached {ck:.0f}%: InnoDB then flushes as fast as it can, ignoring io_capacity_max and starving reads. "
@@ -1103,12 +1119,6 @@ def practice_bundle(items, history):
     return [bundle] + rest
 
 
-def mean_noise(noise, n1, n2):
-    """Noise threshold for comparing two means of n1 and n2 runs. `noise` is calibrated for one run vs one run; the
-    spread of a difference of means shrinks with sqrt(1/n1 + 1/n2), so 3 runs vs 2 runs use ~65% of it."""
-    return noise * math.sqrt((1.0 / max(n1, 1) + 1.0 / max(n2, 1)) / 2.0)
-
-
 def best_config(history, goal="tps", noise=2.0):
     """Highest mean wins when it beats the others beyond noise (scaled for the number of runs in each mean). Within
     noise: a configuration confirmed better than another tied one wins over it (an improvement kept over its parent),
@@ -1116,6 +1126,19 @@ def best_config(history, goal="tps", noise=2.0):
     scores = config_scores(history, goal)
     if not scores:
         return None
+    # candidates: configurations that earned their place (kept: confirmed improvement, efficiency gain, reference,
+    # accepted best practice) or were measured at least twice and beat the best kept one beyond noise. A single
+    # neutral run (e.g. one sweep point) that happens to have the highest number is not a candidate.
+    def kept(c):
+        rs = [r for r in history if config_key(r.get("managed")) == c["key"]]
+        return any((r.get("verdict") in KEEP and (r.get("evaluation") or {}).get("confirmed") is not False)
+                   or (is_practice_run(r) and r.get("verdict") == "neutral") for r in rs)
+    kept_cfgs = [c for c in scores if kept(c)]
+    if kept_cfgs:
+        bk = kept_cfgs[0]
+        sign = -1 if goal == "latency" else 1
+        scores = [c for c in scores if c in kept_cfgs or (c["n"] >= 2 and sign * (c["mean"] - bk["mean"]) / abs(bk["mean"]) * 100
+                                                          > mean_noise(noise, c["n"], bk["n"]))]
     top = scores[0]
     tied = [c for c in scores if abs(c["mean"] - top["mean"]) / abs(top["mean"]) * 100 <= mean_noise(noise, top["n"], c["n"])]
     acc = accepted_practices(history)
@@ -1174,12 +1197,13 @@ def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
     if just_measured and first_eval and not practice_kept and not verdicts & {"improved", "efficiency-gain"} and verdicts & {"neutral", "efficiency-loss"}:
         parent_run = next((r for r in history if r["seq"] == first_eval["parent_runs"][-1]), None)
         if parent_run is not None:
+            # priority: costs no run (merged into the next experiment) and keeps neutral changes from piling up
             items.append(_revert_item(f"revert-to-run-{parent_run['seq']}", "Revert the last experiment: no measurable benefit",
                                       managed, parent_run.get("managed") or {}, variables,
                                       f"The experiment was within the {noise_txt} on the goal ({first_eval.get('goal_delta_pct'):+.1f}%) and did not reduce "
                                       "CPU or I/O per transaction. Keeping changes without a measurable benefit only adds risk.",
                                       {"goal_delta_pct": first_eval.get("goal_delta_pct"), "parent_runs": first_eval.get("parent_runs")},
-                                      priority=False))
+                                      priority=True))
     return [i for i in items if i]
 
 
@@ -1264,6 +1288,10 @@ def run_engine(ctx):
             it["mechanism"] = MECHANISMS[it["id"]][1]
             it["addresses"] = matched
             it["relevance"] = rel
+        if it.get("sweep") and (it.get("relevance") or 0) < 2:
+            # Battery 1: 33 sweep runs, no real gain; without a corroborated mechanism start with two points only
+            it["sweep"]["values"] = it["sweep"]["values"][:2]
+            it["score_note"] = "sweep without a matching bottleneck: 2 points, lower priority"
         if it["id"] in (ctx.get("failed") or []):
             it["confidence"] = 0
             it["note"] = (it.get("note", "") + " Failed earlier in this session (apply/restart failure or run too slow).").strip()
@@ -1274,7 +1302,7 @@ def run_engine(ctx):
         if it["safety"] == "trade-off" and it["kind"] == "config" and not benchmark:
             it["kind"] = "advice"
             it["note"] = (it.get("note", "") + " Trade-off: not applied under policy=safe.").strip()
-        sc = score(it, ctx.get("goal", "tps")) + (2 if it["kind"] == "revert" else 0)
+        sc = score(it, ctx.get("goal", "tps")) + (2 if it["kind"] == "revert" else 0) - (2 if it.get("score_note") else 0)
         if it.get("relevance") is not None:
             sc += 2 * it["relevance"] if it["relevance"] else (-3 if has_major else 0)
         if it.get("experience"):

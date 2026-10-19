@@ -1187,8 +1187,26 @@ def _reevaluate(c, sess):
             changed.append((r["seq"], r.get("verdict"), v))
             r["verdict"], r["evaluation"] = v, ev
             c.client.post(f"/runs/{r['id']}/evaluation", {"verdict": v, "evaluation": ev})
+    changed += _confirm(c, sess, save=False)
     _update_best(sess)
     c.state.set("session", sess)
+    return changed
+
+
+def _confirm(c, sess=None, save=True):
+    """Re-judge improvements whose configuration has been measured again (confirmation, re-checks)."""
+    sess = sess or c.session()
+    noise = sess.get("noise") or ({"noise_pct": sess["noise_pct"]} if sess.get("noise_pct") else None)
+    changed = evaluate.confirm_pass(sess["runs"], sess["goal"], noise)
+    for seq, old, new in changed:
+        r = next(x for x in sess["runs"] if x["seq"] == seq)
+        if r.get("id"):
+            c.client.post(f"/runs/{r['id']}/evaluation", {"verdict": r["verdict"], "evaluation": r["evaluation"]})
+        if old != new:
+            log(f"   run {seq}: {old} -> {new} ({(r['evaluation'] or {}).get('note') or 'confirmed by its repeat'})")
+    if save:
+        _update_best(sess)
+        c.state.set("session", sess)
     return changed
 
 
@@ -1251,6 +1269,8 @@ def _recommend(c, sess, llm=False):
     ctx = _engine_ctx(c, sess)
     res = engine.run_engine(ctx)
     why = llmassist.trigger(res, explicit=llm)
+    pending = sess.get("llm_pending") or []  # accepted earlier, not measured yet: they stay candidates
+    fresh, model = [], None
     if why and ctx.get("summary"):
         try:
             meta = c.db.variables_meta()
@@ -1262,24 +1282,41 @@ def _recommend(c, sess, llm=False):
         except Exception as e:  # LLM help is optional
             r = {"enabled": False, "reason": str(e)}
         if r.get("enabled") and r.get("suggestions") is not None:
-            extra, rejected = llmassist.sanitize(r.get("suggestions"), ctx, res, r.get("model"))
-            res["llm"] = {"model": r.get("model"), "trigger": why, "cached": r.get("cached"), "accepted": len(extra),
-                          "rejected": rejected, "notes": r.get("notes")}
-            if extra:
-                for it in extra:
-                    it["score"] = engine.score(it, ctx.get("goal", "tps")) + (2 if why != "routine" else 0)
-                    if it["safety"] == "trade-off" and ctx.get("policy") != "benchmark":
-                        it["kind"] = "advice"
-                res["items"] = res["items"] + extra
-                res["items"].sort(key=lambda i: (i.get("safety") == "trade-off" and i["kind"] != "revert", -i.get("score", 0)))
-                for n, it in enumerate(res["items"], 1):
-                    it["rank"] = n
-                if not res.get("next") or why == "rules-exhausted":
-                    nxt = next((i for i in res["items"] if i["kind"] in ("config", "revert") and i["confidence"] > 0
-                                and (i.get("safety") == "safe" or ctx.get("policy") == "benchmark")), None)
-                    res["next"] = nxt["id"] if nxt else None
+            fresh, model = [dict(sg, _model=r.get("model")) for sg in r.get("suggestions") or []], r.get("model")
+            res["llm"] = {"model": model, "trigger": why, "cached": r.get("cached"), "notes": r.get("notes")}
         elif why != "routine" and r.get("reason"):
             res["llm"] = {"skipped": r.get("reason"), "trigger": why}
+    seen, allsg = set(), []
+    for sg in fresh + pending:
+        k = json.dumps(sorted((str(x.get("variable")), str(x.get("value"))) for x in sg.get("changes") or []))
+        if k not in seen:
+            seen.add(k)
+            allsg.append(sg)
+    extra, keep, rejected = [], [], []
+    for sg in allsg:  # re-checked every time: dropped once tried, already in effect or no longer valid
+        its, rj = llmassist.sanitize([sg], ctx, res, sg.get("_model") or model)
+        if its:
+            extra += its
+            keep.append(sg)
+        elif sg in fresh:
+            rejected += rj
+    if res.get("llm") and "model" in res["llm"]:
+        res["llm"].update(accepted=len([s for s in keep if s in fresh]), rejected=rejected, pending=len([s for s in keep if s not in fresh]))
+    sess["llm_pending"] = keep
+    if extra:
+        for it in extra:
+            it["score"] = engine.score(it, ctx.get("goal", "tps")) + (2 if why not in (None, "routine") else 0)
+            if it["safety"] == "trade-off" and ctx.get("policy") != "benchmark":
+                it["kind"] = "advice"
+        ids = {i["id"] for i in res["items"]}
+        res["items"] = res["items"] + [i for i in extra if i["id"] not in ids]
+        res["items"].sort(key=lambda i: (i.get("safety") == "trade-off" and i["kind"] != "revert", -i.get("score", 0)))
+        for n, it in enumerate(res["items"], 1):
+            it["rank"] = n
+        if not res.get("next") or why == "rules-exhausted":
+            nxt = next((i for i in res["items"] if i["kind"] in ("config", "revert") and i["confidence"] > 0
+                        and (i.get("safety") == "safe" or ctx.get("policy") == "benchmark")), None)
+            res["next"] = nxt["id"] if nxt else None
     res.pop("_ctx", None)
     run_id = sess["runs"][-1]["id"] if sess["runs"] else None
     r = c.client.post("/recommendations", {"session_id": sess["id"], "run_id": run_id, "goal": sess["goal"], "policy": sess["policy"],
@@ -1670,6 +1707,22 @@ def cmd_autotune(a):
                 log(f"== sweep {nxt}: {item['sweep']['variable']} = {', '.join(item['sweep']['values'])} (experiment #{eid})")
                 log("   " + _run_experiment(c, prof, exp))
                 measured += len(item["sweep"]["values"])
+                # an improved sweep point is a single run like any other improvement: confirm it before building on it
+                sess = c.session()
+                pts = [r for r in sess["runs"] if str(r.get("label") or "").startswith(f"exp#{eid} ") and r.get("verdict") == "improved"]
+                if pts and measured < a.max_runs:
+                    lower = sess["goal"] == "latency"
+                    bp = (min if lower else max)(pts, key=lambda r: r["goal_value"])
+                    cur = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
+                    want = bp.get("managed") or {}
+                    ch = [{"variable": k, "value": want.get(k), "reason": f"autotune: confirm sweep point run {bp['seq']}",
+                           "source": f"exp:{eid}"} for k in set(cur) | set(want) if normalize(k, cur.get(k)) != normalize(k, want.get(k))]
+                    if ch:
+                        _apply_and_record(c, ch, "autotune")
+                    log(f"   sweep point run {bp['seq']} improved: measuring it again to confirm")
+                    run, _ = _bench_run(c, prof, f"exp#{eid} {item['sweep']['variable']}={want.get(item['sweep']['variable'])} (confirm)")
+                    measured += 1
+                    _confirm(c)
             sess = c.session()
             sess.setdefault("failed_recs", []).append(nxt)  # one sweep per rule and session
             c.state.set("session", sess)
@@ -1714,6 +1767,7 @@ def cmd_autotune(a):
             run, _ = _bench_run(c, prof, f"{nxt} (confirm)")
             measured += 1
             log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
+            _confirm(c)  # the improvement must hold for the mean of both runs
         if run["verdict"] == "unreliable":
             log("   hypervisor steal made the run unreliable: measuring the same configuration again")
             run, _ = _bench_run(c, prof, f"{nxt} (re-measure: CPU steal)")

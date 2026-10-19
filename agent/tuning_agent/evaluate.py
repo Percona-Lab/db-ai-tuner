@@ -15,6 +15,7 @@ Protocol
        reference         first run of the session
 """
 import math
+import re
 import os
 
 from .knowledge import normalize
@@ -336,20 +337,83 @@ def verdict(run, history, goal, noise):
     return v, d
 
 
+def mean_noise(noise, n1, n2):
+    """Noise threshold for comparing two means of n1 and n2 runs. `noise` is calibrated for one run vs one run; the
+    spread of a difference of means shrinks with sqrt(1/n1 + 1/n2), so 3 runs vs 2 runs use ~65% of it."""
+    return noise * math.sqrt((1.0 / max(n1, 1) + 1.0 / max(n2, 1)) / 2.0)
+
+
+def confirm_pass(runs, goal, noise):
+    """Re-judge improvements once their configuration has been measured again: the mean of all its runs must still beat
+    the parent mean beyond the (run-count scaled) threshold, else the improvement was a lucky run and becomes neutral.
+    Updates runs in place; returns [(seq, old_verdict, new_verdict)]."""
+    noise_pct = float((noise or {}).get("noise_pct") or DEFAULT_GOAL_NOISE)
+    changed = []
+    for r in runs:
+        ev = r.get("evaluation") or {}
+        if r.get("verdict") not in ("improved",) and not (r.get("verdict") == "neutral" and ev.get("confirmed") is False):
+            continue
+        key = config_key(r.get("managed"))
+        mine = [x for x in runs if config_key(x.get("managed")) == key and x.get("goal_value") is not None and x.get("verdict") not in EXCLUDED]
+        par = [x for x in runs if x["seq"] in (ev.get("parent_runs") or []) and x.get("goal_value") is not None]
+        if len(mine) < 2 or not par:
+            continue
+        m = _mean([x["goal_value"] for x in mine])
+        pm = _mean([x["goal_value"] for x in par])
+        d = improvement(goal, m, pm)
+        thr = max(RESOLUTION_NOISE, mean_noise(noise_pct, len(mine), len(par)))
+        ok = d is not None and d > thr
+        new = "improved" if ok else "neutral"
+        ev = dict(ev, confirmed=ok, confirmed_runs=[x["seq"] for x in mine], confirmed_delta_pct=d, confirmed_threshold_pct=round(thr, 2))
+        if not ok:
+            ev["note"] = (f"Not confirmed: the mean of runs {ev['confirmed_runs']} is {d:+.2f}% vs the parent, within the ±{thr:.2f}% "
+                          "threshold for these run counts (the first run was lucky).")
+        if new != r.get("verdict") or ev != r.get("evaluation"):
+            changed.append((r["seq"], r.get("verdict"), new))
+            r["verdict"], r["evaluation"] = new, ev
+    return changed
+
+
+def _is_revert(change, run):
+    """A change that returns a setting to an earlier configuration rather than being part of this run's experiment:
+    explicit rollbacks, reverts merged into the next experiment, and a sweep's restore applied with a later run."""
+    src = str(change.get("source") or "")
+    if src == "rollback" or re.match(r"rec:(rollback|revert)-to-run", src):
+        return True
+    if src.startswith("exp:"):  # a sweep's own points carry its label (exp#N ...); anything else is its restore
+        return not str(run.get("label") or "").startswith("exp#" + src[4:] + " ")
+    return False
+
+
 def _parent_key(run, history, key):
-    """The configuration this run was derived from. When a revert to an earlier configuration and the next experiment are
-    applied together, the parent is the configuration reverted to (the measured one that differs from this run only in
-    the experiment's own variables), not the last one measured (which may be the regressed experiment just reverted)."""
-    own = {c["variable"] for c in run.get("changes") or [] if str(c.get("source") or "") != "rollback"}
-    cur = dict(run.get("managed") or {})
+    """The configuration this run was derived from: the measured configuration that equals this run in every setting
+    except the run's own experiment changes (reverts merged into the run are not part of the experiment). Own settings
+    prefer their previous values; for sweep points the value before the sweep started (the sweep base), so every point
+    is compared with the base rather than with the previous point."""
+    own_ch = [c for c in run.get("changes") or [] if not _is_revert(c, run)]
+    own = {c["variable"] for c in own_ch}
     if own:
-        for r in reversed(history):
-            m = r.get("managed") or {}
-            if config_key(m) == key or r.get("goal_value") is None or r.get("verdict") in EXCLUDED:
-                continue
-            diff = {k for k in set(m) | set(cur) if normalize(k, m.get(k)) != normalize(k, cur.get(k))}
-            if diff and diff <= own:
-                return config_key(m)
+        cur = run.get("managed") or {}
+        rest = lambda m: {k: normalize(k, v) for k, v in (m or {}).items() if k not in own}
+        want = rest(cur)
+        pref = {}
+        for c in own_ch:
+            base = c.get("old")
+            src = str(c.get("source") or "")
+            if src.startswith("exp:"):
+                first = next((c2 for r in history for c2 in (r.get("changes") or [])
+                              if c2.get("source") == src and c2.get("variable") == c["variable"]), None)
+                if first is not None:
+                    base = first.get("old")
+            pref[c["variable"]] = base
+        cands = [r for r in history if r.get("goal_value") is not None and r.get("verdict") not in EXCLUDED
+                 and config_key(r.get("managed")) != key and rest(r.get("managed")) == want]
+        if cands:
+            def at_pref(r):
+                m = r.get("managed") or {}
+                return all(m.get(v) is None or normalize(v, m.get(v)) == normalize(v, pv) for v, pv in pref.items())
+            exact = [r for r in cands if at_pref(r)]
+            return config_key((exact or cands)[-1].get("managed"))
     for r in reversed(history):  # fallback: last different configuration measured
         if config_key(r.get("managed")) != key:
             return config_key(r.get("managed"))

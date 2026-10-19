@@ -10,13 +10,29 @@ DENY = {"datadir", "socket", "port", "server_id", "read_only", "super_read_only"
 SUMMARY_KEYS = ("tps", "qps", "avg_latency_ms", "p95_latency_ms", "cpu_busy", "mysqld_cpu_pct", "cpu_iowait", "bp_hit_pct", "bp_disk_reads",
                 "redo_mbs", "checkpoint_age_pct_max", "data_fsyncs", "fsyncs_per_trx", "row_lock_waits", "row_lock_wait_avg_ms",
                 "threads_running_avg", "disk_r_iops", "disk_w_iops", "disk_util", "disk_await_ms", "psi_cpu_some", "psi_io_some",
-                "psi_memory_some", "mysqld_cpu_ms_per_trx", "disk_ios_per_trx", "mem_available_mb", "swap_in", "swap_out")
+                "psi_memory_some", "mysqld_cpu_ms_per_trx", "disk_ios_per_trx", "mem_available_mb", "swap_in", "swap_out",
+                "history_list_length_max", "threads_connected_avg", "rows_changed_per_s", "dbproc_runq_wait_pct")
+# pseudo-variables the agent can apply even when the server does not report them yet: name -> allowed values (None = any)
+PSEUDO = {"ps:profile": ("full", "lite"), "rg:innodb_bg_cpus": None}
+
+
+def _pseudo_available(ctx):
+    v, flavor, ver = ctx["variables"], str(ctx.get("flavor") or ""), tuple(ctx.get("version") or ())
+    out = {}
+    if v.get("performance_schema") in ("ON", "1") and flavor != "mariadb":
+        out["ps:profile"] = "performance_schema scope: full (stock instruments) or lite (keeps digests, histograms, wait summaries)"
+    if flavor != "mariadb" and ver >= (8, 0):
+        out["rg:innodb_bg_cpus"] = "CPU list (e.g. 0-1) for InnoDB background threads via a resource group"
+    return out
 
 
 def trigger(res, explicit=False):
     """Why an LLM call would add value now (None = it would not)."""
     if explicit:
         return "explicit"
+    nxt = next((i for i in res["items"] if i["id"] == res.get("next")), None)
+    if nxt and nxt["kind"] == "revert":  # the next step only returns to a measured configuration: nothing to ask
+        return None
     actionable_safe = [i for i in res["items"] if i["kind"] in ("config", "revert") and i["confidence"] > 0 and i.get("safety") == "safe"]
     if not actionable_safe:
         return "rules-exhausted"
@@ -40,13 +56,17 @@ def context(ctx, res, meta=None):
         # facts that decide whether whole families of knobs can have any effect (e.g. binlog_* when log_bin=OFF)
         "server_facts": facts,
         "tuner_constraints": [
-            "The tuner measures statement latency, waits and digests through performance_schema: do not propose "
-            "performance_schema=OFF; to reduce its overhead propose ps:profile=lite (keeps digests, histogram, wait summaries).",
+            "performance_schema=OFF is an observability trade-off the tuner already tests itself (rule ps-off); "
+            + ("to reduce its overhead safely propose ps:profile=lite. " if "ps:profile" in _pseudo_available(ctx) else "")
+            + "Do not propose performance_schema=OFF.",
             "binlog_*, sync_binlog and replication settings have no effect when server_facts.log_bin is OFF.",
             "Each proposal is measured against its parent configuration; differences smaller than noise_pct are treated as noise.",
-            "Pseudo-variables: os:* (operating system), ps:profile (performance_schema scope), rg:innodb_bg_cpus (CPU set for "
-            "InnoDB background threads via a resource group).",
+            "Only variables listed in current_variables, os_settings or available_pseudo_variables can be changed.",
         ],
+        "available_pseudo_variables": dict(_pseudo_available(ctx), **({"os:*": "operating-system settings listed in os_settings"}
+                                                                        if ctx.get("os_tuning") else {})),
+        "load": {"threads_running_per_cpu": round((s.get("threads_running_avg") or 0) / max(hw.get("cpus") or 1, 1), 2),
+                 "history_list_length_max": s.get("history_list_length_max")},
         "benchmark": (ctx.get("bench") or {}),
         "hardware": {"cpus": hw.get("cpus"), "ram_gib": round((hw.get("ram_bytes") or 0) / 2 ** 30, 1),
                      "disk": "HDD" if hw.get("disk_rotational") else "SSD", "filesystem": hw.get("filesystem")},
@@ -100,8 +120,10 @@ def sanitize(suggestions, ctx, res, model):
             val = str(c["value"]).strip().strip("'\"")
             if var in DENY:
                 why = f"{var} is not tunable by the agent"
-            elif var not in v:
+            elif var not in v and not (var in PSEUDO and var in _pseudo_available(ctx)):
                 why = f"{var} does not exist on this server"
+            elif var in PSEUDO and PSEUDO[var] and val.lower() not in PSEUDO[var]:
+                why = f"{var} accepts {', '.join(PSEUDO[var])}"
             elif var.startswith("os:") and not ctx.get("os_tuning"):
                 why = "OS tuning is disabled"
             elif v.get("log_bin") in ("OFF", "0") and (var.startswith(("binlog_", "sync_binlog", "max_binlog")) or var == "log_replica_updates"):

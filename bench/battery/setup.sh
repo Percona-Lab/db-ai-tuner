@@ -48,7 +48,7 @@ case $T in
   M1|M2) WH=$([ $T = M1 ] && echo 50 || echo 500); WU=$([ $T = M1 ] && echo 120 || echo 300); DU=$([ $T = M1 ] && echo 300 || echo 600)
     $GT tpcc prepare -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D ch --warehouses $WH -T 8 --no-check > /root/bench/prep.log 2>&1
     $GT ch prepare -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D ch --warehouses $WH -T 8 >> /root/bench/prep.log 2>&1
-    printf '[bench]\nname = CH-benCHmark %sW: 32 TPC-C threads + 1 analytical stream, %s + %s s\n%s\nrun = %s ch run -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D ch --warehouses %s -T 32 -t 1 --time {total}s --interval 30s --conn-params max_execution_time=120000 --ap-conn-params max_execution_time=120000 --ignore-error\nwarmup = %s\nduration = %s\ntimeout = %s\n\n[metrics]\ntpmc_whole_run = tpmC: ([\\d.]+)\nqphh_whole_run = QphH: ([\\d.]+)\n' \
+    printf '[bench]\nname = CH-benCHmark %sW: 32 TPC-C threads + 2 analytical streams, %s + %s s\n%s\nrun = %s ch run -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D ch --warehouses %s -T 32 -t 2 --time {total}s --interval 30s --conn-params max_execution_time=120000 --ap-conn-params max_execution_time=120000 --ignore-error\nwarmup = %s\nduration = %s\ntimeout = %s\n\n[metrics]\ntpmc_whole_run = tpmC: ([\\d.]+)\nqphh_whole_run = QphH: ([\\d.]+)\nolap_q1_q4_ms = sum:\\[Summary\\] Q[1-4]\\s+- Count: \\d+, Sum\\(ms\\): ([\\d.]+)\n' \
       $WH $WU $DU "$RESET" "$GT" $WH $WU $DU $((WU + DU + 900)) > $P; [ $T = M2 ] && MAX=14 ;;
 esac
 # benchmark prerequisites (applied by the agent before every run, never tuned, shown apart from the tuning result):

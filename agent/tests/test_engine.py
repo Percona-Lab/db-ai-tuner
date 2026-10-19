@@ -522,3 +522,71 @@ def test_data_state():
     assert b.data_state == "seasoned" and b.season_hours == 12 and b.season_min_hours == 1
     open(p, "w").write("[bench]\nname=x\nrun=true\nreset=/r.sh\n")
     assert bench.Profile(p).data_state == "reset" and bench.Profile(p).season_hours == 0
+
+
+def _b1(sid):
+    import json
+    d = json.load(open(os.path.join(os.path.dirname(__file__), "battery1.json")))[str(sid)]
+    return d
+
+
+def _rejudge(sid, noise=None):
+    d = _b1(sid)
+    runs, out = d["runs"], {}
+    nz = {"noise_pct": noise or d["noise_pct"], "runs": [1]}
+    for i, r in enumerate(runs):
+        v, ev = evaluate.verdict(r, runs[:i], d["goal"], nz)
+        r["verdict"], r["evaluation"] = v, ev
+        out[r["seq"]] = (v, ev.get("parent_runs"), ev.get("goal_delta_pct"))
+    return runs, out
+
+
+def test_battery1_parent_after_merged_revert():
+    # M1 run 16: thread pool rolled back (rec:rollback-to-run-14) together with dirty-writeback: parent is run 14, not 15
+    _, out = _rejudge(63)
+    assert out[16][1] == [14] and out[16][0] == "neutral"
+    # O3: a sweep point is compared with the sweep base; the sweep's restore applied with spin-loops is not its experiment
+    _, out = _rejudge(73)
+    assert out[9][1] == [7] and out[9][0] == "regressed"
+    assert out[10][1] == [7] and out[10][0] == "neutral"
+
+
+def test_battery1_confirmation_rejudges():
+    # O2 run 7 jemalloc: +2.15% single run, the mean with its repeat is ~+0.5% -> not confirmed
+    runs, out = _rejudge(56, noise=2.0)
+    evaluate.confirm_pass(runs, "tps", {"noise_pct": 2.0})
+    r7 = next(r for r in runs if r["seq"] == 7)
+    assert r7["verdict"] == "neutral" and r7["evaluation"]["confirmed"] is False
+
+
+def test_battery1_best_config_needs_kept_config():
+    # M2: the best-safe was a single neutral sweep point (innodb_thread_concurrency=32) whose confirmation measured -2.2%
+    d = _b1(67)
+    runs, _ = _rejudge(67)
+    evaluate.confirm_pass(runs, d["goal"], {"noise_pct": d["noise_pct"]})
+    best = engine.best_config([r for r in runs if "trx_commit" not in json_dumps(r["managed"]) and "performance_schema" not in json_dumps(r["managed"])],
+                              d["goal"], d["noise_pct"])
+    assert "innodb_thread_concurrency" not in best["managed"] or best["n"] >= 2
+
+
+def json_dumps(x):
+    import json
+    return json.dumps(x)
+
+
+def test_io_diagnosis_needs_real_waiting():
+    # O3-like: 4 of 829 running threads waiting on data I/O, disk 8.5% busy -> no I/O diagnosis
+    ctx = {"summary": {"cpu_busy": 97, "threads_running_avg": 829, "disk_util": 8.5, "duration_s": 300, "tps": 2400},
+           "inputs": {"wait_classes": {"data_io": 1200, "sync": 100, "table_io": 9000}}, "hw": {"cpus": 8, "ram_bytes": 16 * GiB},
+           "variables": dict(VARS)}
+    assert not any(d["type"] == "io" for d in engine.diagnose(ctx))
+    ctx["summary"].update(disk_util=70, threads_running_avg=20)
+    ctx["inputs"]["wait_classes"]["data_io"] = 3000
+    assert any(d["type"] == "io" for d in engine.diagnose(ctx))
+
+
+def test_llm_pseudo_variables_accepted():
+    ctx = {"variables": dict(VARS, performance_schema="ON"), "flavor": "percona", "version": (9, 7, 2), "hw": HW, "os_tuning": True, "history": []}
+    items, rej = llmassist.sanitize([{"title": "lite", "changes": [{"variable": "ps:profile", "value": "lite"}]},
+                                     {"title": "bad", "changes": [{"variable": "ps:profile", "value": "off"}]}], ctx, {"items": []}, "m")
+    assert [i["changes"][0]["proposed"] for i in items] == ["lite"] and "accepts" in rej[0]["reason"]
