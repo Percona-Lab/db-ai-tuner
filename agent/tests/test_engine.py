@@ -296,11 +296,14 @@ def test_wait_profile_diagnosis():
 def test_steal_flags_and_invalidates():
     from tuning_agent import evaluate
     base = {"seq": 1, "managed": {}, "goal_value": 100, "summary": {}, "verdict": "reference"}
-    # noise 1%: flag from 0.5% average steal, unreliable from 3%
-    v, d = evaluate.verdict({"managed": {"a": "1"}, "goal_value": 130, "summary": {"cpu_steal": 3.5}}, [base], "tps", {"noise_pct": 1})
+    # noise 1%: flag from 0.25% estimated impact, unreliable from 0.5%
+    v, d = evaluate.verdict({"managed": {"a": "1"}, "goal_value": 130, "summary": {"cpu_steal": 0.6, "cpu_busy": 90}}, [base], "tps", {"noise_pct": 1})
     assert v == "unreliable" and d["steal"]["level"] == "invalid"
-    v, d = evaluate.verdict({"managed": {"a": "1"}, "goal_value": 103, "summary": {"cpu_steal": 0.7}}, [base], "tps", {"noise_pct": 1})
+    v, d = evaluate.verdict({"managed": {"a": "1"}, "goal_value": 103, "summary": {"cpu_steal": 0.3, "cpu_busy": 90}}, [base], "tps", {"noise_pct": 1})
     assert v == "improved" and d["steal"]["level"] == "flag"
+    # an I/O-bound run (20% CPU busy) is hurt less by the same steal
+    v, d = evaluate.verdict({"managed": {"a": "1"}, "goal_value": 103, "summary": {"cpu_steal": 0.6, "cpu_busy": 20}}, [base], "tps", {"noise_pct": 1})
+    assert v == "improved" and "steal" not in d
     v, d = evaluate.verdict({"managed": {"a": "1"}, "goal_value": 103, "summary": {"cpu_steal": 0.05, "cpu_steal_max": 1.5}}, [base], "tps", {"noise_pct": 1})
     assert "steal" not in d  # normal for these hosts
     v, d = evaluate.verdict({"managed": {"a": "1"}, "goal_value": 103, "summary": {"cpu_steal": 0.1, "cpu_steal_max": 7}}, [base], "tps", {"noise_pct": 1})

@@ -219,22 +219,24 @@ STEAL_FLAG_PEAK = 5.0  # any 10 s sample; measured normal across our hosts: mean
 
 def steal_check(summary, noise_pct=None):
     """Hypervisor CPU steal on the database host or a client during the run. Steal takes CPU away from a CPU-bound
-    workload roughly one for one, so what matters is its size relative to the differences the session can resolve:
-    flag from half the goal noise threshold (at least 0.5% average) or a 5% peak in any 10 s sample; unreliable (excluded
-    and re-measured) from twice the noise threshold (at least 3% average)."""
+    workload roughly one for one, so its possible effect on the result is about the average steal, scaled down when the
+    host was not CPU-bound. That effect must stay well inside the noise threshold, otherwise a verdict may reflect the
+    neighbours rather than the configuration: flag from a quarter of the threshold (at least 0.25%), or a 5% peak in any
+    10 s sample; unreliable (excluded and re-measured) from half of it (at least 0.5%). Normal on our hosts: < 0.05%."""
     s = summary or {}
     avg, peak, cli = s.get("cpu_steal") or 0, s.get("cpu_steal_max") or 0, s.get("client_cpu_steal") or 0
     noise = float(noise_pct or DEFAULT_GOAL_NOISE)
-    worst = max(avg, cli)
-    flag_at, invalid_at = max(0.5, noise / 2), max(3.0, 2 * noise)
-    if worst >= invalid_at:
+    cpu_factor = min(1.0, max(0.2, (s.get("cpu_busy") or 100) / 70.0))
+    impact = max(avg, cli) * cpu_factor
+    flag_at, invalid_at = max(0.25, noise / 4), max(0.5, noise / 2)
+    if impact >= invalid_at:
         level = "invalid"
-    elif worst >= flag_at or peak >= STEAL_FLAG_PEAK:
+    elif impact >= flag_at or peak >= STEAL_FLAG_PEAK:
         level = "flag"
     else:
         return None
     return {"level": level, "avg_pct": round(avg, 2), "peak_pct": round(peak, 2), "client_avg_pct": round(cli, 2) if cli else None,
-            "flag_at_pct": round(flag_at, 2), "invalid_at_pct": round(invalid_at, 2)}
+            "est_impact_pct": round(impact, 2), "flag_at_pct": round(flag_at, 2), "invalid_at_pct": round(invalid_at, 2)}
 
 
 def verdict(run, history, goal, noise):
