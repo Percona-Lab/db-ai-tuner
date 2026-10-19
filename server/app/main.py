@@ -294,7 +294,14 @@ def environment(env_id: int, request: Request):
         sessions.append(d)
     events = [store.row(r, ("data",)) for r in store.q("SELECT * FROM events WHERE env_id=? ORDER BY ts DESC LIMIT 50", (env_id,))]
     hosts = [host_brief(dict(h)) for h in store.q("SELECT * FROM hosts WHERE env_id=? ORDER BY name", (env_id,))]
-    return {"environment": env_brief(e), "facts": store.uj(e["facts"], {}), "sessions": sessions, "events": events, "hosts": hosts}
+    act = next((x for x in sessions if x["status"] == "active"), None)
+    if act:
+        activity = dict(session_activity(e, act["id"]), session_id=act["id"], session_name=act["name"])
+    else:  # outside sessions: e.g. data loading reported by a setup script, if recent
+        a = store.uj(e.get("activity")) if e.get("activity") else None
+        activity = dict(a, at=e["activity_at"], source="agent") if a and e.get("activity_at") and now() - e["activity_at"] < 6 * 3600 and a.get("phase") != "idle" else None
+    return {"environment": env_brief(e), "facts": store.uj(e["facts"], {}), "sessions": sessions, "events": events, "hosts": hosts,
+            "activity": activity}
 
 
 @app.post("/api/llm/replay")
