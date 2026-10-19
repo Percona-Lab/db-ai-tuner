@@ -673,6 +673,7 @@ async function sessionPage(id) {
   <div class="row"><h1><span class="muted" style="font-weight:500">#${s.id}</span> ${esc(s.name)}</h1>${statusBadge(s.status)}<span class="spacer"></span><button class="ghost" id="rename">Rename</button><button class="ghost danger" id="del">Delete</button></div>
   <p class="sub">Goal: <b>${goalName(s.goal)}</b> · policy <a href="#/policies"><b>${esc(s.policy)}</b></a>${s.policy === "benchmark" ? " (trade-offs allowed after safe experiments)" : " (production-safe changes only)"} · OS tuning ${s.os_tuning === 0 ? "off" : "on"}${info("When on, the agent may also change operating-system settings (swappiness, transparent huge pages, I/O scheduler, mount options, dirty writeback, memory allocator, huge pages). OS changes are recorded per run and rolled back like MySQL settings. Disable with --no-os-tuning.")} · noise threshold ±${s.noise_pct}% · started ${fmtTime(s.created)}${s.workload ? " · workload: " + esc(s.workload) : ""}</p>
   ${s.activity ? `<div style="margin:-4px 0 10px">${activityLine(s.activity)}</div>` : ""}
+  ${(d.requirements || []).length ? `<p class="sub" style="margin-top:-6px">Benchmark prerequisites${info(REQ_TIP)}: ${d.requirements.map(q => `<span class="mono">${esc(q.variable)} ${/^\d+$/.test(q.required) ? "≥" : "="} ${esc(q.required)}</span>`).join(" · ")}</p>` : ""}
   ${calibrationNote(s)}
   <p class="sub study-line" style="margin-top:-6px">Study${info("A study groups sessions from several environments running the same workload, e.g. to compare hardware or find the smallest hardware that reaches a target.")}: <select id="studySel" style="width:auto"><option value="">none</option></select>${d.study ? ` <a href="#/study/${d.study.id}">open study</a>` : ""}</p>
   <div class="tiles"><div class="tile"><div class="k">Runs measured</div><div class="v">${done.length}</div></div>
@@ -852,13 +853,21 @@ function otherChanges(managed) {
     ["Operating system (client hosts)", e.filter(([k]) => k.startsWith("client:")), k => k.replace(/^client:os:/, "")],
   ].filter(g => g[1].length);
 }
-function configBlocks(managed) {
+function reqTable(reqs) {
+  // benchmark prerequisites: settings the benchmark needs to run at all (not tuning)
+  return `<table class="kvt"><tbody>${reqs.map(q => `<tr><td class="mono">${esc(q.variable)}</td><td class="mono">${q.raised ? `${esc(q.server)} → ` : ""}${esc(q.required)}${/^\d+$/.test(q.required) ? '<span class="muted"> min</span>' : ""}</td><td>${q.error ? `<span class="badge warn" data-tip="${esc(q.error)}">not set</span>` : q.raised ? '<span class="muted">raised before the run</span>' : '<span class="muted">already met</span>'}</td></tr>`).join("")}</tbody></table>`;
+}
+const REQ_TIP = "Settings the benchmark needs just to run (for example max_connections for 1024 client threads, or max_prepared_stmt_count for 64 threads × 32 tables of prepared statements). Declared in the benchmark profile, applied before every run including the server-defaults run (numbers are minimums), and never changed by the tuner, so they are not part of the tuning result.";
+function configBlocks(managed, reqs) {
   // side by side: the copyable option file, and everything that is not MySQL configuration
   const my = cnfBlock(managed), other = otherChanges(managed);
+  reqs = reqs || [];
   const right = other.map(([h, rows, name]) => `<h4 style="margin:0 0 4px">${h}</h4><table class="kvt"><tbody>${rows.map(([k, v]) => `<tr><td class="mono">${esc(name(k))}</td><td class="mono">${esc(v)}</td></tr>`).join("")}</tbody></table>`).join('<div style="height:10px"></div>');
-  if (!other.length) return `<pre><code>${my}</code></pre>`;
+  const reqBox = reqs.length ? `<div class="card" style="padding:10px 12px;margin-top:10px"><h4 style="margin:0 0 4px">Benchmark prerequisites${info(REQ_TIP)}</h4>${reqTable(reqs)}</div>` : "";
+  if (!other.length && !reqs.length) return `<pre><code>${my}</code></pre>`;
+  if (!other.length) return `<div class="cfgsplit"><div><div class="muted" style="margin-bottom:4px">MySQL option file${info("Can be copied into a my.cnf [mysqld] section as is.")}</div><pre style="margin:0"><code>${my || "# no MySQL settings"}</code></pre></div><div>${reqBox.replace('margin-top:10px', 'margin-top:22px')}</div></div>`;
   return `<div class="cfgsplit"><div><div class="muted" style="margin-bottom:4px">MySQL option file${info("Can be copied into a my.cnf [mysqld] section as is.")}</div><pre style="margin:0"><code>${my || "# no MySQL settings"}</code></pre></div>
-    <div><div class="muted" style="margin-bottom:4px">Other changes${info("Settings outside the MySQL option file: kernel and filesystem settings of the database host, MySQL runtime objects, and client-host settings. The agent applies and persists them itself.")}</div><div class="card" style="padding:10px 12px">${right}</div></div></div>`;
+    <div><div class="muted" style="margin-bottom:4px">Other changes${info("Settings outside the MySQL option file: kernel and filesystem settings of the database host, MySQL runtime objects, and client-host settings. The agent applies and persists them itself.")}</div><div class="card" style="padding:10px 12px">${right}</div>${reqBox}</div></div>`;
 }
 async function renderKeySettings(el, runId) {
   const c = await api(`/api/runs/${runId}/config`);
@@ -1056,7 +1065,9 @@ function renderDiff(el, r) {
   else if (r.diff.length) h += `<h3>Changed since run #${prev.seq} ${esc(prev.label)}${info("Source and reasoning come from the agent. “outside the agent” means the value changed some other way: manual edit, server default after restart, automatic sizing.")}</h3>
    <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Run #${prev.seq}</th><th>This run</th><th>Source</th><th>Reason</th></tr></thead><tbody>${r.diff.map(diffRow).join("")}</tbody></table></div>`;
   const managed = r.managed || {};
-  if (Object.keys(managed).length) h += `<h3>Agent-applied configuration during this run${info("The settings the tuning-agent enforced while this run was measured: its MySQL option file plus operating-system settings. Everything else was the server default or came from other option files (see Key settings).")}</h3>${configBlocks(managed)}`;
+  const reqs = ((r.inputs || {}).bench || {}).requirements || [];
+  if (Object.keys(managed).length) h += `<h3>Agent-applied configuration during this run${info("The settings the tuning-agent enforced while this run was measured: its MySQL option file plus operating-system settings. Everything else was the server default or came from other option files (see Key settings).")}</h3>${configBlocks(managed, reqs)}`;
+  else if (reqs.length) h += `<h3>Benchmark prerequisites${info(REQ_TIP)}</h3><div class="card">${reqTable(reqs)}</div>`;
   el.innerHTML = h;
 }
 
@@ -1081,7 +1092,7 @@ function renderInputs(el, r) {
   if (inp.probe && Object.keys(inp.probe).length) h += `<p>Environment probe${info("Measured with the database idle right before the benchmark: single-thread CPU speed (sysbench events/s), 4k random read/write IOPS and fsync rate on the data filesystem (fio). Compared with the calibration runs to tell a slower VM from a worse configuration.")}: ${esc(kvText(inp.probe))}${(r.evaluation || {}).environment_shift ? ` <span class="badge warn">shift vs calibration: ${esc(kvText(r.evaluation.environment_shift))} %</span>` : ""}</p>`;
   if (inp.bench) {
     const b = inp.bench;
-    h += `<h3>Benchmark: ${esc(b.name)}</h3><div class="kv"><div>Run command</div><div class="mono">${esc(b.run)}</div>${b.reset ? `<div>Reset</div><div class="mono">${esc(b.reset)}</div>` : ""}<div>Warm-up / measured</div><div>${esc(b.warmup)} s / ${b.duration ? esc(b.duration) + " s" : "until finished"}</div><div>Exit code</div><div>${esc(b.exit_code)}</div>
+    h += `<h3>Benchmark: ${esc(b.name)}</h3><div class="kv"><div>Run command</div><div class="mono">${esc(b.run)}</div>${b.reset ? `<div>Reset</div><div class="mono">${esc(b.reset)}</div>` : ""}<div>Warm-up / measured</div><div>${esc(b.warmup)} s / ${b.duration ? esc(b.duration) + " s" : "until finished"}</div><div>Exit code</div><div>${esc(b.exit_code)}</div>${(b.requirements || []).length ? `<div>Prerequisites${info(REQ_TIP)}</div><div class="mono">${b.requirements.map(q => esc(q.variable) + " ≥ " + esc(q.required)).join(" · ")}</div>` : ""}
       ${Object.entries(b.metrics || {}).map(([k, v]) => `<div class="mono">${esc(k)}</div><div class="mono"><b>${esc(v)}</b></div>`).join("")}</div><details><summary>Benchmark output (tail)</summary><pre>${esc(b.log_tail || "")}</pre></details>`;
   }
   h += "<h3>Diagnosis</h3>" + ((r.diagnosis || []).map(dg => `<div class="diag">${sevBadge(dg.severity)} <b>${esc(dg.type)}</b> — ${esc(dg.text)}<div class="mono muted" style="font-size:11.5px;margin-top:3px">${esc(JSON.stringify(dg.evidence))}</div></div>`).join("") || '<p class="muted">none</p>');

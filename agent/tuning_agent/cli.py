@@ -6,6 +6,7 @@ non-interactive, supports --json, and exits non-zero on failure.
 import argparse
 import configparser
 import json
+import re
 import os
 import signal
 import sys
@@ -781,6 +782,36 @@ def _finish_profile(c, p, t_meas0):
     return res
 
 
+def _ensure_requirements(c, prof):
+    """Benchmark prerequisites ([requires] in the profile): raise them at runtime before the run if the server is below.
+    Numeric values are minimums; others must match. Returns what was checked / changed for the run record."""
+    out = []
+    for var, want in (prof.requires or {}).items():
+        if not re.fullmatch(r"[a-z_][a-z0-9_]*", var):
+            out.append({"variable": var, "required": want, "error": "not a server variable name"})
+            continue
+        try:
+            cur = c.db.scalar(f"SELECT @@GLOBAL.{var}")
+        except Exception as e:
+            out.append({"variable": var, "required": want, "error": str(e)[:200]})
+            continue
+        try:
+            ok = float(cur) >= float(want)
+        except (TypeError, ValueError):
+            ok = str(cur).lower() == str(want).lower()
+        item = {"variable": var, "required": want, "server": str(cur), "raised": False}
+        if not ok:
+            try:
+                c.db.execute(f"SET GLOBAL {var} = %s", (int(want) if str(want).isdigit() else want,))
+                item["raised"] = True
+                log(f"benchmark requirement: {var} {cur} -> {want}")
+            except Exception as e:
+                item["error"] = str(e)[:200]
+                log(f"WARNING: benchmark requirement {var}={want} could not be set: {e}")
+        out.append(item)
+    return out
+
+
 def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     """reset -> start benchmark -> warm-up -> measure -> wait for exit -> parse metrics -> finish run."""
     sess = c.session()
@@ -809,6 +840,7 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
             env_probe = bench.probe(c.datadir(), log)
         except Exception as e:  # never fail a run because of the probe
             log(f"probe failed: {e}")
+    requirements = _ensure_requirements(c, prof)
     log(f"benchmark: {prof.name}")
     c.activity("starting benchmark", label)
     r = bench.Running(prof.run, logfile)
@@ -874,7 +906,7 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         else:
             goal_value = metrics[prof.goal_metric] * prof.goal_scale
             goal_src = f"benchmark:{prof.goal_metric}" + (f" x{prof.goal_scale:g}" if prof.goal_scale != 1 else "")
-    extra = {"bench": {**prof.describe(), "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:]}, "probe": env_probe}
+    extra = {"bench": {**prof.describe(), "requirements": requirements, "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:]}, "probe": env_probe}
     if profiler:
         extra["cpu_profile"] = _finish_profile(c, profiler, t_meas0)
     if goal_value is not None and sess.get("goal_metric") != prof.goal_metric:
@@ -1089,7 +1121,7 @@ def _engine_ctx(c, sess):
     except Exception as e:  # experience is a hint; never block a recommendation on it
         log(f"note: no experience data ({e})")
     b = (last.get("inputs") or {}).get("bench") or {}
-    bench_info = {k: b.get(k) for k in ("name", "run", "warmup", "duration", "goal_metric") if b.get(k) is not None}
+    bench_info = {k: b.get(k) for k in ("name", "run", "warmup", "duration", "goal_metric", "requires") if b.get(k) is not None}
     return {"bench": bench_info, "diagnosis_basis_run": basis, "goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
             "os_tuning": c.os_tuning_allowed() and sess.get("os_tuning", True), "os_facts": osf, "experience": experience,
             "failed": sess.get("failed_recs") or [],

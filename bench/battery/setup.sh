@@ -16,9 +16,6 @@ debconf-set-selections <<< "percona-server-server percona-server-server/root-pas
 debconf-set-selections <<< "percona-server-server percona-server-server/re-root-pass password"
 apt-get install -yq percona-server-server || { echo SETUPFAILED; exit 1; }
 { echo "[mysqld]"; echo "# battery: binary log disabled"; echo "disable_log_bin"
-  # sysbench prepares ~10 statements per table per thread: 64 threads x 32 tables already exceed the default 16382
-  echo "# battery: sysbench prepared statements must fit even with server defaults"; echo "max_prepared_stmt_count = 1048576"
-  [ "$T" = O3 ] && echo "# battery O3: 1024 client connections must be possible even with server defaults" && echo "max_connections = 1100"
 } > /etc/mysql/mysql.conf.d/lab.cnf
 # many connections: raise limits for mysqld and the client
 mkdir -p /etc/systemd/system/mysql.service.d && printf '[Service]\nLimitNOFILE=65535\n' > /etc/systemd/system/mysql.service.d/limits.conf
@@ -52,6 +49,10 @@ case $T in
     printf '[bench]\nname = CH-benCHmark %sW: 32 TPC-C threads + 1 analytical stream, %s + %s s\n%s\nrun = %s ch run -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D ch --warehouses %s -T 32 -t 1 --time %ss --interval 30s --conn-params max_execution_time=120000 --ap-conn-params max_execution_time=120000 --ignore-error\nwarmup = %s\nduration = %s\ntimeout = %s\n\n[metrics]\ntpmc_whole_run = tpmC: ([\\d.]+)\nqphh_whole_run = QphH: ([\\d.]+)\n' \
       $WH $WU $DU "$RESET" "$GT" $WH $((WU + DU + 20)) $WU $DU $((WU + DU + 900)) > $P; [ $T = M2 ] && MAX=14 ;;
 esac
+# benchmark prerequisites (applied by the agent before every run, never tuned, shown apart from the tuning result):
+# sysbench prepares ~10 statements per table per thread (64 threads x 32 tables exceed the default 16382), O3 needs 1024 connections
+case $T in O1|O2|O3|O4) printf '\n[requires]\nmax_prepared_stmt_count = 1048576\n' >> $P;; esac
+[ "$T" = O3 ] && echo "max_connections = 1100" >> $P
 grep -q "^run" $P || { echo SETUPFAILED: no profile; exit 1; }
 mysql -e "SELECT table_schema, ROUND(SUM(data_length+index_length)/1073741824,1) gb FROM information_schema.tables GROUP BY 1"
 cd /root/bench

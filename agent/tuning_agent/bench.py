@@ -14,6 +14,9 @@ Profile (INI):
     [metrics]                           ; name = regex (first group); prefix sum:/geomean:/count:/last: (default last)
     nopm = achieved (\\d+) NOPM
     tpm = from (\\d+) MySQL TPM
+
+    [requires]                          ; benchmark prerequisites: set before every run (numbers are minimums), never tuned
+    max_connections = 1100
 """
 import configparser
 import math
@@ -40,13 +43,17 @@ class Profile:
         self.goal_metric = b.get("goal_metric")
         self.goal_scale = float(b.get("goal_scale", "1"))
         self.metrics = dict(cp["metrics"]) if cp.has_section("metrics") else {}
+        # settings the benchmark needs just to run (e.g. max_connections for 1024 client threads): applied before every
+        # run, including the server-defaults run; numeric values are minimums. Never tuned, shown apart from tuning.
+        self.requires = dict(cp["requires"]) if cp.has_section("requires") else {}
         # probe = auto (calibration + after unusual steal; default) | always | false
         pv = b.get("probe", "auto").lower()
         self.probe = "always" if pv == "always" else (pv in ("auto", "true", "yes", "1"))
 
     def describe(self):
         return {"name": self.name, "profile": self.path, "reset": self.reset, "run": self.run, "warmup": self.warmup,
-                "duration": self.duration, "goal_metric": self.goal_metric, "metrics": list(self.metrics)}
+                "duration": self.duration, "goal_metric": self.goal_metric, "metrics": list(self.metrics),
+                "requires": self.requires}
 
     def parse(self, text):
         out = {}

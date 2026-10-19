@@ -514,7 +514,16 @@ def session(sid: int, request: Request):
     s["activity"] = session_activity(e, sid) if s.get("status") == "active" else None
     st = store.q1("SELECT id, name, kind FROM studies WHERE id=?", (s.get("study_id"),)) if s.get("study_id") else None
     return {"session": s, "environment": env_brief(e), "runs": runs, "recommendations": recs, "events": events, "cost": session_costs(s, e),
-            "study": dict(st) if st else None}
+            "study": dict(st) if st else None, "requirements": session_requirements(sid)}
+
+
+def session_requirements(sid):
+    """Benchmark prerequisites of the session (settings the benchmark needs to run at all), from its latest run."""
+    r = store.q1("SELECT inputs FROM runs WHERE session_id=? AND inputs IS NOT NULL AND inputs LIKE '%\"requirements\"%' ORDER BY seq DESC LIMIT 1", (sid,))
+    if not r:
+        return []
+    b = (store.uj(r["inputs"]) or {}).get("bench") or {}
+    return b.get("requirements") or []
 
 
 @app.patch("/api/sessions/{sid}")

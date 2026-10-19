@@ -1201,6 +1201,21 @@ def per_query_hints(history, variables):
     }]
 
 
+def _breaks_requirement(it, requires):
+    """True when a change would lower a benchmark prerequisite (those are not tuning knobs for this benchmark)."""
+    for ch in it.get("changes") or []:
+        want = requires.get(ch.get("variable"))
+        if want is None:
+            continue
+        try:
+            if float(ch.get("proposed")) < float(want):
+                return True
+        except (TypeError, ValueError):
+            if str(ch.get("proposed")).lower() != str(want).lower():
+                return True
+    return False
+
+
 def run_engine(ctx):
     ctx = dict(ctx)
     ctx["workload"] = classify_workload(ctx.get("summary"), ctx.get("inputs")) if ctx.get("summary") else {"type": None}
@@ -1212,6 +1227,7 @@ def run_engine(ctx):
     items = items + per_query_hints(ctx.get("history") or [], ctx["variables"])
     items = revert_suggestions(ctx.get("history") or [], ctx["variables"], ctx.get("goal", "tps"),
                                float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0), ctx.get("managed")) + items
+    items = [it for it in items if not _breaks_requirement(it, (ctx.get("bench") or {}).get("requires") or {})]
     benchmark = ctx.get("policy") == "benchmark"
     has_major = any(d.get("severity") in ("high", "medium") and d["type"] != "none" for d in ctx["diagnosis"])
     exp = ctx.get("experience") or {}

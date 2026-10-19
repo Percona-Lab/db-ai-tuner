@@ -446,3 +446,10 @@ if __name__ == "__main__":
                 print("FAIL", name, repr(e))
                 traceback.print_exc()
     sys.exit(1 if fails else 0)
+
+
+def test_benchmark_requirements_not_lowered():
+    req = {"max_connections": "1100", "max_prepared_stmt_count": "1048576"}
+    assert engine._breaks_requirement({"changes": [{"variable": "max_connections", "proposed": "500"}]}, req)
+    assert not engine._breaks_requirement({"changes": [{"variable": "max_connections", "proposed": "2000"}]}, req)
+    assert not engine._breaks_requirement({"changes": [{"variable": "innodb_log_writer_threads", "proposed": "OFF"}]}, req)
