@@ -155,3 +155,6 @@ main pre { overflow-x: auto; }
   .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
   .row { flex-wrap: wrap; }
 }
+/* long unbreakable values (allocator / filesystem option strings, statement texts) wrap instead of widening the page */
+.card { overflow-wrap: break-word; }
+table.kvt td.mono, .diff-new, .diff-old, #recs .mono, #recs b { word-break: break-all; }
