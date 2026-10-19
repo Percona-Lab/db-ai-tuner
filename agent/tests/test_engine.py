@@ -617,3 +617,18 @@ def test_io_bound_kinds():
     # read-bound: buffer pool growth is relevant, LRU depth (flushing) is not; flush-bound: the other way round
     assert relevance("bp-grow", dr)[0] > 0 and relevance("lru-depth", dr)[0] == 0
     assert relevance("lru-depth", df)[0] > 0 and relevance("read-ahead", df)[0] == 0
+
+
+def test_sweep_point_parent_with_the_fields_the_agent_passes():
+    # canary #90 run 9: the live verdict got a run without its label and compared the 2nd sweep point with the 1st
+    base = {"innodb_log_writer_threads": "OFF"}
+    hist = [
+        {"seq": 6, "label": "log-writer-threads-off", "managed": dict(base), "goal_value": 1000, "verdict": "neutral", "changes": []},
+        {"seq": 7, "label": "log-writer-threads-off (confirm)", "managed": dict(base), "goal_value": 1002, "verdict": "repeat", "changes": []},
+        {"seq": 8, "label": "exp#51 innodb_thread_concurrency=4", "managed": dict(base, innodb_thread_concurrency="4"), "goal_value": 990,
+         "verdict": "neutral", "changes": [{"variable": "innodb_thread_concurrency", "old": "0", "new": "4", "source": "exp:51"}]},
+    ]
+    run = {"seq": 9, "label": "exp#51 innodb_thread_concurrency=8", "managed": dict(base, innodb_thread_concurrency="8"), "goal_value": 995,
+           "changes": [{"variable": "innodb_thread_concurrency", "old": "4", "new": "8", "source": "exp:51"}]}
+    v, ev = evaluate.verdict(run, hist, "tps", {"noise_pct": 2.0, "runs": [1]})
+    assert ev["parent_runs"] == [6, 7]

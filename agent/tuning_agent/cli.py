@@ -636,7 +636,9 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     d_prev = _improvement(sess["goal"], gv, prev.get("goal_value")) if prev else None
     d_first = _improvement(sess["goal"], gv, first.get("goal_value")) if first else None
     _refresh_noise(c, sess, runs)
-    verdict, evaluation = evaluate.verdict({"managed": m["managed"], "goal_value": gv, "summary": summary, "changes": m.get("changes")}, runs, sess["goal"],
+    # the same fields a re-evaluation sees (the label tells a sweep point's own change from a sweep restore)
+    verdict, evaluation = evaluate.verdict({"seq": m.get("seq"), "label": m.get("label"), "managed": m["managed"], "goal_value": gv,
+                                            "summary": summary, "changes": m.get("changes")}, runs, sess["goal"],
         sess.get("noise") or ({"noise_pct": sess["noise_pct"]} if sess.get("noise_pct") else None))
     if evaluation.get("parent_runs"):
         try:  # query-level view: which statements got faster / slower than under the parent configuration
