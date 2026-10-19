@@ -32,7 +32,9 @@ tuning-agent activity "loading data" "battery $T: preparing the benchmark data s
 case $T in
   O1|O2|O3) TH=$(case $T in O1) echo 4;; O2) echo 64;; O3) echo 1024;; esac)
     mysql -e "CREATE DATABASE IF NOT EXISTS sbtest"; $SB --tables=16 --table-size=1500000 --threads=8 prepare > /root/bench/prep.log 2>&1
-    printf '[bench]\nname = sysbench oltp_read_write in memory (16 x 1.5M rows, 5.6 GB), %s threads, 2 + 5 min\n%s\nrun = ulimit -n 65535; %s --tables=16 --table-size=1500000 --threads=%s --time=450 --report-interval=10 --mysql-ignore-errors=all run\nwarmup = 120\nduration = 300\ntimeout = 900\n\n[metrics]\nsysbench_tps = transactions:\\s+\\d+\\s+\\(([\\d.]+) per sec\nsysbench_p95_ms = 95th percentile:\\s+([\\d.]+)\n' "$TH" "$RESET" "$SB" "$TH" > $P ;;
+    # O3: 1024 threads x 16 tables of prepared statements (~150k) need ~10 GB of server memory: plain statements instead
+    PS=$([ $T = O3 ] && echo "--db-ps-mode=disable " || true); PSN=$([ $T = O3 ] && echo " (no prepared statements)" || true)
+    printf '[bench]\nname = sysbench oltp_read_write in memory (16 x 1.5M rows, 5.6 GB), %s threads%s, 2 + 5 min\n%s\nrun = ulimit -n 65535; %s --tables=16 --table-size=1500000 --threads=%s --time=450 --report-interval=10 %s--mysql-ignore-errors=all run\nwarmup = 120\nduration = 300\ntimeout = 900\n\n[metrics]\nsysbench_tps = transactions:\\s+\\d+\\s+\\(([\\d.]+) per sec\nsysbench_p95_ms = 95th percentile:\\s+([\\d.]+)\n' "$TH" "$PSN" "$RESET" "$SB" "$TH" "$PS" > $P ;;
   O4) mysql -e "CREATE DATABASE IF NOT EXISTS sbtest"; $SB --tables=32 --table-size=10000000 --threads=8 prepare > /root/bench/prep.log 2>&1
     printf '[bench]\nname = sysbench oltp_read_write I/O-bound (32 x 10M rows, ~75 GB), 64 threads, 5 + 10 min\n%s\nrun = %s --tables=32 --table-size=10000000 --threads=64 --time=930 --report-interval=10 --mysql-ignore-errors=all run\nwarmup = 300\nduration = 600\ntimeout = 1800\n\n[metrics]\nsysbench_tps = transactions:\\s+\\d+\\s+\\(([\\d.]+) per sec\nsysbench_p95_ms = 95th percentile:\\s+([\\d.]+)\n' "$RESET" "$SB" > $P; MAX=14 ;;
   O5|O6) WH=$([ $T = O5 ] && echo 80 || echo 800); RU=$([ $T = O5 ] && echo 2 || echo 5); DU=$([ $T = O5 ] && echo 5 || echo 10)
@@ -51,8 +53,8 @@ case $T in
 esac
 # benchmark prerequisites (applied by the agent before every run, never tuned, shown apart from the tuning result):
 # sysbench prepares ~10 statements per table per thread (64 threads x 32 tables exceed the default 16382), O3 needs 1024 connections
-case $T in O1|O2|O3|O4) printf '\n[requires]\nmax_prepared_stmt_count = 1048576\n' >> $P;; esac
-[ "$T" = O3 ] && echo "max_connections = 1100" >> $P
+case $T in O1|O2|O4) printf '\n[requires]\nmax_prepared_stmt_count = 1048576\n' >> $P;; esac
+[ "$T" = O3 ] && printf '\n[requires]\nmax_connections = 1100\n' >> $P
 grep -q "^run" $P || { echo SETUPFAILED: no profile; exit 1; }
 mysql -e "SELECT table_schema, ROUND(SUM(data_length+index_length)/1073741824,1) gb FROM information_schema.tables GROUP BY 1"
 cd /root/bench
