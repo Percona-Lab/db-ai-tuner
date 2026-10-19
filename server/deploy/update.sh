@@ -13,6 +13,11 @@ systemctl stop aituner@$NEW 2>/dev/null || true
 systemctl start aituner@$NEW
 for i in $(seq 1 30); do curl -fsS http://127.0.0.1:$NEW/healthz >/dev/null 2>&1 && break; sleep 1; done
 curl -fsS http://127.0.0.1:$NEW/healthz >/dev/null || { echo "new version failed health check; old one keeps serving"; systemctl stop aituner@$NEW; exit 1; }
+# the UI must load without JavaScript errors before any traffic moves to the new version
+if [ -x /opt/pw/bin/python ]; then
+  PLAYWRIGHT_BROWSERS_PATH=/opt/pw/browsers /opt/pw/bin/python /opt/aituner/server/deploy/ui_check.py http://127.0.0.1:$NEW/ \
+    || { echo "new version's UI failed to load; old one keeps serving"; systemctl stop aituner@$NEW; exit 1; }
+fi
 echo "set \$aituner_upstream http://127.0.0.1:$NEW;" > /etc/nginx/aituner-upstream.conf
 nginx -t -q && systemctl reload nginx
 sleep 5   # let in-flight requests on the old version finish
