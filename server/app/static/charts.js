@@ -147,7 +147,7 @@
     const bars = opts.bars.filter(b => b.value != null);
     if (!bars.length) { const p = document.createElement("div"); p.className = "muted"; p.textContent = "No measured runs yet."; wrap.appendChild(p); return; }
     const W = Math.max(wrap.clientWidth || 300, 240), H = opts.height || 220;
-    const m = { l: 48, r: 8, t: 16, b: (W - 56) / Math.max(bars.length, 1) < 70 ? 24 : 34 };
+    const m = { l: 48, r: 8, t: 26, b: (W - 56) / Math.max(bars.length, 1) < 70 ? 24 : 34 };
     const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": opts.title });
     wrap.appendChild(svg);
     const ticks = niceTicks(0, Math.max(...bars.map(b => b.value), opts.ref != null ? opts.ref : 0), 4);
@@ -177,8 +177,12 @@
         lab.textContent = text.length > maxc ? text.slice(0, maxc - 1) + "…" : text;
       }
       if (b.sub && !dense) { const s2 = el("text", { x: cx, y: H - 5, "text-anchor": "middle", "font-size": 10.5, fill: "var(--muted)" }, svg); s2.textContent = b.sub; }
-      if (b.mark) { const tw = Math.min(10, bw); el("path", { d: `M${cx - tw / 2},${y - 3} L${cx + tw / 2},${y - 3} L${cx},${y - 3 - tw * 0.8} Z`, fill: "var(--ink)" }, svg); }
-      if (b.highlight && slot > 40) { const v = el("text", { x: cx, y: y - 4, "text-anchor": "middle", "font-size": 11, fill: "var(--ink)" }, svg); v.textContent = fmtNum(b.value); }
+      const showVal = b.highlight && slot > 40;
+      if (b.mark) {  // above the value label when there is one, never on top of it
+        const tw = Math.min(9, bw), base = y - (showVal ? 17 : 3);
+        el("path", { d: `M${cx - tw / 2},${base} L${cx + tw / 2},${base} L${cx},${base - tw * 0.8} Z`, fill: "var(--ink)" }, svg);
+      }
+      if (showVal) { const v = el("text", { x: cx, y: y - 4, "text-anchor": "middle", "font-size": 11, fill: "var(--ink)" }, svg); v.textContent = fmtNum(b.value); }
       const hit = el("rect", { x: cx - slot / 2, y: m.t, width: slot, height: H - m.t, fill: "transparent", style: b.href ? "cursor:pointer" : "" }, svg);
       hit.addEventListener("mousemove", ev => showTip(`<div class="t">${b.label}</div><div>${opts.metric || "value"}<b>${fmtNum(b.value)} ${opts.unit || ""}</b></div>${b.sub ? `<div>${opts.subLabel || "change"}<b>${b.sub}</b></div>` : ""}${b.mark ? "<div><b>best configuration known at this point</b></div>" : ""}${b.tip || ""}`, ev.clientX, ev.clientY));
       hit.addEventListener("mouseleave", hideTip);
@@ -186,7 +190,9 @@
     });
     if (opts.ref != null) {
       el("line", { x1: m.l, x2: W - m.r, y1: Y(opts.ref), y2: Y(opts.ref), stroke: "var(--ink-2)", "stroke-dasharray": "4 3", "stroke-width": 1 }, svg);
-      const t = el("text", { x: W - m.r, y: Y(opts.ref) - 4, "text-anchor": "end", "font-size": 11, fill: "var(--ink-2)" }, svg); t.textContent = opts.refLabel || "first run";
+      const key = document.createElement("div"); key.className = "muted"; key.style.cssText = "font-size:12px;margin:-2px 0 4px";
+      key.innerHTML = `<svg width="22" height="8" style="vertical-align:middle"><line x1="0" x2="22" y1="4" y2="4" stroke="currentColor" stroke-dasharray="4 3"/></svg> ${opts.refLabel || "first run"}`;
+      wrap.insertBefore(key, svg);
     }
   }
 

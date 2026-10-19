@@ -651,7 +651,7 @@ async function sessionPage(id) {
     return ch ? { kept: false, by: ch.seq } : { kept: true, pending: !nxt.length };
   };
   C.barChart(document.getElementById("bars"), {
-    title: goalName(s.goal) + " per run (" + goalUnit(s.goal, s) + ") — green: best production-safe configuration · orange: runs with trade-offs · ▲ best configuration known at that point", unit: goalUnit(s.goal, s), metric: s.goal === "latency" ? "avg latency" : "goal value",
+    title: goalName(s.goal) + " per run" + (goalUnit(s.goal, s) && !goalName(s.goal).toLowerCase().includes(goalUnit(s.goal, s).toLowerCase()) ? " (" + goalUnit(s.goal, s) + ")" : "") + " — green: best production-safe configuration · orange: runs with trade-offs · ▲ best configuration known at that point", unit: goalUnit(s.goal, s), metric: s.goal === "latency" ? "avg latency" : "goal value",
     ref: refVal, refLabel: refName, subLabel: "vs " + refName,
     bars: done.map(r => ({ label: "#" + r.seq + " " + r.label, short: "#" + r.seq, value: r.goal_value, sub: vsRef(r.goal_value) != null ? pct(vsRef(r.goal_value)) : "", href: "#/run/" + r.id, mark: bestAt[r.id],
       highlight: (r.tradeoffs || []).length ? "trade" : bestSafe && bestSafe.runs.includes(r) ? "best" : false,
