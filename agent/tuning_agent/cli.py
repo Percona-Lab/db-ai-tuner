@@ -1309,7 +1309,10 @@ def _recommend(c, sess, llm=False):
             if it["safety"] == "trade-off" and ctx.get("policy") != "benchmark":
                 it["kind"] = "advice"
         ids = {i["id"] for i in res["items"]}
-        res["items"] = res["items"] + [i for i in extra if i["id"] not in ids]
+        for i in extra:  # one candidate per id (a pending and a fresh suggestion can be the same change)
+            if i["id"] not in ids:
+                ids.add(i["id"])
+                res["items"].append(i)
         res["items"].sort(key=lambda i: (i.get("safety") == "trade-off" and i["kind"] != "revert", -i.get("score", 0)))
         for n, it in enumerate(res["items"], 1):
             it["rank"] = n
@@ -1745,6 +1748,10 @@ def cmd_autotune(a):
             c.state.set("session", sess)
         if _known_config(c, sess):
             log("   configuration already measured: no new run needed")
+            if item["kind"] != "revert":  # an experiment that only leads back to a measured configuration is done
+                sess = c.session()
+                sess.setdefault("failed_recs", []).append(nxt)
+                c.state.set("session", sess)
             continue
         try:
             run, _ = _bench_run(c, prof, f"{nxt}")
