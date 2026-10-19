@@ -50,6 +50,58 @@ async def timing(request: Request, call_next):
     return resp
 
 
+def watchdog_scan():
+    """Stall watchdog (run by the status sampler every minute): silent agents and client hosts, session phases and
+    measurements that are long overdue. Returns (alerts, what was checked)."""
+    t = now()
+    alerts = []
+    envs = store.q("SELECT * FROM environments WHERE destroyed_at IS NULL")
+    active = {r["env_id"]: r for r in store.q("SELECT * FROM tsessions WHERE status='active'")}
+    for e in envs:
+        e = dict(e)
+        silent = t - (e.get("last_seen") or 0)
+        if e.get("agent_state") == "stopped" and (e.get("agent_state_at") or 0) >= (e.get("last_seen") or 0):
+            continue  # stopped on purpose
+        s = active.get(e["id"])
+        if silent > 300 and (s or silent < 86400):
+            alerts.append({"key": f"agent-silent:{e['id']}", "kind": "agent-silent", "severity": "high" if s else "medium",
+                           "env_id": e["id"], "session_id": s["id"] if s else None,
+                           "message": f"{e['name']}: agent silent for {int(silent // 60)} min" + (f" during session #{s['id']}" if s else "")})
+    hosts = store.q("SELECT h.*, e.name en FROM hosts h JOIN environments e ON e.id=h.env_id WHERE h.destroyed_at IS NULL AND e.destroyed_at IS NULL")
+    for h in hosts:
+        if h["env_id"] in active and t - (h["last_seen"] or 0) > 300:
+            alerts.append({"key": f"client-silent:{h['id']}", "kind": "client-silent", "severity": "medium", "env_id": h["env_id"],
+                           "message": f"{h['en']}: client host {h['name']} silent for {int((t - (h['last_seen'] or 0)) // 60)} min during session"})
+    for env_id, s in active.items():
+        e = next((x for x in envs if x["id"] == env_id), None)
+        if not e:
+            continue
+        runs = store.q("SELECT status, started, ended FROM runs WHERE session_id=? AND status IN ('done','measuring') ORDER BY started", (s["id"],))
+        done = [r for r in runs if r["status"] == "done" and r["started"] and r["ended"]]
+        meas = sorted(r["ended"] - r["started"] for r in done)
+        typ_meas = meas[len(meas) // 2] if meas else None
+        starts = [r["started"] for r in done]
+        gaps = sorted(b - a for a, b in zip(starts, starts[1:]))
+        typ_cycle = gaps[len(gaps) // 2] if gaps else None
+        act = session_activity(e, s["id"])
+        name = f"{e['name']} session #{s['id']}"
+        if act.get("source") == "agent" and act.get("stale"):
+            over = int((t - (act.get("until") or t)) // 60)
+            alerts.append({"key": f"phase-overdue:{s['id']}", "kind": "phase-overdue", "severity": "high", "env_id": env_id, "session_id": s["id"],
+                           "message": f"{name}: '{act.get('phase')}' should have ended {over} min ago"})
+        m = next((r for r in reversed(runs) if r["status"] == "measuring"), None)
+        if m and typ_meas and t - m["started"] > 3 * typ_meas + 1800:
+            alerts.append({"key": f"measure-overdue:{s['id']}", "kind": "measure-overdue", "severity": "high", "env_id": env_id, "session_id": s["id"],
+                           "message": f"{name}: run measuring for {int((t - m['started']) // 60)} min (typical {int(typ_meas // 60)} min)"})
+        last = max([r["started"] or 0 for r in runs] + [r["ended"] or 0 for r in runs] + [s["created"]])
+        limit = max(3600, 3 * (typ_cycle or 0))
+        if act.get("source") != "agent" and t - last > limit:
+            alerts.append({"key": f"no-progress:{s['id']}", "kind": "no-progress", "severity": "high", "env_id": env_id, "session_id": s["id"],
+                           "message": f"{name}: no run started or ended for {int((t - last) // 60)} min (limit {int(limit // 60)} min)"})
+    return alerts, {"environments": len(envs), "client_hosts": len(hosts), "active_sessions": len(active)}
+
+
+status.set_watchdog(watchdog_scan)
 status.start()
 
 

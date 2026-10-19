@@ -26,7 +26,45 @@ def _db():
     c.execute("CREATE TABLE IF NOT EXISTS samples (ts REAL PRIMARY KEY, data TEXT NOT NULL)")
     c.execute("CREATE TABLE IF NOT EXISTS reqs (ts REAL, method TEXT, route TEXT, ms REAL, status INTEGER)")
     c.execute("CREATE INDEX IF NOT EXISTS reqs_ts ON reqs(ts)")
+    c.execute("CREATE TABLE IF NOT EXISTS alerts (key TEXT PRIMARY KEY, kind TEXT, severity TEXT, env_id INTEGER, session_id INTEGER, "
+              "message TEXT, first_seen REAL, last_seen REAL, resolved_at REAL)")
+    c.execute("CREATE TABLE IF NOT EXISTS watchdog (id INTEGER PRIMARY KEY CHECK (id = 1), last_scan REAL, scan_ms REAL, error TEXT, checked TEXT)")
     return c
+
+
+# ------------------------------------------------------------------------------------------------- stall watchdog
+WATCHDOG_EVERY = 60
+_watchdog = None  # set by the app: fn() -> ([alert dict], checked summary dict)
+
+
+def set_watchdog(fn):
+    global _watchdog
+    _watchdog = fn
+
+
+def _scan(c):
+    t0 = time.time()
+    try:
+        found, checked = _watchdog()
+        err = None
+    except Exception as e:  # never let the watchdog take the sampler down
+        found, checked, err = None, {}, f"{type(e).__name__}: {e}"[:300]
+    now = time.time()
+    if found is not None:
+        keys = set()
+        for a in found:
+            keys.add(a["key"])
+            if c.execute("SELECT 1 FROM alerts WHERE key=? AND resolved_at IS NULL", (a["key"],)).fetchone():
+                c.execute("UPDATE alerts SET last_seen=?, message=?, severity=? WHERE key=? AND resolved_at IS NULL",
+                          (now, a["message"], a["severity"], a["key"]))
+            else:
+                c.execute("INSERT OR REPLACE INTO alerts VALUES (?,?,?,?,?,?,?,?,NULL)",
+                          (a["key"], a["kind"], a["severity"], a.get("env_id"), a.get("session_id"), a["message"], now, now))
+        for (k,) in c.execute("SELECT key FROM alerts WHERE resolved_at IS NULL").fetchall():
+            if k not in keys:
+                c.execute("UPDATE alerts SET resolved_at=? WHERE key=?", (now, k))
+        c.execute("DELETE FROM alerts WHERE resolved_at IS NOT NULL AND resolved_at < ?", (now - 7 * 86400,))
+    c.execute("INSERT OR REPLACE INTO watchdog VALUES (1,?,?,?,?)", (now, round((time.time() - t0) * 1000, 1), err, json.dumps(checked)))
 
 
 def record(method, route, ms, status):
@@ -154,6 +192,7 @@ def _loop():
     sampler = False
     dev = _disk_dev()
     prev = None
+    last_scan = 0
     while True:
         try:
             if not sampler:
@@ -169,6 +208,9 @@ def _loop():
                     c.execute("DELETE FROM samples WHERE ts < ?", (time.time() - 7 * 86400,))
                     c.execute("DELETE FROM reqs WHERE ts < ?", (time.time() - 86400,))
                 prev = cur
+                if _watchdog and time.time() - last_scan >= WATCHDOG_EVERY:
+                    _scan(c)
+                    last_scan = time.time()
             _flush(c)
         except Exception:
             pass
@@ -193,6 +235,10 @@ def report(hours=24):
     since = time.time() - hours * 3600
     samples = [(ts, json.loads(d)) for ts, d in c.execute("SELECT ts, data FROM samples WHERE ts >= ? ORDER BY ts", (since,))]
     rq = c.execute("SELECT route, method, ms, status FROM reqs WHERE ts >= ?", (time.time() - 3600,)).fetchall()
+    alerts = [dict(zip(("key", "kind", "severity", "env_id", "session_id", "message", "first_seen", "last_seen", "resolved_at"), r))
+              for r in c.execute("SELECT * FROM alerts WHERE resolved_at IS NULL OR resolved_at > ? ORDER BY resolved_at IS NOT NULL, first_seen DESC",
+                                 (time.time() - 86400,))]
+    wd = c.execute("SELECT last_scan, scan_ms, error, checked FROM watchdog WHERE id=1").fetchone()
     c.close()
     routes = {}
     for route, method, ms, status in rq:
@@ -215,10 +261,18 @@ def report(hours=24):
         warn.append(f"CPU busy {last['cpu_busy']:.0f}%")
     if (last.get("db_probe_ms") or 0) > 500:
         warn.append(f"database probe slow ({last['db_probe_ms']:.0f} ms)")
+    active = [a for a in alerts if not a["resolved_at"]]
+    if active:
+        warn.append(f"watchdog: {len(active)} active alert(s)")
+    wds = {"last_scan": wd[0], "scan_ms": wd[1], "error": wd[2], "checked": json.loads(wd[3] or "{}")} if wd else None
+    if not wds or not wds["last_scan"] or time.time() - wds["last_scan"] > 5 * WATCHDOG_EVERY:
+        warn.append("watchdog not running")
+    elif wds["error"]:
+        warn.append(f"watchdog error: {wds['error']}")
     return {"ok": not warn, "warnings": warn, "uptime_s": round(time.time() - STARTED), "now": time.time(), "last": last,
             "requests_last_hour": {"count": len(allms), "p50_ms": _pct(allms, 0.5), "p95_ms": _pct(allms, 0.95),
                                    "p99_ms": _pct(allms, 0.99), "errors": sum(1 for r in rq if r[3] >= 500)},
-            "slowest_routes": slow[:12], "series": [{"ts": ts, **d} for ts, d in samples]}
+            "slowest_routes": slow[:12], "watchdog": wds, "alerts": alerts, "series": [{"ts": ts, **d} for ts, d in samples]}
 
 
 SERIES = [("CPU busy %", ["cpu_busy", "cpu_iowait", "cpu_steal"], "%"), ("Load (1 min)", ["load1"], ""),
@@ -258,6 +312,16 @@ def html(hours=24):
         for title, keys, unit in SERIES)
     rows = "".join(f"<tr><td class=m>{h_.escape(x['route'])}</td><td>{x['count']}</td><td>{fmt(x['p50_ms'])}</td><td>{fmt(x['p95_ms'])}</td>"
                    f"<td>{fmt(x['max_ms'])}</td><td>{x['errors']}</td></tr>" for x in r["slowest_routes"])
+    ago = lambda t: "–" if not t else (f"{int((time.time() - t) // 60)} min ago" if time.time() - t < 7200 else f"{(time.time() - t) / 3600:.1f} h ago")
+    wd = r["watchdog"] or {}
+    ck = wd.get("checked") or {}
+    wd_line = (f'<span class="{"bad" if wd.get("error") or not wd.get("last_scan") or time.time() - wd["last_scan"] > 5 * WATCHDOG_EVERY else "ok"}">'
+               f'{"not running" if not wd.get("last_scan") else ("error: " + h_.escape(wd["error"]) if wd.get("error") else "running")}</span>'
+               f' · last scan {ago(wd.get("last_scan"))} ({fmt(wd.get("scan_ms"))} ms) every {WATCHDOG_EVERY} s · checked '
+               f'{ck.get("environments", 0)} environments, {ck.get("client_hosts", 0)} client hosts, {ck.get("active_sessions", 0)} active sessions')
+    arows = "".join(f'<tr><td class=m>{"<span class=bad>active</span>" if not a["resolved_at"] else "resolved " + ago(a["resolved_at"])}</td>'
+                    f'<td class=m>{h_.escape(a["severity"])}</td><td class=m>{h_.escape(a["message"])}</td><td>{ago(a["first_seen"])}</td></tr>'
+                    for a in r["alerts"]) or '<tr><td class=m colspan=4>No alerts in the last 24 h.</td></tr>'
     state = '<span class="ok">healthy</span>' if r["ok"] else '<span class="bad">' + h_.escape("; ".join(r["warnings"])) + "</span>"
     up = r["uptime_s"]
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -275,6 +339,8 @@ td,th{{padding:5px 8px;border-bottom:1px solid var(--line);text-align:right}}td.
 <h1>Tuner server status</h1><p class="sub">{state} · up {up // 3600} h {up % 3600 // 60} min · last {hours} h, sampled every {INTERVAL} s ·
 requests last hour: {rq['count']} · p50 {fmt(rq['p50_ms'])} ms · p95 {fmt(rq['p95_ms'])} ms · p99 {fmt(rq['p99_ms'])} ms · 5xx {rq['errors']}
 · <a href="/status.json">JSON</a> · <a href="?h=1">1 h</a> <a href="?h=24">24 h</a> <a href="?h=168">7 d</a></p>
-<div class="g">{tiles}</div>
+<h2>Stall watchdog</h2><p class="sub" style="margin:0 0 8px">{wd_line}</p>
+<div class="w"><table><tr><th class=m>state</th><th class=m>severity</th><th class=m>alert</th><th>since</th></tr>{arows}</table></div>
+<h2>Host</h2><div class="g">{tiles}</div>
 <h2>Slowest endpoints, last hour</h2><div class="w"><table><tr><th class=m>endpoint</th><th>requests</th><th>p50 ms</th><th>p95 ms</th><th>max ms</th><th>5xx</th></tr>{rows}</table></div>
 </body></html>"""
