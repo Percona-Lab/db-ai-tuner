@@ -268,6 +268,7 @@ class Builder:
 def recommend(ctx):
     v = ctx["variables"]
     s = ctx.get("summary") or {}
+    busy = s.get("cpu_busy") or 0
     inp = ctx.get("inputs") or {}
     hw = ctx.get("hw") or {}
     goal = ctx.get("goal", "tps")
@@ -409,7 +410,6 @@ def recommend(ctx):
               impact=1, confidence=2)
 
     # ---------------- concurrency (experiments) ----------------------------------
-    busy = s.get("cpu_busy") or 0
     tr = s.get("threads_running_avg") or 0
     selects = rates.get("Com_select", 0)
     writes = sum(rates.get(k, 0) for k in ("Com_insert", "Com_update", "Com_delete", "Com_replace"))

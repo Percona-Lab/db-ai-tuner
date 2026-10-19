@@ -397,6 +397,18 @@ def test_env_shift_only_for_compared_runs_and_beyond_probe_noise():
     assert "environment_shift" in evaluate.verdict(run, base, "tps", noise)[1]
 
 
+def test_engine_smoke_all_branches():
+    """Run every rule branch once: binlog on and off, CPU-bound with a profile, I/O-bound, OLAP; no exceptions."""
+    for extra_v in ({"log_bin": "ON", "binlog_transaction_dependency_history_size": "25000"}, {"log_bin": "OFF"}):
+        for summ, inp in (OLTP, OLAP, (dict(OLTP[0], cpu_busy=97, bp_hit_pct=90, bp_disk_reads=900, history_list_length_max=500000,
+                                            checkpoint_age_pct_max=85, dbproc_runq_wait_pct=30, swap_in=500), dict(OLTP[1], cpu_profile={"categories": {"spin / mutex wait": 20, "memory allocator": 10}}))):
+            for policy in ("safe", "benchmark"):
+                for goal in ("tps", "latency"):
+                    ctx = {"variables": dict(VARS, **extra_v), "summary": summ, "inputs": inp, "hw": dict(HW, cpus=16), "policy": policy,
+                           "goal": goal, "flavor": "mysql", "history": [{"seq": 1, "managed": {}, "goal_value": 1}], "os_tuning": True}
+                    engine.run_engine(ctx)
+
+
 def test_no_run_yet():
     res = run({}, {}, policy="safe")
     assert isinstance(res["items"], list)
