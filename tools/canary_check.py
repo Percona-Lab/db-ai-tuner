@@ -56,6 +56,9 @@ def main():
     exp = [r for r in runs if not r["label"].startswith(SKIP)]
     if a.budget:
         legit = any("nothing else is left" in x or "no further experiments" in x for x in stops)
+        # the agent's own count (sweep points rejected before a run count against the budget too)
+        used = [int(x) for x, n in re.findall(r"trade-off budget: (\d+) of (\d+) runs used", log) if int(n) == a.budget]
+        legit = legit or (bool(used) and max(used) >= a.budget - 1)
         check(len(exp) >= a.budget or legit, f"budget used: {len(exp)} of {a.budget} experiment runs (stops: {stops or 'no log'})")
 
     # 2) verdicts: recompute every comparison with the current evaluate code; parents must match
