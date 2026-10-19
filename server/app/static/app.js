@@ -1137,12 +1137,12 @@ function renderInputs(el, r) {
     h += `<h3>Benchmark: ${esc(b.name)}</h3><div class="kv"><div>Run command</div><div class="mono">${esc(b.run)}</div>${b.reset ? `<div>Reset</div><div class="mono">${esc(b.reset)}</div>` : ""}<div>Warm-up / measured</div><div>${esc(b.warmup)} s / ${b.duration ? esc(b.duration) + " s" : "until finished"}</div><div>Exit code</div><div>${esc(b.exit_code)}</div>${(b.requirements || []).length ? `<div>Prerequisites${info(REQ_TIP)}</div><div class="mono">${b.requirements.map(q => esc(q.variable) + " ≥ " + esc(q.required)).join(" · ")}</div>` : ""}
       ${Object.entries(b.metrics || {}).map(([k, v]) => `<div class="mono">${esc(k)}</div><div class="mono"><b>${esc(v)}</b></div>`).join("")}</div><details><summary>Benchmark output (tail)</summary><pre>${esc(b.log_tail || "")}</pre></details>`;
   }
-  const tb = inp.time_breakdown || [];
-  if (tb.length) {
-    const q = tb[0].cpu_queue_share_pct;
+  const tbk = inp.time_breakdown || [];
+  if (tbk.length) {
+    const q = tbk[0].cpu_queue_share_pct;
     h += `<h3>Where the time went${info("Average number of database threads in each state during the measured window, largest first: what keeps the workload from going faster. On-CPU time is split by the CPU profile when one was taken (otherwise one CPU component); time spent runnable but waiting for a CPU is added to the CPU components in proportion, because doing less CPU work shortens that queue too. Waits come from performance_schema (global, so background threads such as page cleaners are included) and InnoDB row lock counters. 'Client / network' = the server waiting for the next statement. Experiments are ranked by how much of this time they can act on.")}</h3>
-      <div class="card"><div class="waitbar">${tb.map((p, i) => `<span style="width:${p.share_pct}%;background:${WAIT_COLORS[i % WAIT_COLORS.length]}" data-tip="${esc(p.name)}: ${p.share_pct}% (${num(p.threads)} threads)"></span>`).join("")}</div>
-      <div class="tablewrap"><table class="kvt" style="margin-top:6px"><tbody>${tb.slice(0, 8).map((p, i) => `<tr><td><i class="dot" style="background:${WAIT_COLORS[i % WAIT_COLORS.length]}"></i>${esc(p.name)}</td><td class="num">${p.share_pct}%</td><td class="num muted">${num(p.threads)} thr</td></tr>`).join("")}</tbody></table></div>
+      <div class="card"><div class="waitbar">${tbk.map((p, i) => `<span style="width:${p.share_pct}%;background:${WAIT_COLORS[i % WAIT_COLORS.length]}" data-tip="${esc(p.name)}: ${p.share_pct}% (${num(p.threads)} threads)"></span>`).join("")}</div>
+      <div class="tablewrap"><table class="kvt" style="margin-top:6px"><tbody>${tbk.slice(0, 8).map((p, i) => `<tr><td><i class="dot" style="background:${WAIT_COLORS[i % WAIT_COLORS.length]}"></i>${esc(p.name)}</td><td class="num">${p.share_pct}%</td><td class="num muted">${num(p.threads)} thr</td></tr>`).join("")}</tbody></table></div>
       ${q ? `<p class="muted" style="margin:6px 0 0;font-size:12px">Of this, ${q}% was runnable threads waiting for a CPU (included in the CPU components).</p>` : ""}</div>`;
   }
   h += "<h3>Diagnosis</h3>" + ((r.diagnosis || []).map(dg => `<div class="diag">${sevBadge(dg.severity)} <b>${esc(dg.type)}</b> — ${esc(dg.text)}<div class="mono muted" style="font-size:11.5px;margin-top:3px">${esc(JSON.stringify(dg.evidence))}</div></div>`).join("") || '<p class="muted">none</p>');
