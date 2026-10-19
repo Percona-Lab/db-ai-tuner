@@ -181,7 +181,7 @@ async function envList() {
     box.parentElement.querySelectorAll("#viewSeg button").forEach(b => b.classList.toggle("on", b.dataset.v === mode));
     box.parentElement.querySelectorAll("#scopeSeg button").forEach(b => b.classList.toggle("on", b.dataset.s === scope));
     if (mode === "list") {
-      box.innerHTML = `<div class="card tablewrap"><table><thead><tr><th>Name</th><th>Status</th><th>Database</th><th>Hardware</th><th class="num">Data</th><th class="num">TPS</th><th class="num">Avg latency</th><th class="num">CPU</th><th class="num">Disk</th><th>Active session</th><th class="num">Sessions</th></tr></thead><tbody>${envs.map(e => {
+      box.innerHTML = `<div class="card tablewrap"><table data-opt="Database|Hardware|Data|TPS|Avg latency|Disk|Sessions"><thead><tr><th>Name</th><th>Status</th><th>Database</th><th>Hardware</th><th class="num">Data</th><th class="num">TPS</th><th class="num">Avg latency</th><th class="num">CPU</th><th class="num">Disk</th><th>Active session</th><th class="num">Sessions</th></tr></thead><tbody>${envs.map(e => {
         const m = metrics(e);
         return `<tr class="click" data-href="#/env/${e.id}"><td><a href="#/env/${e.id}"><b>${esc(e.name)}</b></a>${clients(e)}</td><td>${status(e)}</td><td>${esc(e.db_short || e.db)}</td><td>${e.cpus || "?"} CPU · ${bytes(e.ram_bytes)} · ${e.disk}</td><td class="num">${bytes(e.data_bytes)}</td>
           <td class="num">${m.tps}</td><td class="num">${m.lat}</td><td class="num">${m.cpu}</td><td class="num"${m.diskTip ? ` data-tip="${m.diskTip}"` : ""}>${m.disk}</td><td>${e.active_session ? `<a href="#/session/${e.active_session.id}">#${e.active_session.id} ${esc(e.active_session.name)}</a>${activityLine(e.active_session.activity)}` : '<span class="muted">–</span>'}</td><td class="num">${e.sessions}</td></tr>`; }).join("")}</tbody></table></div>`;
@@ -225,7 +225,7 @@ async function studiesPage() {
     <label>Goal<select id="nsGoal"><option value="tps">Throughput</option><option value="latency">Avg response time</option></select></label>
     <label>Target${info("Minimum hardware studies: the goal value to reach (e.g. 100000 for NOPM, or 5 for 5 ms average latency).")}<input id="nsTarget" type="number" step="any" placeholder="optional"></label></div>
     <div class="row" style="margin-top:10px"><button class="primary" id="nsCreate">Create</button><span class="muted">Add sessions from each session page, or start them with <code>tuning-agent session start --study "name"</code>.</span></div></div>
-  <div class="card tablewrap" style="margin-top:10px"><table><thead><tr><th>#</th><th>Study</th><th>Kind</th><th>Goal</th><th class="num">Target</th><th class="num">Environments</th><th class="num">Sessions</th><th>Created</th></tr></thead><tbody>
+  <div class="card tablewrap" style="margin-top:10px"><table data-opt="Goal|Target|Environments|Created"><thead><tr><th>#</th><th>Study</th><th>Kind</th><th>Goal</th><th class="num">Target</th><th class="num">Environments</th><th class="num">Sessions</th><th>Created</th></tr></thead><tbody>
   ${d.studies.length ? d.studies.map(st => `<tr class="click" data-href="#/study/${st.id}"><td class="muted">${st.id}</td><td><a href="#/study/${st.id}"><b>${esc(st.name)}</b></a></td><td>${STUDY_KINDS[st.kind] || esc(st.kind)}</td><td>${goalName(st.goal || "tps")}</td><td class="num">${st.target != null ? num(st.target) : "–"}</td><td class="num">${st.environments}</td><td class="num">${st.sessions}${st.active ? ` <span class="badge info">${st.active} active</span>` : ""}</td><td>${fmtTime(st.created)}</td></tr>`).join("")
     : '<tr><td colspan="8" class="muted">No studies yet.</td></tr>'}</tbody></table></div>`;
   $view.querySelectorAll("tr[data-href]").forEach(tr => tr.onclick = ev => { if (!ev.target.closest("a")) location.hash = tr.dataset.href; });
@@ -273,7 +273,7 @@ async function studyPage(id) {
   <div class="note" style="margin-bottom:12px">${verdict}</div>
   <div class="card" id="sbars"></div>
   <h2>Results by environment${info("Start = first run of each session (usually server defaults). Tuned = best production-safe configuration; with trade-offs = best configuration that gives up durability, replication or observability guarantees. Values are means of all runs of a configuration. Click a cost to edit it.")}</h2>
-  <div class="card tablewrap"><table><thead><tr><th>Environment</th><th>Hardware</th><th class="num">Cost / month</th><th>Session</th><th class="num">Start</th><th class="num">Tuned</th><th class="num">Gain</th><th class="num">With trade-offs</th><th class="num">Per CPU</th>${rows.some(x => x.cost) ? '<th class="num">Per $</th>' : ""}${rows.some(x => x.s.cost || x.s.env_cost) ? `<th class="num">Study cost${info("Machine cost: hourly price × time the machine existed (setup and data load included) when its lifetime is recorded, otherwise the session's wall time. Per-run costs: session pages and the CSV.")}</th>` : ""}${st.target != null ? "<th>Target</th>" : ""}<th></th></tr></thead><tbody>
+  <div class="card tablewrap"><table data-opt="Hardware|Cost / month|Start|With trade-offs|Per CPU|Per $|Study cost"><thead><tr><th>Environment</th><th>Hardware</th><th class="num">Cost / month</th><th>Session</th><th class="num">Start</th><th class="num">Tuned</th><th class="num">Gain</th><th class="num">With trade-offs</th><th class="num">Per CPU</th>${rows.some(x => x.cost) ? '<th class="num">Per $</th>' : ""}${rows.some(x => x.s.cost || x.s.env_cost) ? `<th class="num">Study cost${info("Machine cost: hourly price × time the machine existed (setup and data load included) when its lifetime is recorded, otherwise the session's wall time. Per-run costs: session pages and the CSV.")}</th>` : ""}${st.target != null ? "<th>Target</th>" : ""}<th></th></tr></thead><tbody>
   ${rows.length ? rows.map(x => `<tr><td><a href="#/env/${x.e.id}"><b>${esc(x.e.name)}</b></a></td><td>${x.e.cpus || "?"} CPU · ${bytes(x.e.ram_bytes)} · ${x.e.disk}</td>
     <td class="num"><a href="#" class="cost" data-env="${x.e.id}" data-cost="${x.cost != null ? x.cost : ""}">${x.cost ? "$" + Math.round(x.cost) : "set"}</a></td>
     <td><a href="#/session/${x.s.id}">#${x.s.id} ${esc(x.s.name)}</a> ${x.s.status === "active" ? "" : statusBadge(x.s.status)}${activityLine(x.s.activity)}</td><td class="num">${num(x.first)}</td><td class="num"><b>${num(x.bs)}</b></td>
@@ -497,7 +497,7 @@ async function envPage(id) {
   <div class="card" style="margin-top:10px"><details><summary style="margin:0">Current agent-applied configuration (${Object.keys((f.agent || {}).managed || {}).length} settings)${info("The settings the tuning-agent currently enforces on this server: MySQL variables written to its own option file (shown below) and operating-system settings. Everything not listed is the server default or comes from your own option files. As of the agent's last report.")}</summary>${Object.keys((f.agent || {}).managed || {}).length ? `<p class="muted" style="margin:0 0 6px">${esc((f.agent || {}).cnf_path || "")} · restarts ${(f.agent || {}).allow_restart === false ? "disabled" : "allowed"}</p>${configBlocks(f.agent.managed)}` : '<span class="muted">None yet: <code>tuning-agent baseline --apply</code> writes the first set.</span>'}</details></div>
   <div class="row"><h2>Live metrics</h2><span class="spacer"></span><select id="range" style="width:auto"><option value="900">15 min</option><option value="3600" selected>1 hour</option><option value="21600">6 hours</option><option value="86400">24 hours</option></select></div>
   <div id="live"></div>
-  <h2>Tuning sessions</h2><div class="card tablewrap"><table><thead><tr><th>#</th><th>Session</th><th>Goal</th><th>Policy</th><th>Status</th><th class="num">Runs</th><th class="num">First run</th><th class="num">Best</th><th class="num">Best gain</th><th>Started</th></tr></thead><tbody id="sess"></tbody></table></div>
+  <h2>Tuning sessions</h2><div class="card tablewrap"><table data-opt="Goal|Policy|Runs|First run|Best|Started"><thead><tr><th>#</th><th>Session</th><th>Goal</th><th>Policy</th><th>Status</th><th class="num">Runs</th><th class="num">First run</th><th class="num">Best</th><th class="num">Best gain</th><th>Started</th></tr></thead><tbody id="sess"></tbody></table></div>
   <h2>Recent activity</h2><div class="card" id="events"></div>`;
   const tb = document.getElementById("sess");
   if (!d.sessions.length) tb.innerHTML = `<tr><td colspan="10" class="muted">No sessions yet. Start one with <code>tuning-agent session start --goal tps</code>.</td></tr>`;
@@ -674,7 +674,7 @@ async function sessionPage(id) {
    ${cfgTile("Best safe", bestSafe, firstCfg, lower, s.goal, false, s)}
    ${bestTrade ? cfgTile("Best with trade-offs", bestTrade, firstCfg, lower, s.goal, true, s) : ""}</div>
   <div class="card" style="margin-top:14px" id="bars"></div>
-  <h2>Runs</h2><div class="card tablewrap"><table class="runs"><thead><tr><th>#</th><th>Run</th><th>Changes</th><th class="num">${goalUnit(s.goal, s) === "ms" ? "Avg ms" : "Goal"}</th><th class="num">Δ parent${info("Change of the goal vs the mean of the parent configuration (the configuration this run was changed from). Coloured only beyond the noise threshold.")}</th><th class="num">vs start${info("Change vs the calibrated starting configuration. Bold: the best configuration known at that point of the session (it took the lead by beating the previous best beyond the noise threshold). Changes shown struck through were rolled back afterwards; ↩ marks settings undone before the run.")}</th><th>Verdict</th>
+  <h2>Runs</h2><div class="card tablewrap"><table class="runs" data-opt="TPS|Avg ms|CPU ms/trx|IOs/trx|Time"><thead><tr><th>#</th><th>Run</th><th>Changes</th><th class="num">${goalUnit(s.goal, s) === "ms" ? "Avg ms" : "Goal"}</th><th class="num">Δ parent${info("Change of the goal vs the mean of the parent configuration (the configuration this run was changed from). Coloured only beyond the noise threshold.")}</th><th class="num">vs start${info("Change vs the calibrated starting configuration. Bold: the best configuration known at that point of the session (it took the lead by beating the previous best beyond the noise threshold). Changes shown struck through were rolled back afterwards; ↩ marks settings undone before the run.")}</th><th>Verdict</th>
    <th class="num">TPS</th><th class="num">Avg ms</th><th class="num">CPU ms/trx</th><th class="num">IOs/trx</th><th class="num">Time</th></tr></thead><tbody id="runs"></tbody></table></div>
   <h2>Experiments${info("Your own experiments: try a set of settings, or sweep one variable over several values (e.g. buffer pool 1G, 2G, 3G). They run before the tuner's own ideas, each value measured from the same parent configuration with the session's benchmark. The best value is kept only if it beats the parent beyond the noise threshold.")}</h2><div class="card" id="exps"></div>
   <h2>Latest recommendations</h2><div class="card" id="recs"></div>
@@ -730,9 +730,13 @@ async function sessionPage(id) {
     const isUndo = c => c.source === "rollback" || (lead != null && String((r.managed || {})[c.variable]) === String(lead[c.variable]));
     const own = chs.filter(c => !isUndo(c)), undo = chs.filter(isUndo);
     const line = c => {
-      const f = fate(r, c), txt = `${esc(c.variable.replace(/^innodb_/, ""))}=${esc(shortVal(c.variable, c.new))}`;
-      return f.kept ? `<span class="mono" data-tip="${esc(c.variable + "=" + val(c.variable, c.new))} · ${f.pending ? "in effect now" : "kept: still in effect in the later runs"}">${txt}</span>`
-        : `<span class="mono rolled" data-tip="${esc(c.variable + "=" + val(c.variable, c.new))} · rolled back before run #${f.by}">${txt}</span>`;
+      // from -> to, so the direction of a numeric change is visible at a glance
+      const f = fate(r, c), name = esc(c.variable.replace(/^innodb_/, ""));
+      const from = c.old != null && c.old !== "" ? esc(shortVal(c.variable, c.old)) : null, to = esc(shortVal(c.variable, c.new));
+      const txt = `${name} ${from != null && from !== to ? `<span class="muted">${from}</span> → ` : "= "}<b>${to}</b>`;
+      const tip = `${c.variable}: ${c.old != null ? val(c.variable, c.old) : "?"} → ${val(c.variable, c.new)}`;
+      return f.kept ? `<span class="mono chg-line" data-tip="${esc(tip)} · ${f.pending ? "in effect now" : "kept: still in effect in the later runs"}">${txt}</span>`
+        : `<span class="mono chg-line rolled" data-tip="${esc(tip)} · rolled back before run #${f.by}">${txt} <span class="undo-tag">undone #${f.by}</span></span>`;
     };
     const parts = [];
     if (own.length > 3) {
@@ -1102,6 +1106,15 @@ function renderInputs(el, r) {
 
 // ------------------------------------------------------------------ router
 async function loadMe() { const d = await api("/api/me", { allow401: true }); ME = d.user; if (d.server) SERVER = d.server; }
+function markOptionalColumns(root) {
+  root.querySelectorAll("table[data-opt]").forEach(t => {
+    const opt = t.dataset.opt.split("|");
+    const idx = [...t.querySelectorAll("thead th")].map((th, i) => opt.some(o => th.textContent.trim().startsWith(o)) ? i : -1).filter(i => i >= 0);
+    if (!idx.length) return;
+    t.querySelectorAll("tr").forEach(tr => idx.forEach(i => { const c = tr.children[i]; if (c && !c.hasAttribute("colspan")) c.classList.add("opt"); }));
+  });
+}
+new MutationObserver(() => markOptionalColumns(document.getElementById("view") || document.body)).observe(document.getElementById("view") || document.body, { childList: true, subtree: true });
 async function route() {
   clearTimers();
   document.getElementById("tip").hidden = true;
