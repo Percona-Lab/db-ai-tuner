@@ -9,10 +9,10 @@ import tarfile
 import time
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, llm, store
+from . import auth, llm, status, store
 
 APP_DIR = os.path.dirname(__file__)
 AGENT_DIR = os.environ.get("TUNER_AGENT_DIR", os.path.join(APP_DIR, "..", "..", "agent"))
@@ -37,6 +37,34 @@ def share_scope(sh):
 
 @app.middleware("http")
 async def share_guard(request: Request, call_next):
+    return await _share_guard(request, call_next)
+
+
+@app.middleware("http")
+async def timing(request: Request, call_next):
+    """Request timings for /status (route templates, not concrete URLs)."""
+    t0 = time.time()
+    resp = await call_next(request)
+    route = getattr(request.scope.get("route"), "path", None) or ("/static/*" if request.url.path.startswith("/static/") else "other")
+    status.record(request.method, route, (time.time() - t0) * 1000, resp.status_code)
+    return resp
+
+
+status.start()
+
+
+@app.get("/status", response_class=HTMLResponse)
+def server_status(h: int = 24):
+    """Public health page: host trends, database probes, request timings (no user data)."""
+    return HTMLResponse(status.html(max(1, min(int(h), 168))), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/status.json")
+def server_status_json(h: int = 24):
+    return status.report(max(1, min(int(h), 168)))
+
+
+async def _share_guard(request: Request, call_next):
     """Requests with a share token: GET only, only the pages a shared object needs, only inside its scope."""
     if request.headers.get("x-share-token") and request.url.path.startswith("/api/"):
         sh = auth.share_of(request)
