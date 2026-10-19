@@ -18,5 +18,6 @@ tuning-agent session start --goal $GOAL --policy benchmark ${SCOPE:+--scope $SCO
 tuning-agent measure run --bench $PROF --label "server defaults" || exit 1
 tuning-agent baseline --apply $BASELINE_ARGS || exit 1  # e.g. BASELINE_ARGS="--reserve-mem 1.5G" with a co-located client
 tuning-agent autotune --bench $PROF --calibrate ${CALIBRATE:-3} --max-runs $MAX --tradeoffs || exit 1
+[ -n "$POST" ] && { $POST "$PROF" || exit 1; }  # extra phases in the same session (e.g. queued experiment series)
 tuning-agent session stop
 echo SESSIONDONE
