@@ -755,3 +755,22 @@ def test_apply_failure_is_a_failed_experiment():
     from tuning_agent import cli
     src = inspect.getsource(cli._apply_and_record)
     assert "except Exception" in src and '"rolled_back": True' in src
+
+
+def test_experiment_run_ignores_restores_applied_before_it():
+    # SATA validation: after a whole-config try (#82, kept), the script restored each variable with `tuning-agent apply`;
+    # those restores were counted as part of #83 and it was compared with #82 instead of the baseline
+    base = {"innodb_io_capacity": "2000"}
+    mark = {"innodb_io_capacity": "10000", "innodb_max_dirty_pages_pct_lwm": "80"}
+    hist = [{"seq": 2, "label": "baseline (1/3)", "managed": base, "goal_value": 92000, "verdict": "improved", "changes": []},
+            {"seq": 3, "label": "baseline (2/3)", "managed": base, "goal_value": 92500, "verdict": "repeat", "changes": []},
+            {"seq": 12, "label": "exp#82 combo", "managed": mark, "goal_value": 100000, "verdict": "improved",
+             "changes": [{"variable": "innodb_io_capacity", "old": "2000", "new": "10000", "source": "exp:82"},
+                         {"variable": "innodb_max_dirty_pages_pct_lwm", "old": None, "new": "80", "source": "exp:82"}]}]
+    run = {"seq": 15, "label": "exp#83 innodb_change_buffering=none (1/2)", "managed": dict(base, innodb_change_buffering="none"),
+           "goal_value": 92900, "changes": [
+               {"variable": "innodb_io_capacity", "old": "10000", "new": "2000", "source": "cli"},
+               {"variable": "innodb_max_dirty_pages_pct_lwm", "old": "80", "new": None, "source": "cli"},
+               {"variable": "innodb_change_buffering", "old": "all", "new": "none", "source": "exp:83"}]}
+    v, ev = evaluate.verdict(run, hist, "tps", {"noise_pct": 0.84, "runs": [2, 3]})
+    assert ev["parent_runs"] == [2, 3] and v == "neutral", (v, ev.get("parent_runs"), ev.get("goal_delta_pct"))

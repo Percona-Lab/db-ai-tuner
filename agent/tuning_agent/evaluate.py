@@ -387,8 +387,17 @@ def confirm_pass(runs, goal, noise):
 
 def _is_revert(change, run):
     """A change that returns a setting to an earlier configuration rather than being part of this run's experiment:
-    explicit rollbacks, reverts merged into the next experiment, and a sweep's restore applied with a later run."""
+    explicit rollbacks, reverts merged into the next experiment, and a sweep's restore applied with a later run.
+    For a run that belongs to a known experiment (label 'exp#N ...' or a rule id), only that experiment's own changes
+    count; anything else applied before it (restores, manual applies) is context, not the experiment."""
     src = str(change.get("source") or "")
+    label = str(run.get("label") or "")
+    m = re.match(r"exp#(\d+) ", label)
+    if m:
+        return src != f"exp:{m.group(1)}"
+    rid = label.split(" ")[0]
+    if rid and any(str(c.get("source") or "") == f"rec:{rid}" for c in run.get("changes") or []):
+        return src != f"rec:{rid}"
     if src == "rollback" or re.match(r"rec:(rollback|revert)-to-run", src):
         return True
     if src.startswith("exp:"):  # a sweep's own points carry its label (exp#N ...); anything else is its restore
