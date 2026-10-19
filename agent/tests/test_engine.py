@@ -602,3 +602,18 @@ def test_profile_has_all_attributes():
     for attr in ("probe", "requires", "data_state", "adaptive", "max_duration", "season_hours", "timeout", "reset", "metrics"):
         assert hasattr(b, attr), attr
     assert b.probe is True and b.describe()["command"] == "sysbench --time=450 run"
+
+
+def test_io_bound_kinds():
+    from tuning_agent.mechanisms import relevance
+    base = {"cpu_busy": 30, "cpu_iowait": 25, "disk_util": 95, "disk_await_ms": 3, "tps": 900, "duration_s": 600, "threads_running_avg": 12}
+    read = dict(base, bp_disk_reads=4000, bp_hit_pct=93, disk_r_iops=5000, disk_w_iops=900, bp_wait_free=0, checkpoint_age_pct_max=30)
+    flush = dict(base, bp_disk_reads=300, bp_hit_pct=99.5, disk_r_iops=400, disk_w_iops=6000, bp_wait_free=40, checkpoint_age_pct_max=85,
+                 bp_dirty_pct_avg=88)
+    ctx = lambda s: {"summary": s, "inputs": {}, "hw": {"cpus": 8, "ram_bytes": 16 * GiB}, "variables": dict(VARS)}
+    dr, df = engine.diagnose(ctx(read)), engine.diagnose(ctx(flush))
+    assert "io-read" in {d["type"] for d in dr} and "io-flush" not in {d["type"] for d in dr}
+    assert "io-flush" in {d["type"] for d in df} and "io-read" not in {d["type"] for d in df}
+    # read-bound: buffer pool growth is relevant, LRU depth (flushing) is not; flush-bound: the other way round
+    assert relevance("bp-grow", dr)[0] > 0 and relevance("lru-depth", dr)[0] == 0
+    assert relevance("lru-depth", df)[0] > 0 and relevance("read-ahead", df)[0] == 0

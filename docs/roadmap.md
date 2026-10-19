@@ -56,3 +56,18 @@ evidence from other classes counts half and never demotes a change to the end of
 
 To do in Battery 2: run the contention-sensitive workloads (O2/O3-style sysbench, HammerDB high VU) on the 16+ core
 machines as well, at 64 and 1024 connections, and report each rule's outcome per machine class x concurrency class.
+
+## Three kinds of I/O-bound InnoDB (user guidance, 2026-10-19)
+
+An I/O-bound InnoDB workload is bound by one of: **commits** (redo fsync per transaction), **reads** (working set
+misses the buffer pool) or **flushing dirty pages** (page cleaners cannot keep up: free-page waits, checkpoint age,
+dirty pages at the limit). Each calls for different experiments.
+
+Done: diagnoses `commit`, `io-read` and `io-flush`; rules carry the kind they address (mechanisms.py), and once a kind
+is diagnosed, rules that only address generic "io" stop counting as relevant (bp-grow / read-ahead / read threads for
+reads; io_capacity / LRU depth / redo size / dirty thresholds / doublewrite for flushing; trx_commit / log writer /
+fdatasync for commits).
+
+Next: report the kind per run on the run page and per study; design Battery 3 I/O tests so each kind is represented
+(e.g. sysbench read-only on 10x RAM = read-bound; update-heavy on 2-3x RAM with small redo = flush-bound;
+trx_commit=1 small transactions on slow fsync = commit-bound).

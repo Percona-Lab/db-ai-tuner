@@ -318,6 +318,8 @@ def analyze_window(a, b, samples):
         "p99_latency_ms": _percentile_from_hist(a.get("hist"), b.get("hist"), 0.99),
         "bp_hit_pct": db_rates.get("bp_hit_pct"),
         "bp_disk_reads": db_rates.get("bp_disk_reads"),
+        "bp_wait_free": db_rates.get("bp_wait_free"),  # user threads waiting for a clean free page (flush-bound)
+        "bp_pages_flushed": db_rates.get("bp_pages_flushed"),
         "redo_mbs": db_rates.get("redo_mbs"),
         "data_fsyncs": db_rates.get("data_fsyncs"),
         "row_lock_waits": db_rates.get("row_lock_waits"),

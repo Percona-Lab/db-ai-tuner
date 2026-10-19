@@ -6,16 +6,16 @@ diagnosis types from engine.diagnose().
 """
 
 MECHANISMS = {
-    "bp-grow": (("memory", "io"), "More pages cached: fewer disk reads."),
+    "bp-grow": (("memory", "io", "io-read"), "More pages cached: fewer disk reads."),
     "bp-shrink": (("swap", "memory-pressure", "oom"), "Gives memory back to the OS: no swapping/reclaim stalls."),
     "bp-instances": (("concurrency", "cpu", "cpu-pressure"), "Splits buffer pool mutexes."),
-    "redo-grow": (("redo", "io"), "Fewer forced checkpoints; pages absorb more changes before being written."),
+    "redo-grow": (("redo", "io", "io-flush"), "Fewer forced checkpoints; pages absorb more changes before being written."),
     "log-buffer": (("redo", "commit"), "Fewer waits for redo log buffer space."),
-    "io-capacity-up": (("redo", "io"), "Page cleaners flush harder: keeps redo free."),
-    "io-capacity-down": (("io",), "Fewer background writes competing with foreground I/O."),
-    "lru-depth": (("io", "memory"), "More free pages ready: no single-page flushes in user threads."),
-    "flush-neighbors": (("io",), "No extra neighbour page writes."),
-    "o-direct": (("io", "memory"), "No double buffering in the OS page cache."),
+    "io-capacity-up": (("redo", "io", "io-flush"), "Page cleaners flush harder: keeps redo free."),
+    "io-capacity-down": (("io", "io-read"), "Fewer background writes competing with foreground I/O."),
+    "lru-depth": (("io", "io-flush"), "More free pages ready: no single-page flushes in user threads."),
+    "flush-neighbors": (("io", "io-flush"), "No extra neighbour page writes."),
+    "o-direct": (("io", "memory", "io-read"), "No double buffering in the OS page cache."),
     "ahi-on": (("cpu", "cpu-pressure"), "Hash lookups skip B-tree descents for hot point reads."),
     "ahi-off": (("concurrency", "cpu"), "Removes AHI latch contention."),
     "log-writer-threads-off": (("cpu", "cpu-pressure", "commit"), "No dedicated log threads competing for few CPUs."),
@@ -30,14 +30,14 @@ MECHANISMS = {
     "sort-buffer": (("io", "cpu"), "Sorts finish in memory."),
     "sort-buffer-olap": (("io", "cpu"), "Large analytical sorts finish in memory."),
     "join-buffer": (("io", "cpu"), "Hash joins build in memory instead of spilling."),
-    "read-ahead": (("io",), "Larger sequential reads for scans."),
+    "read-ahead": (("io", "io-read"), "Larger sequential reads for scans."),
     "subquery-to-derived": (("cpu", "io"), "Correlated subqueries computed once instead of per row."),
-    "bka-mrr": (("io",), "Index lookups fetched in primary-key order."),
+    "bka-mrr": (("io", "io-read"), "Index lookups fetched in primary-key order."),
     "group-commit-delay": (("commit",), "More transactions share one binlog fsync."),
-    "change-buffer": (("io",), "Secondary index updates without reading the page."),
+    "change-buffer": (("io", "io-read"), "Secondary index updates without reading the page."),
     "trx-commit-2": (("commit", "io"), "No fsync per commit."),
     "sync-binlog": (("commit", "io"), "No binlog fsync per commit group."),
-    "doublewrite-off": (("io", "commit"), "Pages written once instead of twice."),
+    "doublewrite-off": (("io", "commit", "io-flush"), "Pages written once instead of twice."),
     "binlog-off": (("commit", "io", "cpu"), "No binary log writes, fsyncs or two-phase commit."),
     "ps-off": (("cpu", "cpu-pressure", "cpu-pfs"), "No instrumentation overhead."),
     "binlog-minimal": (("io",), "Smaller binary log writes for updates (helps only when binlog I/O volume matters)."),
@@ -53,11 +53,11 @@ MECHANISMS = {
     "os-autogroup": (("cpu-pressure", "cpu", "sched-delay"), "mysqld threads compete for CPU individually, not as one group."),
     "os-aio": (("io",), "Native async I/O stays available."),
     "ps-lite": (("cpu", "cpu-pressure", "cpu-pfs"), "Less instrumentation work per statement and allocation."),
-    "sweep-dirty-lwm": (("io", "redo", "commit"), "Dirty pages absorb more updates before being written, or flushing starts earlier."),
-    "sweep-lru-depth": (("io", "memory"), "Free pages ready for user threads (no single-page flushes)."),
-    "sweep-read-io-threads": (("io", "memory"), "More asynchronous reads in flight."),
+    "sweep-dirty-lwm": (("io", "redo", "commit", "io-flush"), "Dirty pages absorb more updates before being written, or flushing starts earlier."),
+    "sweep-lru-depth": (("io", "io-flush"), "Free pages ready for user threads (no single-page flushes)."),
+    "sweep-read-io-threads": (("io", "memory", "io-read"), "More asynchronous reads in flight."),
     "sweep-purge-threads": (("locks", "io"), "Purge keeps up with undo history."),
-    "flush-sync-off": (("io", "redo"), "Reads are not starved during sync flushing."),
+    "flush-sync-off": (("io", "redo", "io-flush", "io-read"), "Reads are not starved during sync flushing."),
     "sweep-bp-instances": (("concurrency", "cpu"), "Less buffer pool mutex contention."),
     "purge-lag": (("locks", "io", "memory"), "Bounded history: shorter version chains for readers."),
     "sweep-spin-wait-delay": (("cpu-spin", "concurrency"), "Less CPU burned spinning, or faster wake-ups."),
@@ -76,8 +76,8 @@ MECHANISMS = {
     "malloc-mimalloc": (("cpu", "concurrency"), "Allocator variant."),
     "malloc-glibc-tuned": (("memory", "cpu"), "Allocator variant."),
     "sweep-bp": (("memory", "io"), "More pages cached: fewer disk reads."),
-    "sweep-redo": (("redo", "io"), "Fewer forced checkpoints."),
-    "sweep-io-capacity": (("io", "redo"), "Background flushing matched to the storage."),
+    "sweep-redo": (("redo", "io", "io-flush"), "Fewer forced checkpoints."),
+    "sweep-io-capacity": (("io", "redo", "io-flush"), "Background flushing matched to the storage."),
     "sweep-thread-concurrency": (("concurrency", "cpu-pressure"), "Caps threads inside InnoDB."),
     "net-listen-backlog": (("connections",), "Bursts of connects queue instead of being dropped."),
     "net-syn-backlog": (("connections",), "Half-open connections queue instead of being dropped."),
@@ -105,7 +105,12 @@ def relevance(item_id, diagnosis):
     m = MECHANISMS.get(item_id)
     if not m:
         return None, []
-    relieves = m[0]
+    relieves = set(m[0])
+    # the generic "io" match only counts when the kind of I/O bottleneck is unknown: once the diagnosis says
+    # read-bound, flush-bound or commit-bound, a change must address that kind to be relevant
+    kinds = {d["type"] for d in diagnosis or []} & {"io-read", "io-flush", "commit"}
+    if kinds and "io" in relieves and not relieves & kinds:
+        relieves.discard("io")
     matched = [(d["type"], SEVERITY.get(d.get("severity"), 1)) for d in diagnosis or [] if d["type"] in relieves]
     if not matched:
         return 0, []

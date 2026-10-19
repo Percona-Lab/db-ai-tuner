@@ -154,6 +154,33 @@ def diagnose(ctx):
     if (s.get("checkpoint_age_pct_max") or 0) >= 70:
         add("redo", "high", f"Redo log nearly full (checkpoint age peaked at {s['checkpoint_age_pct_max']:.0f}% of capacity): "
             "forced synchronous flushing stalls writes.", {"checkpoint_age_pct_max": s["checkpoint_age_pct_max"], "redo_mbs": s.get("redo_mbs")})
+    # I/O-bound InnoDB comes in three kinds that need different experiments: bound by reads (working set misses
+    # memory), by flushing dirty pages (free-page waits, checkpoint pressure, dirty pages at the limit) or by commits
+    # (redo fsync per transaction, the "commit" diagnosis below)
+    r_iops, w_iops = s.get("disk_r_iops") or 0, s.get("disk_w_iops") or 0
+    io_tot = r_iops + w_iops
+    wait_free = s.get("bp_wait_free") or 0
+    ck_now = s.get("checkpoint_age_pct_max") or 0
+    dirty = s.get("bp_dirty_pct_avg") or 0
+    try:
+        max_dirty = float((ctx.get("variables") or {}).get("innodb_max_dirty_pages_pct") or 90)
+    except (TypeError, ValueError):
+        max_dirty = 90.0
+    reads = s.get("bp_disk_reads") or 0
+    if reads >= 100 and io_tot and r_iops >= 0.6 * io_tot:
+        add("io-read", "high" if (s.get("bp_hit_pct") or 100) < 95 else "medium",
+            f"Read-bound I/O: {reads:.0f} page reads/s from disk, reads are {100 * r_iops / io_tot:.0f}% of disk operations. "
+            "More memory for pages and a faster read path help; flushing settings matter little.",
+            {"bp_disk_reads": reads, "disk_r_iops": r_iops, "disk_w_iops": w_iops, "bp_hit_pct": s.get("bp_hit_pct")})
+    if wait_free >= 1 or ck_now >= 75 or (dirty >= 0.9 * max_dirty and io_tot and w_iops >= 0.5 * io_tot):
+        why = [x for x in (f"{wait_free:.0f} free-page waits/s" if wait_free >= 1 else "",
+                           f"checkpoint age {ck_now:.0f}% of the redo capacity" if ck_now >= 75 else "",
+                           f"dirty pages {dirty:.0f}% (limit {max_dirty:.0f}%)" if dirty >= 0.9 * max_dirty else "") if x]
+        add("io-flush", "high" if wait_free >= 10 or ck_now >= 90 else "medium",
+            f"Flush-bound: page cleaners cannot keep up ({', '.join(why)}). Flushing capacity, LRU depth, redo size and dirty "
+            "page thresholds matter; read settings do not.",
+            {"bp_wait_free": wait_free, "checkpoint_age_pct_max": ck_now, "bp_dirty_pct_avg": dirty, "innodb_max_dirty_pages_pct": max_dirty,
+             "disk_w_iops": w_iops, "bp_pages_flushed": s.get("bp_pages_flushed")})
     tps = s.get("tps") or 0
     fsyncs = s.get("data_fsyncs") or 0
     if tps > 0 and fsyncs / tps > 0.5 and s.get("disk_await_ms", 0) > 0.5:
