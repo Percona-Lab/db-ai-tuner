@@ -63,6 +63,9 @@ class Profile:
         self.adaptive = b.get("adaptive_duration", "auto").lower() not in ("off", "false", "no", "0")
         self.max_duration = int(b["max_duration"]) if b.get("max_duration") else None
         self.base_duration = self.duration
+        # probe = auto (calibration + after unusual steal; default) | always | false
+        pv = b.get("probe", "auto").lower()
+        self.probe = "always" if pv == "always" else (pv in ("auto", "true", "yes", "1"))
 
     PLACEHOLDERS = ("{duration}", "{warmup}", "{total}", "{duration_min}", "{warmup_min}", "{total_min}")
 
@@ -78,9 +81,6 @@ class Profile:
         for k, v in vals.items():
             cmd = cmd.replace("{" + k + "}", str(v))
         return cmd
-        # probe = auto (calibration + after unusual steal; default) | always | false
-        pv = b.get("probe", "auto").lower()
-        self.probe = "always" if pv == "always" else (pv in ("auto", "true", "yes", "1"))
 
     def describe(self):
         return {"name": self.name, "profile": self.path, "reset": self.reset, "run": self.run, "warmup": self.warmup,

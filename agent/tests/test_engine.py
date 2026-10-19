@@ -590,3 +590,15 @@ def test_llm_pseudo_variables_accepted():
     items, rej = llmassist.sanitize([{"title": "lite", "changes": [{"variable": "ps:profile", "value": "lite"}]},
                                      {"title": "bad", "changes": [{"variable": "ps:profile", "value": "off"}]}], ctx, {"items": []}, "m")
     assert [i["changes"][0]["proposed"] for i in items] == ["lite"] and "accepts" in rej[0]["reason"]
+
+
+def test_profile_has_all_attributes():
+    # a profile must carry every attribute _bench_run uses (a misplaced edit once dropped `probe`)
+    import tempfile
+    from tuning_agent import bench
+    p = os.path.join(tempfile.mkdtemp(), "b.ini")
+    open(p, "w").write("[bench]\nname=x\nrun=sysbench --time={total} run\nwarmup=120\nduration=300\n\n[requires]\nmax_connections=1100\n")
+    b = bench.Profile(p)
+    for attr in ("probe", "requires", "data_state", "adaptive", "max_duration", "season_hours", "timeout", "reset", "metrics"):
+        assert hasattr(b, attr), attr
+    assert b.probe is True and b.describe()["command"] == "sysbench --time=450 run"
