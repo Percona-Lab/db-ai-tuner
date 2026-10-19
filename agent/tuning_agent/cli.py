@@ -1112,12 +1112,14 @@ def _engine_ctx(c, sess):
     try:
         from .engine import classify_workload
         wl = classify_workload(last.get("summary"), last.get("inputs")).get("type") if last.get("summary") else None
-        q = f"/experience?cpus={os.cpu_count()}&exclude_session={sess['id']}" + (f"&workload={wl}" if wl else "")
+        conns = (last.get("summary") or {}).get("threads_connected_avg")
+        q = (f"/experience?cpus={os.cpu_count()}&exclude_session={sess['id']}" + (f"&workload={wl}" if wl else "")
+             + (f"&conns={int(conns)}" if conns else ""))
         ex = c.client.get(q)
         experience = ex.get("experience", {})
         for rid, e in (ex.get("experience_all") or {}).items():  # thin same-class evidence: fall back to all sessions
             if e.get("n", 0) >= 3 and (experience.get(rid) or {}).get("n", 0) < 2:
-                experience[rid] = dict(e, scope="all workloads / machine sizes")
+                experience[rid] = dict(e, scope="other workloads / machine sizes / concurrency")
     except Exception as e:  # experience is a hint; never block a recommendation on it
         log(f"note: no experience data ({e})")
     b = (last.get("inputs") or {}).get("bench") or {}

@@ -43,3 +43,16 @@ Evaluate before building: in Battery 1, count sessions where (a) the diagnosis w
 mechanisms were tried before one helped, e.g. the `innodb_thread_concurrency` sweep (20 runs, median 0%) and spin-loop
 experiments (mostly noise). If that wasted budget exceeds the cost of a diagnostic run, build it, starting with latch
 contention and off-CPU profiling.
+
+## Results depend on machine class and concurrency (noted 2026-10-19)
+
+Most experiments so far ran on 2-8 vCPU VMs at 4-64 client threads, where latch and lock contention stays mostly hidden.
+Contention-related changes (thread pool, spin settings, `innodb_thread_concurrency`, buffer pool instances, log writer
+threads, CPU / IRQ affinity, allocators) may behave differently on high-core servers with hundreds or thousands of
+connections. Conclusions from the 2026-10-18 review (e.g. "thread pool consistently harmful") hold for that range only.
+
+Done: the experience prior now matches workload, CPU class **and** concurrency class (1-16 / 17-128 / 129+ connections);
+evidence from other classes counts half and never demotes a change to the end of the queue.
+
+To do in Battery 2: run the contention-sensitive workloads (O2/O3-style sysbench, HammerDB high VU) on the 16+ core
+machines as well, at 64 and 1024 connections, and report each rule's outcome per machine class x concurrency class.

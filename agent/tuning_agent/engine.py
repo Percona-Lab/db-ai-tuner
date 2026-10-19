@@ -1257,10 +1257,13 @@ def run_engine(ctx):
             e = it["experience"]
             w = 0.5 if e.get("scope") else 1.0  # evidence from other workloads / machine sizes counts half
             sc += round(w * 3 * (e.get("wins", 0) - e.get("losses", 0)) / max(e["n"], 1) * min(e["n"], 3) / 3, 2)
-            if e.get("losses", 0) >= 2 and not e.get("wins"):
+            # strong penalties only from comparable evidence (same workload, CPU class and concurrency): contention-related
+            # changes (thread pool, spin settings, concurrency limits) that lose on small low-concurrency boxes can win
+            # on many cores with 1000+ connections
+            if e.get("losses", 0) >= 2 and not e.get("wins") and not e.get("scope"):
                 it["confidence"] = min(it["confidence"], 1)
-            if e.get("n", 0) >= 5 and e.get("losses", 0) >= 0.7 * e["n"] and not e.get("wins"):
-                sc -= 4  # consistently harmful everywhere so far (e.g. the thread pool on these benchmarks): try it last
+            if e.get("n", 0) >= 5 and e.get("losses", 0) >= 0.7 * e["n"] and not e.get("wins") and not e.get("scope"):
+                sc -= 4  # consistently harmful in comparable sessions (e.g. the thread pool at low concurrency): try it last
         it["score"] = 100 if it.get("priority") else sc
     items.sort(key=lambda i: (i["safety"] == "trade-off" and i["kind"] != "revert", -i["score"]))
     for n, it in enumerate(items, 1):

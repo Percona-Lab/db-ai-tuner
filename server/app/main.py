@@ -828,19 +828,26 @@ def cpu_class(n):
     return "1-2" if n <= 2 else "3-8" if n <= 8 else "9-32" if n <= 32 else "33+"
 
 
+def conc_class(n):
+    """Client concurrency class: contention effects (latches, thread pool, spin settings) change with it."""
+    n = int(n or 0)
+    return "1-16" if n <= 16 else "17-128" if n <= 128 else "129+"
+
+
 @app.get("/api/v1/agent/experience")
-def agent_experience(workload: str = None, cpus: int = None, exclude_session: int = None, key=Depends(auth.agent_key)):
-    """Outcomes of each recommendation in this account's earlier sessions with a similar workload and CPU class."""
+def agent_experience(workload: str = None, cpus: int = None, conns: int = None, exclude_session: int = None, key=Depends(auth.agent_key)):
+    """Outcomes of each recommendation in this account's earlier sessions with a similar workload, CPU class and concurrency."""
     rows = store.q(
         "SELECT r.changes, r.verdict, r.evaluation, json_extract(r.inputs, '$.workload.type') AS wl, "
-        "json_extract(e.facts, '$.hardware.cpus') AS cpus, r.session_id FROM runs r JOIN tsessions s ON s.id=r.session_id "
+        "json_extract(e.facts, '$.hardware.cpus') AS cpus, json_extract(r.summary, '$.threads_connected_avg') AS conns, r.session_id FROM runs r JOIN tsessions s ON s.id=r.session_id "
         "JOIN environments e ON e.id=s.env_id WHERE e.user_id=? AND r.status='done' AND r.verdict IN "
         "('improved','efficiency-gain','neutral','regressed','efficiency-loss')", (key["user_id"],))
     out, wide = {}, {}
     for r in rows:
         if exclude_session and r["session_id"] == exclude_session:
             continue
-        similar = not (workload and r["wl"] and r["wl"] != workload) and not (cpus and r["cpus"] and cpu_class(r["cpus"]) != cpu_class(cpus))
+        similar = (not (workload and r["wl"] and r["wl"] != workload) and not (cpus and r["cpus"] and cpu_class(r["cpus"]) != cpu_class(cpus))
+                   and not (conns and r["conns"] and conc_class(r["conns"]) != conc_class(conns)))
         _experience_add(wide, r)  # every workload and machine size: a weaker prior when similar sessions are few
         if not similar:
             continue
@@ -849,7 +856,8 @@ def agent_experience(workload: str = None, cpus: int = None, exclude_session: in
         for e in d.values():
             x = e.pop("deltas")
             e["mean_delta_pct"] = round(sum(x) / len(x), 2) if x else None
-    return {"workload": workload, "cpu_class": cpu_class(cpus) if cpus else None, "experience": out, "experience_all": wide}
+    return {"workload": workload, "cpu_class": cpu_class(cpus) if cpus else None, "concurrency_class": conc_class(conns) if conns else None,
+            "experience": out, "experience_all": wide}
 
 
 def _experience_add(out, r):

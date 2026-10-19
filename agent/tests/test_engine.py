@@ -453,3 +453,19 @@ def test_benchmark_requirements_not_lowered():
     assert engine._breaks_requirement({"changes": [{"variable": "max_connections", "proposed": "500"}]}, req)
     assert not engine._breaks_requirement({"changes": [{"variable": "max_connections", "proposed": "2000"}]}, req)
     assert not engine._breaks_requirement({"changes": [{"variable": "innodb_log_writer_threads", "proposed": "OFF"}]}, req)
+
+
+def test_cross_class_experience_does_not_demote():
+    # losses from other workloads / machine sizes / concurrency count half and never send a change to the end
+    base = {"goal": "tps", "policy": "safe", "os_tuning": True, "os_facts": {"os:filesystem": "ext4"}, "hw": HW, "flavor": "percona",
+            "version": (8, 4, 11), "variables": dict(VARS), "summary": OLTP[0], "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}}
+    first = next(i for i in engine.run_engine(base)["items"] if not i.get("priority") and i["kind"] == "config")
+    bad = {"n": 6, "wins": 0, "losses": 6}
+
+    def score(exp):
+        its = engine.run_engine({**base, "experience": {first["id"]: exp}})["items"]
+        return next(i for i in its if i["id"] == first["id"])["score"]
+    plain, comparable = score({}), score(bad)
+    other = score(dict(bad, scope="other workloads / machine sizes / concurrency"))
+    assert comparable < other < plain
+    assert plain - other <= 1.5  # half-weight evidence only, no demotion
