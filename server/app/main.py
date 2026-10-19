@@ -95,9 +95,13 @@ def watchdog_scan():
                            "message": f"{name}: run measuring for {int((t - m['started']) // 60)} min (typical {int(typ_meas // 60)} min)"})
         last = max([r["started"] or 0 for r in runs] + [r["ended"] or 0 for r in runs] + [s["created"]])
         limit = max(3600, 3 * (typ_cycle or 0))
-        if act.get("source") != "agent" and t - last > limit:
-            alerts.append({"key": f"no-progress:{s['id']}", "kind": "no-progress", "severity": "high", "env_id": env_id, "session_id": s["id"],
-                           "message": f"{name}: no run started or ended for {int((t - last) // 60)} min (limit {int(limit // 60)} min)"})
+        silent = any(a["kind"] == "agent-silent" and a["env_id"] == env_id for a in alerts)  # the root cause is already reported
+        stopped = e["agent_state"] == "stopped" and (e["agent_state_at"] or 0) >= (e["last_seen"] or 0)
+        if act.get("source") != "agent" and not m and not silent and t - last > limit:
+            alerts.append({"key": f"no-progress:{s['id']}", "kind": "no-progress", "severity": "medium" if stopped else "high",
+                           "env_id": env_id, "session_id": s["id"],
+                           "message": f"{name}: no run started or ended for {int((t - last) // 60)} min (limit {int(limit // 60)} min)"
+                                      + (" - the agent was stopped on purpose; close the session or restart the agent" if stopped else "")})
     return alerts, {"environments": len(envs), "client_hosts": len(hosts), "active_sessions": len(active)}
 
 
