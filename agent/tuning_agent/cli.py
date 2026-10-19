@@ -1306,6 +1306,19 @@ def cmd_profile(a):
     emit({k: v for k, v in res.items() if k != "folded" or a.json_folded}, "\n".join(lines) if not res.get("error") else res["error"])
 
 
+def cmd_llm_context(a):
+    """Print the context the tuner would send to the LLM now (for audits / replays)."""
+    c = Ctx()
+    sess = c.session()
+    ctx = _engine_ctx(c, sess)
+    res = engine.run_engine(ctx)
+    try:
+        meta = c.db.variables_meta()
+    except Exception:
+        meta = {}
+    print(json.dumps(llmassist.context(ctx, res, meta), indent=1, default=str))
+
+
 def cmd_diag(a):
     """Diagnostic instrumentation switches (runtime only, reset by a mysqld restart)."""
     c = Ctx(need_server=False)
@@ -1793,6 +1806,9 @@ def main(argv=None):
     s.add_argument("--folded", help="also write folded stacks (for flamegraph.pl / speedscope) to this file")
     s.add_argument("--json-folded", action="store_true", help="include folded stacks in --json output")
     s.set_defaults(fn=cmd_profile)
+
+    s = sp.add_parser("llm-context", help="print the context the LLM assistant would receive now")
+    s.set_defaults(fn=cmd_llm_context)
 
     s = sp.add_parser("diag", help="diagnostic instrumentation (runtime only)")
     s.add_argument("what", choices=["waits"])
