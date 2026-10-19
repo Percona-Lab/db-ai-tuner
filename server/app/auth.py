@@ -44,7 +44,21 @@ def end_login(token):
         store.ex("DELETE FROM logins WHERE token_hash=?", (sha(token),))
 
 
+def share_of(request):
+    """A read-only share link: header X-Share-Token. Returns the share row or None."""
+    t = request.headers.get("x-share-token")
+    if not t:
+        return None
+    r = store.q1("SELECT * FROM shares WHERE token=? AND revoked IS NULL", (t,))
+    return dict(r) if r else None
+
+
 def current_user(request: Request, required=True):
+    sh = share_of(request)
+    if sh:  # the owner's data, read-only and limited to the shared object (enforced in main)
+        r = store.q1("SELECT * FROM users WHERE id=?", (sh["user_id"],))
+        if r:
+            return dict(r, share=sh)
     token = request.cookies.get(COOKIE)
     if token:
         r = store.q1("SELECT u.* FROM logins l JOIN users u ON u.id=l.user_id WHERE l.token_hash=? AND l.expires>?",

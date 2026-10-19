@@ -1,4 +1,5 @@
 """AI DB Tuner web service."""
+import contextvars
 import io
 import json
 import os
@@ -20,6 +21,45 @@ ONLINE_S = 60
 app = FastAPI(title="AI DB Tuner", docs_url=None, redoc_url=None)
 store.init()
 
+# ---------------------------------------------------------------------------- read-only share links
+SHARE = contextvars.ContextVar("share", default=None)  # scope of the share link used by the current request
+SHARE_PATHS = re.compile(r"^/api/(me|policies|environments(/\d+(/(metrics|waits))?)?|sessions/\d+|runs/\d+(/(config|metrics))?|"
+                         r"studies(/\d+(/costs)?)?|events)$")
+
+
+def share_scope(sh):
+    if sh["kind"] == "environment":
+        return {"kind": "environment", "id": sh["object_id"], "envs": {sh["object_id"]}, "studies": set()}
+    envs = {r["env_id"] for r in store.q("SELECT DISTINCT env_id FROM tsessions WHERE study_id=?", (sh["object_id"],))}
+    return {"kind": "study", "id": sh["object_id"], "envs": envs, "studies": {sh["object_id"]}}
+
+
+@app.middleware("http")
+async def share_guard(request: Request, call_next):
+    """Requests with a share token: GET only, only the pages a shared object needs, only inside its scope."""
+    if request.headers.get("x-share-token") and request.url.path.startswith("/api/"):
+        sh = auth.share_of(request)
+        if not sh:
+            return JSONResponse({"detail": "this share link was revoked or does not exist"}, status_code=401)
+        if request.method != "GET" or not SHARE_PATHS.match(request.url.path):
+            return JSONResponse({"detail": "read-only shared view"}, status_code=403)
+        store.ex("UPDATE shares SET last_used=?, uses=uses+1 WHERE id=?", (time.time(), sh["id"]))
+        tok = SHARE.set(share_scope(sh))
+        try:
+            return await call_next(request)
+        finally:
+            SHARE.reset(tok)
+    return await call_next(request)
+
+
+def in_scope(env_id=None, study_id=None):
+    sc = SHARE.get()
+    if sc is None:
+        return True
+    if study_id is not None:
+        return study_id in sc["studies"]
+    return env_id in sc["envs"]
+
 VOLATILE = {"gtid_executed", "gtid_purged", "timestamp", "pseudo_thread_id", "rand_seed1", "rand_seed2", "last_insert_id",
             "insert_id", "identity", "warning_count", "error_count", "gtid_owned", "innodb_buffer_pool_resize_status"}
 
@@ -32,22 +72,22 @@ def now():
 
 def own_env(env_id, user_id):
     e = store.q1("SELECT * FROM environments WHERE id=? AND user_id=?", (env_id, user_id))
-    if not e:
+    if not e or not in_scope(env_id=e["id"]):
         raise HTTPException(404, "environment not found")
     return dict(e)
 
 
 def own_session(session_id, user_id):
     s = store.q1("SELECT s.* FROM tsessions s JOIN environments e ON e.id=s.env_id WHERE s.id=? AND e.user_id=?", (session_id, user_id))
-    if not s:
+    if not s or not in_scope(env_id=s["env_id"]):
         raise HTTPException(404, "session not found")
     return dict(s)
 
 
 def own_run(run_id, user_id):
-    r = store.q1("SELECT r.* FROM runs r JOIN tsessions s ON s.id=r.session_id JOIN environments e ON e.id=s.env_id "
+    r = store.q1("SELECT r.*, s.env_id AS _env FROM runs r JOIN tsessions s ON s.id=r.session_id JOIN environments e ON e.id=s.env_id "
                  "WHERE r.id=? AND e.user_id=?", (run_id, user_id))
-    if not r:
+    if not r or not in_scope(env_id=r["_env"]):
         raise HTTPException(404, "run not found")
     return dict(r)
 
@@ -180,6 +220,13 @@ def me(request: Request):
     u = auth.current_user(request, required=False)
     if not u:
         return {"user": None}
+    if u.get("share"):
+        sh = u["share"]
+        obj = store.q1("SELECT name FROM environments WHERE id=?" if sh["kind"] == "environment" else "SELECT name FROM studies WHERE id=?",
+                       (sh["object_id"],))
+        return {"user": {"email": "shared view", "name": None, "share": {"kind": sh["kind"], "id": sh["object_id"],
+                                                                         "name": obj["name"] if obj else None, "label": sh["label"]}},
+                "server": PUBLIC_URL}
     return {"user": {"id": u["id"], "email": u["email"], "name": u["name"]}, "server": PUBLIC_URL}
 
 
@@ -261,6 +308,8 @@ def environments(request: Request):
     u = auth.current_user(request)
     out = []
     for e in store.q("SELECT * FROM environments WHERE user_id=? ORDER BY name COLLATE NOCASE, id", (u["id"],)):
+        if not in_scope(env_id=e["id"]):
+            continue
         b = env_brief(e)
         s = store.q1("SELECT COUNT(*) n, MAX(created) last FROM tsessions WHERE env_id=?", (e["id"],))
         b["sessions"] = s["n"]
@@ -302,6 +351,41 @@ def environment(env_id: int, request: Request):
         activity = dict(a, at=e["activity_at"], source="agent") if a and e.get("activity_at") and now() - e["activity_at"] < 6 * 3600 and a.get("phase") != "idle" else None
     return {"environment": env_brief(e), "facts": store.uj(e["facts"], {}), "sessions": sessions, "events": events, "hosts": hosts,
             "activity": activity, "steal": steal_profile(env_id)}
+
+
+@app.post("/api/shares")
+def create_share(request: Request, body: dict = Body(...)):
+    """Read-only link to an environment or a study (with all its environments), usable without an account."""
+    import secrets
+    u = auth.current_user(request)
+    kind = body.get("kind")
+    oid = int(body.get("id") or 0)
+    if kind == "environment":
+        own_env(oid, u["id"])
+    elif kind == "study":
+        own_study(oid, u["id"])
+    else:
+        raise HTTPException(400, "kind must be environment or study")
+    token = secrets.token_urlsafe(24)
+    sid = store.ex("INSERT INTO shares(user_id, token, kind, object_id, label, created) VALUES (?,?,?,?,?,?)",
+                   (u["id"], token, kind, oid, (body.get("label") or "")[:120] or None, now()))
+    return {"id": sid, "token": token, "url": f"{PUBLIC_URL}/#/s/{token}"}
+
+
+@app.get("/api/shares")
+def list_shares(request: Request, kind: str = None, id: int = None):
+    u = auth.current_user(request)
+    q, args = "SELECT * FROM shares WHERE user_id=? AND revoked IS NULL", [u["id"]]
+    if kind and id:
+        q += " AND kind=? AND object_id=?"; args += [kind, id]
+    return {"shares": [dict(r, url=f"{PUBLIC_URL}/#/s/{r['token']}") for r in store.q(q + " ORDER BY id DESC", args)]}
+
+
+@app.delete("/api/shares/{share_id}")
+def revoke_share(share_id: int, request: Request):
+    u = auth.current_user(request)
+    store.ex("UPDATE shares SET revoked=? WHERE id=? AND user_id=?", (now(), share_id, u["id"]))
+    return {"ok": True}
 
 
 @app.post("/api/llm/replay")
@@ -1056,7 +1140,7 @@ STUDY_KINDS = ("compare", "scaling", "min-hardware")
 
 def own_study(study_id, user_id):
     st = store.q1("SELECT * FROM studies WHERE id=? AND user_id=?", (study_id, user_id))
-    if not st:
+    if not st or not in_scope(study_id=st["id"]):
         raise HTTPException(404, "study not found")
     return dict(st)
 
@@ -1156,6 +1240,8 @@ def studies(request: Request):
     u = auth.current_user(request)
     out = []
     for st in store.q("SELECT * FROM studies WHERE user_id=? ORDER BY id DESC", (u["id"],)):
+        if not in_scope(study_id=st["id"]):
+            continue
         st = dict(st)
         n = store.q1("SELECT COUNT(*) n, COUNT(DISTINCT env_id) e, SUM(status='active') a FROM tsessions WHERE study_id=?", (st["id"],))
         st.update(sessions=n["n"], environments=n["e"], active=n["a"] or 0)
@@ -1187,7 +1273,7 @@ def study(study_id: int, request: Request):
     others = [dict(r) for r in store.q("SELECT s.id, s.name, s.goal, e.name env_name FROM tsessions s JOIN environments e ON e.id=s.env_id "
                                         "WHERE e.user_id=? AND (s.study_id IS NULL OR s.study_id<>?) ORDER BY s.id DESC LIMIT 200",
                                         (u["id"], study_id))]
-    return {"study": st, "sessions": study_view(st, u["id"]), "other_sessions": others}
+    return {"study": st, "sessions": study_view(st, u["id"]), "other_sessions": [] if SHARE.get() else others}
 
 
 @app.get("/api/studies/{study_id}/costs")

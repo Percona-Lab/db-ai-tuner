@@ -137,3 +137,8 @@ table.kvt td:first-child { color: var(--ink-2); }
 i.dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 .rolled { text-decoration: line-through; color: var(--muted); }
 table.runs td.chg { font-size: 12px; overflow-wrap: anywhere; }
+/* read-only shared view: hide every control that changes something */
+body.ro #share, body.ro #rename, body.ro #del, body.ro #edit, body.ro #addSess, body.ro a.detach, body.ro #savenotes, body.ro #savesn,
+body.ro #studySel, body.ro #expf, body.ro [data-cancel], body.ro .study-line, body.ro #newStudy, body.ro #range + .ro-hide, body.ro .owner-only { display: none !important; }
+body.ro a.cost { pointer-events: none; color: inherit; }
+body.ro textarea { pointer-events: none; background: transparent; border-color: transparent; resize: none; }

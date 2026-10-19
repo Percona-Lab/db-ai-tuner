@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS commands (
   id INTEGER PRIMARY KEY, host_id INTEGER NOT NULL, session_id INTEGER, created REAL NOT NULL, action TEXT NOT NULL, payload TEXT,
   status TEXT NOT NULL DEFAULT 'queued', result TEXT, updated REAL);
 CREATE INDEX IF NOT EXISTS commands_host ON commands(host_id, status);
+CREATE TABLE IF NOT EXISTS shares (
+  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, token TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, object_id INTEGER NOT NULL,
+  label TEXT, created REAL NOT NULL, revoked REAL, last_used REAL, uses INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS studies (
   id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'compare', goal TEXT,
   target REAL, workload TEXT, notes TEXT, created REAL NOT NULL);

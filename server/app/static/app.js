@@ -8,8 +8,12 @@ const PHASE = { safe: "production-safe experiments", "trade-offs": "trade-off ex
 function kvText(o) { return Object.entries(o || {}).map(([k, v]) => `${k.replace(/_/g, " ")}: ${typeof v === "object" ? JSON.stringify(v) : v}`).join(" · "); }
 function info(text) { return ` <span class="itip" tabindex="0" role="note" aria-label="${esc(text)}" data-tip="${esc(text)}">i</span>`; }
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function shareToken() { try { return sessionStorage.getItem("shareToken"); } catch (e) { return null; } }
 async function api(path, opts = {}) {
-  const r = await fetch(path, { method: opts.method || "GET", headers: opts.body ? { "Content-Type": "application/json" } : {}, body: opts.body ? JSON.stringify(opts.body) : undefined, credentials: "same-origin" });
+  const headers = opts.body ? { "Content-Type": "application/json" } : {};
+  const share = shareToken();
+  if (share) headers["X-Share-Token"] = share;
+  const r = await fetch(path, { method: opts.method || "GET", headers, body: opts.body ? JSON.stringify(opts.body) : undefined, credentials: "same-origin" });
   let data = null; try { data = await r.json(); } catch (e) { }
   if (r.status === 401 && !opts.allow401) { location.hash = "#/login"; throw new Error("login required"); }
   if (!r.ok) throw new Error((data && data.detail) || ("HTTP " + r.status));
@@ -51,6 +55,14 @@ function clearTimers() { timers.forEach(clearInterval); timers = []; }
 function setNav(active) {
   const nav = document.getElementById("nav");
   if (!ME) { nav.innerHTML = `<a class="right" href="#/login">Log in</a><a href="#/register">Create account</a>`; return; }
+  if (ME.share) {
+    document.body.classList.add("ro");
+    const home = "#/" + (ME.share.kind === "study" ? "study/" : "env/") + ME.share.id;
+    nav.innerHTML = `<a href="${home}" class="on">${ME.share.kind === "study" ? "Study" : "Environment"}: ${esc(ME.share.name || "")}</a><span class="right"><span class="badge plain" data-tip="You are looking at a read-only shared view. Nothing can be changed from here.">read-only shared view</span></span><a href="#" id="leaveShare">Leave</a>`;
+    document.getElementById("leaveShare").onclick = e => { e.preventDefault(); try { sessionStorage.removeItem("shareToken"); } catch (x) { } ME = null; location.hash = "#/"; loadMe().then(route); };
+    return;
+  }
+  document.body.classList.remove("ro");
   nav.innerHTML = `<a href="#/" class="${active === "envs" ? "on" : ""}">Environments</a><a href="#/studies" class="${active === "studies" ? "on" : ""}">Studies</a><a href="#/connect" class="${active === "connect" ? "on" : ""}">Connect agent</a>` +
     `<a href="#/policies" class="${active === "policies" ? "on" : ""}">Policies</a><a href="#/account" class="${active === "account" ? "on" : ""}">Account</a><span class="right">${esc(ME.email)}</span><a href="#" id="logout">Log out</a>`;
   document.getElementById("logout").onclick = async e => { e.preventDefault(); await api("/api/auth/logout", { method: "POST", body: {} }); ME = null; location.hash = "#/"; };
@@ -105,6 +117,22 @@ function authForm(kind) {
   };
 }
 
+async function sharePanel(kind, id, btn) {
+  // owner: create / list / revoke read-only links
+  let box = document.getElementById("sharePanel");
+  if (box) { box.remove(); return; }
+  box = document.createElement("div"); box.id = "sharePanel"; box.className = "card"; box.style.marginBottom = "12px";
+  btn.closest(".row").after(box);
+  const draw = async () => {
+    const d = await api(`/api/shares?kind=${kind}&id=${id}`);
+    box.innerHTML = `<div class="row"><b>Read-only links</b>${info(kind === "study" ? "Anyone with the link can view this study, all its environments, their sessions, runs, charts and configurations, without an account. Nothing can be changed." : "Anyone with the link can view this environment, its sessions, runs, charts and configurations, without an account. Nothing can be changed.")}<span class="spacer"></span><button id="newShare" class="primary">Create link</button></div>
+      ${d.shares.length ? `<table class="kvt" style="margin-top:8px"><tbody>${d.shares.map(x => `<tr><td><input class="mono" readonly value="${esc(x.url)}" style="width:100%;font-size:12px" onclick="this.select()"></td><td class="muted" style="white-space:nowrap;font-size:12px">created ${ago(x.created)}${x.uses ? ` · opened ${x.uses}× · last ${ago(x.last_used)}` : " · not opened yet"}</td><td><button class="ghost" data-copy="${esc(x.url)}">Copy</button><button class="ghost danger" data-revoke="${x.id}">Revoke</button></td></tr>`).join("")}</tbody></table>` : '<p class="muted" style="margin:8px 0 0">No links yet.</p>'}`;
+    box.querySelector("#newShare").onclick = async () => { await api("/api/shares", { method: "POST", body: { kind, id } }); draw(); };
+    box.querySelectorAll("[data-copy]").forEach(b => b.onclick = () => { navigator.clipboard && navigator.clipboard.writeText(b.dataset.copy); b.textContent = "Copied"; });
+    box.querySelectorAll("[data-revoke]").forEach(b => b.onclick = async () => { if (confirm("Revoke this link? People using it lose access immediately.")) { await api("/api/shares/" + b.dataset.revoke, { method: "DELETE" }); draw(); } });
+  };
+  draw();
+}
 function activityLine(a) {
   // what an active session is doing right now: the agent's report (phase + time left) or derived from its latest run
   if (!a) return "";
@@ -227,7 +255,7 @@ async function studyPage(id) {
       : `Best production-safe result: <b>${esc(measured.reduce((a, b) => better(a.bs, b.bs) ? a : b).e.name)}</b>.`;
   } else verdict = measured.length ? "Add sessions from more environments to compare." : "No results yet.";
   $view.innerHTML = `<div class="crumbs"><a href="#/studies">Studies</a> /</div>
-  <div class="row"><h1>${esc(st.name)}</h1><span class="badge plain">${STUDY_KINDS[st.kind] || esc(st.kind)}</span>${info(STUDY_TIPS[st.kind] || "")}<span class="spacer"></span><button class="ghost" id="edit">Edit</button><button class="ghost danger" id="del">Delete</button></div>
+  <div class="row"><h1>${esc(st.name)}</h1><span class="badge plain">${STUDY_KINDS[st.kind] || esc(st.kind)}</span>${info(STUDY_TIPS[st.kind] || "")}<span class="spacer"></span><button class="ghost owner" id="share">Share</button><button class="ghost" id="edit">Edit</button><button class="ghost danger" id="del">Delete</button></div>
   <p class="sub">Goal ${goalName(st.goal || "tps")}${st.target != null ? ` · target <b>${num(st.target)}</b>` : ""}${st.workload ? " · workload: " + esc(st.workload) : ""} · ${new Set(rows.map(x => x.e.id)).size} environment(s), ${rows.length} session(s)</p>
   <div class="note" style="margin-bottom:12px">${verdict}</div>
   <div class="card" id="sbars"></div>
@@ -252,6 +280,7 @@ ${rows.some(y => y.s.cost || y.s.env_cost) ? `<td class="num">${(() => { const c
   $view.querySelectorAll("a.cost").forEach(a => a.onclick = async ev => { ev.preventDefault(); const v = prompt("Cost per month in USD (empty to clear)", a.dataset.cost); if (v === null) return; await api("/api/environments/" + a.dataset.env, { method: "PATCH", body: { cost_month: v } }); studyPage(id); });
   $view.querySelectorAll("a.detach").forEach(a => a.onclick = async ev => { ev.preventDefault(); await api("/api/sessions/" + a.dataset.sid, { method: "PATCH", body: { study_id: null } }); studyPage(id); });
   document.getElementById("addSess").onchange = async e => { if (!e.target.value) return; await api("/api/sessions/" + e.target.value, { method: "PATCH", body: { study_id: id } }); studyPage(id); };
+  document.getElementById("share").onclick = ev => sharePanel("study", id, ev.target);
   document.getElementById("savesn").onclick = async () => { await api("/api/studies/" + id, { method: "PATCH", body: { notes: document.getElementById("snotes").value } }); document.getElementById("snsaved").textContent = "saved"; };
   document.getElementById("del").onclick = async () => { if (confirm("Delete this study? Its sessions stay in their environments.")) { await api("/api/studies/" + id, { method: "DELETE" }); location.hash = "#/studies"; } };
   document.getElementById("edit").onclick = async () => {
@@ -414,7 +443,7 @@ async function envPage(id) {
   const kv = db.key_variables || {};
   $view.innerHTML = `<div class="crumbs"><a href="#/">Environments</a> /</div>
   <div class="row"><h1>${esc(e.name)}</h1>${envStatus(e)}<span class="spacer"></span>
-  <button class="ghost" id="rename">Rename</button><button class="ghost danger" id="del">Delete</button></div>
+  <button class="ghost owner" id="share">Share</button><button class="ghost" id="rename">Rename</button><button class="ghost danger" id="del">Delete</button></div>
   <p class="sub">${esc(e.db_short || e.db)} · ${esc(hw.hostname || "")} · agent ${esc(e.agent_version || "")}</p>
   ${d.activity ? `<div class="card" style="margin-bottom:10px;padding:10px 14px"><span class="muted" style="font-size:12px">Now${d.activity.session_id ? `: session <a href="#/session/${d.activity.session_id}">#${d.activity.session_id} ${esc(d.activity.session_name || "")}</a>` : ""}</span>${activityLine(d.activity)}</div>` : ""}
   <div class="card"><div class="row" style="gap:6px 18px">
@@ -460,6 +489,7 @@ async function envPage(id) {
     tb.appendChild(tr);
   });
   renderEvents(document.getElementById("events"), null, false, { env: id });
+  document.getElementById("share").onclick = ev => sharePanel("environment", id, ev.target);
   document.getElementById("rename").onclick = async () => { const n = prompt("Environment name", e.name); if (n) { await api("/api/environments/" + id, { method: "PATCH", body: { name: n } }); envPage(id); } };
   const cj = document.getElementById("clientsJump"); if (cj) cj.onclick = ev => { ev.preventDefault(); document.getElementById("clientHosts").scrollIntoView({ behavior: "smooth" }); };
   document.getElementById("detailsToggle").onclick = ev => { ev.preventDefault(); const d = document.getElementById("envDetails"); d.hidden = !d.hidden; ev.target.textContent = d.hidden ? "Details ▸" : "Details ▾"; };
@@ -618,7 +648,7 @@ async function sessionPage(id) {
   <p class="sub">Goal: <b>${goalName(s.goal)}</b> · policy <a href="#/policies"><b>${esc(s.policy)}</b></a>${s.policy === "benchmark" ? " (trade-offs allowed after safe experiments)" : " (production-safe changes only)"} · OS tuning ${s.os_tuning === 0 ? "off" : "on"}${info("When on, the agent may also change operating-system settings (swappiness, transparent huge pages, I/O scheduler, mount options, dirty writeback, memory allocator, huge pages). OS changes are recorded per run and rolled back like MySQL settings. Disable with --no-os-tuning.")} · noise threshold ±${s.noise_pct}% · started ${fmtTime(s.created)}${s.workload ? " · workload: " + esc(s.workload) : ""}</p>
   ${s.activity ? `<div style="margin:-4px 0 10px">${activityLine(s.activity)}</div>` : ""}
   ${calibrationNote(s)}
-  <p class="sub" style="margin-top:-6px">Study${info("A study groups sessions from several environments running the same workload, e.g. to compare hardware or find the smallest hardware that reaches a target.")}: <select id="studySel" style="width:auto"><option value="">none</option></select>${d.study ? ` <a href="#/study/${d.study.id}">open study</a>` : ""}</p>
+  <p class="sub study-line" style="margin-top:-6px">Study${info("A study groups sessions from several environments running the same workload, e.g. to compare hardware or find the smallest hardware that reaches a target.")}: <select id="studySel" style="width:auto"><option value="">none</option></select>${d.study ? ` <a href="#/study/${d.study.id}">open study</a>` : ""}</p>
   <div class="tiles"><div class="tile"><div class="k">Runs measured</div><div class="v">${done.length}</div></div>
    <div class="tile"><div class="k">Start${info(`Starting configuration: first run of the session (${goalUnit(s.goal, s)}).`)}</div><div class="v">${first ? num(first.goal_value) : "–"}</div><div class="d">${first ? esc(first.label) : ""}</div></div>
    ${d.cost ? `<div class="tile"><div class="k">Machine cost${info(`Session wall time ${d.cost.hours} h × $${d.cost.rate_hourly.toFixed(4)}/hour (the environment's price). Per-run costs are shown under each run's time.`)}</div><div class="v">$${d.cost.total.toFixed(2)}</div><div class="d">${d.cost.hours} h</div></div>` : ""}
@@ -1059,6 +1089,15 @@ async function route() {
   const h = location.hash.replace(/^#/, "").split("?")[0] || "/";
   const parts = h.split("/").filter(Boolean);
   try {
+    if (parts[0] === "s" && parts[1]) {  // read-only share link
+      try { sessionStorage.setItem("shareToken", parts[1]); } catch (e) { }
+      await loadMe();
+      if (!ME || !ME.share) { $view.innerHTML = '<p class="err">This share link was revoked or does not exist.</p>'; return; }
+      location.replace("#/" + (ME.share.kind === "study" ? "study/" : "env/") + ME.share.id); return;
+    }
+    if (ME && ME.share && (!parts.length || ["connect", "account", "policies-edit"].includes(parts[0]))) {
+      location.replace("#/" + (ME.share.kind === "study" ? "study/" : "env/") + ME.share.id); return;
+    }
     if (parts[0] === "login") return authForm("login");
     if (parts[0] === "register") return authForm("register");
     if (!ME) return landing();
