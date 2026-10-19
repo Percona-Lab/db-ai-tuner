@@ -332,11 +332,18 @@ function chartsGrid(container, m, defs, window_, markers, opts) {
   // series: [group, key, name] or {name, fn: m => values} for values derived from sampled series
   container.innerHTML = "";
   defs.forEach(def => {
-    const series = def.series.map(x => Array.isArray(x) ? { name: x[2], values: (m[x[0]] || {})[x[1]] } : { name: x.name, values: x.fn(m) });
+    let series = def.series.map(x => Array.isArray(x) ? { name: x[2], values: (m[x[0]] || {})[x[1]] } : { name: x.name, values: x.fn(m) });
     if (opts && opts.skipEmpty && !series.some(s => s.values && s.values.some(v => v != null))) return;
+    // large values in MiB read badly ("30.0k MiB"): switch the whole chart to GiB
+    let unit = def.unit;
+    const peak = Math.max(0, ...series.flatMap(s => (s.values || []).filter(v => v != null)));
+    if ((unit === "MiB" && peak > 4096) || (unit === "MiB/s" && peak > 2048)) {
+      unit = unit === "MiB" ? "GiB" : "GiB/s";
+      series = series.map(s => ({ name: s.name, values: (s.values || []).map(v => v == null ? v : v / 1024) }));
+    }
     const cell = document.createElement("div"); cell.className = "card";
     container.appendChild(cell);
-    C.lineChart(cell, { title: def.title, unit: def.unit, ts: m.ts, window: window_, max100: def.max100, min0: def.min0, markers, series });
+    C.lineChart(cell, { title: def.title, unit, ts: m.ts, window: window_, max100: def.max100, min0: def.min0, markers, series });
     const t = cell.querySelector(".title");
     if (def.tip && t) t.insertAdjacentHTML("beforeend", info(def.tip));
   });
