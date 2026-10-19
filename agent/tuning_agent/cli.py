@@ -936,6 +936,9 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     requirements = _ensure_requirements(c, prof)
     log(f"benchmark: {prof.name}")
     c.activity("starting benchmark", label)
+    if sess.get("warmup_seconds") and prof.can_resize() and str(prof.warmup) != str(sess["warmup_seconds"]):
+        prof.timeout += int(sess["warmup_seconds"]) - int(prof.warmup)
+        prof.warmup = str(sess["warmup_seconds"])  # warm-up chosen at calibration (steady state)
     if sess.get("run_seconds") and prof.can_resize() and prof.duration != int(sess["run_seconds"]):
         # run length chosen at calibration (noise plan)
         prof.timeout += int(sess["run_seconds"]) - prof.duration
@@ -1170,6 +1173,40 @@ def _noise_plan(c, prof, runs, n):
     cal = sess["noise"]
     ds = evaluate.data_state_check(runs, prof.data_state)
     cal["data_state"] = ds
+    wu = evaluate.warmup_check(runs, int(prof.warmup) if str(prof.warmup).isdigit() else None)
+    if wu:
+        cal["warmup"] = wu
+        if not wu["adequate"]:
+            log(f"   WARNING: {wu['text']}")
+            c.event("warmup", wu["text"], wu)
+            base = int(getattr(prof, "base_warmup", prof.warmup) if str(prof.warmup).isdigit() else 0)
+            if prof.adaptive and prof.can_resize() and base and int(prof.warmup) < 3 * base:
+                new = min(3 * base, int(prof.warmup) * 2)
+                sess["warmup_seconds"] = new
+                wu["applied_warmup_s"] = new
+                note = f"Measured with a {prof.warmup} s warm-up that did not reach steady state; superseded by calibration with {new} s."
+                for r in sess["runs"]:
+                    if r["seq"] in {x["seq"] for x in runs}:
+                        r["superseded"] = note
+                sess["noise"] = None
+                c.state.set("session", sess)
+                _reevaluate(c, sess)
+                prof.warmup = str(new)
+                log(f"== recalibration with a {new} s warm-up")
+                c.activity("calibrating", f"{n} runs with a {new} s warm-up (steady state)")
+                new_runs = []
+                while len([r for r in new_runs if r.get("verdict") not in evaluate.EXCLUDED]) < n and len(new_runs) < 2 * n:
+                    run, _ = _bench_run(c, prof, f"baseline warm-up {new}s ({len(new_runs) + 1}/{n})")
+                    new_runs.append(run)
+                new_runs = [r for r in new_runs if r.get("verdict") not in evaluate.EXCLUDED] or new_runs
+                sess = c.session()
+                cal = evaluate.calibrate(new_runs)
+                _set_calibration(c, sess, cal)
+                _reevaluate(c, c.session())
+                sess = c.session()
+                cal = sess["noise"]
+                cal["warmup"] = dict(evaluate.warmup_check(new_runs, new) or {}, previous=wu)
+                runs = new_runs
     if ds["status"] == "drifting":
         log(f"   WARNING: {ds['text']}")
         c.event("data-state", ds["text"], ds)

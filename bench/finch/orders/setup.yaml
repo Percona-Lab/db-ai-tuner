@@ -1,0 +1,48 @@
+# Load the data set: schema, then customers/products/counters/orders in parallel.
+stage:
+  name: setup
+  stats:
+    disable: true
+  workload:
+    - trx: [schema]
+      group: ddl
+    - trx: [customers]
+      group: rows
+      clients: 2
+    - trx: [products]
+      group: rows
+    - trx: [counters]
+      group: rows
+      iter: 1
+    - trx: [orders]
+      group: rows
+      clients: 4
+    - trx: [indexes]
+      group: index
+  trx:
+    - file: trx/schema.sql
+      name: schema
+    - file: trx/load-customers.sql
+      name: customers
+      data:
+        name:  {generator: str-fill-az, params: {len: 24}}
+        email: {generator: str-fill-az, params: {len: 30}}
+        city:  {generator: int, params: {max: 500}}
+    - file: trx/load-products.sql
+      name: products
+      data:
+        pname: {generator: str-fill-az, params: {len: 40}}
+        price: {generator: int, params: {min: 100, max: 50000}}
+    - file: trx/load-counters.sql
+      name: counters
+    - file: trx/load-orders.sql
+      name: orders
+      data:
+        cust:  {generator: int, params: {max: $params.customers}}
+        prod:  {generator: int, params: {max: $params.products}}
+        qty:   {generator: int, params: {min: 1, max: 5}}
+        amt:   {generator: int, params: {min: 100, max: 250000}}
+        days:  {generator: int, params: {min: 0, max: 365}}
+        note:  {generator: str-fill-az, params: {len: 60}}
+    - file: trx/indexes.sql
+      name: indexes

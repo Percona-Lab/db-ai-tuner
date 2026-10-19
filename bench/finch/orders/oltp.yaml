@@ -1,0 +1,28 @@
+# Mixed OLTP: 12 clients browse (point selects + a short range scan), 4 clients place orders
+# (insert + product stock update + customer balance update + hot-row counter, one commit per order).
+stage:
+  name: oltp
+  runtime: $params.runtime
+  workload:
+    - trx: [browse]
+      clients: $params.clients_read
+      db: orders
+    - trx: [place-order]
+      clients: $params.clients_write
+      db: orders
+  trx:
+    - file: trx/browse.sql
+      name: browse
+      data:
+        bcust: {generator: int, scope: trx, params: {max: $params.customers, dist: normal}}
+        bprod: {generator: int, params: {max: $params.products, dist: normal}}
+        oid: {generator: int, params: {max: $params.orders}}
+    - file: trx/place-order.sql
+      name: place-order
+      data:
+        cust: {generator: int, scope: trx, params: {max: $params.customers, dist: normal}}
+        prod: {generator: int, scope: trx, params: {max: $params.products, dist: normal}}
+        qty: {generator: int, scope: trx, params: {min: 1, max: 5}}
+        note: {generator: str-fill-az, params: {len: 40}}
+        price: {generator: column}
+        hot: {generator: int, params: {max: $params.hot_counters}}

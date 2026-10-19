@@ -224,6 +224,9 @@ def parse_innodb_status(text):
     m = re.search(r"Last checkpoint at\s+(\d+)", text)
     if m:
         out["checkpoint_lsn"] = int(m.group(1))
+    m = re.search(r"Ibuf: size (\d+)", text)  # change buffer: pages of buffered secondary-index changes not merged yet
+    if m:
+        out["ibuf_size"] = int(m.group(1))
     m = re.search(r"History list length\s+(\d+)", text)
     if m:
         out["history_list_length"] = int(m.group(1))

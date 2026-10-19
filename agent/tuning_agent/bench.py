@@ -63,6 +63,7 @@ class Profile:
         self.adaptive = b.get("adaptive_duration", "auto").lower() not in ("off", "false", "no", "0")
         self.max_duration = int(b["max_duration"]) if b.get("max_duration") else None
         self.base_duration = self.duration
+        self.base_warmup = self.warmup
         # probe = auto (calibration + after unusual steal; default) | always | false
         pv = b.get("probe", "auto").lower()
         self.probe = "always" if pv == "always" else (pv in ("auto", "true", "yes", "1"))

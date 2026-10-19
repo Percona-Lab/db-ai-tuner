@@ -1,0 +1,18 @@
+# Connection churn: every client opens a new MySQL connection for every request (run with
+# FINCH_RECONNECT_EVERY=1, see ../apply_reconnect_patch.py): 3 reads + 1 small write trx per connection.
+stage:
+  name: churn
+  runtime: $params.runtime
+  workload:
+    - trx: [churn-request]
+      clients: $params.clients_churn
+      db: orders
+  trx:
+    - file: trx/churn-request.sql
+      name: churn-request
+      data:
+        cust: {generator: int, scope: trx, params: {max: $params.customers, dist: normal}}
+        prod: {generator: int, scope: trx, params: {max: $params.products, dist: normal}}
+        qty: {generator: int, scope: trx, params: {min: 1, max: 5}}
+        note: {generator: str-fill-az, params: {len: 40}}
+        hot: {generator: int, params: {max: $params.hot_counters}}

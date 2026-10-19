@@ -774,3 +774,19 @@ def test_experiment_run_ignores_restores_applied_before_it():
                {"variable": "innodb_change_buffering", "old": "all", "new": "none", "source": "exp:83"}]}
     v, ev = evaluate.verdict(run, hist, "tps", {"noise_pct": 0.84, "runs": [2, 3]})
     assert ev["parent_runs"] == [2, 3] and v == "neutral", (v, ev.get("parent_runs"), ev.get("goal_delta_pct"))
+
+
+def test_steady_state_and_warmup_check():
+    from tuning_agent import collector
+    def window(dirty_from, dirty_to, tps_from=1000, tps_to=1000, n=30):
+        smp = [{"db": {"bp_dirty_pct": dirty_from + (dirty_to - dirty_from) * i / (n - 1), "tps": tps_from + (tps_to - tps_from) * i / (n - 1),
+                       "checkpoint_age_pct": 40, "history_list_length": 1000}, "os": {}} for i in range(n)]
+        return collector.steady_state(smp)
+    growing = window(20, 60)
+    assert growing["steady"] is False and any("dirty pages" in g for g in growing["growing"])
+    assert window(40, 41)["steady"] is True
+    assert window(40, 40, 1000, 900)["steady"] is False  # throughput sliding
+    runs = [{"summary": {"steady_state": growing}} for _ in range(3)]
+    w = evaluate.warmup_check(runs, 120)
+    assert w["adequate"] is False and "120 s" in w["text"]
+    assert evaluate.warmup_check([{"summary": {"steady_state": {"steady": True, "growing": []}}}] * 3, 120)["adequate"]

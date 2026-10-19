@@ -128,6 +128,8 @@ class DBSampler:
                 out["checkpoint_age_pct"] = round(100.0 * age / cap, 2)
         if "history_list_length" in ib:
             out["history_list_length"] = ib["history_list_length"]
+        if "ibuf_size" in ib:
+            out["ibuf_size"] = ib["ibuf_size"]
         if "os_wait_reservations" in ib and "os_wait_reservations" in a.get("innodb", {}):
             out["innodb_os_waits"] = round((ib["os_wait_reservations"] - a["innodb"]["os_wait_reservations"]) / dt, 1)
         return out
@@ -261,6 +263,36 @@ def _percentile_from_hist(hist_a, hist_b, q):
     return None
 
 
+def steady_state(samples):
+    """Is the measured window in steady state, or is deferred work still piling up? Flushing (dirty pages, checkpoint
+    age), purge (history list) and change-buffer merges can be postponed: a window that ends while that debt grows
+    never pays it, which flatters settings that defer more. Compares the first and last third of the window."""
+    def thirds(key):
+        v = [s["db"][key] for s in samples if s.get("db", {}).get(key) is not None]
+        if len(v) < 9:
+            return None
+        n = len(v) // 3
+        return sum(v[:n]) / n, sum(v[-n:]) / n
+    growing, ev = [], {}
+    for key, label, absmin, rel in (("bp_dirty_pct", "dirty pages %", 3.0, 0.15), ("checkpoint_age_pct", "checkpoint age %", 5.0, 0.15),
+                                    ("history_list_length", "history list length", 50000, 0.25), ("ibuf_size", "change buffer pages", 2000, 0.25)):
+        t = thirds(key)
+        if not t:
+            continue
+        a, b = t
+        ev[key] = [round(a, 1), round(b, 1)]
+        if b - a >= absmin and b >= a * (1 + rel):
+            growing.append(f"{label} {a:,.1f} -> {b:,.1f}")
+    tp = thirds("tps") or thirds("qps")
+    if tp and tp[0]:
+        drift = 100.0 * (tp[1] - tp[0]) / tp[0]
+        ev["throughput_drift_pct"] = round(drift, 1)
+        if drift <= -5:
+            growing.append(f"throughput {drift:+.0f}% from the first to the last third")
+    return {"steady": not growing, "growing": growing, "evidence": ev} if ev else None
+
+
+
 def analyze_window(a, b, samples):
     """Summary + decision inputs for a measurement window between snapshots a and b."""
     dt = max(b["t"] - a["t"], 1e-6)
@@ -313,6 +345,7 @@ def analyze_window(a, b, samples):
         "tps": db_rates.get("tps"),
         "within_se_pct": batch_se_pct("db", "tps") or batch_se_pct("db", "qps"),
         "rows_changed_per_s": avg("db", "rows_changed"),
+        "steady_state": steady_state(samples),
         "qps": db_rates.get("qps"),
         "handler_commits": db_rates.get("handler_commits"),
         "statements_per_s": db_rates.get("statements"),

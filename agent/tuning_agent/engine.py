@@ -1192,7 +1192,9 @@ def best_config(history, goal="tps", noise=2.0):
     # neutral run (e.g. one sweep point) that happens to have the highest number is not a candidate.
     def kept(c):
         rs = [r for r in history if config_key(r.get("managed")) == c["key"]]
-        return any((r.get("verdict") in KEEP and (r.get("evaluation") or {}).get("confirmed") is not False)
+        # an improvement measured while deferred work (flushing, purge, change-buffer merges) still piled up is not earned
+        return any((r.get("verdict") in KEEP and (r.get("evaluation") or {}).get("confirmed") is not False
+                    and not (r.get("verdict") == "improved" and (r.get("evaluation") or {}).get("not_steady")))
                    or (is_practice_run(r) and r.get("verdict") == "neutral") for r in rs)
     kept_cfgs = [c for c in scores if kept(c)]
     if kept_cfgs:

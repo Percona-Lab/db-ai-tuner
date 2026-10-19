@@ -153,6 +153,25 @@ def noise_estimate(runs, prior_cv=None):
             "prior_cv_pct": prior_cv, "basis": basis, **({"outlier_groups": outliers} if outliers else {})}
 
 
+def warmup_check(runs, warmup):
+    """Calibration runs of the starting configuration: is the warm-up long enough to reach steady state?"""
+    sts = [(r.get("summary") or {}).get("steady_state") for r in runs]
+    sts = [x for x in sts if x]
+    if not sts:
+        return None
+    bad = [x for x in sts if not x.get("steady")]
+    out = {"steady_runs": len(sts) - len(bad), "runs": len(sts), "warmup_s": warmup}
+    if len(bad) * 2 > len(sts):  # most calibration runs still accumulate deferred work
+        grow = sorted({g.split(" ")[0] + " " + g.split(" ")[1] for x in bad for g in x.get("growing") or []})
+        out.update(adequate=False, growing=[g for x in bad[:1] for g in x.get("growing") or []],
+                   text=f"Warm-up of {warmup} s is not long enough: at the end of the measured window deferred work was still "
+                        f"accumulating in {len(bad)} of {len(sts)} calibration runs ({'; '.join(bad[0].get('growing') or [])}). "
+                        "Results would favour settings that postpone flushing, purge or change-buffer merges.")
+    else:
+        out.update(adequate=True, text=f"Steady state reached in {len(sts) - len(bad)} of {len(sts)} calibration runs.")
+    return out
+
+
 def noise_plan(runs, cal, duration, max_duration=None, target=NOISE_TARGET):
     """Split the calibrated run-to-run noise into a within-run part (what each run's own 10 s samples predict for its
     length: batch-means standard error) and a between-run part (shifts from run to run: data state, restarts,
@@ -490,6 +509,9 @@ def _verdict(run, history, goal, noise):
             elif ch < -thr:
                 worse.append(label)
     details["efficiency_better"], details["efficiency_worse"] = better, worse
+    st = s.get("steady_state") or {}
+    if st and not st.get("steady"):  # deferred work still accumulating at the end of the window: result may be optimistic
+        details["not_steady"] = st.get("growing")
     if d_goal is None:
         return "neutral", details
     if d_goal > goal_noise:

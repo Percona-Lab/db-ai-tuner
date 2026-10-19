@@ -1,0 +1,24 @@
+# Finch "orders" workload (AI DB Tuner benchmark set). Applies to all stages in this directory.
+mysql:
+  username: finch
+  password: finch
+  hostname: 127.0.0.1
+  disable-auto-tls: true
+params:
+  customers: "1,000,000"
+  products: "100,000"
+  orders: "2,000,000"
+  hot_counters: "8"
+  clients_read: "12"
+  clients_write: "4"
+  clients_churn: "16"
+  runtime: "300s"
+  csv: "/root/bench/finch-stats.csv"
+stats:
+  freq: 10s
+  report:
+    stdout:
+      percentiles: "P99"
+    csv:
+      file: $params.csv
+      percentiles: "P95,P99"
