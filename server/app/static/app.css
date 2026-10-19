@@ -158,3 +158,5 @@ main pre { overflow-x: auto; }
 /* long unbreakable values (allocator / filesystem option strings, statement texts) wrap instead of widening the page */
 .card { overflow-wrap: break-word; }
 table.kvt td.mono, .diff-new, .diff-old, #recs .mono, #recs b { word-break: break-all; }
+details.fullval { margin-top: 6px; font-size: 11.5px; color: var(--muted); word-break: break-all; }
+details.fullval summary { cursor: pointer; font-family: var(--font, inherit); }

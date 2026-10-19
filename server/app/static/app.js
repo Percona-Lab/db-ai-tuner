@@ -37,6 +37,13 @@ function shortVal(name, v) {
   if (SIZE_VAR.test(name) && /^\d+$/.test(String(v)) && +v >= 1048576) { const n = +v; return n >= 1073741824 ? +(n / 1073741824).toFixed(2) + "G" : +(n / 1048576).toFixed(0) + "M"; }
   const t = String(v); return t.length > 24 ? t.slice(0, 22) + "…" : t;
 }
+// flag-set variables (optimizer_switch, sql_mode-like "k=v,k=v"): only the flags that differ matter
+function parseFlags(v) { if (v == null) return null; const t = String(v); if (!/^[a-z_]+=[a-z0-9_]+(,[a-z_]+=[a-z0-9_]+)+$/i.test(t)) return null; return Object.fromEntries(t.split(",").map(x => x.split("="))); }
+function flagDiff(before, after) {
+  const a = parseFlags(before), b = parseFlags(after);
+  if (!a || !b) return null;
+  return Object.keys({ ...a, ...b }).filter(k => a[k] !== b[k]).map(k => ({ flag: k, from: a[k], to: b[k] }));
+}
 function num(v, d) { return v == null ? "–" : C.fmtNum(+v); }
 function pct(v, sign = true) { if (v == null) return "–"; return (sign && v > 0 ? "+" : "") + (+v).toFixed(1) + "%"; }
 function deltaClsN(v, noise) { return v == null || Math.abs(v) <= (noise || 0) ? "" : v > 0 ? "up" : "down"; }
@@ -733,7 +740,9 @@ async function sessionPage(id) {
       // from -> to, so the direction of a numeric change is visible at a glance
       const f = fate(r, c), name = esc(c.variable.replace(/^innodb_/, ""));
       const from = c.old != null && c.old !== "" ? esc(shortVal(c.variable, c.old)) : null, to = esc(shortVal(c.variable, c.new));
-      const txt = `${name} ${from != null && from !== to ? `<span class="muted">${from}</span> → ` : "= "}<b>${to}</b>`;
+      const fd = flagDiff(c.old, c.new);
+      const txt = fd ? `${name}: ${fd.map(x => `${esc(x.flag)} <span class="muted">${esc(x.from || "–")}</span> → <b>${esc(x.to || "–")}</b>`).join(", ")}`
+        : `${name} ${from != null && from !== to ? `<span class="muted">${from}</span> → ` : "= "}<b>${to}</b>`;
       const tip = `${c.variable}: ${c.old != null ? val(c.variable, c.old) : "?"} → ${val(c.variable, c.new)}`;
       return f.kept ? `<span class="mono chg-line" data-tip="${esc(tip)} · ${f.pending ? "in effect now" : "kept: still in effect in the later runs"}">${txt}</span>`
         : `<span class="mono chg-line rolled" data-tip="${esc(tip)} · rolled back before run #${f.by}">${txt} <span class="undo-tag">undone #${f.by}</span></span>`;
@@ -1029,6 +1038,15 @@ function renderEvaluation(r) {
    ${rows ? `<div class="tablewrap"><table><thead><tr><th>Work per transaction</th><th class="num">Parent mean</th><th class="num">This run</th><th class="num">Change</th><th class="num">Noise</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}</div>`;
 }
 
+function diffRow(d) {
+  const fd = flagDiff(d.before, d.after);
+  const cells = fd
+    ? `<td class="mono">${esc(d.variable)}<div class="muted" style="font-size:11.5px;font-family:inherit">${fd.length} of ${Object.keys(parseFlags(d.after)).length} flags changed</div></td>
+       <td class="mono diff-old">${fd.map(x => `${esc(x.flag)}=${esc(x.from || "–")}`).join("<br>")}<details class="fullval"><summary>full value</summary>${esc(d.before)}</details></td>
+       <td class="mono diff-new">${fd.map(x => `${esc(x.flag)}=<b>${esc(x.to || "–")}</b>`).join("<br>")}<details class="fullval"><summary>full value</summary>${esc(d.after)}</details></td>`
+    : `<td class="mono">${esc(d.variable)}</td><td class="mono diff-old" style="word-break:break-all">${esc(val(d.variable, d.before))}</td><td class="mono diff-new" style="word-break:break-all">${esc(val(d.variable, d.after))}</td>`;
+  return `<tr>${cells}<td>${esc(d.source)}</td><td class="reason">${esc(d.reason || "")}</td></tr>`;
+}
 function renderDiff(el, r) {
   const prev = r.compared_with;
   let h = renderEvaluation(r);
@@ -1036,7 +1054,7 @@ function renderDiff(el, r) {
   if (!prev) {}
   else if (!r.diff.length && r.seq !== 1) h += `<p>No configuration differences with run #${prev.seq} <b>${esc(prev.label)}</b>.</p>`;
   else if (r.diff.length) h += `<h3>Changed since run #${prev.seq} ${esc(prev.label)}${info("Source and reasoning come from the agent. “outside the agent” means the value changed some other way: manual edit, server default after restart, automatic sizing.")}</h3>
-   <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Run #${prev.seq}</th><th>This run</th><th>Source</th><th>Reason</th></tr></thead><tbody>${r.diff.map(d => `<tr><td class="mono">${esc(d.variable)}</td><td class="mono diff-old" style="word-break:break-all">${esc(val(d.variable, d.before))}</td><td class="mono diff-new" style="word-break:break-all">${esc(val(d.variable, d.after))}</td><td>${esc(d.source)}</td><td class="reason">${esc(d.reason || "")}</td></tr>`).join("")}</tbody></table></div>`;
+   <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Run #${prev.seq}</th><th>This run</th><th>Source</th><th>Reason</th></tr></thead><tbody>${r.diff.map(diffRow).join("")}</tbody></table></div>`;
   const managed = r.managed || {};
   if (Object.keys(managed).length) h += `<h3>Agent-applied configuration during this run${info("The settings the tuning-agent enforced while this run was measured: its MySQL option file plus operating-system settings. Everything else was the server default or came from other option files (see Key settings).")}</h3>${configBlocks(managed)}`;
   el.innerHTML = h;
