@@ -1042,8 +1042,8 @@ function diffRow(d) {
   const fd = flagDiff(d.before, d.after);
   const cells = fd
     ? `<td class="mono">${esc(d.variable)}<div class="muted" style="font-size:11.5px;font-family:inherit">${fd.length} of ${Object.keys(parseFlags(d.after)).length} flags changed</div></td>
-       <td class="mono diff-old">${fd.map(x => `${esc(x.flag)}=${esc(x.from || "–")}`).join("<br>")}<details class="fullval"><summary>full value</summary>${esc(d.before)}</details></td>
-       <td class="mono diff-new">${fd.map(x => `${esc(x.flag)}=<b>${esc(x.to || "–")}</b>`).join("<br>")}<details class="fullval"><summary>full value</summary>${esc(d.after)}</details></td>`
+       <td class="mono diff-old flags">${fd.map(x => `${esc(x.flag)}=${esc(x.from || "–")}`).join("<br>")}<details class="fullval"><summary>full value</summary>${esc(d.before)}</details></td>
+       <td class="mono diff-new flags">${fd.map(x => `${esc(x.flag)}=<b>${esc(x.to || "–")}</b>`).join("<br>")}<details class="fullval"><summary>full value</summary>${esc(d.after)}</details></td>`
     : `<td class="mono">${esc(d.variable)}</td><td class="mono diff-old" style="word-break:break-all">${esc(val(d.variable, d.before))}</td><td class="mono diff-new" style="word-break:break-all">${esc(val(d.variable, d.after))}</td>`;
   return `<tr>${cells}<td>${esc(d.source)}</td><td class="reason">${esc(d.reason || "")}</td></tr>`;
 }

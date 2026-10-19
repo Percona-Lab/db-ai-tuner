@@ -157,6 +157,9 @@ main pre { overflow-x: auto; }
 }
 /* long unbreakable values (allocator / filesystem option strings, statement texts) wrap instead of widening the page */
 .card { overflow-wrap: break-word; }
-table.kvt td.mono, .diff-new, .diff-old, #recs .mono, #recs b { word-break: break-all; }
+table.kvt td.mono, #recs .mono, #recs b { word-break: break-all; }
+td.flags { white-space: nowrap; word-break: normal; }
+td.flags details { white-space: normal; max-width: 420px; }
 details.fullval { margin-top: 6px; font-size: 11.5px; color: var(--muted); word-break: break-all; }
 details.fullval summary { cursor: pointer; font-family: var(--font, inherit); }
+.diff-old { text-decoration: none !important; color: var(--muted); }
