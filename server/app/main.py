@@ -1165,11 +1165,20 @@ _tar_cache = {}
 
 
 def _agent_build():
-    """Git commit of the deployed tree (blue/green deploys run from the same /opt/aituner checkout)."""
+    """Git commit of the deployed tree, read from .git (the service user may not be allowed to run git on the checkout)."""
     try:
-        import subprocess
-        return subprocess.run(["git", "-C", AGENT_DIR, "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
-                              timeout=5).stdout.strip() or "unknown"
+        g = os.path.join(AGENT_DIR, "..", ".git")
+        head = open(os.path.join(g, "HEAD")).read().strip()
+        if head.startswith("ref: "):
+            ref = head[5:]
+            p = os.path.join(g, ref)
+            if os.path.exists(p):
+                return open(p).read().strip()[:7]
+            for line in open(os.path.join(g, "packed-refs")):
+                if line.strip().endswith(" " + ref):
+                    return line.split()[0][:7]
+            return "unknown"
+        return head[:7]
     except Exception:
         return "unknown"
 

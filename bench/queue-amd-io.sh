@@ -50,8 +50,10 @@ tuning-agent experiment run --bench $P || exit 1
 # 3) buffer pool push with a large swap file: step the pool up past RAM while it still pays off
 tuning-agent apply --set os:swapfile=64G --reason "large swap for the buffer pool push" || exit 1
 cur=$(( $(mysql -N -e "SELECT @@innodb_buffer_pool_size") / 1073741824 ))
-vals=$(python3 -c "c=$cur; print(','.join(f'{x}G' for x in sorted(set(list(range(c+2, 31, 2)) + list(range(28, 37)))) if x > c))")
-add --sweep innodb_buffer_pool_size=$vals --force --reason "buffer pool push from ${cur}G with 64 GB swap: how far does a larger cache still win?"
+# start at 80% of RAM (below that the pool is just sized normally), 1 GB steps up to RAM, then 2 GB steps past it
+ram=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo) / 1048576 ))
+vals=$(python3 -c "r=$ram; c=$cur; s=max(c + 1, round(0.8 * r)); print(','.join(f'{x}G' for x in list(range(s, r + 1)) + list(range(r + 2, r + 7, 2))))")
+add --sweep innodb_buffer_pool_size=$vals --force --reason "buffer pool push from 80% of RAM (${ram} GiB) with 64 GB swap: how far does a larger cache still win?"
 tuning-agent experiment run --bench $P || exit 1
 POST
 chmod +x /root/bench/amd-post.sh
