@@ -191,7 +191,7 @@
     if (opts.ref != null) {
       el("line", { x1: m.l, x2: W - m.r, y1: Y(opts.ref), y2: Y(opts.ref), stroke: "var(--ink-2)", "stroke-dasharray": "4 3", "stroke-width": 1 }, svg);
       const key = document.createElement("div"); key.className = "muted"; key.style.cssText = "font-size:12px;margin:-2px 0 4px";
-      key.innerHTML = `<svg width="22" height="8" style="vertical-align:middle"><line x1="0" x2="22" y1="4" y2="4" stroke="currentColor" stroke-dasharray="4 3"/></svg> ${opts.refLabel || "first run"}`;
+      key.innerHTML = `<span style="display:inline-block;width:22px;border-top:1px dashed currentColor;vertical-align:middle;margin-right:4px"></span>${opts.refLabel || "first run"}`;
       wrap.insertBefore(key, svg);
     }
   }
