@@ -1164,6 +1164,16 @@ def agent_recommendation(body: dict = Body(...), key=Depends(auth.agent_key)):
 _tar_cache = {}
 
 
+def _agent_build():
+    """Git commit of the deployed tree (blue/green deploys run from the same /opt/aituner checkout)."""
+    try:
+        import subprocess
+        return subprocess.run(["git", "-C", AGENT_DIR, "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
+                              timeout=5).stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
 def agent_tarball():
     mtime = max(os.path.getmtime(os.path.join(dp, f)) for dp, _, fs in os.walk(AGENT_DIR) for f in fs)
     if _tar_cache.get("mtime") != mtime:
@@ -1174,6 +1184,11 @@ def agent_tarball():
                 for f in fs:
                     full = os.path.join(dp, f)
                     t.add(full, arcname=os.path.join("tuning-agent", os.path.relpath(full, AGENT_DIR)))
+            build = _agent_build().encode()
+            ti = tarfile.TarInfo("tuning-agent/tuning_agent/_build.py")
+            body = b'BUILD = "' + build + b'"\n'
+            ti.size, ti.mtime = len(body), int(time.time())
+            t.addfile(ti, io.BytesIO(body))
         _tar_cache.update(mtime=mtime, data=buf.getvalue())
     return _tar_cache["data"]
 
