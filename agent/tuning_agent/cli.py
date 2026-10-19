@@ -16,6 +16,7 @@ import uuid
 from . import __version__, baseline, bench, bottleneck, clientrole, collector, engine, evaluate, hostinfo, llmassist, mysqldb, ostune
 from .knowledge import tradeoffs_in
 from .applier import Applier
+from .knowledge import OPTIONS as KOPTIONS
 from .client import APIError, Client
 from .knowledge import human_size, normalize
 from .state import SampleStore, State
@@ -290,8 +291,28 @@ def _maintenance_tasks(c):
     return out
 
 
+def _finish_pending_restart(c):
+    """A restart deferred to a data reset that never came (the loop ended): restart now so the server runs what the
+    option file says."""
+    if c.state.get("restart_pending"):
+        log("== applying the deferred restart")
+        Applier(c.cfg, c.state, c.db, log=log).restart()
+        c.state.set("restart_pending", False)
+        c.db.connect(retries=30, delay=2)
+
+
+def _reset_restarts(c):
+    """The session's benchmark restores the data set (stop, copy, start mysqld) before every run."""
+    try:
+        prof = (c.state.get("session") or {}).get("bench")
+        return bool(prof) and "reset_datadir" in str(bench.Profile(prof).reset or "")
+    except Exception:
+        return False
+
+
 def _apply_and_record(c, changes, source, reason_default="", restart=None):
     allow = c.cfg.get("allow_restart", "true").lower() == "true" if restart is None else restart
+    defer = source in ("autotune", "rollback") or str(source).startswith("exp:")
     for ch in changes:
         ch.setdefault("source", source)
         ch.setdefault("reason", reason_default)
@@ -299,7 +320,8 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
     changes = [ch for ch in changes if not ch["variable"].startswith("client:")]
     ap = Applier(c.cfg, c.state, c.db, log=log)
     try:
-        res = ap.apply(changes, allow_restart=allow) if changes else {"applied": [], "restarted": False, "needs_restart": [],
+        res = ap.apply(changes, allow_restart=allow, defer_restart=defer and _reset_restarts(c)) if changes else {
+                                                                      "applied": [], "restarted": False, "needs_restart": [],
                                                                       "mismatches": [], "errors": [], "cnf_path": ap.cnf_path}
     except Exception as e:
         # a change that cannot be applied (e.g. huge pages: not enough contiguous memory) is a failed experiment, not a
@@ -312,6 +334,8 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
         c.event("apply", f"{source}: apply failed and was rolled back: {str(e)[:300]}")
         return {"applied": [], "restarted": False, "needs_restart": [], "mismatches": [], "errors": [f"{type(e).__name__}: {e}"],
                 "rolled_back": True, "cnf_path": ap.cnf_path}
+    if res.get("restart_deferred"):
+        c.state.set("restart_pending", True)  # cleared by the next data reset; finish_pending_restart() otherwise
     if client_changes and not res.get("rolled_back"):
         _apply_clients(c, client_changes, res)
     if res["applied"]:
@@ -879,6 +903,16 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         if rc != 0:
             raise Fail(f"reset command failed ({rc}): {out[-500:]}")
         c.db.connect(retries=30, delay=2)
+        c.state.set("restart_pending", False)
+        try:  # a restart deferred to this reset: the configured values must be in effect now
+            now_vars = c.db.variables()
+            for var, m in (c.state.get("managed") or {}).items():
+                if ":" in var or var not in now_vars or var in KOPTIONS:
+                    continue
+                if normalize(var, now_vars.get(var)) != normalize(var, m.get("value")):
+                    log(f"WARNING after reset: {var} is {now_vars.get(var)}, configured {m.get('value')}")
+        except Exception:
+            pass
     env_probe = {}
     # environment check: during calibration only (its baseline), and again when the previous run showed unusual steal.
     # Between runs it mostly measured its own noise; steal is measured passively all the time.
@@ -1671,6 +1705,7 @@ def cmd_experiment(a):
         for e in _queued_experiments(c, sess):
             log(f"== experiment #{e['id']} ({e['kind']}, from {e.get('created_by')})")
             done.append({"id": e["id"], "result": _run_experiment(c, prof, e)})
+        _finish_pending_restart(c)
         emit({"ok": True, "ran": done}, "\n".join(f"#{d['id']}: {d['result']}" for d in done) or "No queued experiments.")
 
 
@@ -1890,6 +1925,7 @@ def cmd_autotune(a):
         goto(best_safe, "best production-safe configuration")
         if a.confirm:
             _bench_run(c, prof, "best safe config, confirmation")
+    _finish_pending_restart(c)
     sess = c.session()
     out = {"ok": True, "best": sess.get("best"), "best_safe": sess.get("best_safe"),
            "runs": [{k: r.get(k) for k in ("seq", "label", "goal_value", "verdict")} for r in sess["runs"]]}

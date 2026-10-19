@@ -172,10 +172,10 @@ class Applier:
         r = subprocess.run(["journalctl", "-u", self.service, "-n", "30", "--no-pager"], capture_output=True, text=True)
         return r.stdout[-3000:]
 
-    def apply(self, changes, allow_restart=True, force_restart=False):
+    def apply(self, changes, allow_restart=True, force_restart=False, defer_restart=False):
         old_managed = {k: dict(v) for k, v in self.state["managed"].items()}
         try:
-            return self._apply(changes, allow_restart, force_restart)
+            return self._apply(changes, allow_restart, force_restart, defer_restart)
         except Exception:
             # never leave an option file the agent's state does not describe
             self.write_cnf(old_managed)
@@ -183,7 +183,7 @@ class Applier:
             self.state.save()
             raise
 
-    def _apply(self, changes, allow_restart=True, force_restart=False):
+    def _apply(self, changes, allow_restart=True, force_restart=False, defer_restart=False):
         """changes: [{variable, value (None = unmanage), reason, source}]
         Returns dict(applied, restarted, needs_restart, mismatches, errors)."""
         before_vars = self.all_settings()
@@ -268,7 +268,21 @@ class Applier:
                     need_restart.append(var)
                 else:
                     result["errors"].append(f"{var}: {e.args[-1] if e.args else e}")
-        if (need_restart or force_restart) and allow_restart:
+        # the next step restores the data set with its own mysqld stop / start (benchmark reset): that start applies the
+        # option file, so flushing and restarting now is wasted time. The new configuration is validated without starting.
+        deferrable = defer_restart and not applied_os and not any(c["variable"] == "large_pages" for c in changes)
+        if (need_restart or force_restart) and allow_restart and deferrable:
+            r = subprocess.run(["mysqld", "--validate-config"], capture_output=True, text=True, timeout=120)
+            if r.returncode != 0:
+                self.log("new configuration rejected by mysqld --validate-config, restoring the previous one")
+                self.write_cnf(old_managed)
+                result["errors"].append("invalid configuration: " + (r.stderr or r.stdout).strip()[-400:])
+                result["rolled_back"] = True
+                return result
+            self.log("restart deferred to the data reset (configuration validated)")
+            result["needs_restart"] = need_restart
+            result["restart_deferred"] = True
+        elif (need_restart or force_restart) and allow_restart:
             ok, err = self.restart()
             if ok and any(c["variable"] == "large_pages" and str(c.get("value")).upper() == "ON" for c in changes):
                 ok, err = self._verify_huge_pages()
@@ -317,6 +331,8 @@ class Applier:
                 result["applied"].append(entry)
                 continue
             entry = {"variable": var, "old": c["old"], "new": after.get(var), "reason": c.get("reason", ""), "source": c.get("source", "manual")}
+            if result.get("restart_deferred") and var in result["needs_restart"]:
+                entry["new"] = c["value"]  # takes effect at the reset's restart
             ok = flags_subset(c["value"], after.get(var)) if KB.get(var, {}).get("kind") == "flags" else \
                 normalize(var, after.get(var)) == normalize(var, c["value"])
             if c.get("value") is not None and not ok and var not in result["needs_restart"]:
