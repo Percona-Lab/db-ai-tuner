@@ -105,6 +105,17 @@ function authForm(kind) {
   };
 }
 
+function activityLine(a) {
+  // what an active session is doing right now: the agent's report (phase + time left) or derived from its latest run
+  if (!a) return "";
+  const nowS = Date.now() / 1000;
+  const left = a.until ? Math.round((a.until - nowS) / 60) : null;
+  const t = left != null && left > 0 ? ` · ${left} min left` : a.since ? ` · ${ago(a.since).replace(" ago", "")}` : a.at ? ` · ${ago(a.at)}` : "";
+  const cls = a.stale ? "warn" : a.phase === "measuring" ? "good" : "info";
+  const tip = a.stale ? "This phase should have ended more than 15 minutes ago and the agent has not reported anything since: check the host."
+    : a.source === "derived" ? "Derived from the session's latest run (the agent running this session predates live activity reports)." : "Reported by the tuning-agent.";
+  return `<div style="font-size:12px;margin-top:3px"><span class="badge ${cls}" data-tip="${esc(tip)}" tabindex="0">${esc(a.phase)}</span> <span class="muted">${esc(a.detail || "")}${t}</span></div>`;
+}
 function envStatus(e) {
   if (e.destroyed_at) return `<span class="badge plain" data-tip="The machine was deleted ${ago(e.destroyed_at)} (e.g. at the end of a study). Its sessions and results are kept.">decommissioned</span>`;
   const stopped = e.agent_state === "stopped" && (e.agent_state_at || 0) >= (e.last_seen || 0);
@@ -138,7 +149,7 @@ async function envList() {
       box.innerHTML = `<div class="card tablewrap"><table><thead><tr><th>Name</th><th>Status</th><th>Database</th><th>Hardware</th><th class="num">Data</th><th class="num">TPS</th><th class="num">Avg latency</th><th class="num">CPU</th><th class="num">Disk</th><th>Active session</th><th class="num">Sessions</th></tr></thead><tbody>${envs.map(e => {
         const m = metrics(e);
         return `<tr class="click" data-href="#/env/${e.id}"><td><a href="#/env/${e.id}"><b>${esc(e.name)}</b></a>${clients(e)}</td><td>${status(e)}</td><td>${esc(e.db_short || e.db)}</td><td>${e.cpus || "?"} CPU · ${bytes(e.ram_bytes)} · ${e.disk}</td><td class="num">${bytes(e.data_bytes)}</td>
-          <td class="num">${m.tps}</td><td class="num">${m.lat}</td><td class="num">${m.cpu}</td><td class="num"${m.diskTip ? ` data-tip="${m.diskTip}"` : ""}>${m.disk}</td><td>${e.active_session ? `<a href="#/session/${e.active_session.id}">#${e.active_session.id} ${esc(e.active_session.name)}</a>` : '<span class="muted">–</span>'}</td><td class="num">${e.sessions}</td></tr>`; }).join("")}</tbody></table></div>`;
+          <td class="num">${m.tps}</td><td class="num">${m.lat}</td><td class="num">${m.cpu}</td><td class="num"${m.diskTip ? ` data-tip="${m.diskTip}"` : ""}>${m.disk}</td><td>${e.active_session ? `<a href="#/session/${e.active_session.id}">#${e.active_session.id} ${esc(e.active_session.name)}</a>${activityLine(e.active_session.activity)}` : '<span class="muted">–</span>'}</td><td class="num">${e.sessions}</td></tr>`; }).join("")}</tbody></table></div>`;
       box.querySelectorAll("tr[data-href]").forEach(tr => tr.onclick = ev => { if (!ev.target.closest("a")) location.hash = tr.dataset.href; });
     } else {
       box.innerHTML = `<div class="grid g3">${envs.map(e => { const m = metrics(e);
@@ -146,7 +157,7 @@ async function envList() {
           <div class="muted" style="margin:4px 0 10px">${esc(e.db_short || e.db)}${(e.clients || []).length ? ` · + ${e.clients.length} client${e.clients.length > 1 ? "s" : ""}` : ""}<br>${e.cpus || "?"} CPUs · ${bytes(e.ram_bytes)} RAM · ${e.disk} · data ${bytes(e.data_bytes)}</div>
           <div class="row" style="gap:18px"><div><div class="muted" style="font-size:12px">TPS</div><b>${m.tps}</b></div><div><div class="muted" style="font-size:12px">Avg latency</div><b>${m.lat}</b></div>
           <div><div class="muted" style="font-size:12px">CPU busy</div><b>${m.cpu}</b></div><div data-tip="${m.diskTip}"><div class="muted" style="font-size:12px">Disk</div><b>${m.disk}</b></div><div><div class="muted" style="font-size:12px">Sessions</div><b>${e.sessions}</b></div></div>
-          ${e.active_session ? `<div style="margin-top:10px"><span class="badge info">active: ${esc(e.active_session.name)}</span></div>` : ""}</a>`; }).join("")}</div>`;
+          ${e.active_session ? `<div style="margin-top:10px"><span class="badge info">active: ${esc(e.active_session.name)}</span>${activityLine(e.active_session.activity)}</div>` : ""}</a>`; }).join("")}</div>`;
     }
   };
   box.parentElement.querySelectorAll(".seg button").forEach(b => b.onclick = () => { mode = b.dataset.v; try { localStorage.setItem("envView", mode); } catch (e) { } draw(); });
@@ -221,7 +232,7 @@ async function studyPage(id) {
   <div class="card tablewrap"><table><thead><tr><th>Environment</th><th>Hardware</th><th class="num">Cost / month</th><th>Session</th><th class="num">Start</th><th class="num">Tuned</th><th class="num">Gain</th><th class="num">With trade-offs</th><th class="num">Per CPU</th>${rows.some(x => x.cost) ? '<th class="num">Per $</th>' : ""}${rows.some(x => x.s.cost || x.s.env_cost) ? `<th class="num">Study cost${info("Machine cost: hourly price × time the machine existed (setup and data load included) when its lifetime is recorded, otherwise the session's wall time. Per-run costs: session pages and the CSV.")}</th>` : ""}${st.target != null ? "<th>Target</th>" : ""}<th></th></tr></thead><tbody>
   ${rows.length ? rows.map(x => `<tr><td><a href="#/env/${x.e.id}"><b>${esc(x.e.name)}</b></a></td><td>${x.e.cpus || "?"} CPU · ${bytes(x.e.ram_bytes)} · ${x.e.disk}</td>
     <td class="num"><a href="#" class="cost" data-env="${x.e.id}" data-cost="${x.cost != null ? x.cost : ""}">${x.cost ? "$" + Math.round(x.cost) : "set"}</a></td>
-    <td><a href="#/session/${x.s.id}">#${x.s.id} ${esc(x.s.name)}</a> ${statusBadge(x.s.status)}</td><td class="num">${num(x.first)}</td><td class="num"><b>${num(x.bs)}</b></td>
+    <td><a href="#/session/${x.s.id}">#${x.s.id} ${esc(x.s.name)}</a> ${x.s.status === "active" ? "" : statusBadge(x.s.status)}${activityLine(x.s.activity)}</td><td class="num">${num(x.first)}</td><td class="num"><b>${num(x.bs)}</b></td>
     <td class="num ${deltaCls((x.r.best_safe || {}).gain_pct)}">${pct((x.r.best_safe || {}).gain_pct)}</td><td class="num">${x.bt != null ? num(x.bt) : "–"}</td>
     <td class="num">${x.bs != null && x.cpus ? num(lat ? x.bs * x.cpus : x.bs / x.cpus) : "–"}</td>${rows.some(y => y.cost) ? `<td class="num">${x.bs != null && x.cost ? num(lat ? x.bs * x.cost : x.bs / x.cost) : "–"}</td>` : ""}
 ${rows.some(y => y.s.cost || y.s.env_cost) ? `<td class="num">${(() => { const c = x.s.env_cost || x.s.cost; return c ? `<span data-tip="${c.hours} h × $${c.rate_hourly.toFixed(4)}/h${x.s.env_cost && x.s.env_cost.destroyed ? " · machine destroyed" : ""}${x.s.cost ? ` · session ${x.s.cost.hours} h = $${x.s.cost.total.toFixed(2)}` : ""}">$${c.total.toFixed(2)}</span>` : "–"; })()}</td>` : ""}
@@ -600,6 +611,7 @@ async function sessionPage(id) {
   $view.innerHTML = `<div class="crumbs"><a href="#/">Environments</a> / <a href="#/env/${d.environment.id}">${esc(d.environment.name)}</a> /</div>
   <div class="row"><h1><span class="muted" style="font-weight:500">#${s.id}</span> ${esc(s.name)}</h1>${statusBadge(s.status)}<span class="spacer"></span><button class="ghost" id="rename">Rename</button><button class="ghost danger" id="del">Delete</button></div>
   <p class="sub">Goal: <b>${goalName(s.goal)}</b> · policy <a href="#/policies"><b>${esc(s.policy)}</b></a>${s.policy === "benchmark" ? " (trade-offs allowed after safe experiments)" : " (production-safe changes only)"} · OS tuning ${s.os_tuning === 0 ? "off" : "on"}${info("When on, the agent may also change operating-system settings (swappiness, transparent huge pages, I/O scheduler, mount options, dirty writeback, memory allocator, huge pages). OS changes are recorded per run and rolled back like MySQL settings. Disable with --no-os-tuning.")} · noise threshold ±${s.noise_pct}% · started ${fmtTime(s.created)}${s.workload ? " · workload: " + esc(s.workload) : ""}</p>
+  ${s.activity ? `<div style="margin:-4px 0 10px">${activityLine(s.activity)}</div>` : ""}
   ${calibrationNote(s)}
   <p class="sub" style="margin-top:-6px">Study${info("A study groups sessions from several environments running the same workload, e.g. to compare hardware or find the smallest hardware that reaches a target.")}: <select id="studySel" style="width:auto"><option value="">none</option></select>${d.study ? ` <a href="#/study/${d.study.id}">open study</a>` : ""}</p>
   <div class="tiles"><div class="tile"><div class="k">Runs measured</div><div class="v">${done.length}</div></div>

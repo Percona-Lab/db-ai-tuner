@@ -265,7 +265,7 @@ def environments(request: Request):
         s = store.q1("SELECT COUNT(*) n, MAX(created) last FROM tsessions WHERE env_id=?", (e["id"],))
         b["sessions"] = s["n"]
         act = store.q1("SELECT id, name, goal FROM tsessions WHERE env_id=? AND status='active' ORDER BY id DESC LIMIT 1", (e["id"],))
-        b["active_session"] = dict(act) if act else None
+        b["active_session"] = dict(act, activity=session_activity(e, act["id"])) if act else None
         m = store.q1("SELECT data FROM metrics WHERE env_id=? ORDER BY ts DESC LIMIT 1", (e["id"],))
         b["latest"] = store.uj(m["data"]) if m else None
         b["clients"] = [{"id": h["id"], "name": h["name"], "online": bool(h["last_seen"] and now() - h["last_seen"] < ONLINE_S)}
@@ -420,6 +420,7 @@ def session(sid: int, request: Request):
     runs = [run_brief(r) for r in store.q("SELECT * FROM runs WHERE session_id=? ORDER BY seq, id", (sid,))]
     recs = [store.row(r, ("items", "diagnosis", "workload", "llm")) for r in store.q("SELECT * FROM recommendations WHERE session_id=? ORDER BY id DESC", (sid,))]
     events = [store.row(r, ("data",)) for r in store.q("SELECT * FROM events WHERE session_id=? ORDER BY ts DESC LIMIT 200", (sid,))]
+    s["activity"] = session_activity(e, sid) if s.get("status") == "active" else None
     st = store.q1("SELECT id, name, kind FROM studies WHERE id=?", (s.get("study_id"),)) if s.get("study_id") else None
     return {"session": s, "environment": env_brief(e), "runs": runs, "recommendations": recs, "events": events, "cost": session_costs(s, e),
             "study": dict(st) if st else None}
@@ -612,6 +613,35 @@ def agent_metrics(body: dict = Body(...), key=Depends(auth.agent_key)):
     c.execute("UPDATE environments SET last_seen=?, agent_state='running' WHERE id=?", (now(), e["id"]))
     c.execute("COMMIT")
     return {"ok": True, "stored": len(rows)}
+
+
+@app.post("/api/v1/agent/activity")
+def agent_activity(body: dict = Body(...), key=Depends(auth.agent_key)):
+    e = agent_env(body.get("environment_id"), key)
+    act = {k: body.get(k) for k in ("phase", "detail", "until", "session_id")}
+    act["phase"] = str(act.get("phase") or "")[:60]
+    act["detail"] = str(act.get("detail") or "")[:200]
+    store.ex("UPDATE environments SET activity=?, activity_at=? WHERE id=?", (store.j(act), now(), e["id"]))
+    return {"ok": True}
+
+
+def session_activity(env, session_id):
+    """What an active session is doing: the agent's own report when fresh, else derived from its latest run."""
+    env = dict(env)
+    act = store.uj(env.get("activity")) if env.get("activity") else None
+    if act and act.get("session_id") in (session_id, None) and env.get("activity_at") and now() - env["activity_at"] < 6 * 3600:
+        act = dict(act, at=env["activity_at"], source="agent")
+        until = act.get("until")
+        if until and now() > until + 900:
+            act["stale"] = True  # the phase should have ended 15+ min ago without a new report
+        return act
+    r = store.q1("SELECT seq, label, status, started, ended FROM runs WHERE session_id=? ORDER BY seq DESC, id DESC LIMIT 1", (session_id,))
+    if not r:
+        return {"phase": "preparing", "detail": "no run yet", "source": "derived", "at": None}
+    if r["status"] == "measuring":
+        return {"phase": "measuring", "detail": f"run #{r['seq']} {r['label']}", "since": r["started"], "source": "derived"}
+    return {"phase": "between runs", "detail": f"run #{r['seq']} ended (reset, warm-up or applying the next change)", "since": r["ended"],
+            "source": "derived"}
 
 
 @app.post("/api/v1/agent/bye")
@@ -1090,7 +1120,8 @@ def study_view(st, user_id):
         sessions.append({"id": s["id"], "name": s["name"], "status": s["status"], "goal": s["goal"], "policy": s["policy"],
                          "goal_metric": s.get("goal_metric"), "noise_pct": s["noise_pct"], "workload": s["workload"],
                          "created": s["created"], "environment": env_brief(e), "results": session_results(s),
-                         "cost": session_costs(s, e), "env_cost": env_cost(e)})
+                         "cost": session_costs(s, e), "env_cost": env_cost(e),
+                         "activity": session_activity(e, s["id"]) if s["status"] == "active" else None})
     return sessions
 
 

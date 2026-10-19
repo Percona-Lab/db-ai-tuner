@@ -96,6 +96,8 @@ MIGRATIONS = [
     ("environments", "agent_state_at", "REAL"),
     ("hosts", "destroyed_at", "REAL"),
     ("llm_calls", "context", "TEXT"),
+    ("environments", "activity", "TEXT"),
+    ("environments", "activity_at", "REAL"),
     ("llm_calls", "purpose", "TEXT"),
 ]
 

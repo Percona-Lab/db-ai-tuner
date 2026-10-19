@@ -140,6 +140,20 @@ class Ctx:
             self.hello()
         return self.state["environment_id"]
 
+    def activity(self, phase, detail=None, seconds=None):
+        """What the agent is doing right now (shown next to the active session). Best effort, one quick attempt."""
+        if not self.client:
+            return
+        old = self.client.timeout
+        try:
+            self.client.timeout = 5
+            self.client._call("POST", "/activity", {"environment_id": self.env_id(), "session_id": (self.state.get("session") or {}).get("id"),
+                                                    "phase": phase, "detail": detail, "until": time.time() + seconds if seconds else None})
+        except Exception:
+            pass
+        finally:
+            self.client.timeout = old
+
     def event(self, kind, message, data=None):
         try:
             self.client.post("/events", {"environment_id": self.env_id(), "session_id": (self.state.get("session") or {}).get("id"),
@@ -437,6 +451,7 @@ def cmd_session(a):
         c.state.data["sessions_done"] = hist[-20:]
         c.state.data["session"] = None
         c.state.save()
+        c.activity("idle", f"session #{sess['id']} closed")
         emit({"ok": True, "closed": sess["id"], "best": sess.get("best")}, f"Session #{sess['id']} closed. Best run: {sess.get('best')}")
     else:  # show
         emit(c.session(required=False) or {}, None)
@@ -775,6 +790,7 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     logfile = os.path.join(logdir, f"s{sess['id']}-run{seq}.log")
     if prof.reset:
         log(f"reset: {prof.reset}")
+        c.activity("resetting data", prof.reset.split()[0].rsplit("/", 1)[-1])
         c.db.close()
         rc, out = bench.run_shell(prof.reset, timeout=3600, log=logfile + ".reset")
         if rc != 0:
@@ -783,11 +799,13 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     env_probe = {}
     if prof.probe:
         log("environment probe (CPU, storage) ...")
+        c.activity("environment check", "quick CPU and storage benchmark")
         try:
             env_probe = bench.probe(c.datadir(), log)
         except Exception as e:  # never fail a run because of the probe
             log(f"probe failed: {e}")
     log(f"benchmark: {prof.name}")
+    c.activity("starting benchmark", label)
     r = bench.Running(prof.run, logfile)
     profiler = None
     try:
@@ -800,6 +818,7 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
             profiler = _maybe_profile(c, sess, prof, waited)
             if waited:
                 log(f"warm-up {waited}s ...")
+                c.activity("warm-up", label, waited)
                 deadline = time.time() + waited
                 while time.time() < deadline and r.alive():
                     time.sleep(1)
@@ -809,6 +828,7 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         t_meas0 = time.time()
         if prof.duration > 0:
             log(f"measuring run {m['seq']} for {prof.duration}s ...")
+            c.activity("measuring", f"run #{m['seq']} {label or ''}", prof.duration)
             deadline = time.time() + prof.duration
             while time.time() < deadline and r.alive():
                 time.sleep(1)
@@ -817,6 +837,7 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
             durs = sorted(x["summary"].get("duration_s") for x in sess["runs"] if (x.get("summary") or {}).get("duration_s"))
             limit = min(prof.timeout, 2.5 * durs[len(durs) // 2]) if len(durs) >= 2 else prof.timeout
             log(f"measuring run {m['seq']} until the benchmark finishes (abort after {limit:.0f}s) ...")
+            c.activity("measuring", f"run #{m['seq']} {label or ''} (until the benchmark finishes)", durs[len(durs) // 2] if durs else None)
             t_start = time.time()
             deadline = t_start + limit
             while time.time() < deadline and r.alive():
@@ -1306,6 +1327,12 @@ def cmd_profile(a):
     emit({k: v for k, v in res.items() if k != "folded" or a.json_folded}, "\n".join(lines) if not res.get("error") else res["error"])
 
 
+def cmd_activity(a):
+    """Report what is happening on this host (for scripts: e.g. loading benchmark data before a session)."""
+    c = Ctx()
+    c.activity(a.phase, a.detail, a.seconds)
+
+
 def cmd_llm_context(a):
     """Print the context the tuner would send to the LLM now (for audits / replays)."""
     c = Ctx()
@@ -1411,6 +1438,7 @@ def cmd_autotune(a):
                                "source": "fs-baseline"}], "autotune")
     if not sess.get("noise"):
         log(f"== calibration: {a.calibrate} runs of the current configuration")
+        c.activity("calibrating", f"{a.calibrate} runs of the starting configuration to measure noise")
         runs = []
         extra = 0
         while len([r for r in runs if r.get("verdict") != "unreliable"]) < a.calibrate:
@@ -1442,6 +1470,7 @@ def cmd_autotune(a):
             log("   " + _run_experiment(c, prof, e))
             measured += len(e["spec"].get("values") or [1]) * int(e.get("repeats") or 1)
             continue
+        c.activity("choosing next experiment", "diagnosis and recommendation")
         res = _recommend(c, sess)
         nxt = res.get("next")
         if nxt in (sess.get("failed_recs") or []):
@@ -1490,6 +1519,7 @@ def cmd_autotune(a):
             c.state.set("session", sess)
             continue
         log(f"== experiment: {nxt} ({item['title']}) [{item.get('safety')}]")
+        c.activity("applying changes", f"{nxt}: {item['title']}" + (" (restart)" if item.get("restart") else ""))
         changes = [{"variable": ch["variable"], "value": None if ch.get("unset") else ch["proposed"], "reason": item["rationale"],
                     "source": f"rec:{nxt}"} for ch in item["changes"]]
         before_exp = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
@@ -1806,6 +1836,12 @@ def main(argv=None):
     s.add_argument("--folded", help="also write folded stacks (for flamegraph.pl / speedscope) to this file")
     s.add_argument("--json-folded", action="store_true", help="include folded stacks in --json output")
     s.set_defaults(fn=cmd_profile)
+
+    s = sp.add_parser("activity", help="report the current activity of this host to the server (shown in the UI)")
+    s.add_argument("phase")
+    s.add_argument("detail", nargs="?")
+    s.add_argument("--seconds", type=float, help="expected duration")
+    s.set_defaults(fn=cmd_activity)
 
     s = sp.add_parser("llm-context", help="print the context the LLM assistant would receive now")
     s.set_defaults(fn=cmd_llm_context)
