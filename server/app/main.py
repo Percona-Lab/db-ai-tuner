@@ -297,6 +297,26 @@ def environment(env_id: int, request: Request):
     return {"environment": env_brief(e), "facts": store.uj(e["facts"], {}), "sessions": sessions, "events": events, "hosts": hosts}
 
 
+@app.post("/api/llm/replay")
+def llm_replay(request: Request, body: dict = Body(...)):
+    """Audit: re-ask a stored LLM call with another model and/or a patched context."""
+    u = auth.current_user(request)
+    try:
+        return llm.replay(u["id"], int(body["call_id"]), body.get("model"), body.get("context"), body.get("patch"))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/llm/calls")
+def llm_calls(request: Request, session_id: int = None):
+    u = auth.current_user(request)
+    q = "SELECT id, session_id, ts, model, status, cached, purpose, cost, response, context IS NOT NULL has_context FROM llm_calls WHERE user_id=?"
+    args = [u["id"]]
+    if session_id:
+        q += " AND session_id=?"; args.append(session_id)
+    return {"calls": [dict(r) for r in store.q(q + " ORDER BY id", args)]}
+
+
 @app.patch("/api/hosts/{host_id}")
 def update_host(host_id: int, request: Request, body: dict = Body(...)):
     u = auth.current_user(request)

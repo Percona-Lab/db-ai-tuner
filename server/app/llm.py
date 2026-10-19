@@ -89,6 +89,8 @@ Never propose changes to: datadir, socket, port, server_id, read_only, sql_mode,
 Mark durability/replication/observability/semantics trade-offs honestly in "risk".
 Judge past experiments by "configurations" (goal mean per configuration over all its runs) rather than by single-run
 verdicts in "history": single runs on cloud VMs drift, and repeats of the same configuration reveal it.
+Respect "server_facts" and "tuner_constraints": a knob that cannot act on this server (e.g. binary log settings with
+log_bin=OFF) wastes a measured run.
 If nothing is likely to help, return an empty list - do not guess."""
 
 SCHEMA = {
@@ -134,7 +136,7 @@ def suggest(user_id, env_id, session_id, context, force=False, trigger="routine"
     tries, wins = gate(user_id, wl)
     if not force and tries >= GATE_MIN_TRIES and wins <= GATE_MAX_WINS:
         return {"enabled": False, "reason": f"LLM suggestions have not helped for {wl or 'this'} workloads ({tries} experiments, {wins} improvements)"}
-    n = store.q1("SELECT COUNT(*) n FROM llm_calls WHERE session_id=? AND status='ok' AND cached=0", (session_id,))["n"]
+    n = store.q1("SELECT COUNT(*) n FROM llm_calls WHERE session_id=? AND status='ok' AND cached=0 AND COALESCE(purpose,'suggest')='suggest'", (session_id,))["n"]
     if not force and n >= MAX_CALLS_PER_SESSION:
         return {"enabled": False, "reason": f"per-session limit of {MAX_CALLS_PER_SESSION} LLM calls reached"}
     payload = json.dumps(context, sort_keys=True, default=str)
@@ -157,12 +159,41 @@ def suggest(user_id, env_id, session_id, context, force=False, trigger="routine"
     except Exception as e:  # noqa
         content, usage, status, err = {"suggestions": [], "notes": ""}, {}, "error", str(e)[:500]
     store.ex("INSERT INTO llm_calls(user_id, env_id, session_id, ts, model, prompt_hash, status, cached, latency_s, prompt_tokens, "
-             "completion_tokens, cost, response, error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             "completion_tokens, cost, response, error, context, purpose) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
              (user_id, env_id, session_id, time.time(), st["model"], h, status, 0, round(time.time() - t0, 2), usage.get("prompt_tokens"),
-              usage.get("completion_tokens"), usage.get("cost"), json.dumps(content), err))
+              usage.get("completion_tokens"), usage.get("cost"), json.dumps(content), err, payload, "suggest"))
     if status != "ok":
         return {"enabled": True, "error": err, "suggestions": []}
     return {"enabled": True, "cached": False, "model": st["model"], "usage": usage, **content}
+
+
+def replay(user_id, call_id, model=None, context=None, patch=None):
+    """Re-ask a stored call: the same context with another model (model question), or a patched / enriched context
+    with the same model (context question). Recorded with purpose='replay' and excluded from the tuner's own limits."""
+    row = store.q1("SELECT * FROM llm_calls WHERE id=? AND user_id=?", (call_id, user_id))
+    if not row:
+        raise ValueError("call not found")
+    ctx = context if context is not None else (json.loads(row["context"]) if row["context"] else None)
+    if ctx is None:
+        raise ValueError("this call has no stored context (made before contexts were recorded): pass one")
+    for k, v in (patch or {}).items():
+        ctx[k] = v
+    st = settings(user_id)
+    model = model or row["model"] or st["model"]
+    key = decrypt(store.q1("SELECT llm_key_enc FROM users WHERE id=?", (user_id,))["llm_key_enc"])
+    payload = json.dumps(ctx, sort_keys=True, default=str)
+    body = {"model": model, "temperature": 0.2, "usage": {"include": True},
+            "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": payload}],
+            "response_format": {"type": "json_schema", "json_schema": {"name": "knob_suggestions", "strict": True, "schema": SCHEMA}}}
+    t0 = time.time()
+    d = _request("POST", OPENROUTER + "/chat/completions", key, body)
+    content = json.loads(d["choices"][0]["message"]["content"])
+    usage = d.get("usage") or {}
+    store.ex("INSERT INTO llm_calls(user_id, env_id, session_id, ts, model, prompt_hash, status, cached, latency_s, prompt_tokens, "
+             "completion_tokens, cost, response, context, purpose) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             (user_id, row["env_id"], row["session_id"], time.time(), model, f"replay-of-{call_id}", "ok", 0, round(time.time() - t0, 2),
+              usage.get("prompt_tokens"), usage.get("completion_tokens"), usage.get("cost"), json.dumps(content), payload, f"replay:{call_id}"))
+    return {"model": model, "usage": usage, **content}
 
 
 def usage_summary(user_id):

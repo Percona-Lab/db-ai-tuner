@@ -1062,7 +1062,9 @@ def _engine_ctx(c, sess):
                 experience[rid] = dict(e, scope="all workloads / machine sizes")
     except Exception as e:  # experience is a hint; never block a recommendation on it
         log(f"note: no experience data ({e})")
-    return {"diagnosis_basis_run": basis, "goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
+    b = (last.get("inputs") or {}).get("bench") or {}
+    bench_info = {k: b.get(k) for k in ("name", "run", "warmup", "duration", "goal_metric") if b.get(k) is not None}
+    return {"bench": bench_info, "diagnosis_basis_run": basis, "goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
             "os_tuning": c.os_tuning_allowed() and sess.get("os_tuning", True), "os_facts": osf, "experience": experience,
             "failed": sess.get("failed_recs") or [],
             "scope": sess.get("scope") or ["knobs", "os"], "fs_device": _ap.fs_device,

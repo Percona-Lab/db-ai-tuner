@@ -32,8 +32,22 @@ def context(ctx, res, meta=None):
     inp = ctx.get("inputs") or {}
     nondefault = {k for k, m in (meta or {}).items() if m.get("source") not in ("COMPILED", "OS")}
     keep = {k: v[k] for k in v if (k in KB or k in nondefault) and not k.startswith("os:") and k not in DENY}
+    facts = {k: v.get(k) for k in ("log_bin", "binlog_format", "gtid_mode", "innodb_flush_log_at_trx_commit", "sync_binlog",
+                                     "transaction_isolation", "performance_schema", "ps:profile", "max_connections", "thread_handling",
+                                     "innodb_buffer_pool_size", "innodb_redo_log_capacity", "innodb_flush_method", "version_comment") if k in v}
     return {
         "server": {"flavor": ctx.get("flavor"), "version": ".".join(str(x) for x in (ctx.get("version") or ()))},
+        # facts that decide whether whole families of knobs can have any effect (e.g. binlog_* when log_bin=OFF)
+        "server_facts": facts,
+        "tuner_constraints": [
+            "The tuner measures statement latency, waits and digests through performance_schema: do not propose "
+            "performance_schema=OFF; to reduce its overhead propose ps:profile=lite (keeps digests, histogram, wait summaries).",
+            "binlog_*, sync_binlog and replication settings have no effect when server_facts.log_bin is OFF.",
+            "Each proposal is measured against its parent configuration; differences smaller than noise_pct are treated as noise.",
+            "Pseudo-variables: os:* (operating system), ps:profile (performance_schema scope), rg:innodb_bg_cpus (CPU set for "
+            "InnoDB background threads via a resource group).",
+        ],
+        "benchmark": (ctx.get("bench") or {}),
         "hardware": {"cpus": hw.get("cpus"), "ram_gib": round((hw.get("ram_bytes") or 0) / 2 ** 30, 1),
                      "disk": "HDD" if hw.get("disk_rotational") else "SSD", "filesystem": hw.get("filesystem")},
         "goal": ctx.get("goal"), "policy": ctx.get("policy"), "workload": res.get("workload"),
