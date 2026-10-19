@@ -20,6 +20,9 @@ RATE_COUNTERS = {
     "bp_disk_reads": ["Innodb_buffer_pool_reads"],
     "bp_pages_flushed": ["Innodb_buffer_pool_pages_flushed"],
     "bp_wait_free": ["Innodb_buffer_pool_wait_free"],
+    "read_ahead": ["Innodb_buffer_pool_read_ahead"],  # pages prefetched by linear read-ahead
+    "read_ahead_rnd": ["Innodb_buffer_pool_read_ahead_rnd"],  # by random read-ahead
+    "read_ahead_evicted": ["Innodb_buffer_pool_read_ahead_evicted"],  # prefetched, evicted before any use: wasted I/O
     "data_reads": ["Innodb_data_reads"],
     "data_writes": ["Innodb_data_writes"],
     "data_fsyncs": ["Innodb_data_fsyncs"],
@@ -318,7 +321,9 @@ def analyze_window(a, b, samples):
         "p99_latency_ms": _percentile_from_hist(a.get("hist"), b.get("hist"), 0.99),
         "bp_hit_pct": db_rates.get("bp_hit_pct"),
         "bp_disk_reads": db_rates.get("bp_disk_reads"),
-        "bp_wait_free": db_rates.get("bp_wait_free"),  # user threads waiting for a clean free page (flush-bound)
+        "bp_wait_free": db_rates.get("bp_wait_free"),
+        "read_ahead_per_s": round((db_rates.get("read_ahead") or 0) + (db_rates.get("read_ahead_rnd") or 0), 2),
+        "read_ahead_evicted_per_s": db_rates.get("read_ahead_evicted"),  # user threads waiting for a clean free page (flush-bound)
         "bp_pages_flushed": db_rates.get("bp_pages_flushed"),
         "redo_mbs": db_rates.get("redo_mbs"),
         "data_fsyncs": db_rates.get("data_fsyncs"),

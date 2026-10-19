@@ -732,3 +732,17 @@ def test_hypotheses_rescore_and_learn():
     # across sessions: the same idea against the same component held 3 of 4 times in similar sessions
     d, note = credibility(it, {"similar": [{"id": "spin-loops", "target": "CPU: spinning on latches", "n": 4, "supported": 3, "refuted": 1}]})
     assert d > 0 and "3 of 4" in note
+
+
+def test_read_ahead_experiments():
+    def items(**kw):
+        ctx = {"goal": "latency", "policy": "safe", "os_tuning": True, "os_facts": {"os:filesystem": "ext4"}, "hw": HW, "flavor": "percona",
+               "version": (9, 7, 2), "variables": dict(VARS, innodb_read_ahead_threshold="56", innodb_random_read_ahead="OFF"),
+               "summary": dict(OLAP[0], redo_mbs=0.0, bp_disk_reads=2900, disk_r_iops=2946, disk_w_iops=13, cpu_iowait=8, **kw),
+               "inputs": OLAP[1], "history": [], "noise_pct": 2.0, "managed": {}}
+        return {i["id"]: i for i in engine.run_engine(ctx)["items"]}
+    it = items(read_ahead_per_s=300, read_ahead_evicted_per_s=10)
+    assert "sweep-read-ahead" in it and it["sweep-read-ahead"]["sweep"]["values"][:2] == ["8", "32"] and "random-read-ahead" in it
+    assert not it["sweep-read-ahead"].get("no_mechanism") and it["sweep-read-ahead"]["relevance"] >= 2
+    wasted = items(read_ahead_per_s=300, read_ahead_evicted_per_s=200)
+    assert "read-ahead-less" in wasted and "random-read-ahead" not in wasted and wasted["sweep-read-ahead"]["sweep"]["values"][0] == "64"

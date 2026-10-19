@@ -588,11 +588,7 @@ def recommend(ctx):
                 b.add("tmp-olap", "Keep analytical temporary tables in memory", ch,
                       f"{100 * tmpd / tmpa:.0f}% of internal temporary tables go to disk ({tmpd:.2f}/s) for GROUP BY / DISTINCT / derived tables.",
                       {"tmp_disk_per_s": tmpd, "tmp_per_s": tmpa, "tmp_table_size": cur}, impact=2, confidence=2)
-        if (s.get("bp_disk_reads") or 0) > 100 and "innodb_read_ahead_threshold" in v and _int(v, "innodb_read_ahead_threshold", 56) > 32 and \
-                rates.get("Handler_read_rnd_next", 0) > 10 * max(rates.get("Handler_read_key", 0), 1):
-            b.add("read-ahead", "Earlier linear read-ahead for scans", [("innodb_read_ahead_threshold", "32")],
-                  "Scan-heavy analytical reads from disk: triggering linear read-ahead earlier turns more random page reads into larger sequential ones. Experiment.",
-                  {"bp_disk_reads": s.get("bp_disk_reads"), "Handler_read_rnd_next_per_s": rates.get("Handler_read_rnd_next")}, impact=1, confidence=1)
+        pass  # read-ahead experiments: see "read path" below (any read-bound workload, not only scans)
         top = (inp.get("top_statements") or [])
         timeouts = rates.get("Max_execution_time_exceeded", 0)
         sub = [q for q in top if q.get("pct_time", 0) >= 5 and str(q.get("query", "")).upper().count("SELECT") >= 2]
@@ -921,6 +917,29 @@ def recommend(ctx):
             sweep("sweep-read-io-threads", "Sweep InnoDB read I/O threads", "innodb_read_io_threads", [str(x) for x in vals],
                   f"{s.get('bp_disk_reads'):.0f} page reads/s from disk on {cpus} CPUs: more read threads keep more asynchronous reads "
                   "(read-ahead, prefetch) in flight on NVMe. Needs a restart.", {"bp_disk_reads": s.get("bp_disk_reads")}, impact=1)
+    # read path: InnoDB read-ahead (linear: prefetch the next extent after N sequential page reads; random: prefetch the
+    # rest of an extent when many of its pages are already cached). Counters show whether prefetching was used or wasted.
+    ra, ra_ev = s.get("read_ahead_per_s") or 0, s.get("read_ahead_evicted_per_s") or 0
+    reads_now = s.get("bp_disk_reads") or 0
+    if have_run and reads_now >= 100 and "innodb_read_ahead_threshold" in v:
+        cur = _int(v, "innodb_read_ahead_threshold", 56)
+        waste = ra_ev / ra if ra else 0
+        vals = ["64", "32"] if waste > 0.3 else ["8", "32", "64"]  # wasted prefetch: read ahead less, not more
+        sweep("sweep-read-ahead", "Sweep linear read-ahead threshold", "innodb_read_ahead_threshold", [x for x in vals if x != str(cur)],
+              f"{reads_now:.0f} page reads/s from disk; linear read-ahead prefetched {ra:.0f} pages/s"
+              + (f", {100 * waste:.0f}% of them evicted unused" if ra else "")
+              + ". A lower threshold prefetches sooner (larger sequential reads for range / index scans), 64 almost disables it.",
+              {"bp_disk_reads": reads_now, "read_ahead_per_s": ra, "read_ahead_evicted_per_s": ra_ev, "innodb_read_ahead_threshold": cur}, impact=2)
+        if not _on(v, "innodb_random_read_ahead") and waste < 0.3:
+            b.add("random-read-ahead", "Random read-ahead", [("innodb_random_read_ahead", "ON")],
+                  f"{reads_now:.0f} page reads/s from disk: random read-ahead fetches the rest of an extent once enough of its pages "
+                  "are cached, helping access patterns that are clustered but not sequential. Off by default since 5.5; watch the "
+                  "evicted-unused counter. Experiment.", {"bp_disk_reads": reads_now, "read_ahead_per_s": ra}, impact=1, confidence=1)
+    if have_run and ra >= 50 and ra_ev / ra > 0.5 and _int(v, "innodb_read_ahead_threshold", 56) < 64:
+        b.add("read-ahead-less", "Read ahead less: prefetched pages are wasted", [("innodb_read_ahead_threshold", "64")] +
+              ([("innodb_random_read_ahead", "OFF")] if _on(v, "innodb_random_read_ahead") else []),
+              f"{100 * ra_ev / ra:.0f}% of read-ahead pages ({ra_ev:.0f}/s) were evicted before use: wasted I/O and buffer pool churn.",
+              {"read_ahead_per_s": ra, "read_ahead_evicted_per_s": ra_ev}, impact=2, confidence=2)
     hll_max = s.get("history_list_length_max") or 0
     if have_run and hll_max > 100000 and "innodb_purge_threads" in v:
         pt = _int(v, "innodb_purge_threads", 4)

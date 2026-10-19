@@ -30,6 +30,9 @@ MECHANISMS = {
     "sort-buffer": (("io", "cpu"), "Sorts finish in memory."),
     "sort-buffer-olap": (("io", "cpu"), "Large analytical sorts finish in memory."),
     "join-buffer": (("io", "cpu"), "Hash joins build in memory instead of spilling."),
+    "sweep-read-ahead": (("io", "io-read", "memory"), "Larger, earlier sequential reads for scans; fewer synchronous page reads."),
+    "random-read-ahead": (("io", "io-read"), "Prefetches the rest of partly cached extents."),
+    "read-ahead-less": (("io", "io-read", "memory"), "No wasted prefetch I/O or buffer pool churn."),
     "read-ahead": (("io", "io-read"), "Larger sequential reads for scans."),
     "subquery-to-derived": (("cpu", "io"), "Correlated subqueries computed once instead of per row."),
     "bka-mrr": (("io", "io-read"), "Index lookups fetched in primary-key order."),
@@ -108,7 +111,7 @@ WRITES = {"redo-grow", "log-buffer", "io-capacity-up", "io-capacity-down", "flus
           "binlog-off", "binlog-minimal", "os-dirty-writeback", "sweep-dirty-lwm", "sweep-purge-threads", "flush-sync-off",
           "purge-lag", "writeset-history", "o-direct-no-fsync", "zfs-doublewrite-off", "sweep-redo", "sweep-io-capacity",
           "os-nobarrier"}
-READS = {"read-ahead", "sweep-read-io-threads"}
+READS = {"read-ahead", "sweep-read-io-threads", "sweep-read-ahead", "random-read-ahead", "read-ahead-less"}
 ANY_IO = {"bp-grow", "bp-overcommit", "sweep-bp", "o-direct", "os-scheduler"}
 
 
