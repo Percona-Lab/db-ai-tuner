@@ -797,7 +797,12 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
             raise Fail(f"reset command failed ({rc}): {out[-500:]}")
         c.db.connect(retries=30, delay=2)
     env_probe = {}
-    if prof.probe:
+    # environment check: during calibration only (its baseline), and again when the previous run showed unusual steal.
+    # Between runs it mostly measured its own noise; steal is measured passively all the time.
+    prev = (sess.get("runs") or [{}])[-1]
+    probe_now = prof.probe == "always" or (prof.probe and (not sess.get("noise") or str(label or "").startswith("baseline")
+                                                           or ((prev.get("evaluation") or {}).get("steal"))))
+    if probe_now:
         log("environment probe (CPU, storage) ...")
         c.activity("environment check", "quick CPU and storage benchmark")
         try:

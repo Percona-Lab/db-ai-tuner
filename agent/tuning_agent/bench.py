@@ -40,7 +40,9 @@ class Profile:
         self.goal_metric = b.get("goal_metric")
         self.goal_scale = float(b.get("goal_scale", "1"))
         self.metrics = dict(cp["metrics"]) if cp.has_section("metrics") else {}
-        self.probe = b.get("probe", "true").lower() == "true"
+        # probe = auto (calibration + after unusual steal; default) | always | false
+        pv = b.get("probe", "auto").lower()
+        self.probe = "always" if pv == "always" else (pv in ("auto", "true", "yes", "1"))
 
     def describe(self):
         return {"name": self.name, "profile": self.path, "reset": self.reset, "run": self.run, "warmup": self.warmup,

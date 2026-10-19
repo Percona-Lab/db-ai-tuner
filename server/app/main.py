@@ -301,7 +301,7 @@ def environment(env_id: int, request: Request):
         a = store.uj(e.get("activity")) if e.get("activity") else None
         activity = dict(a, at=e["activity_at"], source="agent") if a and e.get("activity_at") and now() - e["activity_at"] < 6 * 3600 and a.get("phase") != "idle" else None
     return {"environment": env_brief(e), "facts": store.uj(e["facts"], {}), "sessions": sessions, "events": events, "hosts": hosts,
-            "activity": activity}
+            "activity": activity, "steal": steal_profile(env_id)}
 
 
 @app.post("/api/llm/replay")
@@ -630,6 +630,25 @@ def agent_activity(body: dict = Body(...), key=Depends(auth.agent_key)):
     act["detail"] = str(act.get("detail") or "")[:200]
     store.ex("UPDATE environments SET activity=?, activity_at=? WHERE id=?", (store.j(act), now(), e["id"]))
     return {"ok": True}
+
+
+_STEAL_CACHE = {}
+
+
+def steal_profile(env_id):
+    """Normal CPU steal of an environment: distribution of the 10 s samples of the last 7 days (cached 10 min)."""
+    hit = _STEAL_CACHE.get(env_id)
+    if hit and now() - hit[0] < 600:
+        return hit[1]
+    vals = sorted(r[0] for r in store.q("SELECT json_extract(data, '$.os.cpu_steal') FROM metrics WHERE env_id=? AND ts>?",
+                                        (env_id, now() - 7 * 86400)) if r[0] is not None)
+    out = None
+    if len(vals) >= 30:
+        q = lambda p: vals[min(len(vals) - 1, int(p * len(vals)))]
+        out = {"samples": len(vals), "mean": round(sum(vals) / len(vals), 3), "p50": round(q(0.5), 2), "p99": round(q(0.99), 2),
+               "max": round(vals[-1], 2), "pct_over_1": round(100 * sum(v > 1 for v in vals) / len(vals), 2)}
+    _STEAL_CACHE[env_id] = (now(), out)
+    return out
 
 
 def session_activity(env, session_id):

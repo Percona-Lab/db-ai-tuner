@@ -214,27 +214,31 @@ def relevant_resources(*summaries):
     return {"cpu": cpu, "io": io}
 
 
-STEAL_FLAG_AVG, STEAL_FLAG_PEAK, STEAL_INVALID_AVG = 3.0, 15.0, 8.0
+STEAL_FLAG_PEAK = 5.0  # any 10 s sample; measured normal across our hosts: mean < 0.05%, p99 < 1.5%, max < 2%
 
 
-def steal_check(summary):
-    """Hypervisor CPU steal on the database host or a client during the run. Steal takes CPU away at random from the
-    workload, so the run measures the neighbours as much as the configuration. Flag from 3% average (or 15% in any
-    10 s sample); from 8% average the run is not comparable and is excluded (and re-measured by autotune)."""
+def steal_check(summary, noise_pct=None):
+    """Hypervisor CPU steal on the database host or a client during the run. Steal takes CPU away from a CPU-bound
+    workload roughly one for one, so what matters is its size relative to the differences the session can resolve:
+    flag from half the goal noise threshold (at least 0.5% average) or a 5% peak in any 10 s sample; unreliable (excluded
+    and re-measured) from twice the noise threshold (at least 3% average)."""
     s = summary or {}
     avg, peak, cli = s.get("cpu_steal") or 0, s.get("cpu_steal_max") or 0, s.get("client_cpu_steal") or 0
+    noise = float(noise_pct or DEFAULT_GOAL_NOISE)
     worst = max(avg, cli)
-    if worst >= STEAL_INVALID_AVG:
+    flag_at, invalid_at = max(0.5, noise / 2), max(3.0, 2 * noise)
+    if worst >= invalid_at:
         level = "invalid"
-    elif worst >= STEAL_FLAG_AVG or peak >= STEAL_FLAG_PEAK:
+    elif worst >= flag_at or peak >= STEAL_FLAG_PEAK:
         level = "flag"
     else:
         return None
-    return {"level": level, "avg_pct": round(avg, 2), "peak_pct": round(peak, 2), "client_avg_pct": round(cli, 2) if cli else None}
+    return {"level": level, "avg_pct": round(avg, 2), "peak_pct": round(peak, 2), "client_avg_pct": round(cli, 2) if cli else None,
+            "flag_at_pct": round(flag_at, 2), "invalid_at_pct": round(invalid_at, 2)}
 
 
 def verdict(run, history, goal, noise):
-    st = steal_check(run.get("summary"))
+    st = steal_check(run.get("summary"), (noise or {}).get("noise_pct"))
     if st and st["level"] == "invalid":
         return "unreliable", {"steal": st, "note": f"UNRELIABLE: hypervisor CPU steal averaged {max(st['avg_pct'], st['client_avg_pct'] or 0):.1f}% "
                                                    "during the run (noisy neighbours on a shared host). The result is kept for reference "
