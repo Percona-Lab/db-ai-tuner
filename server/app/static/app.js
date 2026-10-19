@@ -830,7 +830,7 @@ function calibrationNote(s) {
     const verdict = p.action === "ok" ? "" : p.action === "longer-runs"
       ? (p.applied ? ` · <b>runs lengthened</b>${p.previous ? ` from ${Math.round(p.previous.run_seconds / 60)} to ${Math.round(p.run_seconds / 60)} min (±${p.previous.noise_pct}% → ±${c.noise_pct}%)` : ""}`
         : ` · <span class="badge warn">noisy</span> mostly within-run: ${Math.round(p.seconds / 60)} min runs would bring it to about ±${p.expected_noise_pct || p.target_pct}%`)
-      : p.action === "between-runs" ? ` · <span class="badge warn">noisy</span> mostly between runs: longer runs will not help; changes under ±${c.noise_pct}% cannot be seen (~${p.repeats} runs per configuration needed, or remove the run-to-run shifts, e.g. reset the data set before each run)` : "";
+      : p.action === "between-runs" ? ` · <span class="badge warn">noisy</span> mostly between runs: longer runs will not help; changes under ±${c.noise_pct}% cannot be seen (${p.repeats >= 9 ? "9+" : "~" + p.repeats} runs per configuration needed, or remove the run-to-run shifts, e.g. reset the data set before each run)` : "";
     plan = `<div style="margin-top:4px">${split}${info(splitTip + (p.text ? " " + p.text : ""))}${verdict}</div>`;
   }
   return `<div class="note" style="margin-bottom:12px">Noise: changes within <b>±${c.noise_pct}%</b> are treated as noise (${c.estimate ? `pooled CV ${c.estimate.pooled_cv_pct}% over ${c.estimate.dof} repeat${c.estimate.dof === 1 ? "" : "s"}${c.estimate.long_term_dof ? ", including re-checks over time" : ""}` : `CV ${c.goal_cv_pct}% over ${c.runs.length} runs`})${info(how)}${plan}</div>`;
