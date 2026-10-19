@@ -679,3 +679,14 @@ def test_no_mechanism_goes_last():
     for f in flush:
         assert f.get("no_mechanism") and "sweep" not in f
         assert all(o["score"] > f["score"] for o in others), (f["id"], f["score"])
+
+
+def test_noise_estimate_robust_to_one_wild_pair():
+    # Battery 2 O1 re-run: calibration ~1.4% CV, then one config repeated 1588 / 1385 (14% apart)
+    runs = [{"seq": i, "managed": {}, "goal_value": v} for i, v in ((2, 1318), (3, 1288), (4, 1283))]
+    runs += [{"seq": 5, "managed": {"a": "1"}, "goal_value": 1588}, {"seq": 6, "managed": {"a": "1"}, "goal_value": 1385}]
+    runs += [{"seq": 9, "managed": {"b": "1"}, "goal_value": 1380}, {"seq": 12, "managed": {"b": "1"}, "goal_value": 1395}]
+    est = evaluate.noise_estimate(runs)
+    assert est["noise_pct"] < 7 and est.get("outlier_groups") == [[5, 6]], est  # was 12.6% without the cap
+    plan = evaluate.noise_plan([{"summary": {"within_se_pct": 0.9}}] * 3, {"goal_cv_pct": 1.49, "noise_pct": 3.73}, 300)
+    assert plan["repeats"] >= 2

@@ -118,8 +118,7 @@ def noise_estimate(runs, prior_cv=None):
         if r.get("goal_value") is None or r.get("verdict") in EXCLUDED:
             continue
         groups.setdefault(config_key(r.get("managed")), []).append(r)
-    ss = dof = 0.0
-    long_term = 0
+    stats = []  # (cv of the group, its degrees of freedom, separated in time, seqs)
     for g in groups.values():
         if len(g) < 2:
             continue
@@ -127,13 +126,22 @@ def noise_estimate(runs, prior_cv=None):
         m = _mean(vals)
         if not m:
             continue
-        ss += sum(((v - m) / m * 100) ** 2 for v in vals)
-        dof += len(vals) - 1
         seqs = sorted(r["seq"] for r in g)
-        if seqs[-1] - seqs[0] >= len(seqs):  # other runs happened in between: includes drift
-            long_term += len(vals) - 1
-    if not dof:
+        cvg = (sum(((v - m) / m * 100) ** 2 for v in vals) / (len(vals) - 1)) ** 0.5
+        stats.append((cvg, len(vals) - 1, seqs[-1] - seqs[0] >= len(seqs), seqs))
+    if not stats:
         return None
+    # one wild pair must not set the threshold for the whole session (Battery 2 O1: a 14% repeat gap took the
+    # threshold from 3.7% to 12.6%): with 3+ groups, each group's spread is capped at 3x the median group spread
+    outliers = []
+    if len(stats) >= 3:
+        med = sorted(x[0] for x in stats)[len(stats) // 2]
+        cap = max(3 * med, RESOLUTION_NOISE / NOISE_K)
+        outliers = [x[3] for x in stats if x[0] > cap]
+        stats = [(min(x[0], cap), x[1], x[2], x[3]) for x in stats]
+    ss = sum(c * c * d for c, d, _, _ in stats)
+    dof = sum(d for _, d, _, _ in stats)
+    long_term = sum(d for _, d, sep, _ in stats if sep)
     cv = (ss / dof) ** 0.5
     if long_term:
         pct, basis = max(RESOLUTION_NOISE, NOISE_K * cv), f"{int(dof)} repeat(s), {long_term} separated in time"
@@ -142,7 +150,7 @@ def noise_estimate(runs, prior_cv=None):
     else:
         pct, basis = max(MIN_GOAL_NOISE, NOISE_K * cv), "back-to-back repeats only (no long-term evidence yet)"
     return {"noise_pct": round(pct, 2), "pooled_cv_pct": round(cv, 3), "dof": int(dof), "long_term_dof": long_term,
-            "prior_cv_pct": prior_cv, "basis": basis}
+            "prior_cv_pct": prior_cv, "basis": basis, **({"outlier_groups": outliers} if outliers else {})}
 
 
 def noise_plan(runs, cal, duration, max_duration=None, target=NOISE_TARGET):
@@ -167,7 +175,7 @@ def noise_plan(runs, cal, duration, max_duration=None, target=NOISE_TARGET):
         return dict(out, action="ok", text=f"Noise ±{cal.get('noise_pct')}% is within the ±{target}% target.")
     cv_t = target / NOISE_K
     if between >= 0.8 * cv_t or within <= between:
-        reps = math.ceil((NOISE_K * between / target) ** 2) if between else 1
+        reps = max(2, math.ceil((NOISE_K * between / target) ** 2)) if between else 2
         return dict(out, action="between-runs", repeats=min(reps, 9),
                     text=f"Mostly between-run noise (between {between:.2f}% vs within {within:.2f}% CV): longer runs would not help. "
                          f"Changes smaller than ~{cal.get('noise_pct')}% cannot be seen; about {min(reps, 9)} runs per configuration would be "
