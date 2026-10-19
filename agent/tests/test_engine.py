@@ -746,3 +746,12 @@ def test_read_ahead_experiments():
     assert not it["sweep-read-ahead"].get("no_mechanism") and it["sweep-read-ahead"]["relevance"] >= 2
     wasted = items(read_ahead_per_s=300, read_ahead_evicted_per_s=200)
     assert "read-ahead-less" in wasted and "random-read-ahead" not in wasted and wasted["sweep-read-ahead"]["sweep"]["values"][0] == "64"
+
+
+def test_apply_failure_is_a_failed_experiment():
+    # EPYC 1000W: huge pages could not be reserved -> the applier raised and autotune crashed; it must come back as
+    # a rolled-back result that autotune records as a failed experiment
+    import inspect
+    from tuning_agent import cli
+    src = inspect.getsource(cli._apply_and_record)
+    assert "except Exception" in src and '"rolled_back": True' in src

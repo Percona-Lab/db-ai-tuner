@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 
 SYSCTL_FILE = "/etc/sysctl.d/99-tuning-agent.conf"
 UDEV_FILE = "/etc/udev/rules.d/99-tuning-agent.rules"
@@ -301,8 +302,17 @@ class OSApplier:
             if os.path.exists("/proc/sys/vm/compact_memory"):
                 _write("/proc/sys/vm/compact_memory", 1)
             _write("/proc/sys/vm/nr_hugepages", want)
-            _write("/proc/sys/vm/hugetlb_shm_group", self.mysql_gid())
             got = int(_read("/proc/sys/vm/nr_hugepages") or 0)
+            for _ in range(3):  # each pass compacts more: close misses (e.g. 96%) usually complete
+                if got >= want:
+                    break
+                _write("/proc/sys/vm/drop_caches", 3)
+                if os.path.exists("/proc/sys/vm/compact_memory"):
+                    _write("/proc/sys/vm/compact_memory", 1)
+                time.sleep(2)
+                _write("/proc/sys/vm/nr_hugepages", want)
+                got = int(_read("/proc/sys/vm/nr_hugepages") or 0)
+            _write("/proc/sys/vm/hugetlb_shm_group", self.mysql_gid())
             if got < want:
                 _write("/proc/sys/vm/nr_hugepages", 0)
                 subprocess.run(["systemctl", "start", self.service], capture_output=True)

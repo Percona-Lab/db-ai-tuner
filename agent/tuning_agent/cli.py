@@ -298,8 +298,20 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
     client_changes = [ch for ch in changes if ch["variable"].startswith("client:")]
     changes = [ch for ch in changes if not ch["variable"].startswith("client:")]
     ap = Applier(c.cfg, c.state, c.db, log=log)
-    res = ap.apply(changes, allow_restart=allow) if changes else {"applied": [], "restarted": False, "needs_restart": [],
-                                                                  "mismatches": [], "errors": [], "cnf_path": ap.cnf_path}
+    try:
+        res = ap.apply(changes, allow_restart=allow) if changes else {"applied": [], "restarted": False, "needs_restart": [],
+                                                                      "mismatches": [], "errors": [], "cnf_path": ap.cnf_path}
+    except Exception as e:
+        # a change that cannot be applied (e.g. huge pages: not enough contiguous memory) is a failed experiment, not a
+        # crashed session: the applier already restored the option file, the OS settings of this batch and mysqld
+        log(f"   apply failed: {type(e).__name__}: {e}")
+        try:
+            c.db.connect(retries=30, delay=2)
+        except Exception:
+            pass
+        c.event("apply", f"{source}: apply failed and was rolled back: {str(e)[:300]}")
+        return {"applied": [], "restarted": False, "needs_restart": [], "mismatches": [], "errors": [f"{type(e).__name__}: {e}"],
+                "rolled_back": True, "cnf_path": ap.cnf_path}
     if client_changes and not res.get("rolled_back"):
         _apply_clients(c, client_changes, res)
     if res["applied"]:
