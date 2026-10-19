@@ -110,9 +110,12 @@ function activityLine(a) {
   if (!a) return "";
   const nowS = Date.now() / 1000;
   const left = a.until ? Math.round((a.until - nowS) / 60) : null;
-  const t = left != null && left > 0 ? ` · ${left} min left` : a.since ? ` · ${ago(a.since).replace(" ago", "")}` : a.at ? ` · ${ago(a.at)}` : "";
-  const cls = a.stale ? "warn" : a.phase === "measuring" ? "good" : "info";
-  const tip = a.stale ? "This phase should have ended more than 15 minutes ago and the agent has not reported anything since: check the host."
+  const setAt = a.at || a.since;  // when this status started
+  // derived "between runs" for over an hour also looks stuck (reset + warm-up never take that long)
+  const stale = a.stale || (a.source === "derived" && a.phase === "between runs" && setAt && nowS - setAt > 3600);
+  const t = (setAt ? ` · since ${ago(setAt)}` : "") + (left != null && left > 0 ? ` · ~${left} min left` : left != null && left <= 0 ? ` · overdue by ${-left} min` : "");
+  const cls = stale ? "warn" : a.phase === "measuring" ? "good" : "info";
+  const tip = stale ? "This phase should have ended more than 15 minutes ago and the agent has not reported anything since: check the host."
     : a.source === "derived" ? "Derived from the session's latest run (the agent running this session predates live activity reports)." : "Reported by the tuning-agent.";
   return `<div style="font-size:12px;margin-top:3px"><span class="badge ${cls}" data-tip="${esc(tip)}" tabindex="0">${esc(a.phase)}</span> <span class="muted">${esc(a.detail || "")}${t}</span></div>`;
 }
