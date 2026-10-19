@@ -446,7 +446,7 @@ def cmd_session(a):
         if c.state.get("measurement"):
             raise Fail("a measurement is in progress; stop it first")
         _remember_noise(c, sess)
-        c.client.post(f"/sessions/{sess['id']}/close", {"summary": {"best": sess.get("best"), "runs": len(sess.get("runs", []))}})
+        c.client.post(f"/sessions/{sess['id']}/close", {"summary": {"best": sess.get("best"), "best_safe": sess.get("best_safe"), "runs": len(sess.get("runs", []))}})
         hist = c.state.get("sessions_done") or []
         hist.append({k: sess.get(k) for k in ("id", "name", "goal", "best")})
         c.state.data["sessions_done"] = hist[-20:]
