@@ -987,7 +987,7 @@ def config_scores(history, goal="tps"):
     """Mean goal value per distinct configuration (repeated runs of one config are averaged)."""
     groups = {}
     for r in history:
-        if r.get("goal_value") is None or r.get("verdict") == "unreliable":
+        if r.get("goal_value") is None or r.get("verdict") in ("unreliable", "superseded"):
             continue
         g = groups.setdefault(config_key(r.get("managed")), {"runs": [], "managed": r.get("managed") or {}})
         g["runs"].append(r)

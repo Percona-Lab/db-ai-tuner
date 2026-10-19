@@ -291,9 +291,24 @@ def analyze_window(a, b, samples):
         var = sum((v - m) ** 2 for v in vals) / (len(vals) - 1)
         return round(100.0 * var ** 0.5 / m, 2)
 
+    def batch_se_pct(group, key, block=6):
+        """Standard error of the window mean from the run's own samples (batch means of ~60 s blocks, robust to
+        short-term autocorrelation): the run-to-run spread this run length would show from within-run noise alone."""
+        vals = [s[group][key] for s in samples if s.get(group, {}).get(key) is not None]
+        k = len(vals) // block
+        if k < 3:
+            return None
+        means = [sum(vals[i * block:(i + 1) * block]) / block for i in range(k)]
+        m = sum(means) / k
+        if not m:
+            return None
+        sd = (sum((x - m) ** 2 for x in means) / (k - 1)) ** 0.5
+        return round(100.0 * sd / k ** 0.5 / m, 3)
+
     summary = {
         "duration_s": round(dt, 1),
         "tps": db_rates.get("tps"),
+        "within_se_pct": batch_se_pct("db", "tps") or batch_se_pct("db", "qps"),
         "qps": db_rates.get("qps"),
         "handler_commits": db_rates.get("handler_commits"),
         "statements_per_s": db_rates.get("statements"),

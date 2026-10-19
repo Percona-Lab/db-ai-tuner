@@ -50,9 +50,11 @@ function deltaClsN(v, noise) { return v == null || Math.abs(v) <= (noise || 0) ?
 function deltaCls(v) { return v == null ? "" : v > 0 ? "up" : v < 0 ? "down" : ""; }
 function goalName(g) { return g === "latency" ? "Query response time" : "Throughput (TPS)"; }
 function goalUnit(g, s) { if (s && s.goal_metric) return s.goal_metric.length <= 5 ? s.goal_metric.toUpperCase() : s.goal_metric.replace(/_/g, " "); return g === "latency" ? "ms" : "tps"; }
+const EXCLUDED = ["unreliable", "superseded"];
 function verdictBadge(v) {
-  const m = { improved: "good", "efficiency-gain": "good", regressed: "bad", "efficiency-loss": "warn", neutral: "plain", reference: "info", repeat: "plain", unreliable: "warn" };
-  const tip = v === "unreliable" ? ' data-tip="Hypervisor CPU steal during the run could have moved the result by half the session noise threshold or more (at least 0.5%): excluded from all comparisons and re-measured by autotune." tabindex="0"' : "";
+  const m = { improved: "good", "efficiency-gain": "good", regressed: "bad", "efficiency-loss": "warn", neutral: "plain", reference: "info", repeat: "plain", unreliable: "warn", superseded: "plain" };
+  const tip = v === "unreliable" ? ' data-tip="Hypervisor CPU steal during the run could have moved the result by half the session noise threshold or more (at least 0.5%): excluded from all comparisons and re-measured by autotune." tabindex="0"'
+    : v === "superseded" ? ' data-tip="Measured with a shorter run length. The noise plan lengthened the runs and calibrated the starting configuration again; this run is kept for reference and excluded from comparisons." tabindex="0"' : "";
   return v ? `<span class="badge ${m[v] || "plain"}"${tip}>${esc(v)}</span>` : "";
 }
 function statusBadge(s, why) { const m = { active: "good", measuring: "info", done: "plain", closed: "plain", abandoned: "warn", aborted: "warn" }; return `<span class="badge ${m[s] || "plain"}"${why ? ` data-tip="${esc(why)}" tabindex="0"` : ""}>${esc(s)}</span>`; }
@@ -650,7 +652,7 @@ async function sessionPage(id) {
   setNav("envs");
   const d = await api("/api/sessions/" + id);
   const s = d.session, runs = d.runs.filter(r => r.status !== "aborted");
-  const done = runs.filter(r => r.goal_value != null && r.verdict !== "unreliable");
+  const done = runs.filter(r => r.goal_value != null && !EXCLUDED.includes(r.verdict));
   const lower = s.goal === "latency";
   const first = done[0];
   // configurations are scored by the mean of all runs measured with them (repeats reduce noise)
@@ -720,7 +722,7 @@ async function sessionPage(id) {
   const bestAt = {}, leadBefore = {};
   { const acc = {}; let lead = null, leadMean = null, leadManaged = null, leadN = 1;
     d.runs.filter(r => r.status !== "aborted").forEach(r => { leadBefore[r.id] = leadManaged;
-      if (r.goal_value == null || r.verdict === "unreliable") return;
+      if (r.goal_value == null || EXCLUDED.includes(r.verdict)) return;
       const k = JSON.stringify(Object.entries(r.managed || {}).sort());
       const a = acc[k] = acc[k] || { sum: 0, n: 0 }; a.sum += r.goal_value; a.n += 1;
       const mean = a.sum / a.n;
@@ -784,7 +786,7 @@ async function sessionPage(id) {
     const ev = r.evaluation || {};
     tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${r.status !== "done" ? " " + statusBadge(r.status, r.abort_reason) : ""}${tradeBadge(r.tradeoffs)}</td><td class="chg">${ch}</td>
      <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaClsN(ev.goal_delta_pct, noiseP)}">${pct(ev.goal_delta_pct)}</td><td class="num ${deltaClsN(r.goal_value != null ? vsRef(r.goal_value) : null, noiseP)}">${r.goal_value != null && vsRef(r.goal_value) != null ? (bestAt[r.id] ? `<b data-tip="Best configuration known at this point">${pct(vsRef(r.goal_value))}</b>` : pct(vsRef(r.goal_value))) : "–"}</td>
-     <td>${verdictBadge(r.verdict)}${ev.drift ? ' <span class="badge warn">drift</span>' : ""}${ev.environment_shift && !["reference", "repeat", "unreliable"].includes(r.verdict) ? ` <span class="badge warn" data-tip="The quick CPU / storage benchmark run before this run differed from the calibration runs beyond its normal variation (${esc(kvText(ev.environment_shift))} %). The machine itself may have changed (noisy neighbour, throttling), so this run's comparison is less trustworthy; autotune measures such runs again.">env shift</span>` : ""}${ev.steal && ev.steal.level === "flag" ? ` <span class="badge warn" data-tip="Hypervisor CPU steal ${ev.steal.avg_pct}% average, ${ev.steal.peak_pct}% peak${ev.steal.client_avg_pct ? `, client ${ev.steal.client_avg_pct}%` : ""} , estimated effect on the result ${ev.steal.est_impact_pct != null ? ev.steal.est_impact_pct : ev.steal.avg_pct}% (flagged from a quarter of the noise threshold, ${ev.steal.flag_at_pct || 0.25}%, or a 5% peak; normally close to 0 on these hosts): differences near the noise threshold may come from neighbours.">steal</span>` : ""}</td>
+     <td>${verdictBadge(r.verdict)}${ev.drift ? ' <span class="badge warn">drift</span>' : ""}${ev.environment_shift && !["reference", "repeat", "unreliable", "superseded"].includes(r.verdict) ? ` <span class="badge warn" data-tip="The quick CPU / storage benchmark run before this run differed from the calibration runs beyond its normal variation (${esc(kvText(ev.environment_shift))} %). The machine itself may have changed (noisy neighbour, throttling), so this run's comparison is less trustworthy; autotune measures such runs again.">env shift</span>` : ""}${ev.steal && ev.steal.level === "flag" ? ` <span class="badge warn" data-tip="Hypervisor CPU steal ${ev.steal.avg_pct}% average, ${ev.steal.peak_pct}% peak${ev.steal.client_avg_pct ? `, client ${ev.steal.client_avg_pct}%` : ""} , estimated effect on the result ${ev.steal.est_impact_pct != null ? ev.steal.est_impact_pct : ev.steal.avg_pct}% (flagged from a quarter of the noise threshold, ${ev.steal.flag_at_pct || 0.25}%, or a 5% peak; normally close to 0 on these hosts): differences near the noise threshold may come from neighbours.">steal</span>` : ""}</td>
      <td class="num">${num(sm.tps)}</td><td class="num">${num(sm.avg_latency_ms)}</td><td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td><td class="num" style="white-space:nowrap">${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}${costOf(r) != null ? `<div class="muted" style="font-size:11px" data-tip="Machine cost of this run: wall time since the previous run ended (data reset, warm-up, measurement) × $${(d.cost.rate_hourly).toFixed(4)}/hour">$${costOf(r).toFixed(costOf(r) < 0.1 ? 3 : 2)}</div>` : ""}</td>`;
     tb.appendChild(tr);
   });
@@ -820,7 +822,18 @@ function calibrationNote(s) {
   if (!c) return `<div class="note" style="margin-bottom:12px">Noise not calibrated: fixed ±${s.noise_pct || 2}% threshold${info("Standard protocol: measure the starting configuration 3 times with `tuning-agent calibrate --runs 3`; the run-to-run variation then sets the noise threshold.")}</div>`;
   const eff = Object.entries(c.efficiency || {}).filter(([k]) => EFF_LABELS[k]).map(([k, e]) => `${EFF_LABELS[k]} ±${e.noise_pct}%`).join(" · ");
   const how = `Calibration runs ${c.runs.map(x => "#" + x).join(", ")}: mean ${num(c.goal_mean)}, CV ${c.goal_cv_pct}%, range ${c.goal_range_pct}%. CV (coefficient of variation) = standard deviation ÷ mean. Threshold = ${c.k || 2.5} × CV: a run of an unchanged configuration lands outside it only about 1 time in 100. Natural variance depends on the environment and the workload, so it is re-estimated during the session from every configuration measured more than once; repeats separated by other runs also capture drift. Until such repeats exist, earlier sessions of the same benchmark on this environment are used, else at least 2%.${c.estimate ? ` Current basis: ${c.estimate.basis}; pooled CV ${c.estimate.pooled_cv_pct}%.` : ""} Experiments are compared with the mean of the most recent runs of the configuration they were changed from. Efficiency thresholds: ${eff}.`;
-  return `<div class="note" style="margin-bottom:12px">Noise: changes within <b>±${c.noise_pct}%</b> are treated as noise (${c.estimate ? `pooled CV ${c.estimate.pooled_cv_pct}% over ${c.estimate.dof} repeat${c.estimate.dof === 1 ? "" : "s"}${c.estimate.long_term_dof ? ", including re-checks over time" : ""}` : `CV ${c.goal_cv_pct}% over ${c.runs.length} runs`})${info(how)}</div>`;
+  const p = c.plan;
+  let plan = "";
+  if (p && p.within_cv_pct != null) {
+    const split = `Run-to-run variation: within-run ${p.within_cv_pct}% · between-run ${p.between_cv_pct}% (CV)`;
+    const splitTip = "Within-run: what each run's own 10 s samples predict for the spread of its mean at this run length (batch means of 60 s blocks); it shrinks with longer runs. Between-run: the rest of the observed run-to-run variation — shifts from run to run such as data-set state, restarts, caches or neighbours; longer runs do not reduce it, more runs per configuration or removing the cause do. Target: ±" + p.target_pct + "% (typical OLTP tuning gains are 2-8%).";
+    const verdict = p.action === "ok" ? "" : p.action === "longer-runs"
+      ? (p.applied ? ` · <b>runs lengthened</b>${p.previous ? ` from ${Math.round(p.previous.run_seconds / 60)} to ${Math.round(p.run_seconds / 60)} min (±${p.previous.noise_pct}% → ±${c.noise_pct}%)` : ""}`
+        : ` · <span class="badge warn">noisy</span> mostly within-run: ${Math.round(p.seconds / 60)} min runs would bring it to about ±${p.expected_noise_pct || p.target_pct}%`)
+      : p.action === "between-runs" ? ` · <span class="badge warn">noisy</span> mostly between runs: longer runs will not help; changes under ±${c.noise_pct}% cannot be seen (~${p.repeats} runs per configuration needed, or remove the run-to-run shifts, e.g. reset the data set before each run)` : "";
+    plan = `<div style="margin-top:4px">${split}${info(splitTip + (p.text ? " " + p.text : ""))}${verdict}</div>`;
+  }
+  return `<div class="note" style="margin-bottom:12px">Noise: changes within <b>±${c.noise_pct}%</b> are treated as noise (${c.estimate ? `pooled CV ${c.estimate.pooled_cv_pct}% over ${c.estimate.dof} repeat${c.estimate.dof === 1 ? "" : "s"}${c.estimate.long_term_dof ? ", including re-checks over time" : ""}` : `CV ${c.goal_cv_pct}% over ${c.runs.length} runs`})${info(how)}${plan}</div>`;
 }
 const KEY_VARS = ["innodb_buffer_pool_size", "innodb_buffer_pool_instances", "innodb_redo_log_capacity", "innodb_log_file_size", "innodb_log_buffer_size",
   "innodb_flush_log_at_trx_commit", "sync_binlog", "log_bin", "innodb_doublewrite", "innodb_flush_method", "innodb_io_capacity", "innodb_io_capacity_max",

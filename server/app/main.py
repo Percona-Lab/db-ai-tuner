@@ -2,6 +2,7 @@
 import contextvars
 import io
 import json
+import math
 import os
 import re
 import tarfile
@@ -333,7 +334,7 @@ def environment(env_id: int, request: Request):
         d["summary"] = store.uj(d["summary"])
         runs = [dict(r) for r in store.q("SELECT seq, label, goal_value, status, verdict, started, ended FROM runs WHERE session_id=? AND status<>'aborted' ORDER BY seq", (s["id"],))]
         d["runs"] = len(runs)
-        done = [r for r in runs if r["goal_value"] is not None and r["verdict"] != "unreliable"]
+        done = [r for r in runs if r["goal_value"] is not None and r["verdict"] not in ("unreliable", "superseded")]
         if done:
             first = done[0]["goal_value"]
             best = (min if s["goal"] == "latency" else max)(r["goal_value"] for r in done)
@@ -512,9 +513,57 @@ def session(sid: int, request: Request):
     recs = [store.row(r, ("items", "diagnosis", "workload", "llm")) for r in store.q("SELECT * FROM recommendations WHERE session_id=? ORDER BY id DESC", (sid,))]
     events = [store.row(r, ("data",)) for r in store.q("SELECT * FROM events WHERE session_id=? ORDER BY ts DESC LIMIT 200", (sid,))]
     s["activity"] = session_activity(e, sid) if s.get("status") == "active" else None
+    if s["calibration"] and not s["calibration"].get("plan"):
+        s["calibration"]["plan"] = noise_breakdown(sid, e["id"], s["calibration"])
     st = store.q1("SELECT id, name, kind FROM studies WHERE id=?", (s.get("study_id"),)) if s.get("study_id") else None
     return {"session": s, "environment": env_brief(e), "runs": runs, "recommendations": recs, "events": events, "cost": session_costs(s, e),
             "study": dict(st) if st else None, "requirements": session_requirements(sid)}
+
+
+_nb_cache = {}
+
+
+def noise_breakdown(sid, env_id, cal):
+    """For sessions calibrated by older agents: split the calibration noise into within-run and between-run parts from
+    the stored 10 s samples (batch means of 60 s blocks), the same split the agent's noise plan makes."""
+    seqs = [int(x) for x in (cal.get("runs") or [])]
+    cv = cal.get("goal_cv_pct")
+    ck = (sid, tuple(seqs), cv)
+    if ck in _nb_cache:
+        return _nb_cache[ck]
+    out = None
+    if seqs and cv is not None:
+        ses, dur = [], []
+        for r in store.q(f"SELECT started, ended FROM runs WHERE session_id=? AND seq IN ({','.join('?' * len(seqs))})", (sid, *seqs)):
+            if not (r["started"] and r["ended"]):
+                continue
+            vals = []
+            for m in store.q("SELECT data FROM metrics WHERE env_id=? AND ts BETWEEN ? AND ? ORDER BY ts", (env_id, r["started"], r["ended"])):
+                d = (store.uj(m["data"]) or {}).get("db") or {}
+                v = d.get("tps") or d.get("qps")
+                if v:
+                    vals.append(v)
+            k = len(vals) // 6
+            if k >= 3:
+                bm = [sum(vals[i * 6:(i + 1) * 6]) / 6 for i in range(k)]
+                mu = sum(bm) / k
+                ses.append(100 * (sum((x - mu) ** 2 for x in bm) / (k - 1)) ** 0.5 / k ** 0.5 / mu)
+                dur.append(r["ended"] - r["started"])
+        if ses:
+            within = (sum(x * x for x in ses) / len(ses)) ** 0.5
+            between = max(0.0, cv * cv - within * within) ** 0.5
+            target, K = 3.0, 2.5
+            out = {"within_cv_pct": round(within, 2), "between_cv_pct": round(between, 2), "target_pct": target,
+                   "noise_pct": cal.get("noise_pct"), "run_seconds": int(sum(dur) / len(dur)), "derived": True}
+            if (cal.get("noise_pct") or 0) <= target:
+                out["action"] = "ok"
+            elif between >= 0.8 * target / K or within <= between:
+                out.update(action="between-runs", repeats=min(9, math.ceil((K * between / target) ** 2)))
+            else:
+                need = ((target / K) ** 2 - between ** 2) ** 0.5
+                out.update(action="longer-runs", seconds=int(math.ceil(out["run_seconds"] * (within / need) ** 2 / 60) * 60))
+    _nb_cache[ck] = out
+    return out
 
 
 def session_requirements(sid):

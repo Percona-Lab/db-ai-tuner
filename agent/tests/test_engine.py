@@ -479,3 +479,29 @@ def test_best_config_confirmed_improvement_wins():
     assert round(engine.mean_noise(9.95, 3, 2), 1) == 6.4 and engine.mean_noise(2.0, 1, 1) == 2.0
     # within the scaled threshold, the configuration kept over its (grand)parent still wins
     assert engine.best_config(h, "tps", 20.0)["seqs"] == [6, 7]
+
+
+def test_noise_plan_picks_the_remedy():
+    runs = lambda se: [{"summary": {"within_se_pct": se}} for _ in range(3)]
+    # session #58: CV 3.98% but within-run noise predicts only ~0.9% -> between-run shifts, longer runs do not help
+    p = evaluate.noise_plan(runs(0.92), {"goal_cv_pct": 3.98, "noise_pct": 9.95}, 300)
+    assert p["action"] == "between-runs" and p["repeats"] >= 9
+    # within-run dominated: longer runs, capped at 4x
+    p = evaluate.noise_plan(runs(2.0), {"goal_cv_pct": 2.1, "noise_pct": 5.25}, 300)
+    assert p["action"] == "longer-runs" and 300 < p["seconds"] <= 1200 and p["expected_noise_pct"] < 5.25
+    assert evaluate.noise_plan(runs(0.3), {"goal_cv_pct": 0.5, "noise_pct": 1.25}, 300)["action"] == "ok"
+    assert evaluate.verdict({"superseded": "x", "seq": 2}, [], "tps", {"noise_pct": 2})[0] == "superseded"
+
+
+def test_profile_run_length_placeholders(tmp_path=None):
+    import tempfile
+    from tuning_agent import bench
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "b.ini")
+    open(p, "w").write("[bench]\nname=x\nrun = sysbench --time={total} run; hdb {warmup_min} {duration_min}\nwarmup = 120\nduration = 300\n")
+    b = bench.Profile(p)
+    assert b.can_resize() and b.command() == "sysbench --time=450 run; hdb 2 5"
+    b.duration = 900
+    assert b.command() == "sysbench --time=1050 run; hdb 2 15"
+    open(p, "w").write("[bench]\nname=x\nrun = sysbench --time=430 run\nwarmup = 120\nduration = 300\n")
+    assert not bench.Profile(p).can_resize()

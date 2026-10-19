@@ -843,7 +843,11 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     requirements = _ensure_requirements(c, prof)
     log(f"benchmark: {prof.name}")
     c.activity("starting benchmark", label)
-    r = bench.Running(prof.run, logfile)
+    if sess.get("run_seconds") and prof.can_resize() and prof.duration != int(sess["run_seconds"]):
+        # run length chosen at calibration (noise plan)
+        prof.timeout += int(sess["run_seconds"]) - prof.duration
+        prof.duration = int(sess["run_seconds"])
+    r = bench.Running(prof.command(), logfile)
     profiler = None
     try:
         warm = warmup_override if warmup_override is not None else prof.warmup
@@ -1013,6 +1017,58 @@ def _set_calibration(c, sess, cal):
     c.state.set("session", sess)
     c.client.post(f"/sessions/{sess['id']}/update", {"noise_pct": cal["noise_pct"], "calibration": cal})
     c.event("calibrate", f"noise calibrated from runs {cal['runs']}: goal CV {cal['goal_cv_pct']}% -> threshold ±{cal['noise_pct']}%", cal)
+
+
+def _noise_plan(c, prof, runs, n):
+    """After calibration: is the noise threshold small enough to see typical gains, and what would reduce it?
+    Longer runs only when the noise is mostly within-run (they do not remove run-to-run shifts); then the earlier
+    calibration runs are superseded (different run length) and the start configuration is calibrated again."""
+    sess = c.session()
+    cal = sess["noise"]
+    plan = evaluate.noise_plan(runs, cal, prof.duration, prof.max_duration)
+    cal["plan"] = plan
+    if plan["action"] == "longer-runs" and not (prof.adaptive and prof.can_resize()):
+        plan["applied"] = False
+        plan["text"] += (" Not applied: adaptive_duration = off." if not prof.adaptive else
+                         " Not applied: the run command has a fixed length (use {duration} / {total} placeholders in the profile).")
+    _set_calibration(c, sess, cal)
+    log(f"   noise plan: {plan['text']}")
+    c.event("noise-plan", plan["text"], plan)
+    if plan["action"] != "longer-runs" or plan.get("applied") is False:
+        return runs
+    old = prof.duration
+    sess = c.session()
+    sess["run_seconds"] = plan["seconds"]
+    note = f"Measured with {old // 60} min runs; superseded by calibration with {plan['seconds'] // 60} min runs (noise plan)."
+    for r in sess["runs"]:
+        if r["seq"] in {x["seq"] for x in runs}:
+            r["superseded"] = note
+    sess["noise"] = None
+    c.state.set("session", sess)
+    _reevaluate(c, sess)
+    c.activity("calibrating", f"{n} runs at {plan['seconds'] // 60} min (longer runs to reduce noise)")
+    log(f"== recalibration: {n} runs of {plan['seconds'] // 60} min")
+    new = []
+    while len([r for r in new if r.get("verdict") not in evaluate.EXCLUDED]) < n and len(new) < 2 * n:
+        run, _ = _bench_run(c, prof, f"baseline {plan['seconds'] // 60}min ({len(new) + 1}/{n})")
+        log(f"   run {run['seq']}: goal {run['goal_value']}")
+        new.append(run)
+    new = [r for r in new if r.get("verdict") not in evaluate.EXCLUDED] or new
+    sess = c.session()
+    cal = evaluate.calibrate(new)
+    _set_calibration(c, sess, cal)
+    _reevaluate(c, c.session())
+    log(_fmt_cal(cal))
+    sess = c.session()
+    after = evaluate.noise_plan(new, sess["noise"], prof.duration, prof.max_duration)
+    after["previous"] = {k: plan.get(k) for k in ("noise_pct", "run_seconds", "within_cv_pct", "between_cv_pct")}
+    after["applied"] = True
+    if after["action"] == "longer-runs":  # one adjustment per session: report, do not loop
+        after["text"] = f"Runs lengthened to {prof.duration // 60} min (threshold ±{plan['noise_pct']}% -> ±{sess['noise']['noise_pct']}%)."
+    sess["noise"]["plan"] = after
+    _set_calibration(c, sess, sess["noise"])
+    log(f"   noise plan after recalibration: {after['text']}")
+    return new
 
 
 def _fmt_cal(cal):
@@ -1480,7 +1536,7 @@ def cmd_autotune(a):
         c.activity("calibrating", f"{a.calibrate} runs of the starting configuration to measure noise")
         runs = []
         extra = 0
-        while len([r for r in runs if r.get("verdict") != "unreliable"]) < a.calibrate:
+        while len([r for r in runs if r.get("verdict") not in evaluate.EXCLUDED]) < a.calibrate:
             run, _ = _bench_run(c, prof, f"baseline ({len(runs) + 1}/{a.calibrate + extra})")
             log(f"   run {run['seq']}: goal {run['goal_value']}" + (" (unreliable: CPU steal, measured again)" if run.get("verdict") == "unreliable" else ""))
             runs.append(run)
@@ -1489,12 +1545,14 @@ def cmd_autotune(a):
                 if extra > a.calibrate:  # the host is too noisy right now: calibrate with what we have
                     log("   WARNING: persistent CPU steal; calibrating with the runs available")
                     break
-        runs = [r for r in runs if r.get("verdict") != "unreliable"] or runs
+        runs = [r for r in runs if r.get("verdict") not in evaluate.EXCLUDED] or runs
         sess = c.session()
         cal = evaluate.calibrate(runs)
         _set_calibration(c, sess, cal)
         _reevaluate(c, c.session())
         log(_fmt_cal(cal))
+        runs = _noise_plan(c, prof, runs, a.calibrate)
+
     sess = c.session()
     sess["bench"] = os.path.abspath(a.bench)
     c.state.set("session", sess)

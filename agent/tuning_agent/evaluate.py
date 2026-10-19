@@ -37,6 +37,8 @@ MIN_GOAL_NOISE = 2.0  # used only until the session (or this environment's histo
 RESOLUTION_NOISE = 0.5  # below this a difference is not worth acting on, however stable the environment
 MIN_EFF_NOISE = 3.0
 NOISE_K = 2.5  # threshold = K x coefficient of variation of single runs
+EXCLUDED = ("unreliable", "superseded")  # never compared, averaged, kept or used for calibration
+NOISE_TARGET = 3.0  # noise threshold (%) above which typical tuning gains (2-8% on OLTP) are hard to see
 
 
 def add_efficiency(summary, db_rates=None, cpus=None):
@@ -110,7 +112,7 @@ def noise_estimate(runs, prior_cv=None):
     """
     groups = {}
     for r in runs:
-        if r.get("goal_value") is None or r.get("verdict") == "unreliable":
+        if r.get("goal_value") is None or r.get("verdict") in EXCLUDED:
             continue
         groups.setdefault(config_key(r.get("managed")), []).append(r)
     ss = dof = 0.0
@@ -140,9 +142,51 @@ def noise_estimate(runs, prior_cv=None):
             "prior_cv_pct": prior_cv, "basis": basis}
 
 
+def noise_plan(runs, cal, duration, max_duration=None, target=NOISE_TARGET):
+    """Split the calibrated run-to-run noise into a within-run part (what each run's own 10 s samples predict for its
+    length: batch-means standard error) and a between-run part (shifts from run to run: data state, restarts,
+    neighbours), and pick the remedy that actually reduces it:
+
+    * within-run dominated -> longer runs (the within part shrinks with sqrt(length));
+    * between-run dominated -> longer runs do not help: more repeats per configuration / a data reset per run;
+    * otherwise fine.
+    """
+    cv = cal.get("goal_cv_pct")
+    ses = [(r.get("summary") or {}).get("within_se_pct") for r in runs]
+    ses = [x for x in ses if x]
+    out = {"target_pct": target, "noise_pct": cal.get("noise_pct"), "run_seconds": duration}
+    if cv is None or not ses:
+        return dict(out, action="unknown", text="No per-run sample data to separate within-run and between-run noise.")
+    within = (sum(x * x for x in ses) / len(ses)) ** 0.5
+    between = max(0.0, cv * cv - within * within) ** 0.5
+    out.update(within_cv_pct=round(within, 2), between_cv_pct=round(between, 2))
+    if (cal.get("noise_pct") or 0) <= target:
+        return dict(out, action="ok", text=f"Noise ±{cal.get('noise_pct')}% is within the ±{target}% target.")
+    cv_t = target / NOISE_K
+    if between >= 0.8 * cv_t or within <= between:
+        reps = math.ceil((NOISE_K * between / target) ** 2) if between else 1
+        return dict(out, action="between-runs", repeats=min(reps, 9),
+                    text=f"Mostly between-run noise (between {between:.2f}% vs within {within:.2f}% CV): longer runs would not help. "
+                         f"Changes smaller than ~{cal.get('noise_pct')}% cannot be seen; about {min(reps, 9)} runs per configuration would be "
+                         "needed for the target, or remove the source of run-to-run shifts (reset the data set before each run, "
+                         "avoid restarts between runs, a quieter host).")
+    need_se = (cv_t * cv_t - between * between) ** 0.5
+    new = int(math.ceil(duration * (within / need_se) ** 2 / 60.0) * 60) if duration else None
+    cap = max_duration or (min(4 * duration, 1800) if duration else None)
+    if not new or not cap:
+        return dict(out, action="unknown", text="Run length cannot be changed for this benchmark (runs until it finishes).")
+    capped = new > cap
+    sec = min(new, cap)
+    exp_cv = (between ** 2 + within ** 2 * duration / sec) ** 0.5
+    return dict(out, action="longer-runs", seconds=sec, capped=capped, expected_noise_pct=round(max(RESOLUTION_NOISE, NOISE_K * exp_cv), 2),
+                text=f"Mostly within-run noise (within {within:.2f}% vs between {between:.2f}% CV): {sec // 60} min runs instead of "
+                     f"{duration // 60} min should bring the threshold from ±{cal.get('noise_pct')}% to about ±{max(RESOLUTION_NOISE, NOISE_K * exp_cv):.1f}%"
+                     + (" (capped by max_duration)" if capped else "") + ".")
+
+
 def calibrate(runs):
     """Noise thresholds from repeated runs of one configuration."""
-    runs = [r for r in runs if r.get("verdict") != "unreliable"] or runs
+    runs = [r for r in runs if r.get("verdict") not in EXCLUDED] or runs
     goal_vals = [r["goal_value"] for r in runs if r.get("goal_value") is not None]
     if len(goal_vals) < 2:
         return None
@@ -177,7 +221,7 @@ RECENT = 3  # parent configuration = mean of its most recent runs (protects agai
 
 def config_means(runs, key, recent=None):
     sel = [r for r in runs if config_key(r.get("managed")) == key and r.get("goal_value") is not None
-           and r.get("verdict") != "unreliable"]
+           and r.get("verdict") not in EXCLUDED]
     if recent:
         sel = sel[-recent:]
     if not sel:
@@ -240,6 +284,8 @@ def steal_check(summary, noise_pct=None):
 
 
 def verdict(run, history, goal, noise):
+    if run.get("superseded"):
+        return "superseded", {"note": run["superseded"]}
     st = steal_check(run.get("summary"), (noise or {}).get("noise_pct"))
     if st and st["level"] == "invalid":
         return "unreliable", {"steal": st, "note": f"UNRELIABLE: hypervisor CPU steal averaged {max(st['avg_pct'], st['client_avg_pct'] or 0):.1f}% "
@@ -266,7 +312,7 @@ def _parent_key(run, history, key):
     if own:
         for r in reversed(history):
             m = r.get("managed") or {}
-            if config_key(m) == key or r.get("goal_value") is None or r.get("verdict") == "unreliable":
+            if config_key(m) == key or r.get("goal_value") is None or r.get("verdict") in EXCLUDED:
                 continue
             diff = {k for k in set(m) | set(cur) if normalize(k, m.get(k)) != normalize(k, cur.get(k))}
             if diff and diff <= own:
@@ -337,7 +383,7 @@ def _verdict(run, history, goal, noise):
     return "neutral", details
 
 
-KEEP_VERDICTS = ("improved", "efficiency-gain", "reference")  # "unreliable" runs are never kept or compared
+KEEP_VERDICTS = ("improved", "efficiency-gain", "reference")  # EXCLUDED runs are never kept or compared
 
 
 # ---- per-query impact (query-level view of an experiment, after CMU's Booster) -------------

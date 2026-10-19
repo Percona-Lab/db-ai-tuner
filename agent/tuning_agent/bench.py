@@ -15,6 +15,12 @@ Profile (INI):
     nopm = achieved (\\d+) NOPM
     tpm = from (\\d+) MySQL TPM
 
+    adaptive_duration = auto            ; auto: lengthen runs when calibration shows mostly within-run noise | off
+    max_duration = 1200                 ; upper limit for that (default: 4 x duration, at most 30 min)
+
+    The run command may use {duration} {warmup} {total} (seconds) and {duration_min} {warmup_min} {total_min}
+    (whole minutes); they follow run-length changes. Without them the run length is fixed.
+
     [requires]                          ; benchmark prerequisites: set before every run (numbers are minimums), never tuned
     max_connections = 1100
 """
@@ -46,13 +52,31 @@ class Profile:
         # settings the benchmark needs just to run (e.g. max_connections for 1024 client threads): applied before every
         # run, including the server-defaults run; numeric values are minimums. Never tuned, shown apart from tuning.
         self.requires = dict(cp["requires"]) if cp.has_section("requires") else {}
+        self.adaptive = b.get("adaptive_duration", "auto").lower() not in ("off", "false", "no", "0")
+        self.max_duration = int(b["max_duration"]) if b.get("max_duration") else None
+        self.base_duration = self.duration
+
+    PLACEHOLDERS = ("{duration}", "{warmup}", "{total}", "{duration_min}", "{warmup_min}", "{total_min}")
+
+    def can_resize(self):
+        """Run length can follow a duration change: fixed-length measurement and a run command that uses it."""
+        return self.duration > 0 and str(self.warmup).isdigit() and any(p in self.run for p in self.PLACEHOLDERS)
+
+    def command(self):
+        w = int(self.warmup) if str(self.warmup).isdigit() else 0
+        vals = {"duration": self.duration, "warmup": w, "total": w + self.duration + 30,
+                "duration_min": max(1, -(-self.duration // 60)), "warmup_min": -(-w // 60), "total_min": -(-(w + self.duration + 30) // 60)}
+        cmd = self.run
+        for k, v in vals.items():
+            cmd = cmd.replace("{" + k + "}", str(v))
+        return cmd
         # probe = auto (calibration + after unusual steal; default) | always | false
         pv = b.get("probe", "auto").lower()
         self.probe = "always" if pv == "always" else (pv in ("auto", "true", "yes", "1"))
 
     def describe(self):
         return {"name": self.name, "profile": self.path, "reset": self.reset, "run": self.run, "warmup": self.warmup,
-                "duration": self.duration, "goal_metric": self.goal_metric, "metrics": list(self.metrics),
+                "duration": self.duration, "goal_metric": self.goal_metric, "metrics": list(self.metrics), "command": self.command(),
                 "requires": self.requires}
 
     def parse(self, text):
