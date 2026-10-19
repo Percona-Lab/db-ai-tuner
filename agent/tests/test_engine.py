@@ -661,3 +661,21 @@ def test_resource_tiebreak():
         r["summary"] = dict(r["summary"], mysqld_cpu_ms_per_trx=0.99)
         r["verdict"] = "neutral" if r["seq"] == 3 else "repeat"
     assert engine.best_config(h, "tps", 2.0)["seqs"] == [1, 2]
+
+
+def test_no_mechanism_goes_last():
+    # TPC-H SF10 (Battery 2 A2): 2946 read IOPS, 13 write IOPS, no redo - flushing knobs have nothing to act on
+    from tuning_agent.mechanisms import missing_mechanism
+    s = {"redo_mbs": 0.0, "bp_disk_reads": 2900, "disk_r_iops": 2946, "disk_w_iops": 13}
+    assert missing_mechanism("sweep-io-capacity", s) and missing_mechanism("trx-commit-2", s)
+    assert missing_mechanism("sweep-read-io-threads", s) is None and missing_mechanism("bp-grow", s) is None
+    assert missing_mechanism("read-ahead", {"redo_mbs": 2.0, "bp_disk_reads": 0})
+    ctx = {"goal": "latency", "policy": "safe", "os_tuning": True, "os_facts": {"os:filesystem": "ext4"}, "hw": HW, "flavor": "percona",
+           "version": (9, 7, 2), "variables": dict(VARS), "summary": dict(OLAP[0], redo_mbs=0.0, bp_disk_reads=2900, cpu_iowait=8,
+           disk_r_iops=2946, disk_w_iops=13, disk_util=70, bp_hit_pct=97.6), "inputs": OLAP[1], "history": [], "noise_pct": 2.0, "managed": {}}
+    items = engine.run_engine(ctx)["items"]
+    flush = [i for i in items if i["id"] in ("sweep-io-capacity", "io-capacity-up", "redo-grow", "sweep-dirty-lwm")]
+    others = [i for i in items if i["kind"] == "config" and not i.get("no_mechanism") and not i.get("priority")]
+    for f in flush:
+        assert f.get("no_mechanism") and "sweep" not in f
+        assert all(o["score"] > f["score"] for o in others), (f["id"], f["score"])

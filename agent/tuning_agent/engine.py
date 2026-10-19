@@ -16,7 +16,7 @@ import math
 import re
 
 from .evaluate import mean_noise
-from .mechanisms import MECHANISMS, relevance
+from .mechanisms import MECHANISMS, missing_mechanism, relevance
 from .knowledge import KB, flags_subset, fmt_size, human_size, normalize, parse_size, tradeoff_of
 
 GiB = 1024 ** 3
@@ -1346,6 +1346,11 @@ def run_engine(ctx):
             it["mechanism"] = MECHANISMS[it["id"]][1]
             it["addresses"] = matched
             it["relevance"] = rel
+        nomech = missing_mechanism(it["id"], ctx.get("summary")) if it["kind"] == "config" else None
+        if nomech:
+            it["no_mechanism"] = nomech
+            it["note"] = (it.get("note", "") + f" Validation only: {nomech}.").strip()
+            it.pop("sweep", None)  # one point at most, after everything with a mechanism
         if it.get("sweep") and (it.get("relevance") or 0) < 2:
             # Battery 1: 33 sweep runs, no real gain; without a corroborated mechanism start with two points only
             it["sweep"]["values"] = it["sweep"]["values"][:2]
@@ -1360,7 +1365,8 @@ def run_engine(ctx):
         if it["safety"] == "trade-off" and it["kind"] == "config" and not benchmark:
             it["kind"] = "advice"
             it["note"] = (it.get("note", "") + " Trade-off: not applied under policy=safe.").strip()
-        sc = score(it, ctx.get("goal", "tps")) + (2 if it["kind"] == "revert" else 0) - (2 if it.get("score_note") else 0)
+        sc = score(it, ctx.get("goal", "tps")) + (2 if it["kind"] == "revert" else 0) - (2 if it.get("score_note") else 0) \
+            - (10 if it.get("no_mechanism") else 0)
         if it.get("relevance") is not None:
             sc += 2 * it["relevance"] if it["relevance"] else (-3 if has_major else 0)
         if it.get("experience"):

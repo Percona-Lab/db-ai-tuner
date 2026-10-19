@@ -2,6 +2,7 @@
 import re
 
 from .knowledge import KB, normalize, parse_size, tradeoff_of
+from .mechanisms import activity as _activity
 
 DENY = {"datadir", "socket", "port", "server_id", "read_only", "super_read_only", "sql_mode", "character_set_server",
         "collation_server", "gtid_mode", "enforce_gtid_consistency", "log_error", "secure_file_priv", "bind_address",
@@ -62,11 +63,16 @@ def context(ctx, res, meta=None):
             "binlog_*, sync_binlog and replication settings have no effect when server_facts.log_bin is OFF.",
             "Each proposal is measured against its parent configuration; differences smaller than noise_pct are treated as noise.",
             "Only variables listed in current_variables, os_settings or available_pseudo_variables can be changed.",
+            "Propose only settings whose mechanism is active in this workload (see load): no flushing, redo, commit or purge "
+            "settings when writes_active is false; no read-path settings when disk_reads_active is false.",
         ],
         "available_pseudo_variables": dict(_pseudo_available(ctx), **({"os:*": "operating-system settings listed in os_settings"}
                                                                         if ctx.get("os_tuning") else {})),
         "load": {"threads_running_per_cpu": round((s.get("threads_running_avg") or 0) / max(hw.get("cpus") or 1, 1), 2),
-                 "history_list_length_max": s.get("history_list_length_max")},
+                 "history_list_length_max": s.get("history_list_length_max"),
+                 # what settings can act on: flushing/redo/commit settings need writes, read-path settings need disk reads
+                 "writes_active": _activity(s)["writes"], "disk_reads_active": _activity(s)["reads"],
+                 "redo_mbs": s.get("redo_mbs"), "page_reads_from_disk_per_s": s.get("bp_disk_reads")},
         "benchmark": (ctx.get("bench") or {}),
         "hardware": {"cpus": hw.get("cpus"), "ram_gib": round((hw.get("ram_bytes") or 0) / 2 ** 30, 1),
                      "disk": "HDD" if hw.get("disk_rotational") else "SSD", "filesystem": hw.get("filesystem")},

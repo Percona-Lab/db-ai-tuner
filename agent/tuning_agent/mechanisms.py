@@ -99,6 +99,40 @@ MECHANISMS = {
 SEVERITY = {"high": 3, "medium": 2, "low": 1}
 
 
+# What a change needs to act on at all. Unlike the bottleneck match (a prior that only orders experiments), these are
+# physical preconditions: flushing / redo / commit / purge settings cannot change anything when the workload writes
+# nothing (e.g. TPC-H), read-path settings nothing without disk reads. Such experiments move to the very end as
+# validation-only checks (one point, no sweep).
+WRITES = {"redo-grow", "log-buffer", "io-capacity-up", "io-capacity-down", "flush-neighbors", "log-writer-threads-off",
+          "group-commit-delay", "change-buffer-off", "change-buffer", "trx-commit-2", "sync-binlog", "doublewrite-off",
+          "binlog-off", "binlog-minimal", "os-dirty-writeback", "sweep-dirty-lwm", "sweep-purge-threads", "flush-sync-off",
+          "purge-lag", "writeset-history", "o-direct-no-fsync", "zfs-doublewrite-off", "sweep-redo", "sweep-io-capacity",
+          "os-nobarrier"}
+READS = {"read-ahead", "sweep-read-io-threads"}
+ANY_IO = {"bp-grow", "bp-overcommit", "sweep-bp", "o-direct", "os-scheduler"}
+
+
+def activity(summary):
+    s = summary or {}
+    writes = (s.get("redo_mbs") or 0) >= 0.05 or (s.get("bp_pages_flushed") or 0) >= 5
+    reads = (s.get("bp_disk_reads") or 0) >= 10
+    return {"writes": writes, "reads": reads}
+
+
+def missing_mechanism(item_id, summary):
+    """Why the change has nothing to act on in this workload (None = it has)."""
+    if summary is None:
+        return None
+    a = activity(summary)
+    if item_id in WRITES and not a["writes"]:
+        return f"the workload writes almost nothing (redo {(summary.get('redo_mbs') or 0):.2f} MB/s): this setting only affects writes, flushing or commits"
+    if item_id in READS and not a["reads"]:
+        return f"no buffer pool misses ({(summary.get('bp_disk_reads') or 0):.0f} page reads/s): this setting only affects reads from disk"
+    if item_id in ANY_IO and not (a["reads"] or a["writes"]):
+        return "no disk reads and almost no writes: the data is in memory and nothing is flushed"
+    return None
+
+
 def relevance(item_id, diagnosis):
     """(score 0..3, list of matched bottlenecks) - how directly the change addresses the diagnosed bottlenecks."""
     if item_id.startswith("revert") or item_id.startswith("rollback"):
