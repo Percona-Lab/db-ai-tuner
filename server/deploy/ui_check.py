@@ -12,7 +12,7 @@ with sync_playwright() as p:
     pg.goto(url)
     pg.wait_for_timeout(1500)
     body = pg.inner_text("body")
-    if not errs and ("Loading..." in body or "Log in" not in body):  # the app must get past its loading placeholder
+    if not errs and ("Loading..." in body or "Loading\u2026" in body or "Log in" not in body):  # the app must get past its loading placeholder
         errs.append("the page did not render past 'Loading...'")
     b.close()
 print("\n".join(errs) or "ui ok")
