@@ -76,3 +76,11 @@ fdatasync for commits).
 Next: report the kind per run on the run page and per study; design Battery 3 I/O tests so each kind is represented
 (e.g. sysbench read-only on 10x RAM = read-bound; update-heavy on 2-3x RAM with small redo = flush-bound;
 trx_commit=1 small transactions on slow fsync = commit-bound).
+
+## Mechanism preconditions (user guidance, 2026-10-19)
+
+Battery 1 and 2 TPC-H SF10 swept `innodb_io_capacity` (3 x 75 min) on a workload with 2946 read IOPS, 13 write IOPS
+and no redo: the knob only paces flushing, so it could not act. Done: `mechanisms.missing_mechanism()` - settings whose
+mechanism has nothing to act on (writes for flushing / redo / commit / purge / change buffer, disk reads for the read
+path) move to the end as one-point validation checks with a note why; the LLM context carries the same activity facts.
+Next: the run page shows "what limited this run" and "what each candidate acts on" side by side.
