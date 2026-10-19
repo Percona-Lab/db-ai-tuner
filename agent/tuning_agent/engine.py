@@ -631,11 +631,21 @@ def recommend(ctx):
                   f"{s.get('fsyncs_per_trx'):.2f} fsyncs per transaction with {s.get('threads_running_avg'):.0f} running threads: waiting up to 200 µs "
                   "lets more transactions share one binlog fsync. Durability unchanged; may add latency at low concurrency. Experiment.",
                   {"fsyncs_per_trx": s.get("fsyncs_per_trx"), "threads_running_avg": s.get("threads_running_avg")}, impact=2, confidence=1)
-        if "innodb_change_buffering" in v and v.get("innodb_change_buffering") == "none" and (s.get("bp_hit_pct") or 100) < 99 and writes > 50:
+        # change buffering is a both-ways experiment like the adaptive hash index (and the default flipped: 8.4 none, 9.7 all):
+        # it saves secondary-index page reads on writes, but costs merge work, buffer pool space and latching
+        cb = str(v.get("innodb_change_buffering") or "").lower()
+        if cb == "none" and (s.get("bp_hit_pct") or 100) < 99.5 and writes > 50:
             b.add("change-buffer", "Buffer secondary index changes", [("innodb_change_buffering", "all")],
-                  "Write-heavy workload whose secondary-index pages are often not in memory: the change buffer defers those reads. "
-                  "MySQL 8.4 disables it by default (helps little on SSD, can slow crash recovery). Experiment.",
-                  {"bp_hit_pct": s.get("bp_hit_pct"), "writes_per_s": round(writes, 1)}, impact=1, confidence=1)
+                  "Write-heavy workload whose secondary-index pages are often not in memory: the change buffer defers those reads "
+                  "(Mark Callaghan measured 0.48x throughput without it on an I/O-bound insert benchmark). MySQL 8.4 disables it by "
+                  "default (merge work, slower crash recovery). Experiment.",
+                  {"bp_hit_pct": s.get("bp_hit_pct"), "writes_per_s": round(writes, 1)}, impact=2, confidence=1)
+        elif cb and cb != "none" and writes > 50:
+            b.add("change-buffer-off", "Disable change buffering", [("innodb_change_buffering", "none")],
+                  f"Write-heavy workload with change buffering '{cb}' (9.7 default): merges of buffered secondary-index changes compete "
+                  "with foreground work and take buffer pool space; on fast storage reading the page directly can be cheaper "
+                  "(MySQL 8.4 default and Percona's 2026 benchmark config: none). Experiment.",
+                  {"bp_hit_pct": s.get("bp_hit_pct"), "writes_per_s": round(writes, 1), "innodb_change_buffering": cb}, impact=2, confidence=1)
         lw = s.get("row_lock_waits") or 0
         if lw > 1 and (s.get("tps") or 0) > 0:
             hot = [q for q in (inp.get("top_statements") or []) if q.get("lock_ms_avg", 0) > 1][:3]

@@ -34,6 +34,7 @@ MECHANISMS = {
     "subquery-to-derived": (("cpu", "io"), "Correlated subqueries computed once instead of per row."),
     "bka-mrr": (("io", "io-read"), "Index lookups fetched in primary-key order."),
     "group-commit-delay": (("commit",), "More transactions share one binlog fsync."),
+    "change-buffer-off": (("io-flush", "cpu", "concurrency", "io"), "No change-buffer merges competing with foreground work or taking buffer pool pages."),
     "change-buffer": (("io", "io-read"), "Secondary index updates without reading the page."),
     "trx-commit-2": (("commit", "io"), "No fsync per commit."),
     "sync-binlog": (("commit", "io"), "No binlog fsync per commit group."),

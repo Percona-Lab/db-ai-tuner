@@ -632,3 +632,15 @@ def test_sweep_point_parent_with_the_fields_the_agent_passes():
            "changes": [{"variable": "innodb_thread_concurrency", "old": "4", "new": "8", "source": "exp:51"}]}
     v, ev = evaluate.verdict(run, hist, "tps", {"noise_pct": 2.0, "runs": [1]})
     assert ev["parent_runs"] == [6, 7]
+
+
+def test_change_buffering_both_ways():
+    # like AHI: write-heavy workloads test the opposite of the current setting (8.4 default none, 9.7 default all)
+    def ids(cb, hit):
+        ctx = {"goal": "tps", "policy": "safe", "os_tuning": True, "os_facts": {"os:filesystem": "ext4"}, "hw": HW, "flavor": "percona",
+               "version": (9, 7, 2), "variables": dict(VARS, innodb_change_buffering=cb), "summary": dict(OLTP[0], bp_hit_pct=hit),
+               "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}}
+        return {i["id"] for i in engine.run_engine(ctx)["items"]}
+    assert "change-buffer-off" in ids("all", 99.9) and "change-buffer" not in ids("all", 99.9)
+    assert "change-buffer" in ids("none", 97.0) and "change-buffer-off" not in ids("none", 97.0)
+    assert "change-buffer" not in ids("none", 99.9)  # all pages in memory: nothing to buffer
