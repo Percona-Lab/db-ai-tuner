@@ -32,6 +32,7 @@ for rep in 1 2 3; do
     rsync -a --delete $BASE/ /var/lib/mysql/; sync; echo 3 > /proc/sys/vm/drop_caches
     systemctl start mysql; for i in $(seq 1 60); do mysqladmin ping >/dev/null 2>&1 && break; sleep 2; done
     [ $cond = agent -o $cond = lite ] && systemctl start tuning-agent
+    tuning-agent activity "overhead experiment" "$WH W, repeat $rep, condition $cond (agent / performance_schema off on purpose in some runs)" --seconds $(( 35 * 60 )) 2>/dev/null || true
     MP=$(pidof mysqld); AP=$(systemctl show -p MainPID --value tuning-agent); m0=$(cpu_ticks $MP); a0=$(cpu_ticks $AP); t0=$(date +%s)
     HDB_VU=$VU HDB_RAMPUP=5 HDB_DURATION=30 hdb ./hammerdbcli auto /root/bench/hdb_run.tcl > /root/bench/overhead-$WH-$rep-$cond.log 2>&1
     m1=$(cpu_ticks $MP); a1=$(cpu_ticks $AP); HZ=$(getconf CLK_TCK)
