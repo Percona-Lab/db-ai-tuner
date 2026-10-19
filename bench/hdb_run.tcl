@@ -12,7 +12,7 @@ diset tpcc mysql_storage_engine innodb
 diset tpcc mysql_driver timed
 diset tpcc mysql_rampup [e HDB_RAMPUP 2]
 diset tpcc mysql_duration [e HDB_DURATION 5]
-diset tpcc mysql_allwarehouse false
+diset tpcc mysql_allwarehouse [e HDB_ALLWH false]
 diset tpcc mysql_timeprofile true
 diset tpcc mysql_keyandthink false
 diset tpcc mysql_total_iterations 10000000000

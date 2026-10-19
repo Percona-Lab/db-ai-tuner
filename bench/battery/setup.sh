@@ -37,10 +37,11 @@ case $T in
     printf '[bench]\nname = sysbench oltp_read_write in memory (16 x 1.5M rows, 5.6 GB), %s threads%s, 2 + 5 min\n%s\nrun = ulimit -n 65535; %s --tables=16 --table-size=1500000 --threads=%s --time={total} --report-interval=10 %s--mysql-ignore-errors=all run\nwarmup = 120\nduration = 300\ntimeout = 900\n\n[metrics]\nsysbench_tps = transactions:\\s+\\d+\\s+\\(([\\d.]+) per sec\nsysbench_p95_ms = 95th percentile:\\s+([\\d.]+)\n' "$TH" "$PSN" "$RESET" "$SB" "$TH" "$PS" > $P ;;
   O4) mysql -e "CREATE DATABASE IF NOT EXISTS sbtest"; $SB --tables=32 --table-size=10000000 --threads=8 prepare > /root/bench/prep.log 2>&1
     printf '[bench]\nname = sysbench oltp_read_write I/O-bound (32 x 10M rows, ~75 GB), 64 threads, 5 + 10 min\n%s\nrun = %s --tables=32 --table-size=10000000 --threads=64 --time={total} --report-interval=10 --mysql-ignore-errors=all run\nwarmup = 300\nduration = 600\ntimeout = 1800\n\n[metrics]\nsysbench_tps = transactions:\\s+\\d+\\s+\\(([\\d.]+) per sec\nsysbench_p95_ms = 95th percentile:\\s+([\\d.]+)\n' "$RESET" "$SB" > $P; MAX=14 ;;
-  O5|O6) WH=$([ $T = O5 ] && echo 80 || echo 800); RU=$([ $T = O5 ] && echo 2 || echo 5); DU=$([ $T = O5 ] && echo 5 || echo 10)
+  O5|O6) WH=$([ $T = O5 ] && echo 80 || echo 800); ALLWH=$([ $T = O6 ] && echo true || echo false)  # O6: all warehouses -> I/O-bound
+    RU=$([ $T = O5 ] && echo 2 || echo 5); DU=$([ $T = O5 ] && echo 5 || echo 10)
     (eval "$HDB HDB_WH=$WH HDB_BUILD_VU=8 ./hammerdbcli auto /root/bench/hdb_build200.tcl") > /root/bench/prep.log 2>&1
-    printf '[bench]\nname = HammerDB TPROC-C %sW, 64 VU, %s + %s min\n%s\nrun = %s HDB_VU=64 HDB_RAMPUP=%s HDB_DURATION={duration_min} ./hammerdbcli auto /root/bench/hdb_run.tcl\nwarmup = %s\nduration = %s\ntimeout = %s\ngoal_metric = nopm\n\n[metrics]\nnopm = achieved (\\d+) NOPM\ntpm = from (\\d+) MySQL TPM\n' \
-      $WH $RU $DU "$RESET" "$HDB" $RU $((RU * 60 + 5)) $((DU * 60)) $(( (RU + DU) * 60 + 900 )) > $P; [ $T = O6 ] && MAX=14 ;;
+    printf '[bench]\nname = HammerDB TPROC-C %sW%s, 64 VU, %s + %s min\n%s\nrun = %s HDB_VU=64 HDB_ALLWH=%s HDB_RAMPUP=%s HDB_DURATION={duration_min} ./hammerdbcli auto /root/bench/hdb_run.tcl\nwarmup = %s\nduration = %s\ntimeout = %s\ngoal_metric = nopm\n\n[metrics]\nnopm = achieved (\\d+) NOPM\ntpm = from (\\d+) MySQL TPM\n' \
+      $WH "$([ $T = O6 ] && echo ' all-warehouse' || true)" $RU $DU "$RESET" "$HDB" $ALLWH $RU $((RU * 60 + 5)) $((DU * 60)) $(( (RU + DU) * 60 + 900 )) > $P; [ $T = O6 ] && MAX=14 ;;
   A1|A2) SF=$([ $T = A1 ] && echo 1 || echo 10); CAP=$([ $T = A1 ] && echo 120000 || echo 300000)
     $GT tpch prepare -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D tpch --sf $SF -T 8 --analyze > /root/bench/prep.log 2>&1
     printf '[bench]\nname = go-tpc TPC-H SF%s, 22 queries, 1 stream, %s s cap per query\nreset = /root/bench/tpch_warm.sh\nrun = %s tpch run -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D tpch --sf %s --count 22 --enable-query-tuning=false --conn-params max_execution_time=%s --ignore-error\nwarmup = 0\nduration = 0\ntimeout = %s\ngoal_metric = pass_seconds\n\n[metrics]\npass_seconds = sum:\\[Summary\\] Q\\d+: ([\\d.]+)s\ngeomean_seconds = geomean:\\[Summary\\] Q\\d+: ([\\d.]+)s\n' \
@@ -63,6 +64,7 @@ cat > queue.sh <<Q
 . /root/bench/queue-common.sh
 set -x
 $([ "$T" = O3 ] && echo 'export BASELINE_ARGS="--max-connections 1100"')
+$([ "$T" = A2 ] && echo 'export CALIBRATE=2')
 SCOPE=knobs,os STUDY="$STUDY" run_session /root/bench/battery.ini "$STUDY: $T $(sed -n 's/^name = //p' $P | cut -c1-70)" $GOAL $MAX
 echo QUEUEDONE
 Q
