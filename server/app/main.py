@@ -23,7 +23,7 @@ store.init()
 
 # ---------------------------------------------------------------------------- read-only share links
 SHARE = contextvars.ContextVar("share", default=None)  # scope of the share link used by the current request
-SHARE_PATHS = re.compile(r"^/api/(me|policies|environments(/\d+(/(metrics|waits))?)?|sessions/\d+|runs/\d+(/(config|metrics))?|"
+SHARE_PATHS = re.compile(r"^/api/(me|policies|environments(/\d+(/(metrics|waits))?)?|sessions/\d+(/experiments)?|runs/\d+(/(config|metrics))?|"
                          r"studies(/\d+(/costs)?)?|events)$")
 
 
