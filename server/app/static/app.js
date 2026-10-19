@@ -642,6 +642,10 @@ async function renderEvents(el, _events, _all, scope) {
   shown = d.events; total = d.total; draw();
 }
 
+function meanNoise(noise, n1, n2) {
+  // noise threshold for two means of n1 and n2 runs (the calibrated threshold is for one run vs one run)
+  return noise * Math.sqrt((1 / Math.max(n1, 1) + 1 / Math.max(n2, 1)) / 2);
+}
 async function sessionPage(id) {
   setNav("envs");
   const d = await api("/api/sessions/" + id);
@@ -654,14 +658,23 @@ async function sessionPage(id) {
   done.forEach(r => { const k = JSON.stringify(Object.entries(r.managed || {}).sort()); (groups[k] = groups[k] || []).push(r); });
   const cfgs = Object.values(groups).map(rs => ({ runs: rs, mean: rs.reduce((a, r) => a + r.goal_value, 0) / rs.length }));
   cfgs.sort((a, b) => lower ? a.mean - b.mean : b.mean - a.mean);
-  // within the noise threshold the leader is not displaced: prefer kept configurations, then more runs
+  // same rules as the agent (engine.best_config): means are compared with the noise threshold scaled for the number of
+  // runs in each mean; within it, a configuration confirmed better than another tied one wins over it, then kept
+  // configurations, then the more often measured
   const noiseP = (s.calibration && s.calibration.noise_pct) || s.noise_pct || 2;
   const KEEP = ["improved", "efficiency-gain", "reference"];
+  const keyOf = r => JSON.stringify(Object.entries(r.managed || {}).sort());
   if (cfgs.length) {
-    const top = cfgs[0].mean;
-    const tied = cfgs.filter(c => Math.abs(c.mean - top) / Math.abs(top) * 100 <= noiseP);
-    tied.forEach(c => c.kept = c.runs.some(r => KEEP.includes(r.verdict)));
-    tied.sort((a, b) => (b.kept - a.kept) || (b.runs.length - a.runs.length) || (lower ? a.mean - b.mean : b.mean - a.mean));
+    const top = cfgs[0];
+    const tied = cfgs.filter(c => Math.abs(c.mean - top.mean) / Math.abs(top.mean) * 100 <= meanNoise(noiseP, top.runs.length, c.runs.length));
+    const bySeq = {}; done.forEach(r => bySeq[r.seq] = r);
+    const over = {};  // configuration -> configurations it was kept over (improved / efficiency gain / accepted practice)
+    done.forEach(r => { if (KEEP.slice(0, 2).includes(r.verdict) || (String(r.label || "").startsWith("best-practices") && r.verdict === "neutral"))
+      ((r.evaluation || {}).parent_runs || []).forEach(ps => { if (bySeq[ps] && keyOf(bySeq[ps]) !== keyOf(r)) (over[keyOf(r)] = over[keyOf(r)] || new Set()).add(keyOf(bySeq[ps])); }); });
+    const beaten = new Set();
+    tied.forEach(c => { c.kept = c.runs.some(r => KEEP.includes(r.verdict)); const me = keyOf(c.runs[0]);
+      const todo = [...(over[me] || [])]; while (todo.length) { const k = todo.pop(); if (k !== me && !beaten.has(k)) { beaten.add(k); todo.push(...(over[k] || [])); } } });
+    tied.sort((a, b) => (beaten.has(keyOf(a.runs[0])) - beaten.has(keyOf(b.runs[0]))) || (b.kept - a.kept) || (b.runs.length - a.runs.length) || (lower ? a.mean - b.mean : b.mean - a.mean));
     cfgs.splice(cfgs.indexOf(tied[0]), 1); cfgs.unshift(tied[0]);
   }
   const safeCfgs = cfgs.filter(c => !(c.runs[0].tradeoffs || []).length);
@@ -705,14 +718,14 @@ async function sessionPage(id) {
   // best configuration known at each point of the session: a configuration takes the lead only when its mean beats the
   // current leader beyond the noise threshold (repeats of the leader keep it)
   const bestAt = {}, leadBefore = {};
-  { const acc = {}; let lead = null, leadMean = null, leadManaged = null;
+  { const acc = {}; let lead = null, leadMean = null, leadManaged = null, leadN = 1;
     d.runs.filter(r => r.status !== "aborted").forEach(r => { leadBefore[r.id] = leadManaged;
       if (r.goal_value == null || r.verdict === "unreliable") return;
       const k = JSON.stringify(Object.entries(r.managed || {}).sort());
       const a = acc[k] = acc[k] || { sum: 0, n: 0 }; a.sum += r.goal_value; a.n += 1;
       const mean = a.sum / a.n;
-      const better = leadMean == null || (lower ? (leadMean - mean) / leadMean : (mean - leadMean) / leadMean) * 100 > noiseP;
-      if (k === lead) leadMean = mean; else if (better) { lead = k; leadMean = mean; leadManaged = r.managed || {}; }
+      const better = leadMean == null || (lower ? (leadMean - mean) / leadMean : (mean - leadMean) / leadMean) * 100 > meanNoise(noiseP, leadN, a.n);
+      if (k === lead) { leadMean = mean; leadN = a.n; } else if (better) { lead = k; leadMean = mean; leadN = a.n; leadManaged = r.managed || {}; }
       if (k === lead) leadManaged = r.managed || {};
       bestAt[r.id] = k === lead;
     }); }

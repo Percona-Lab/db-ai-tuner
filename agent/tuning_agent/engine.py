@@ -12,6 +12,7 @@ Inputs (ctx):
 
 Every recommendation carries the evidence it was derived from so the decision can be audited.
 """
+import math
 import re
 
 from .mechanisms import MECHANISMS, relevance
@@ -1102,20 +1103,43 @@ def practice_bundle(items, history):
     return [bundle] + rest
 
 
+def mean_noise(noise, n1, n2):
+    """Noise threshold for comparing two means of n1 and n2 runs. `noise` is calibrated for one run vs one run; the
+    spread of a difference of means shrinks with sqrt(1/n1 + 1/n2), so 3 runs vs 2 runs use ~65% of it."""
+    return noise * math.sqrt((1.0 / max(n1, 1) + 1.0 / max(n2, 1)) / 2.0)
+
+
 def best_config(history, goal="tps", noise=2.0):
-    """Highest mean wins only when it beats the others beyond noise; within noise prefer configurations that were
-    kept (improved / efficiency-gain / the reference) and measured more often."""
+    """Highest mean wins when it beats the others beyond noise (scaled for the number of runs in each mean). Within
+    noise: a configuration confirmed better than another tied one wins over it (an improvement kept over its parent),
+    then configurations that were kept (improved / efficiency-gain / the reference), then the more often measured."""
     scores = config_scores(history, goal)
     if not scores:
         return None
-    top = scores[0]["mean"]
-    tied = [c for c in scores if abs(c["mean"] - top) / abs(top) * 100 <= noise]
+    top = scores[0]
+    tied = [c for c in scores if abs(c["mean"] - top["mean"]) / abs(top["mean"]) * 100 <= mean_noise(noise, top["n"], c["n"])]
     acc = accepted_practices(history)
+    by_seq = {r["seq"]: r for r in history}
+    # "kept over" edges: child configuration -> parent it replaced (improved, efficiency gain, accepted best practice)
+    over = {}
+    for r in history:
+        if r.get("verdict") in ("improved", "efficiency-gain") or (is_practice_run(r) and r.get("verdict") == "neutral"):
+            for ps in ((r.get("evaluation") or {}).get("parent_runs") or []):
+                pk = config_key((by_seq.get(ps) or {}).get("managed"))
+                if ps in by_seq and pk != config_key(r.get("managed")):
+                    over.setdefault(config_key(r.get("managed")), set()).add(pk)
+    beaten = set()
     for c in tied:
         runs = [r for r in history if config_key(r.get("managed")) == c["key"]]
         c["kept"] = any(r.get("verdict") in KEEP or (is_practice_run(r) and r.get("verdict") == "neutral") for r in runs)
         c["practices"] = len(acc & set(c["managed"] or {}))
-    tied.sort(key=lambda c: (not c["kept"], -c["practices"], -c["n"], c["mean"] if goal == "latency" else -c["mean"]))
+        todo = list(over.get(c["key"], ()))
+        while todo:  # everything this configuration was (transitively) kept over
+            k = todo.pop()
+            if k not in beaten and k != c["key"]:
+                beaten.add(k)
+                todo.extend(over.get(k, ()))
+    tied.sort(key=lambda c: (c["key"] in beaten, not c["kept"], -c["practices"], -c["n"], c["mean"] if goal == "latency" else -c["mean"]))
     return tied[0]
 
 
@@ -1133,7 +1157,7 @@ def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
     noise_txt = f"noise threshold ±{noise}%"
     if cur is not None and cur["key"] != best["key"]:
         gap = (best["mean"] - cur["mean"]) / best["mean"] * 100 * (-1 if goal == "latency" else 1)
-        if gap > noise:
+        if gap > mean_noise(noise, best["n"], cur["n"]):
             items.append(_revert_item(f"rollback-to-run-{best['seqs'][-1]}", f"Return to the best configuration (run #{best['seqs'][-1]})",
                                       managed, best["managed"], variables,
                                       f"The current configuration averages {cur['mean']:.4g} over {cur['n']} run(s) versus {best['mean']:.4g} over "

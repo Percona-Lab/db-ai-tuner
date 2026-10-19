@@ -469,3 +469,13 @@ def test_cross_class_experience_does_not_demote():
     other = score(dict(bad, scope="other workloads / machine sizes / concurrency"))
     assert comparable < other < plain
     assert plain - other <= 1.5  # half-weight evidence only, no demotion
+
+
+def test_best_config_confirmed_improvement_wins():
+    # session #58: noisy calibration (877 / 818 / 799, threshold 9.95%); log_writer_threads=OFF confirmed at 907 / 911
+    import json
+    h = json.load(open(os.path.join(os.path.dirname(__file__), "session58.json")))
+    assert engine.best_config(h, "tps", 9.95)["seqs"] == [6, 7]
+    assert round(engine.mean_noise(9.95, 3, 2), 1) == 6.4 and engine.mean_noise(2.0, 1, 1) == 2.0
+    # within the scaled threshold, the configuration kept over its (grand)parent still wins
+    assert engine.best_config(h, "tps", 20.0)["seqs"] == [6, 7]
