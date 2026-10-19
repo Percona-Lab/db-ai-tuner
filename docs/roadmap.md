@@ -16,3 +16,30 @@ learns them from many measured configurations.
    workload / machine (e.g. thread pool -11..-18% with log_writer_threads=OFF vs ~-2% with ON) - suggestive only.
 4. **Battery 2 targeted factorials**: join_buffer x AHI (TPC-H), log_writer_threads x flush_log_at_trx_commit (OLTP write),
    allocator x THP (1024 connections) to measure interaction sizes on clean data.
+
+## Diagnostic runs (proposed 2026-10-19; decide with the Battery 1 evaluation)
+
+Today instrumentation is fixed: default performance_schema (mutex / rwlock wait timing off), passive OS sampling, and a
+20 s CPU profile at the end of warm-up. Nothing drills deeper automatically; `tuning-agent diag waits on` is manual.
+
+Idea: when the diagnosis names a broad bottleneck but not its mechanism, spend one run on a **diagnostic run**: the current
+best configuration with extra instrumentation for that area. Its throughput is never compared: it is excluded from means,
+verdicts, noise and the best configuration, and the instrumentation is removed (and checked) before the next measured run.
+
+| Broad finding | Drill-down | Narrows the next experiment to |
+|---|---|---|
+| CPU busy, spin / futex / scheduler share high, or "sync" waits untimed | wait/synch/% timed + `events_waits_summary_by_instance`, `SHOW ENGINE INNODB MUTEX`, innodb_metrics latch modules | which latch: lock_sys, trx_sys, log, buf_pool LRU, fil_system, dict → spin settings, thread pool / concurrency, purge, BP instances, table cache instances |
+| Threads waiting but CPU not saturated | off-CPU profile (eBPF `sched_switch`, e.g. bcc `offcputime`) | blocking cause: I/O, locks, fsync, network |
+| I/O-bound | per-file I/O latency (`file_summary_by_instance`, eBPF `biolatency` / `fileslower`), innodb_metrics buffer / flush / log modules | reads vs flushing vs redo vs temp files → BP size, flushing, redo size, tmp settings |
+| Row-lock waits | `data_lock_waits` sampling, `innodb_print_all_deadlocks` | hot rows (schema advice, outside knob scope) vs lock-holding time (commit path) |
+| Slow analytical statements | `EXPLAIN ANALYZE` + optimizer trace of the top digests | join / sort / temp-table sizes, optimizer switches |
+| Memory / allocator in the CPU profile | memory/% instruments, allocator statistics | allocator choice, per-session buffers |
+
+Rules: only when the candidate experiments for the finding address different mechanisms (the drill-down must be able to
+change the plan); at most one per area per session and ≤ 10% of the run budget; shorter run allowed (no comparison needed).
+The drill-down result is passed to the engine (mechanism-specific diagnoses) and to the LLM context.
+
+Evaluate before building: in Battery 1, count sessions where (a) the diagnosis was broad and (b) experiments for several
+mechanisms were tried before one helped, e.g. the `innodb_thread_concurrency` sweep (20 runs, median 0%) and spin-loop
+experiments (mostly noise). If that wasted budget exceeds the cost of a diagnostic run, build it, starting with latch
+contention and off-CPU profiling.
