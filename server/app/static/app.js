@@ -248,6 +248,7 @@ async function studyPage(id) {
   });
   rows.sort((a, b) => (a.cost || 0) - (b.cost || 0) || a.cpus - b.cpus || (a.e.ram_bytes || 0) - (b.e.ram_bytes || 0));
   const better = (a, b) => lat ? a < b : a > b;
+  const mixedWl = new Set(rows.map(x => x.s.workload || x.s.goal_metric || "")).size > 1;
   let verdict = "";
   const measured = rows.filter(x => x.bs != null);
   if (st.kind === "min-hardware") {
@@ -257,6 +258,9 @@ async function studyPage(id) {
       verdict = ok.length ? `<b>${esc(ok[0].e.name)}</b> is the smallest environment reaching ${num(st.target)}: best production-safe ${num(ok[0].bs)} (${ok[0].e.cpus} CPU · ${bytes(ok[0].e.ram_bytes)}${ok[0].cost ? ` · $${num(ok[0].cost)}/month` : ""}). <a href="#/session/${ok[0].s.id}">Its configuration</a>.`
         : measured.length ? `No environment reaches ${num(st.target)} yet; closest: <b>${esc(measured.reduce((a, b) => better(a.bs, b.bs) ? a : b).e.name)}</b> with ${num(measured.reduce((a, b) => better(a.bs, b.bs) ? a : b).bs)}.` : "No results yet.";
     }
+  } else if (mixedWl && measured.length) {
+    const g = measured.filter(x => (x.r.best_safe || {}).gain_pct != null).sort((a, b) => b.r.best_safe.gain_pct - a.r.best_safe.gain_pct);
+    verdict = g.length ? `The sessions run different workloads, so results are compared as gains over each session's own starting configuration. Largest: <b>${esc(g[0].s.name.replace(/^Battery \d+: /, ""))}</b> ${pct(g[0].r.best_safe.gain_pct)}; smallest: ${esc(g[g.length - 1].s.name.replace(/^Battery \d+: /, ""))} ${pct(g[g.length - 1].r.best_safe.gain_pct)}.` : "No results yet.";
   } else if (measured.length >= 2) {
     const small = measured[0], big = measured[measured.length - 1];
     const hw = big.cpus && small.cpus ? big.cpus / small.cpus : null, perf = lat ? small.bs / big.bs : big.bs / small.bs;
@@ -282,7 +286,13 @@ ${rows.some(y => y.s.cost || y.s.env_cost) ? `<td class="num">${(() => { const c
   <div class="row" style="margin-top:8px"><select id="addSess" style="width:auto"><option value="">Add a session…</option>${d.other_sessions.map(o => `<option value="${o.id}">#${o.id} ${esc(o.env_name)} · ${esc(o.name)}</option>`).join("")}</select>
    <span class="muted">or <code>tuning-agent session start --study "${esc(st.name)}" ...</code> on each environment</span></div>
   <h2>Notes</h2><div class="card"><textarea id="snotes" rows="3" placeholder="Hypothesis, method, conclusions">${esc(st.notes || "")}</textarea><div class="row" style="margin-top:6px"><button id="savesn">Save notes</button><span id="snsaved" class="muted"></span></div></div>`;
-  C.barChart(document.getElementById("sbars"), {
+  if (mixedWl) C.barChart(document.getElementById("sbars"), {
+    title: "Gain of the best production-safe configuration over each session's starting configuration (%)", unit: "%", metric: "gain",
+    bars: rows.filter(x => (x.r.best_safe || {}).gain_pct != null).map(x => ({ label: x.s.name.replace(/^Battery \d+: /, ""), short: (x.s.name.match(/: ([A-Z]\d+) /) || [])[1] || "#" + x.s.id,
+      value: Math.max(0, x.r.best_safe.gain_pct), sub: pct(x.r.best_safe.gain_pct), href: "#/session/" + x.s.id, highlight: "best",
+      tip: `<div>start<b>${num(x.first)}</b></div><div>tuned<b>${num(x.bs)}</b></div>` })),
+  });
+  else C.barChart(document.getElementById("sbars"), {
     title: `Tuned result per environment (${goalName(st.goal || "tps")}) — green: meets the target`, unit: "", metric: "tuned",
     ref: st.target, refLabel: "target", bars: rows.map(x => ({ label: x.e.name + (x.cpus ? ` (${x.cpus} CPU)` : ""), value: x.bs, sub: x.first ? "start " + num(x.first) : "", href: "#/session/" + x.s.id, highlight: x.meets ? "best" : false })),
   });
