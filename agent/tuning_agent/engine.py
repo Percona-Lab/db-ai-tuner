@@ -1156,6 +1156,10 @@ def practice_bundle(items, history):
     return [bundle] + rest
 
 
+EFFICIENCY_TIEBREAK = ("mysqld_cpu_ms_per_trx", "disk_ios_per_trx", "disk_kb_per_trx", "db_mem_mb")
+EFFICIENCY_TIE_MIN = 0.03  # resource differences below 3% are not a reason to prefer a configuration
+
+
 def best_config(history, goal="tps", noise=2.0):
     """Highest mean wins when it beats the others beyond noise (scaled for the number of runs in each mean). Within
     noise: a configuration confirmed better than another tied one wins over it (an improvement kept over its parent),
@@ -1199,7 +1203,24 @@ def best_config(history, goal="tps", noise=2.0):
             if k not in beaten and k != c["key"]:
                 beaten.add(k)
                 todo.extend(over.get(k, ()))
-    tied.sort(key=lambda c: (c["key"] in beaten, not c["kept"], -c["practices"], -c["n"], c["mean"] if goal == "latency" else -c["mean"]))
+    # tie-breaker on resources: within the goal noise, using less CPU / I/O per transaction or memory is better
+    eff = {}
+    for k in EFFICIENCY_TIEBREAK:
+        vals = {}
+        for c in tied:
+            xs = [(r.get("summary") or {}).get(k) for r in history if config_key(r.get("managed")) == c["key"]]
+            xs = [x for x in xs if x]
+            if xs:
+                vals[c["key"]] = sum(xs) / len(xs)
+        if len(vals) == len(tied) and len(tied) > 1:
+            lo = min(vals.values())
+            if lo > 0 and max(vals.values()) / lo - 1 > EFFICIENCY_TIE_MIN:  # only meaningful differences
+                for key, x in vals.items():
+                    eff[key] = eff.get(key, 0.0) + (x / lo - 1)
+    for c in tied:
+        c["resource_score"] = round(eff.get(c["key"], 0.0), 4)
+    tied.sort(key=lambda c: (c["key"] in beaten, not c["kept"], -c["practices"], c["resource_score"], -c["n"],
+                             c["mean"] if goal == "latency" else -c["mean"]))
     return tied[0]
 
 

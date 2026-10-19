@@ -644,3 +644,20 @@ def test_change_buffering_both_ways():
     assert "change-buffer-off" in ids("all", 99.9) and "change-buffer" not in ids("all", 99.9)
     assert "change-buffer" in ids("none", 97.0) and "change-buffer-off" not in ids("none", 97.0)
     assert "change-buffer" not in ids("none", 99.9)  # all pages in memory: nothing to buffer
+
+
+def test_resource_tiebreak():
+    # two configurations tie on throughput (within noise), neither was kept over the other: the leaner one wins
+    base = {"summary": {"mysqld_cpu_ms_per_trx": 1.0, "disk_ios_per_trx": 4.0, "db_mem_mb": 20000}}
+    lean = {"summary": {"mysqld_cpu_ms_per_trx": 0.8, "disk_ios_per_trx": 4.0, "db_mem_mb": 20000}}
+    h = [dict(base, seq=1, label="baseline (1/2)", managed={"a": "1"}, goal_value=1000, verdict="improved", evaluation={}),
+         dict(base, seq=2, label="baseline (2/2)", managed={"a": "1"}, goal_value=1002, verdict="repeat", evaluation={}),
+         dict(lean, seq=3, label="x", managed={"a": "1", "b": "2"}, goal_value=1001, verdict="efficiency-gain",
+              evaluation={"parent_runs": []}),
+         dict(lean, seq=4, label="x (confirm)", managed={"a": "1", "b": "2"}, goal_value=999, verdict="repeat", evaluation={})]
+    assert engine.best_config(h, "tps", 2.0)["seqs"] == [3, 4]
+    # within 3% the resource use is not a reason: more runs / higher mean decide as before
+    for r in h[2:]:
+        r["summary"] = dict(r["summary"], mysqld_cpu_ms_per_trx=0.99)
+        r["verdict"] = "neutral" if r["seq"] == 3 else "repeat"
+    assert engine.best_config(h, "tps", 2.0)["seqs"] == [1, 2]

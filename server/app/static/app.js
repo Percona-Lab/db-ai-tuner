@@ -676,7 +676,15 @@ async function sessionPage(id) {
     const beaten = new Set();
     tied.forEach(c => { c.kept = c.runs.some(r => KEEP.includes(r.verdict)); const me = keyOf(c.runs[0]);
       const todo = [...(over[me] || [])]; while (todo.length) { const k = todo.pop(); if (k !== me && !beaten.has(k)) { beaten.add(k); todo.push(...(over[k] || [])); } } });
-    tied.sort((a, b) => (beaten.has(keyOf(a.runs[0])) - beaten.has(keyOf(b.runs[0]))) || (b.kept - a.kept) || (b.runs.length - a.runs.length) || (lower ? a.mean - b.mean : b.mean - a.mean));
+    // tie-breaker on resources (same rule as the agent): less CPU / I/O per transaction or memory, if > 3% apart
+    const eff = {};
+    ["mysqld_cpu_ms_per_trx", "disk_ios_per_trx", "disk_kb_per_trx", "db_mem_mb"].forEach(k => {
+      const vals = tied.map(c => { const xs = c.runs.map(r => (r.summary || {})[k]).filter(x => x); return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null; });
+      if (tied.length < 2 || vals.some(x => x == null)) return;
+      const lo = Math.min(...vals);
+      if (lo > 0 && Math.max(...vals) / lo - 1 > 0.03) tied.forEach((c, i) => eff[keyOf(c.runs[0])] = (eff[keyOf(c.runs[0])] || 0) + vals[i] / lo - 1);
+    });
+    tied.sort((a, b) => (beaten.has(keyOf(a.runs[0])) - beaten.has(keyOf(b.runs[0]))) || (b.kept - a.kept) || ((eff[keyOf(a.runs[0])] || 0) - (eff[keyOf(b.runs[0])] || 0)) || (b.runs.length - a.runs.length) || (lower ? a.mean - b.mean : b.mean - a.mean));
     cfgs.splice(cfgs.indexOf(tied[0]), 1); cfgs.unshift(tied[0]);
   }
   const safeCfgs = cfgs.filter(c => !(c.runs[0].tradeoffs || []).length);
@@ -916,7 +924,7 @@ async function renderKeySettings(el, runId) {
    ${osTable ? `<details class="card" style="margin-top:10px"><summary style="margin:0">${osTable.replace(/<\/h3>[\s\S]*$/, "").replace(/^<h3>/, "")} (${osKeys.length})</summary>${osTable.replace(/^[\s\S]*?<\/h3>/, "")}</details>` : ""}`;
 }
 
-const EFF_LABELS = { mysqld_cpu_ms_per_trx: "mysqld CPU ms/trx", host_cpu_ms_per_trx: "host CPU ms/trx", disk_ios_per_trx: "disk IOs/trx", disk_kb_per_trx: "disk KiB/trx", fsyncs_per_trx: "fsyncs/trx", redo_kb_per_trx: "redo KiB/trx", rows_read_per_trx: "rows read/trx" };
+const EFF_LABELS = { mysqld_cpu_ms_per_trx: "mysqld CPU ms/trx", host_cpu_ms_per_trx: "host CPU ms/trx", disk_ios_per_trx: "disk IOs/trx", disk_kb_per_trx: "disk KiB/trx", fsyncs_per_trx: "fsyncs/trx", redo_kb_per_trx: "redo KiB/trx", rows_read_per_trx: "rows read/trx", db_mem_mb: "database memory MiB" };
 
 async function renderExperiments(el, sess) {
   const d = await api(`/api/sessions/${sess.id}/experiments`);
@@ -1071,7 +1079,7 @@ function renderEvaluation(r) {
   if (!ev.parent_runs) return "";
   const rows = Object.entries(ev.efficiency || {}).map(([k, e]) => `<tr><td>${esc(EFF_LABELS[k] || e.label)}</td><td class="num">${num(e.parent)}</td><td class="num">${num(e.now)}</td><td class="num ${Math.abs(e.improvement_pct) > e.noise_pct ? (e.improvement_pct > 0 ? "up" : "down") : ""}">${e.improvement_pct > 0 ? "−" : "+"}${Math.abs(e.improvement_pct).toFixed(1)}%</td><td class="num muted">±${e.noise_pct}%</td></tr>`).join("");
   return `<div class="card" style="margin-bottom:14px"><h3 style="margin-top:0">Evaluation ${verdictBadge(r.verdict)}</h3>
-   <p style="margin:0 0 8px">Goal <b class="${deltaCls(ev.goal_delta_pct)}">${pct(ev.goal_delta_pct)}</b> vs parent configuration (±${ev.goal_noise_pct}% noise)${info(`Parent configuration = the one this run was changed from; compared with the mean of its most recent runs (${ev.parent_runs.map(x => "#" + x).join(", ")} = ${num(ev.parent_goal_mean)}). Noise threshold ${ev.calibrated ? "calibrated" : "not calibrated"}. improved/regressed: goal beyond noise. efficiency-gain/-loss: goal within noise but CPU or I/O per transaction measurably lower/higher (only resources under load count).`)}</p>
+   <p style="margin:0 0 8px">Goal <b class="${deltaCls(ev.goal_delta_pct)}">${pct(ev.goal_delta_pct)}</b> vs parent configuration (±${ev.goal_noise_pct}% noise)${info(`Parent configuration = the one this run was changed from; compared with the mean of its most recent runs (${ev.parent_runs.map(x => "#" + x).join(", ")} = ${num(ev.parent_goal_mean)}). Noise threshold ${ev.calibrated ? "calibrated" : "not calibrated"}. improved/regressed: goal beyond noise. efficiency-gain/-loss: goal within noise but CPU or I/O per transaction or database memory measurably lower/higher (beyond its own noise) - using fewer resources for the same result is the tie-breaker.`)}</p>
    ${queryImpact(ev.query_impact)}
    ${rows ? `<div class="tablewrap"><table><thead><tr><th>Work per transaction</th><th class="num">Parent mean</th><th class="num">This run</th><th class="num">Change</th><th class="num">Noise</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}</div>`;
 }

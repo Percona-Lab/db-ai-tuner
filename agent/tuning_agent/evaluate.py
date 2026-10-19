@@ -8,8 +8,8 @@ Protocol
   3. Verdicts
        improved          goal better by more than the goal noise
        regressed         goal worse by more than the goal noise
-       efficiency-gain   goal within noise, but CPU or I/O per transaction measurably lower (and nothing measurably worse)
-       efficiency-loss   goal within noise, but CPU or I/O per transaction measurably higher
+       efficiency-gain   goal within noise, but CPU or I/O per transaction or memory measurably lower (and nothing measurably worse)
+       efficiency-loss   goal within noise, but CPU or I/O per transaction or memory measurably higher
        neutral           nothing measurable changed
        repeat            same configuration as the previous run (adds to that configuration's mean)
        reference         first run of the session
@@ -29,9 +29,11 @@ EFFICIENCY = {
     "fsyncs_per_trx": "fsyncs per transaction",
     "redo_kb_per_trx": "redo KiB per transaction",
     "rows_read_per_trx": "rows read per transaction",
+    "db_mem_mb": "database memory (PSS incl. swapped, MiB)",
 }
 # the ones allowed to promote a within-noise result
-KEY_EFFICIENCY = ("mysqld_cpu_ms_per_trx", "host_cpu_ms_per_trx", "disk_ios_per_trx", "disk_kb_per_trx")
+# tie-breakers when the goal is within noise: using less CPU, I/O or memory for the same result is better
+KEY_EFFICIENCY = ("mysqld_cpu_ms_per_trx", "host_cpu_ms_per_trx", "disk_ios_per_trx", "disk_kb_per_trx", "db_mem_mb")
 
 DEFAULT_GOAL_NOISE = 2.0
 MIN_GOAL_NOISE = 2.0  # used only until the session (or this environment's history) has measured long-term variance
@@ -277,6 +279,7 @@ def improvement(goal, new, old):
 
 CPU_METRICS = ("mysqld_cpu_ms_per_trx", "host_cpu_ms_per_trx")
 IO_METRICS = ("disk_ios_per_trx", "disk_kb_per_trx")
+MEM_METRICS = ("db_mem_mb",)
 
 
 def relevant_resources(*summaries):
@@ -459,9 +462,12 @@ def _verdict(run, history, goal, noise):
         ch = round(100.0 * (pm[k] - s[k]) / pm[k], 2)  # positive = less work per transaction
         thr = ((noise or {}).get("efficiency", {}).get(k) or {}).get("noise_pct") or max(MIN_EFF_NOISE, 2 * goal_noise)
         details["efficiency"][k] = {"label": label, "parent": round(pm[k], 4), "now": s[k], "improvement_pct": ch, "noise_pct": thr}
-        relevant = (k in CPU_METRICS and rel["cpu"]) or (k in IO_METRICS and rel["io"])
-        details["efficiency"][k]["counts"] = relevant
-        if k in KEY_EFFICIENCY and relevant:
+        # every resource counts as a tie-breaker (less is better even when it is not the bottleneck); `relevant` is
+        # kept for the explanation only. Thresholds stay noise-based, so only meaningful differences count.
+        relevant = (k in CPU_METRICS and rel["cpu"]) or (k in IO_METRICS and rel["io"]) or k in MEM_METRICS
+        details["efficiency"][k]["counts"] = k in KEY_EFFICIENCY
+        details["efficiency"][k]["under_load"] = relevant
+        if k in KEY_EFFICIENCY:
             if ch > thr:
                 better.append(label)
             elif ch < -thr:
