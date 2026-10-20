@@ -9,6 +9,7 @@ import json
 import re
 import os
 import signal
+import subprocess
 import sys
 import time
 import uuid
@@ -454,6 +455,27 @@ def _print_apply(res):
     return "\n".join(lines)
 
 
+def _measured_overhead(c):
+    """mysqld's memory beyond the buffer pool in the latest run on this host (PSS + swapped-out), in bytes, or None."""
+    try:
+        sess = c.session() or {}
+    except Exception:
+        return None
+    for r in reversed(sess.get("runs") or []):
+        s = r.get("summary") or {}
+        pss = s.get("dbproc_pss_mb")
+        bp = ((r.get("managed") or {}).get("innodb_buffer_pool_size") or {})
+        bp = bp.get("value") if isinstance(bp, dict) else bp
+        try:
+            from .knowledge import parse_size
+            bpb = parse_size(str(bp)) if bp else int(c.variables.get("innodb_buffer_pool_size") or 0)
+        except Exception:
+            continue
+        if pss and bpb:
+            return max(0, int((pss + (s.get("dbproc_swap_mb") or 0)) * 2 ** 20) - int(bpb))
+    return None
+
+
 def cmd_baseline(a):
     c = Ctx()
     v = c.variables
@@ -463,6 +485,9 @@ def cmd_baseline(a):
     if a.reserve_mem:
         from .knowledge import parse_size
         opts["reserve_bytes"] = parse_size(a.reserve_mem)
+    mo = _measured_overhead(c)
+    if mo:
+        opts["measured_overhead_bytes"] = mo
     items, calc = baseline.generate(hw, v, flavor, vt, opts)
     for it in items:
         it["current"] = v.get(it["variable"])
@@ -1031,6 +1056,15 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     os.makedirs(logdir, exist_ok=True)
     seq = len(sess["runs"]) + 1
     logfile = os.path.join(logdir, f"s{sess['id']}-run{seq}.log")
+    if not prof.reset and prof.restart_before_run:
+        log("clean start: restarting mysqld and dropping the OS page cache")
+        c.activity("clean start", "restarting mysqld")
+        ok, err = Applier(c.cfg, c.state, c.db, log=log).restart()
+        if not ok:
+            raise ServerDown(f"mysqld restart before the run failed: {err}")
+        subprocess.run(["sh", "-c", "sync; echo 3 > /proc/sys/vm/drop_caches"], capture_output=True)
+        c.db.connect(retries=30, delay=2)
+        c.state.set("restart_pending", False)
     if prof.reset:
         log(f"reset: {prof.reset}")
         c.activity("resetting data", prof.reset.split()[0].rsplit("/", 1)[-1])

@@ -45,6 +45,10 @@ class Profile:
         self.path = path
         self.name = b.get("name", os.path.basename(path))
         self.reset = b.get("reset")
+        # apples to apples: every run starts from the same state. Without a reset command (read-only or seasoned data)
+        # the agent restarts mysqld and drops the OS page cache before each run, so no run inherits the previous one's
+        # caches, swapped-out memory or fragmentation. restart_before_run = false keeps the state (opt-out, stated).
+        self.restart_before_run = str(b.get("restart_before_run", "true")).lower() not in ("false", "0", "no", "off")
         self.run = b["run"]
         self.warmup = b.get("warmup", "0")
         self.duration = int(b.get("duration", "300"))
@@ -84,7 +88,8 @@ class Profile:
         return cmd
 
     def describe(self):
-        return {"name": self.name, "profile": self.path, "reset": self.reset, "run": self.run, "warmup": self.warmup,
+        return {"name": self.name, "profile": self.path, "reset": self.reset, "restart_before_run": self.restart_before_run,
+                "run": self.run, "warmup": self.warmup,
                 "duration": self.duration, "goal_metric": self.goal_metric, "metrics": list(self.metrics), "command": self.command(),
                 "data_state": self.data_state,
                 "requires": self.requires}

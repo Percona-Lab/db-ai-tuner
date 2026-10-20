@@ -16,7 +16,9 @@ def generate(hw, variables, flavor, version, opts=None):
     cpus = int(hw["cpus"] or 1)
     ssd = not hw.get("disk_rotational", False)
     max_conn = int(opts.get("max_connections") or max(151, min(1000, cpus * 50)))
-    reserve = int(opts.get("reserve_bytes") or max(GiB, int(ram * 0.10)))
+    # OS reserve, plus memory for a co-located client when one is declared (--reserve-mem): added, not instead
+    client = int(opts.get("reserve_bytes") or 0)
+    reserve = max(GiB, int(ram * 0.10)) + client
     out = []
 
     def add(var, value, reason):
@@ -25,6 +27,9 @@ def generate(hw, variables, flavor, version, opts=None):
 
     # -- buffer pool: what is left after OS + server overheads, capped at 75% of RAM
     overhead = 400 * MiB + max_conn * 2 * MiB // 3
+    measured = int(opts.get("measured_overhead_bytes") or 0)
+    if measured > overhead:  # mysqld's own memory beyond the buffer pool in the last run (PSS + swap) beats the estimate
+        overhead = measured
     bp = min(int(ram * 0.75), ram - reserve - overhead)
     bp = max(bp, 128 * MiB)
     instances = 1
@@ -35,7 +40,8 @@ def generate(hw, variables, flavor, version, opts=None):
     chunk = int(variables.get("innodb_buffer_pool_chunk_size") or 0) or 128 * MiB  # MariaDB 10.11+ reports 0 (auto)
     bp = _round_down(bp, chunk * instances)
     add("innodb_buffer_pool_size", fmt_size(bp),
-        f"{human_size(ram)} RAM - {human_size(reserve)} OS reserve - {human_size(overhead)} server/connection overhead "
+        f"{human_size(ram)} RAM - {human_size(reserve)} OS{' + client' if client else ''} reserve - {human_size(overhead)} server/connection overhead"
+        f"{' (measured in the last run)' if measured and overhead == measured else ''} "
         f"(capped at 75% of RAM), rounded to chunk*instances.")
 
     # -- redo log
