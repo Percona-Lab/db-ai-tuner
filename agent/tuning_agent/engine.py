@@ -1436,11 +1436,25 @@ def _swapfile_bytes(val):
         return 0
 
 
+def matching_insights(it, insights):
+    """Learned insights about the settings this change sets (the same variable and value, or the same variable)."""
+    ch = {str(c["variable"]).lower(): str(c.get("proposed")).lower() for c in it.get("changes") or []}
+    out = []
+    for x in insights or []:
+        vs = {str(s.get("variable")).lower(): str(s.get("value")).lower() for s in x.get("settings") or []}
+        if vs and all(k in ch for k in vs) and all(not v or ch[k] == v for k, v in vs.items()):
+            out.append({k: x.get(k) for k in ("id", "statement", "direction", "status", "confidence", "support", "contradict")})
+    return out[:3]
+
+
 def hypothesis(it, ctx):
     """Why the tuner wants to test this change, stated as a testable claim about the last run."""
     h = _hypothesis(it, ctx)
-    if it.get("lead"):  # outside reports only motivate a test; the claim stays what this run's measurements say
-        h["lead"] = it["lead"]
+    leads = [it["lead"]] if it.get("lead") else []  # outside reports only motivate a test; the claim stays what this run measures
+    for x in it.get("insights") or []:
+        leads.append(f"Learned ({x['status']}, {x['support']} supporting / {x['contradict']} contradicting runs): {x['statement']}")
+    if leads:
+        h["lead"] = " ".join(leads)
     return h
 
 
@@ -1561,6 +1575,14 @@ def run_engine(ctx):
             it["no_mechanism"] = nomech
             it["note"] = (it.get("note", "") + f" Validation only: {nomech}.").strip()
             it.pop("sweep", None)  # one point at most, after everything with a mechanism
+        learned = matching_insights(it, ctx.get("insights"))
+        if learned:
+            # what the learner extracted from earlier sessions in these conditions (learning.db): a lead and a small prior
+            # for validated insights - the evidence gate above still decides whether the change runs at all
+            it["insights"] = learned
+            for x in learned:
+                if x["status"] == "validated":
+                    it["score_prior"] = it.get("score_prior", 0) + (1 if x["direction"] == "helps" else -2 if x["direction"] == "hurts" else -1)
         if it["kind"] in ("config", "revert"):
             it["hypothesis"] = hypothesis(it, ctx)
             rd_, rn_ = rescore(it, ctx.get("hypotheses"))
@@ -1584,7 +1606,7 @@ def run_engine(ctx):
         if it["safety"] == "trade-off" and it["kind"] == "config" and not benchmark:
             it["kind"] = "advice"
             it["note"] = (it.get("note", "") + " Trade-off: not applied under policy=safe.").strip()
-        sc = score(it, ctx.get("goal", "tps")) + (2 if it["kind"] == "revert" else 0) - (2 if it.get("score_note") else 0) \
+        sc = score(it, ctx.get("goal", "tps")) + (2 if it["kind"] == "revert" else 0) - (2 if it.get("score_note") else 0) + it.get("score_prior", 0) \
             - (10 if it.get("no_mechanism") else 0) + (it.get("rescore") or {}).get("delta", 0)
         if it.get("relevance") is not None:
             sc += 2 * it["relevance"] if it["relevance"] else (-3 if has_major else 0)

@@ -41,11 +41,23 @@ def decrypt(s):
         return None
 
 
-def settings(user_id):
-    r = store.q1("SELECT llm_key_enc, llm_model, llm_mode FROM users WHERE id=?", (user_id,))
+def _service_row():
+    """The service's AI settings live on the admin account (set up with the service); users need no key of their own."""
+    return store.q1("SELECT id, llm_key_enc, llm_model, llm_mode FROM users WHERE is_admin=1 "
+                    "ORDER BY (llm_key_enc IS NULL), id LIMIT 1")
+
+
+def settings(user_id=None):
+    """Service-wide AI settings (the same for every user)."""
+    r = _service_row()
     if not r:
-        return {}
+        return {"configured": False, "model": DEFAULT_MODEL, "mode": "off"}
     return {"configured": bool(r["llm_key_enc"]), "model": r["llm_model"] or DEFAULT_MODEL, "mode": r["llm_mode"] or "when-needed"}
+
+
+def service_key():
+    r = _service_row()
+    return decrypt(r["llm_key_enc"]) if r and r["llm_key_enc"] else None
 
 
 def _request(method, url, key, body=None, timeout=120):
@@ -147,7 +159,7 @@ def suggest(user_id, env_id, session_id, context, force=False, trigger="routine"
         store.ex("INSERT INTO llm_calls(user_id, env_id, session_id, ts, model, prompt_hash, status, cached, response) VALUES (?,?,?,?,?,?,?,?,?)",
                  (user_id, env_id, session_id, time.time(), st["model"], h, "ok", 1, hit["response"]))
         return {"enabled": True, "cached": True, "model": st["model"], **json.loads(hit["response"])}
-    key = decrypt(store.q1("SELECT llm_key_enc FROM users WHERE id=?", (user_id,))["llm_key_enc"])
+    key = service_key()
     body = {"model": st["model"], "temperature": 0.2, "usage": {"include": True},
             "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": payload}],
             "response_format": {"type": "json_schema", "json_schema": {"name": "knob_suggestions", "strict": True, "schema": SCHEMA}}}
@@ -222,7 +234,7 @@ def analyze(user_id, env_id, session_id, context, signature):
     if n >= MAX_ANALYSES_PER_SESSION:
         return {"enabled": False, "reason": f"per-session limit of {MAX_ANALYSES_PER_SESSION} bottleneck analyses reached"}
     payload = json.dumps(context, sort_keys=True, default=str)
-    key = decrypt(store.q1("SELECT llm_key_enc FROM users WHERE id=?", (user_id,))["llm_key_enc"])
+    key = service_key()
     body = {"model": st["model"], "temperature": 0.2, "usage": {"include": True},
             "messages": [{"role": "system", "content": ANALYZE_SYSTEM}, {"role": "user", "content": payload}],
             "response_format": {"type": "json_schema", "json_schema": {"name": "bottleneck_analysis", "strict": True, "schema": ANALYZE_SCHEMA}}}
@@ -256,7 +268,7 @@ def replay(user_id, call_id, model=None, context=None, patch=None):
         ctx[k] = v
     st = settings(user_id)
     model = model or row["model"] or st["model"]
-    key = decrypt(store.q1("SELECT llm_key_enc FROM users WHERE id=?", (user_id,))["llm_key_enc"])
+    key = service_key()
     payload = json.dumps(ctx, sort_keys=True, default=str)
     body = {"model": model, "temperature": 0.2, "usage": {"include": True},
             "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": payload}],

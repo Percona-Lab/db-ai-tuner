@@ -1606,6 +1606,7 @@ def _engine_ctx(c, sess):
     osf = ostune.facts(c.datadir(), hostinfo.device_for_path(c.datadir()), _ap.service, _ap.fs_device)
     experience = {}
     hyp_exp = {}
+    insights = []
     try:
         from .engine import classify_workload
         wl = classify_workload(last.get("summary"), last.get("inputs")).get("type") if last.get("summary") else None
@@ -1614,6 +1615,7 @@ def _engine_ctx(c, sess):
              + (f"&conns={int(conns)}" if conns else ""))
         ex = c.client.get(q)
         experience = ex.get("experience", {})
+        insights = ex.get("insights") or []
         hyp_exp = {"similar": ex.get("hypotheses") or [], "all": ex.get("hypotheses_all") or []}
         for rid, e in (ex.get("experience_all") or {}).items():  # thin same-class evidence: fall back to all sessions
             if e.get("n", 0) >= 3 and (experience.get(rid) or {}).get("n", 0) < 2:
@@ -1624,6 +1626,7 @@ def _engine_ctx(c, sess):
     bench_info = {k: b.get(k) for k in ("name", "run", "warmup", "duration", "goal_metric", "requires") if b.get(k) is not None}
     return {"bench": bench_info, "diagnosis_basis_run": basis, "goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
             "os_tuning": c.os_tuning_allowed() and sess.get("os_tuning", True), "os_facts": osf, "experience": experience,
+            "insights": insights,
             "failed": sess.get("failed_recs") or [],
             "scope": sess.get("scope") or ["knobs", "os"], "fs_device": _ap.fs_device,
             "variables": c.all_settings(), "summary": last.get("summary"), "inputs": last.get("inputs"),

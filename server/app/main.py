@@ -2,6 +2,7 @@
 import contextvars
 import io
 import json
+import threading
 import math
 import os
 import re
@@ -12,7 +13,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, llm, status, store
+from . import auth, learner, llm, status, store
 
 APP_DIR = os.path.dirname(__file__)
 AGENT_DIR = os.environ.get("TUNER_AGENT_DIR", os.path.join(APP_DIR, "..", "..", "agent"))
@@ -107,6 +108,7 @@ def watchdog_scan():
 
 status.set_watchdog(watchdog_scan)
 status.start()
+learner.start()  # background learner: observations -> learning.db (docs/design/agentic-saas.md)
 
 
 @app.get("/status", response_class=HTMLResponse)
@@ -329,12 +331,13 @@ def change_password(request: Request, body: dict = Body(...)):
 @app.get("/api/settings/llm")
 def get_llm_settings(request: Request):
     u = auth.current_user(request)
-    return {**llm.settings(u["id"]), "modes": llm.MODES, "default_model": llm.DEFAULT_MODEL, "usage": llm.usage_summary(u["id"])}
+    return {**llm.settings(), "service": True, "admin": bool(u.get("is_admin")), "modes": llm.MODES, "default_model": llm.DEFAULT_MODEL,
+            "usage": llm.usage_summary(u["id"])}
 
 
 @app.put("/api/settings/llm")
 def put_llm_settings(request: Request, body: dict = Body(...)):
-    u = auth.current_user(request)
+    u = auth.require_admin(request)  # the service's AI key and settings belong to the admin account
     if body.get("mode") and body["mode"] not in llm.MODES:
         raise HTTPException(400, "unknown mode")
     if body.get("key"):
@@ -1026,8 +1029,13 @@ def agent_experience(workload: str = None, cpus: int = None, conns: int = None, 
         for e in d.values():
             x = e.pop("deltas")
             e["mean_delta_pct"] = round(sum(x) / len(x), 2) if x else None
+    try:  # learnings (learning.db) that hold in these conditions: leads and priors, never a replacement for evidence
+        insights = learner.matching(workload, cpu_class(cpus) if cpus else None, conc_class(conns) if conns else None)
+    except Exception:
+        insights = []
     return {"workload": workload, "cpu_class": cpu_class(cpus) if cpus else None, "concurrency_class": conc_class(conns) if conns else None,
-            "experience": out, "experience_all": wide, "hypotheses": list(hyp.values()), "hypotheses_all": list(hyp_wide.values())}
+            "experience": out, "experience_all": wide, "hypotheses": list(hyp.values()), "hypotheses_all": list(hyp_wide.values()),
+            "insights": insights}
 
 
 def learning_data():
@@ -1078,6 +1086,38 @@ def admin_learning(request: Request):
     d = learning_data()
     d["snapshots"] = [dict(r) for r in store.q("SELECT id, created, label, runs FROM learning_snapshots ORDER BY id DESC")]
     return d
+
+
+@app.get("/api/admin/learner")
+def admin_learner(request: Request):
+    auth.require_admin(request)
+    return learner.overview()
+
+
+@app.post("/api/admin/learner/run")
+def admin_learner_run(request: Request, body: dict = Body(default={})):
+    auth.require_admin(request)
+    threading.Thread(target=learner.run_pass, args=("admin", body.get("max_sessions")), daemon=True).start()
+    return {"started": True}
+
+
+@app.patch("/api/admin/insights/{iid}")
+def admin_insight(iid: int, request: Request, body: dict = Body(...)):
+    auth.require_admin(request)
+    if body.get("status") not in ("candidate", "validated", "retired", "implemented"):
+        raise HTTPException(400, "status: candidate | validated | retired | implemented")
+    learner.db().execute("UPDATE insights SET status=?, notes=COALESCE(?, notes), updated=? WHERE id=?",
+                         (body["status"], body.get("notes"), now(), iid))
+    return {"ok": True}
+
+
+@app.patch("/api/admin/proposals/{pid}")
+def admin_proposal(pid: int, request: Request, body: dict = Body(...)):
+    auth.require_admin(request)
+    if body.get("status") not in ("open", "accepted", "rejected", "done"):
+        raise HTTPException(400, "status: open | accepted | rejected | done")
+    learner.db().execute("UPDATE proposals SET status=? WHERE id=?", (body["status"], pid))
+    return {"ok": True}
 
 
 @app.post("/api/admin/learning/snapshots")
