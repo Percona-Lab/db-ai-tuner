@@ -127,12 +127,12 @@ def ensure_data():
     cur.execute("SELECT COUNT(*) FROM big")
     if cur.fetchone()[0] < 2_000_000:
         log("filling memtest.big (2M rows)")
-        cur.execute("INSERT INTO big (k, c, pad) VALUES " + ",".join(f"({i % 1000}, REPEAT(MD5({i}), 3), MD5({i + 7}))" for i in range(1000)))
+        cur.execute("INSERT INTO big (k, c, pad) VALUES " + ",".join(f"({i % 1000}, LEFT(REPEAT(SHA2('{i}', 256), 2), 120), LEFT(SHA2('{i + 7}', 256), 60))" for i in range(1000)))
         while True:
             cur.execute("SELECT COUNT(*) FROM big")
             if cur.fetchone()[0] >= 2_000_000:
                 break
-            cur.execute("INSERT INTO big (k, c, pad) SELECT FLOOR(RAND() * 100000), REPEAT(MD5(RAND()), 3), MD5(RAND()) FROM big LIMIT 500000")
+            cur.execute("INSERT INTO big (k, c, pad) SELECT FLOOR(RAND() * 100000), LEFT(REPEAT(SHA2(RAND(), 256), 2), 120), LEFT(SHA2(RAND(), 256), 60) FROM big LIMIT 500000")
     c.close()
 
 
