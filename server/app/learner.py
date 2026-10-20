@@ -333,7 +333,7 @@ def run_pass(trigger="timer", max_sessions=None):
             done = {r["session_id"] for r in c.execute("SELECT session_id FROM processed")}
             todo = [r["id"] for r in store.q("SELECT id, name FROM tsessions WHERE status='closed' ORDER BY id")
                     if r["id"] not in done and not str(r["name"] or "").lower().startswith("canary")]
-            limit = min(max_sessions or MAX_CALLS_PER_PASS, MAX_CALLS_PER_PASS, max(0, MAX_CALLS_PER_DAY - day))
+            limit = min(MAX_CALLS_PER_PASS if max_sessions is None else max_sessions, MAX_CALLS_PER_PASS, max(0, MAX_CALLS_PER_DAY - day))
             for sid in todo[:limit]:
                 dg = digest(sid)
                 if not dg or len(dg["runs"]) < 3:
