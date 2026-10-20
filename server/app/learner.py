@@ -42,6 +42,10 @@ CREATE TABLE IF NOT EXISTS proposals (
 CREATE TABLE IF NOT EXISTS learner_runs (
   id INTEGER PRIMARY KEY, started REAL NOT NULL, ended REAL, trigger TEXT, sessions INTEGER DEFAULT 0, calls INTEGER DEFAULT 0,
   cost REAL DEFAULT 0, insights_new INTEGER DEFAULT 0, insights_updated INTEGER DEFAULT 0, proposals_new INTEGER DEFAULT 0, error TEXT);
+CREATE TABLE IF NOT EXISTS param_evidence (
+  variable TEXT NOT NULL, session_id INTEGER NOT NULL, workload TEXT, cpu_class TEXT, runs INTEGER DEFAULT 0, improved INTEGER DEFAULT 0,
+  regressed INTEGER DEFAULT 0, neutral INTEGER DEFAULT 0, deltas TEXT, legacy INTEGER DEFAULT 0, counted REAL,
+  PRIMARY KEY (variable, session_id));
 CREATE TABLE IF NOT EXISTS processed (session_id INTEGER PRIMARY KEY, processed REAL NOT NULL, learner_run INTEGER);
 CREATE TABLE IF NOT EXISTS evidence (
   insight_id INTEGER NOT NULL, session_id INTEGER NOT NULL, support INTEGER DEFAULT 0, contradict INTEGER DEFAULT 0,
@@ -351,6 +355,7 @@ def run_pass(trigger="timer", max_sessions=None):
                 c.execute("INSERT OR REPLACE INTO processed VALUES (?,?,?)", (sid, time.time(), rid))
             revalidate(c)
             stats["archived"] = prune(c)
+            collect_param_evidence(c)
         except Exception as e:  # noqa - logged in the pass record
             err = str(e)[:500]
         c.execute("UPDATE learner_runs SET ended=?, sessions=?, calls=?, cost=?, insights_new=?, insights_updated=?, proposals_new=?, error=? "
@@ -388,6 +393,79 @@ def _store_insight(ins, dg, c):
     c.execute("UPDATE insights SET updated=?, support=?, contradict=?, neutral=?, confidence=?, status=?, sessions=? WHERE id=?",
               (time.time(), sup, con, neu, conf, status, _j(sorted(set(ids) | {dg["session"]})), iid))
     return new
+
+
+# ------------------------------------------------------------------------------------------------ parameter impact
+COMPANIONS = {"innodb_io_capacity_max": "innodb_io_capacity", "max_heap_table_size": "tmp_table_size", "large_pages": "os:hugepages"}
+
+
+def collect_param_evidence(c=None):
+    """Per setting and session: experiments that changed this setting alone (companions allowed), with their verdicts and
+    goal changes against the parent configuration. Stored per session so it outlives the observations."""
+    c = c or db()
+    rows = store.q("SELECT r.session_id, s.agent_version, r.changes, r.verdict, r.evaluation, json_extract(r.inputs, '$.workload.type') wl, "
+                   "json_extract(e.facts, '$.hardware.cpus') cpus FROM runs r JOIN tsessions s ON s.id=r.session_id "
+                   "JOIN environments e ON e.id=s.env_id WHERE r.status='done' AND r.verdict IN "
+                   "('improved','efficiency-gain','neutral','regressed','efficiency-loss')")
+    acc = {}
+    for r in rows:
+        ev = _uj(r["evaluation"], {}) or {}
+        if any(ev.get(k) for k in FLAWED):
+            continue
+        own = [x for x in _uj(r["changes"], []) or [] if str(x.get("source", "")).startswith(("rec:", "exp:"))
+               and not str(x.get("source", ""))[4:].startswith(("revert", "rollback"))]
+        vars_ = {x.get("variable") for x in own if x.get("variable") not in COMPANIONS} or {x.get("variable") for x in own}
+        if len(vars_) != 1:
+            continue  # several settings at once: the effect cannot be attributed to one of them
+        var = vars_.pop()
+        a = acc.setdefault((var, r["session_id"]), {"wl": r["wl"], "cpu": _cpu_class(r["cpus"]), "legacy": 0 if r["agent_version"] else 1,
+                                                    "runs": 0, "improved": 0, "regressed": 0, "neutral": 0, "deltas": []})
+        a["runs"] += 1
+        a["improved" if r["verdict"] in GOOD else "regressed" if r["verdict"] in BAD else "neutral"] += 1
+        if ev.get("goal_delta_pct") is not None:
+            a["deltas"].append(round(ev["goal_delta_pct"], 2))
+    for (var, sid), a in acc.items():
+        c.execute("INSERT OR REPLACE INTO param_evidence VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                  (var, sid, a["wl"], a["cpu"], a["runs"], a["improved"], a["regressed"], a["neutral"], _j(a["deltas"]), a["legacy"], time.time()))
+    return len(acc)
+
+
+def param_impact(workload=None, cpu_class=None, min_runs=3):
+    """Measured impact per setting: high when experiments that changed it moved the goal beyond noise by a median of
+    10% or more, medium for 3-10%, low when at least min_runs experiments never moved it beyond noise. Sessions from
+    pre-fix builds count half. A summary of experiment data in the given conditions, not a law."""
+    c = db()
+    q = "SELECT * FROM param_evidence WHERE 1=1" + (" AND (workload=? OR workload IS NULL)" if workload else "") + \
+        (" AND (cpu_class=? OR cpu_class IS NULL)" if cpu_class else "")
+    args = [x for x in (workload, cpu_class) if x]
+    agg = {}
+    for r in c.execute(q, args):
+        w = LEGACY_WEIGHT if r["legacy"] else 1.0
+        a = agg.setdefault(r["variable"], {"runs": 0.0, "improved": 0.0, "regressed": 0.0, "neutral": 0.0, "decisive": [], "sessions": 0})
+        a["runs"] += r["runs"] * w
+        a["improved"] += r["improved"] * w
+        a["regressed"] += r["regressed"] * w
+        a["neutral"] += r["neutral"] * w
+        a["sessions"] += 1
+        if r["improved"] or r["regressed"]:
+            a["decisive"] += [abs(x) for x in _uj(r["deltas"], []) or []]
+    out = {}
+    for var, a in agg.items():
+        dec = sorted(a["decisive"])
+        med = dec[len(dec) // 2] if dec else 0
+        moved = a["improved"] + a["regressed"]
+        if a["runs"] < min_runs:
+            imp = "unknown"
+        elif moved >= 1 and med >= 10:
+            imp = "high"
+        elif moved >= 1 and med >= 3:
+            imp = "medium"
+        else:
+            imp = "low"
+        out[var] = {"impact": imp, "runs": round(a["runs"], 1), "sessions": a["sessions"], "improved": round(a["improved"], 1),
+                    "regressed": round(a["regressed"], 1), "neutral": round(a["neutral"], 1), "median_abs_delta_pct": med,
+                    "max_abs_delta_pct": dec[-1] if dec else 0}
+    return out
 
 
 def prune(c=None, now=None):

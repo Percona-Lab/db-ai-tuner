@@ -16,7 +16,7 @@ import math
 import re
 
 from .evaluate import mean_noise
-from . import bottleneck
+from . import bottleneck, knowledge
 from .mechanisms import MECHANISMS, missing_mechanism, name_resolution, relevance
 from .knowledge import KB, flags_subset, fmt_size, human_size, normalize, parse_size, tradeoff_of
 
@@ -1551,6 +1551,18 @@ def run_engine(ctx):
     items = revert_suggestions(ctx.get("history") or [], ctx["variables"], ctx.get("goal", "tps"),
                                float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0), ctx.get("managed")) + items
     items = [it for it in items if not _breaks_requirement(it, (ctx.get("bench") or {}).get("requires") or {})]
+    # the account's parameter policy (admin defaults + the user's own list): blocked settings never become experiments;
+    # returning a blocked setting to an earlier value (revert / rollback) is still allowed
+    blocked = set(ctx.get("blocked") or [])
+    if blocked:
+        keep = []
+        for it in items:
+            hit = sorted({c["variable"] for c in it.get("changes") or []} & blocked)
+            if hit and it["kind"] != "revert" and not it["id"].startswith(("revert", "rollback")):
+                ctx.setdefault("_blocked_items", []).append({"id": it["id"], "variables": hit})
+                continue
+            keep.append(it)
+        items = keep
     benchmark = ctx.get("policy") == "benchmark"
     has_major = any(d.get("severity") in ("high", "medium") and d["type"] != "none" for d in ctx["diagnosis"])
     exp = ctx.get("experience") or {}
@@ -1586,6 +1598,13 @@ def run_engine(ctx):
             it["no_mechanism"] = nomech
             it["note"] = (it.get("note", "") + f" Validation only: {nomech}.").strip()
             it.pop("sweep", None)  # one point at most, after everything with a mechanism
+        if it["kind"] == "config" and it.get("changes"):
+            # parameter catalog: what the changed settings can move when they count (learned impact overrides the shipped
+            # prior once there is measured evidence in these conditions)
+            imps = [knowledge.effective_impact(c["variable"], ctx.get("param_impact")) for c in it["changes"]]
+            best_imp = max(imps, key=lambda x: knowledge.IMPACT_SCORE.get(x[0], 0))
+            it["param_impact"] = {"impact": best_imp[0], "source": best_imp[1]}
+            it["score_prior"] = it.get("score_prior", 0) + knowledge.IMPACT_SCORE.get(best_imp[0], 0)
         learned = matching_insights(it, ctx.get("insights"))
         if learned:
             # what the learner extracted from earlier sessions in these conditions (learning.db): a lead and a small prior
@@ -1644,4 +1663,5 @@ def run_engine(ctx):
     trade_next = next((i for i in actionable if i["safety"] == "trade-off"), None)
     nxt = safe_next or (trade_next if benchmark else None)
     return {"workload": ctx["workload"], "diagnosis": ctx["diagnosis"], "breakdown": ctx["breakdown"], "items": items, "next": nxt["id"] if nxt else None,
+            "blocked_by_policy": ctx.get("_blocked_items") or [],
             "phase": "safe" if safe_next else ("trade-offs" if nxt else "done")}

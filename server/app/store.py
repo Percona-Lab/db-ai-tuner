@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY, env_id INTEGER NOT NULL, session_id INTEGER, ts REAL NOT NULL, type TEXT, message TEXT, data TEXT);
 CREATE INDEX IF NOT EXISTS events_env ON events(env_id, ts);
 CREATE INDEX IF NOT EXISTS events_session ON events(session_id, ts);
+CREATE TABLE IF NOT EXISTS param_policy (
+  user_id INTEGER NOT NULL, variable TEXT NOT NULL, mode TEXT NOT NULL, note TEXT, updated REAL NOT NULL,
+  PRIMARY KEY (user_id, variable));
 CREATE TABLE IF NOT EXISTS learning_snapshots (
   id INTEGER PRIMARY KEY, created REAL NOT NULL, created_by INTEGER, label TEXT, runs INTEGER, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS llm_calls (

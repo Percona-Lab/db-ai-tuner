@@ -14,3 +14,6 @@ tuning-agent = "tuning_agent.cli:main"
 
 [tool.setuptools]
 packages = ["tuning_agent"]
+
+[tool.setuptools.package-data]
+tuning_agent = ["knowledge_data/*.json"]

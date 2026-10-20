@@ -93,7 +93,8 @@ def context(ctx, res, meta=None):
         "top_waits": (inp.get("top_waits") or [])[:8],
         "top_statements": [{"query": q.get("query", "")[:200], "pct_time": q.get("pct_time"), "avg_ms": q.get("avg_ms"),
                             "rows_examined_avg": q.get("rows_examined_avg")} for q in (inp.get("top_statements") or [])[:5]],
-        "current_variables": keep,
+        "current_variables": {k: x for k, x in keep.items() if k not in set(ctx.get("blocked") or [])},
+        "blocked_by_policy": sorted(ctx.get("blocked") or []),
         "os_settings": {k: v[k] for k in v if k.startswith("os:")} if ctx.get("os_tuning") else {},
         "history": [{"run": r.get("seq"), "changes": [f"{c['variable']}={c.get('new')}" for c in r.get("changes") or []],
                      "verdict": r.get("verdict"), "goal_delta_pct": (r.get("evaluation") or {}).get("goal_delta_pct"),
@@ -137,6 +138,8 @@ def sanitize(suggestions, ctx, res, model):
             val = str(c["value"]).strip().strip("'\"")
             if var in DENY:
                 why = f"{var} is not tunable by the agent"
+            elif var in set(ctx.get("blocked") or []):
+                why = f"{var} is blocked by the parameter policy"
             elif var not in v and not (var in PSEUDO and var in _pseudo_available(ctx)):
                 why = f"{var} does not exist on this server"
             elif var in PSEUDO and PSEUDO[var] and val.lower() not in PSEUDO[var]:

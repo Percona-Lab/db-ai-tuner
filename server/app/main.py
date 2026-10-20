@@ -1037,11 +1037,12 @@ def agent_experience(workload: str = None, cpus: int = None, conns: int = None, 
             e["mean_delta_pct"] = round(sum(x) / len(x), 2) if x else None
     try:  # learnings (learning.db) that hold in these conditions: leads and priors, never a replacement for evidence
         insights = learner.matching(workload, cpu_class(cpus) if cpus else None, conc_class(conns) if conns else None)
+        params = learner.param_impact(workload, cpu_class(cpus) if cpus else None)
     except Exception:
-        insights = []
+        insights, params = [], {}
     return {"workload": workload, "cpu_class": cpu_class(cpus) if cpus else None, "concurrency_class": conc_class(conns) if conns else None,
             "experience": out, "experience_all": wide, "hypotheses": list(hyp.values()), "hypotheses_all": list(hyp_wide.values()),
-            "insights": insights}
+            "insights": insights, "parameters": params}
 
 
 def learning_data():
@@ -1092,6 +1093,91 @@ def admin_learning(request: Request):
     d = learning_data()
     d["snapshots"] = [dict(r) for r in store.q("SELECT id, created, label, runs FROM learning_snapshots ORDER BY id DESC")]
     return d
+
+
+@app.get("/api/parameters")
+def parameters_catalog(request: Request, workload: str = None):
+    """The parameter catalog the tuner works with: shipped knowledge (impact prior, when it counts, precondition,
+    safety, restart) and, where enough experiments exist, the measured impact from the learnings."""
+    auth.current_user(request)
+    try:
+        with open(os.path.join(AGENT_DIR, "tuning_agent", "knowledge_data", "parameters.json")) as f:
+            cat = json.load(f).get("parameters") or {}
+    except (OSError, ValueError):
+        cat = {}
+    try:
+        learned_all = learner.param_impact()
+        learned_wl = {}
+        for wl in sorted({r["workload"] for r in learner.db().execute("SELECT DISTINCT workload FROM param_evidence") if r["workload"]}):
+            for var, v in learner.param_impact(wl).items():
+                if v["impact"] != "unknown":
+                    learned_wl.setdefault(var, {})[wl] = v
+    except Exception:
+        learned_all, learned_wl = {}, {}
+    u = auth.current_user(request)
+    pol = param_policies(u["id"])
+    out = []
+    for name, p in sorted(cat.items()):
+        lv = learned_all.get(name)
+        out.append(dict(p, name=name, learned=lv, learned_by_workload=learned_wl.get(name),
+                        effective_impact=lv["impact"] if lv and lv["impact"] != "unknown" else p.get("impact"), **pol.get(name, _POL0)))
+    return {"parameters": out, "admin": bool(u.get("is_admin"))}
+
+
+SERVICE = 0  # param_policy.user_id of the service defaults set by the admin
+_POL0 = {"default_mode": "tune", "user_mode": None, "mode": "tune", "default_note": None, "user_note": None}
+
+
+def param_policies(user_id):
+    """{variable: {default_mode, user_mode, mode, notes}}: whether the tuner may change each setting for this user. The
+    admin's service default applies unless the user set their own."""
+    out = {}
+    for r in store.q("SELECT * FROM param_policy WHERE user_id IN (?, ?)", (SERVICE, user_id)):
+        e = out.setdefault(r["variable"], dict(_POL0))
+        if r["user_id"] == SERVICE:
+            e["default_mode"], e["default_note"] = r["mode"], r["note"]
+        else:
+            e["user_mode"], e["user_note"] = r["mode"], r["note"]
+    for e in out.values():
+        e["mode"] = e["user_mode"] or e["default_mode"]
+    return out
+
+
+def _set_policy(user_id, variable, mode, note):
+    if mode not in ("tune", "block", "default"):
+        raise HTTPException(400, "mode: tune | block | default")
+    if mode == "default":
+        store.ex("DELETE FROM param_policy WHERE user_id=? AND variable=?", (user_id, variable))
+    else:
+        store.ex("INSERT INTO param_policy(user_id, variable, mode, note, updated) VALUES (?,?,?,?,?) "
+                 "ON CONFLICT(user_id, variable) DO UPDATE SET mode=excluded.mode, note=excluded.note, updated=excluded.updated",
+                 (user_id, variable[:120], mode, (note or "")[:500] or None, now()))
+
+
+@app.put("/api/parameters/{variable}/policy")
+def put_param_policy(variable: str, request: Request, body: dict = Body(...)):
+    """A user's own list: tune or block a setting for their sessions ('default' = follow the service default)."""
+    u = auth.current_user(request)
+    if u.get("share"):
+        raise HTTPException(403, "read-only shared view")
+    _set_policy(u["id"], variable, body.get("mode"), body.get("note"))
+    return param_policies(u["id"]).get(variable, _POL0)
+
+
+@app.put("/api/admin/parameters/{variable}/policy")
+def put_param_default(variable: str, request: Request, body: dict = Body(...)):
+    """The service default every user starts from (admin only)."""
+    auth.require_admin(request)
+    _set_policy(SERVICE, variable, body.get("mode"), body.get("note"))
+    return {"variable": variable, "default_mode": "tune" if body.get("mode") == "default" else body.get("mode")}
+
+
+@app.get("/api/v1/agent/param-policy")
+def agent_param_policy(key=Depends(auth.agent_key)):
+    """Settings the tuner must not change for this account (user list over the service defaults)."""
+    pol = param_policies(key["user_id"])
+    return {"blocked": sorted(v for v, e in pol.items() if e["mode"] == "block"),
+            "notes": {v: e["user_note"] or e["default_note"] for v, e in pol.items() if e["mode"] == "block"}}
 
 
 @app.get("/api/admin/learner")

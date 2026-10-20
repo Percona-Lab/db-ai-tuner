@@ -343,3 +343,34 @@ def policy_rules():
         ],
         "variables": {k: {"desc": v.get("desc"), "dynamic": v.get("dynamic"), "category": v.get("cat")} for k, v in KB.items()},
     }
+
+
+# ---------------------------------------------------------------------------------------------- parameter catalog
+_CATALOG = None
+
+
+def catalog():
+    """The shipped parameter catalog (knowledge_data/parameters.json, built by tools/build_parameter_catalog.py):
+    impact (high / medium / low / unknown), when it counts, precondition, safety, restart, mechanism tags, rules."""
+    global _CATALOG
+    if _CATALOG is None:
+        import json
+        import os
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "knowledge_data", "parameters.json")) as f:
+                _CATALOG = json.load(f).get("parameters") or {}
+        except (OSError, ValueError):
+            _CATALOG = {}
+    return _CATALOG
+
+
+IMPACT_SCORE = {"high": 1, "medium": 0, "low": -1, "unknown": 0}
+
+
+def effective_impact(variable, learned=None):
+    """The impact the tuner works with: the learned one (hosted service, enough measured experiments in matching
+    conditions) when present, else the shipped prior. Returns (impact, source)."""
+    le = (learned or {}).get(variable)
+    if le and le.get("impact") and le.get("impact") != "unknown":
+        return le["impact"], "learned"
+    return (catalog().get(variable) or {}).get("impact", "unknown"), "shipped"

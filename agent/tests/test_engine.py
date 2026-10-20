@@ -603,6 +603,18 @@ def test_unsteady_and_window_goal():
     assert out["sysbench_tps"] == 200.0 and out["sysbench_tps_whole_run"] == 140.0
 
 
+def test_param_catalog_and_policy():
+    from tuning_agent import knowledge
+    cat = knowledge.catalog()
+    assert cat["innodb_buffer_pool_size"]["impact"] == "high" and cat["innodb_doublewrite"]["safety"] == "durability"
+    assert knowledge.effective_impact("innodb_io_capacity", {"innodb_io_capacity": {"impact": "low"}}) == ("low", "learned")
+    assert knowledge.effective_impact("innodb_io_capacity", {}) == ("medium", "shipped")
+    # blocked settings never become experiments
+    res = engine.run_engine({"goal": "tps", "policy": "benchmark", "hw": HW, "variables": dict(VARS), "summary": OLTP[0], "inputs": OLTP[1],
+                             "history": [], "noise_pct": 2.0, "managed": {}, "blocked": ["innodb_buffer_pool_size", "innodb_io_capacity"]})
+    assert not [i for i in res["items"] if any(c["variable"] in ("innodb_buffer_pool_size", "innodb_io_capacity") for c in i["changes"])]
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

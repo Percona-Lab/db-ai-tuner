@@ -73,7 +73,7 @@ function setNav(active) {
   }
   document.body.classList.remove("ro");
   nav.innerHTML = `<a href="#/" class="${active === "envs" ? "on" : ""}">Environments</a><a href="#/studies" class="${active === "studies" ? "on" : ""}">Studies</a><a href="#/connect" class="${active === "connect" ? "on" : ""}">Connect agent</a>` +
-    `<a href="#/policies" class="${active === "policies" ? "on" : ""}">Policies</a>${ME.is_admin ? `<a href="#/learning" class="${active === "learning" ? "on" : ""}">Learning</a><a href="/status">Status</a>` : ""}<a href="#/account" class="${active === "account" ? "on" : ""}">Account</a><span class="right">${esc(ME.email)}</span><a href="#" id="logout">Log out</a>`;
+    `<a href="#/parameters" class="${active === "parameters" ? "on" : ""}">Parameters</a><a href="#/policies" class="${active === "policies" ? "on" : ""}">Policies</a>${ME.is_admin ? `<a href="#/learning" class="${active === "learning" ? "on" : ""}">Learning</a><a href="/status">Status</a>` : ""}<a href="#/account" class="${active === "account" ? "on" : ""}">Account</a><span class="right">${esc(ME.email)}</span><a href="#" id="logout">Log out</a>`;
   document.getElementById("logout").onclick = async e => { e.preventDefault(); await api("/api/auth/logout", { method: "POST", body: {} }); ME = null; location.hash = "#/"; };
 }
 
@@ -355,6 +355,39 @@ tuning-agent session stop</code></pre>
     sessionStorage.setItem("newkey", r.api_key); connectPage();
   };
   window.addEventListener("hashchange", () => sessionStorage.removeItem("newkey"), { once: true });
+}
+
+// ------------------------------------------------------------------ parameters
+async function parametersPage() {
+  setNav("parameters");
+  const d = await api("/api/parameters");
+  const st = (() => { try { return JSON.parse(sessionStorage.getItem("paramFilter") || "{}"); } catch (x) { return {}; } })();
+  const q = (st.q || "").toLowerCase(), fi = st.impact || "", fs = st.scope || "";
+  const rank = { high: 0, medium: 1, low: 2, unknown: 3 };
+  const rows = d.parameters.filter(p => (!q || (p.name + " " + p.description + " " + (p.when || "")).toLowerCase().includes(q))
+    && (!fi || p.effective_impact === fi) && (!fs || p.scope === fs))
+    .sort((a, b) => (rank[a.effective_impact] - rank[b.effective_impact]) || a.name.localeCompare(b.name));
+  const impBadge = p => { const l = p.learned && p.learned.impact !== "unknown" ? p.learned : null;
+    const tip = `Shipped estimate: ${p.impact}` + (l ? `. Measured: ${l.impact} - ${l.runs} single-setting experiments in ${l.sessions} session(s): ${l.improved} improved, ${l.regressed} regressed, ${l.neutral} within noise; median change of the decisive ones ${l.median_abs_delta_pct}% (max ${l.max_abs_delta_pct}%). A summary of experiment data, not a law.` : ". Not measured often enough yet to replace the estimate.")
+      + (p.learned_by_workload ? " By workload: " + Object.entries(p.learned_by_workload).map(([w, v]) => `${w} ${v.impact} (${v.runs} runs)`).join(", ") + "." : "");
+    return `<span class="badge ${{ high: "good", medium: "info", low: "plain", unknown: "plain" }[p.effective_impact] || "plain"}" data-tip="${esc(tip)}" tabindex="0">${esc(p.effective_impact)}${l ? " · measured" : ""}</span>`; };
+  const polSel = (p, admin) => { const cur = admin ? p.default_mode : (p.user_mode || "default");
+    const opts = admin ? ["tune", "block"] : ["default", "tune", "block"];
+    return `<select data-${admin ? "def" : "pol"}="${esc(p.name)}" style="font-size:12px;width:auto">${opts.map(o => `<option value="${o}" ${o === cur ? "selected" : ""}>${o === "default" ? `default (${p.default_mode})` : o}</option>`).join("")}</select>`; };
+  $view.innerHTML = `<h1>Parameters${info("The MySQL and operating-system settings the tuner works with. Impact: how much a setting can move results when it counts (shipped estimate; replaced by the measured impact once enough single-setting experiments exist - a summary of experiment data, not a law). When it counts: the conditions or measured bottleneck in which it matters. Precondition: what must happen in the workload for it to act at all (otherwise the tuner does not try it). Safety: safe, or what a value gives up (durability, observability, replication, semantics). Your policy: the tuner never changes a blocked setting in your sessions; 'default' follows the service default.")}</h1>
+  <div class="row" style="margin-bottom:8px;gap:8px;flex-wrap:wrap"><input id="pq" placeholder="search" value="${esc(st.q || "")}" style="max-width:260px">
+   <select id="pimp" style="width:auto"><option value="">any impact</option>${["high", "medium", "low", "unknown"].map(x => `<option ${x === fi ? "selected" : ""}>${x}</option>`).join("")}</select>
+   <select id="pscope" style="width:auto"><option value="">MySQL and OS</option>${["mysql", "os", "pseudo"].map(x => `<option ${x === fs ? "selected" : ""}>${x}</option>`).join("")}</select>
+   <span class="muted" style="font-size:12.5px">${rows.length} of ${d.parameters.length} · blocked for you: ${d.parameters.filter(p => p.mode === "block").length}</span></div>
+  <div class="card tablewrap"><table><thead><tr><th>Parameter</th><th>Impact</th><th>When it counts</th><th>Safety</th><th>Restart</th><th>Your policy</th>${d.admin ? "<th>Service default</th>" : ""}</tr></thead><tbody>
+  ${rows.map(p => `<tr><td class="mono" style="white-space:nowrap">${esc(p.name)}${info((p.description || "") + (p.precondition ? ` Precondition: ${p.precondition}.` : "") + (p.rules && p.rules.length ? ` Tuner rules: ${p.rules.join(", ")}.` : "") + (p.mechanism_tags && p.mechanism_tags.length ? ` Acts on: ${p.mechanism_tags.join(", ")}.` : ""))}</td>
+    <td>${impBadge(p)}</td><td style="font-size:12.5px;max-width:360px">${esc(p.when || "")}</td>
+    <td>${p.safety === "safe" ? '<span class="badge good">safe</span>' : `<span class="badge warn" ${p.safety_note ? `data-tip="${esc(p.safety_note)}"` : ""} tabindex="0">${esc(p.safety || "?")}</span>`}</td>
+    <td>${p.restart ? "yes" : p.restart === false ? "no" : ""}</td><td>${polSel(p, false)}</td>${d.admin ? `<td>${polSel(p, true)}</td>` : ""}</tr>`).join("")}</tbody></table></div>`;
+  const save = () => { try { sessionStorage.setItem("paramFilter", JSON.stringify({ q: document.getElementById("pq").value, impact: document.getElementById("pimp").value, scope: document.getElementById("pscope").value })); } catch (x) { } parametersPage(); };
+  document.getElementById("pq").onchange = save; document.getElementById("pimp").onchange = save; document.getElementById("pscope").onchange = save;
+  $view.querySelectorAll("select[data-pol]").forEach(el => el.onchange = async () => { await api(`/api/parameters/${encodeURIComponent(el.dataset.pol)}/policy`, { method: "PUT", body: { mode: el.value } }); parametersPage(); });
+  $view.querySelectorAll("select[data-def]").forEach(el => el.onchange = async () => { await api(`/api/admin/parameters/${encodeURIComponent(el.dataset.def)}/policy`, { method: "PUT", body: { mode: el.value } }); parametersPage(); });
 }
 
 // ------------------------------------------------------------------ learning (admin)
@@ -1280,6 +1313,7 @@ async function route() {
     if (parts[0] === "account") return await accountPage();
     if (parts[0] === "policies") return await policiesPage();
     if (parts[0] === "learning") return await learningPage();
+    if (parts[0] === "parameters") return await parametersPage();
     if (parts[0] === "env") return await envPage(+parts[1]);
     if (parts[0] === "studies") return await studiesPage();
     if (parts[0] === "study") return await studyPage(+parts[1]);
