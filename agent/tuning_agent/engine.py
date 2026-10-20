@@ -1193,7 +1193,9 @@ def practice_bundle(items, history):
               "safety": "safe", "tradeoffs": [], "evidence": {"settings": len(chosen), "rules": sorted({i["id"] for i in src}),
                                                              "excluded_after_regression": sorted(excluded) or None},
               "impact": 2, "confidence": 3, "risk": max((i.get("risk", "none") for i in src), key=["none", "low", "compat", "observability", "durability"].index),
-              "restart": any(i.get("restart") for i in src), "goals": ["tps", "latency"], "priority": True, "practice": True}
+              "restart": any(i.get("restart") for i in src), "goals": ["tps", "latency"], "priority": True, "practice": True,
+              # the bundle acts on what its members act on: evidence for any member is evidence for the bundle
+              "acts_on_tags": sorted({t for i in src for t in (MECHANISMS.get(i["id"]) or ((),))[0]})}
     return [bundle] + rest
 
 
@@ -1552,7 +1554,8 @@ def run_engine(ctx):
                 it["confidence"] = min(it["confidence"], 1)
             if e.get("n", 0) >= 5 and e.get("losses", 0) >= 0.7 * e["n"] and not e.get("wins") and not e.get("scope"):
                 sc -= 4  # consistently harmful in comparable sessions (e.g. the thread pool at low concurrency): try it last
-        it["score"] = 100 if it.get("priority") else sc
+        # priority (best-practice bundle, reverts) only with evidence: a bundle nothing measured points at goes last
+        it["score"] = 100 if it.get("priority") and not it.get("no_mechanism") else sc
     items.sort(key=lambda i: (i["safety"] == "trade-off" and i["kind"] != "revert", -i["score"]))
     for n, it in enumerate(items, 1):
         it["rank"] = n

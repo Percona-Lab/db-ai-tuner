@@ -19,20 +19,20 @@ experiment's relevance is the share of time it can act on. Classes like "I/O-bou
 
 # CPU profile category -> (component name, bottleneck tags)
 CPU_PARTS = {
-    "spin / mutex wait": ("CPU: spinning on latches", ("cpu-spin", "concurrency")),
-    "memory allocator": ("CPU: memory allocator", ("cpu-allocator",)),
-    "performance_schema": ("CPU: performance_schema", ("cpu-pfs",)),
-    "compression / checksums": ("CPU: checksums / compression", ("cpu",)),
-    "parser / optimizer": ("CPU: parsing / optimizing", ("cpu-parse",)),
-    "redo / commit": ("CPU: redo / commit path", ("commit",)),
-    "row locks": ("CPU: row lock management", ("locks",)),
-    "buffer pool": ("CPU: buffer pool page access", ("cpu",)),
-    "B-tree / row access": ("CPU: B-tree / row access", ("cpu",)),
-    "SQL executor": ("CPU: SQL execution", ("cpu",)),
-    "network / protocol": ("CPU: network / protocol", ("cpu-network",)),
-    "disk I/O (kernel)": ("CPU: kernel I/O path", ("io",)),
-    "scheduler / futex": ("CPU: scheduler / futex (sleep-wakeup)", ("cpu-futex", "concurrency")),
-    "memory management (kernel)": ("CPU: kernel memory management", ("cpu-mm",)),
+    "spin / mutex wait": ("CPU: spinning on latches", ("cpu", "cpu-spin", "concurrency")),
+    "memory allocator": ("CPU: memory allocator", ("cpu", "cpu-allocator")),
+    "performance_schema": ("CPU: performance_schema", ("cpu", "cpu-pfs")),
+    "compression / checksums": ("CPU: checksums / compression", ("cpu", "cpu-checksum")),
+    "parser / optimizer": ("CPU: parsing / optimizing", ("cpu", "cpu-parse")),
+    "redo / commit": ("CPU: redo / commit path", ("cpu", "cpu-commit", "commit")),
+    "row locks": ("CPU: row lock management", ("cpu", "cpu-locks", "locks")),
+    "buffer pool": ("CPU: buffer pool page access", ("cpu", "cpu-bufpool")),
+    "B-tree / row access": ("CPU: B-tree / row access", ("cpu", "cpu-btree")),
+    "SQL executor": ("CPU: SQL execution", ("cpu", "cpu-exec")),
+    "network / protocol": ("CPU: network / protocol", ("cpu", "cpu-network")),
+    "disk I/O (kernel)": ("CPU: kernel I/O path", ("cpu", "cpu-io", "io")),
+    "scheduler / futex": ("CPU: scheduler / futex (sleep-wakeup)", ("cpu", "cpu-futex", "concurrency")),
+    "memory management (kernel)": ("CPU: kernel memory management", ("cpu", "cpu-mm")),
     "other": ("CPU: other", ("cpu",)),
 }
 WAIT_PARTS = {
@@ -140,7 +140,8 @@ def offcpu_foreground(inputs):
 
 
 SPECIFIC = {"io": {"io-read", "io-flush", "commit", "redo"},
-            "cpu": {"cpu-spin", "cpu-allocator", "cpu-pfs", "cpu-parse", "cpu-futex", "cpu-mm", "cpu-network"}}
+            "cpu": {"cpu-spin", "cpu-allocator", "cpu-pfs", "cpu-parse", "cpu-futex", "cpu-mm", "cpu-network", "cpu-checksum",
+                    "cpu-bufpool", "cpu-btree", "cpu-exec", "cpu-commit", "cpu-locks", "cpu-io"}}
 
 
 def specific(relieves, parts):

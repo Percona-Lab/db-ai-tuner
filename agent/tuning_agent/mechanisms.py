@@ -8,7 +8,7 @@ diagnosis types from engine.diagnose().
 MECHANISMS = {
     "bp-grow": (("memory", "io", "io-read"), "More pages cached: fewer disk reads."),
     "bp-shrink": (("swap", "memory-pressure", "oom"), "Gives memory back to the OS: no swapping/reclaim stalls."),
-    "bp-instances": (("concurrency", "cpu", "cpu-pressure"), "Splits buffer pool mutexes."),
+    "bp-instances": (("concurrency", "cpu-spin", "cpu-bufpool", "cpu-pressure"), "Splits buffer pool mutexes."),
     "redo-grow": (("redo", "io", "io-flush"), "Fewer forced checkpoints; pages absorb more changes before being written."),
     "log-buffer": (("redo", "commit"), "Fewer waits for redo log buffer space."),
     "io-capacity-up": (("redo", "io", "io-flush"), "Page cleaners flush harder: keeps redo free."),
@@ -16,14 +16,14 @@ MECHANISMS = {
     "lru-depth": (("io", "io-flush"), "More free pages ready: no single-page flushes in user threads."),
     "flush-neighbors": (("io", "io-flush"), "No extra neighbour page writes."),
     "o-direct": (("io", "memory", "io-read"), "No double buffering in the OS page cache."),
-    "ahi-on": (("cpu", "cpu-pressure"), "Hash lookups skip B-tree descents for hot point reads."),
-    "ahi-off": (("concurrency", "cpu"), "Removes AHI latch contention."),
-    "log-writer-threads-off": (("cpu", "cpu-pressure", "commit"), "No dedicated log threads competing for few CPUs."),
-    "spin-loops": (("cpu", "cpu-pressure", "concurrency", "sched-delay", "cpu-spin"), "Less CPU burned spinning on contended latches."),
+    "ahi-on": (("cpu-btree", "cpu-pressure"), "Hash lookups skip B-tree descents for hot point reads."),
+    "ahi-off": (("concurrency", "cpu-spin"), "Removes AHI latch contention."),
+    "log-writer-threads-off": (("commit", "cpu-commit", "sched-delay", "cpu-pressure"), "No dedicated log threads competing for few CPUs."),
+    "spin-loops": (("cpu-spin", "cpu-pressure", "concurrency", "sched-delay"), "Less CPU burned spinning on contended latches."),
     "thread-pool": (("concurrency", "cpu-pressure", "sched-delay", "cpu-futex", "cpu-spin"), "Caps active threads: less context switching."),
-    "table-open-cache": (("cpu",), "Avoids reopening tables."),
-    "table-def-cache": (("cpu",), "Avoids re-reading table definitions."),
-    "thread-cache": (("cpu",), "Avoids thread creation per connection."),
+    "table-open-cache": (("cpu-exec", "locks"), "Avoids reopening tables."),
+    "table-def-cache": (("cpu-exec",), "Avoids re-reading table definitions."),
+    "thread-cache": (("connections", "cpu-mm"), "Avoids thread creation per connection."),
     "max-connections": ((), "Admits more clients."),
     "tmp-tables": (("io", "cpu"), "Temporary tables stay in memory."),
     "tmp-olap": (("io", "cpu"), "Analytical temporary tables stay in memory."),
@@ -34,29 +34,29 @@ MECHANISMS = {
     "random-read-ahead": (("io", "io-read"), "Prefetches the rest of partly cached extents."),
     "read-ahead-less": (("io", "io-read", "memory"), "No wasted prefetch I/O or buffer pool churn."),
     "read-ahead": (("io", "io-read"), "Larger sequential reads for scans."),
-    "subquery-to-derived": (("cpu", "io"), "Correlated subqueries computed once instead of per row."),
+    "subquery-to-derived": (("cpu-exec", "cpu-btree", "io-read"), "Correlated subqueries computed once instead of per row."),
     "bka-mrr": (("io", "io-read"), "Index lookups fetched in primary-key order."),
     "group-commit-delay": (("commit",), "More transactions share one binlog fsync."),
-    "change-buffer-off": (("io-flush", "cpu", "concurrency", "io"), "No change-buffer merges competing with foreground work or taking buffer pool pages."),
+    "change-buffer-off": (("io-flush", "cpu-bufpool", "concurrency"), "No change-buffer merges competing with foreground work or taking buffer pool pages."),
     "change-buffer": (("io", "io-read"), "Secondary index updates without reading the page."),
     "trx-commit-2": (("commit", "io"), "No fsync per commit."),
     "sync-binlog": (("commit", "io"), "No binlog fsync per commit group."),
     "doublewrite-off": (("io", "commit", "io-flush"), "Pages written once instead of twice."),
     "binlog-off": (("commit", "io", "cpu"), "No binary log writes, fsyncs or two-phase commit."),
-    "ps-off": (("cpu", "cpu-pressure", "cpu-pfs"), "No instrumentation overhead."),
+    "ps-off": (("cpu-pfs", "cpu-pressure"), "No instrumentation overhead."),
     "binlog-minimal": (("io",), "Smaller binary log writes for updates (helps only when binlog I/O volume matters)."),
     "os-swappiness": (("swap", "memory-pressure"), "Kernel keeps database memory resident."),
-    "os-thp-off": (("memory", "cpu", "cpu-mm"), "No compaction / khugepaged stalls."),
+    "os-thp-off": (("memory", "cpu-mm"), "No compaction / khugepaged stalls."),
     "os-scheduler": (("io",), "No request reordering overhead on SSD."),
     "os-noatime": (("io",), "No access-time metadata writes."),
     "os-dirty-writeback": (("commit", "io"), "Small, steady writeback: shorter fsyncs."),
-    "os-jemalloc": (("cpu", "cpu-pressure", "concurrency", "cpu-allocator"), "Less allocator lock contention."),
+    "os-jemalloc": (("cpu-allocator", "cpu-pressure", "concurrency"), "Less allocator lock contention."),
     "os-hugepages": (("cpu", "memory"), "Fewer TLB misses."),
     "os-governor": (("cpu",), "Full clock speed."),
     "os-numa": (("cpu", "memory"), "No cross-node page migration."),
-    "os-autogroup": (("cpu-pressure", "cpu", "sched-delay"), "mysqld threads compete for CPU individually, not as one group."),
+    "os-autogroup": (("cpu-pressure", "sched-delay"), "mysqld threads compete for CPU individually, not as one group."),
     "os-aio": (("io",), "Native async I/O stays available."),
-    "ps-lite": (("cpu", "cpu-pressure", "cpu-pfs"), "Less instrumentation work per statement and allocation."),
+    "ps-lite": (("cpu-pfs", "cpu-pressure"), "Less instrumentation work per statement and allocation."),
     "sweep-dirty-lwm": (("io", "redo", "commit", "io-flush"), "Dirty pages absorb more updates before being written, or flushing starts earlier."),
     "sweep-lru-depth": (("io", "io-flush"), "Free pages ready for user threads (no single-page flushes)."),
     "sweep-read-io-threads": (("io", "memory", "io-read"), "More asynchronous reads in flight."),
@@ -65,7 +65,7 @@ MECHANISMS = {
     "sweep-bp-instances": (("concurrency", "cpu"), "Less buffer pool mutex contention."),
     "purge-lag": (("locks", "io", "memory"), "Bounded history: shorter version chains for readers."),
     "sweep-spin-wait-delay": (("cpu-spin", "concurrency"), "Less CPU burned spinning, or faster wake-ups."),
-    "writeset-history": (("cpu", "commit"), "Less hashing work per commit."),
+    "writeset-history": (("cpu-commit", "commit"), "Less hashing work per commit."),
     "o-direct-no-fsync": (("commit", "io"), "One fsync fewer per data file write batch."),
     "bp-overcommit": (("memory", "io"), "Cold memory goes to swap; the larger cache saves more reads than swap costs."),
     "os-irq-split": (("softirq", "sched-delay", "network-rtt"), "Interrupts no longer preempt query threads."),
@@ -75,10 +75,10 @@ MECHANISMS = {
     "fs-zfs": (("io", "commit", "memory"), "Atomic writes, compression, different caching."),
     "fs-btrfs": (("io",), "Extent-based allocation without copy-on-write."),
     "zfs-doublewrite-off": (("io", "commit"), "Pages written once instead of twice."),
-    "malloc-jemalloc-tuned": (("cpu", "memory", "concurrency"), "Allocator variant."),
-    "malloc-tcmalloc": (("cpu", "concurrency"), "Allocator variant."),
-    "malloc-mimalloc": (("cpu", "concurrency"), "Allocator variant."),
-    "malloc-glibc-tuned": (("memory", "cpu"), "Allocator variant."),
+    "malloc-jemalloc-tuned": (("cpu-allocator", "memory", "concurrency"), "Allocator variant."),
+    "malloc-tcmalloc": (("cpu-allocator", "concurrency"), "Allocator variant."),
+    "malloc-mimalloc": (("cpu-allocator", "concurrency"), "Allocator variant."),
+    "malloc-glibc-tuned": (("memory", "cpu-allocator"), "Allocator variant."),
     "sweep-bp": (("memory", "io"), "More pages cached: fewer disk reads."),
     "sweep-redo": (("redo", "io", "io-flush"), "Fewer forced checkpoints."),
     "sweep-io-capacity": (("io", "redo", "io-flush"), "Background flushing matched to the storage."),
@@ -183,7 +183,24 @@ def _no_ibuf(s):
     return None if s["ibuf_size_max"] > 0 else "the change buffer held no pages in the window (InnoDB status): disabling it changes nothing"
 
 
-COUNTER_PRECONDITIONS = {"change-buffer-off": _no_ibuf}
+def _never(counter, what):
+    def check(s, rates):
+        if counter not in (rates or {}):
+            return None  # not measured
+        return None if rates[counter] > 0 else f"{what} did not happen in the window ({counter} = 0): this setting has nothing to act on"
+    return check
+
+
+COUNTER_PRECONDITIONS = {
+    "change-buffer-off": lambda s, r: _no_ibuf(s),
+    "thread-cache": _never("Threads_created", "thread creation"),
+    "table-open-cache": _never("Opened_tables", "table opening"),
+    "table-def-cache": _never("Opened_table_definitions", "table definition loading"),
+    "tmp-tables": _never("Created_tmp_disk_tables", "on-disk temporary tables"),
+    "tmp-olap": _never("Created_tmp_disk_tables", "on-disk temporary tables"),
+    "sort-buffer": _never("Sort_merge_passes", "sort merge passes"),
+    "sort-buffer-olap": _never("Sort_merge_passes", "sort merge passes"),
+}
 
 
 def missing_mechanism(item_id, summary, changes=None, rates=None, inputs=None):
@@ -191,7 +208,7 @@ def missing_mechanism(item_id, summary, changes=None, rates=None, inputs=None):
     if summary is None:
         return None
     if item_id in COUNTER_PRECONDITIONS:
-        why = COUNTER_PRECONDITIONS[item_id](summary)
+        why = COUNTER_PRECONDITIONS[item_id](summary, rates)
         if why:
             return why
     if changes is not None and item_id not in WRITES | READS | ANY_IO:
