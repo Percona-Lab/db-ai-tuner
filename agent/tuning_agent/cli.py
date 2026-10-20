@@ -15,7 +15,7 @@ import time
 import uuid
 
 from . import __version__, baseline, bench, bottleneck, clientrole, collector, engine, evaluate, hostinfo, llmassist, mechanisms, mysqldb, ostune
-from .knowledge import tradeoffs_in
+from .knowledge import run_tradeoffs, tradeoffs_in
 from .applier import Applier
 from .knowledge import OPTIONS as KOPTIONS
 from .client import APIError, Client
@@ -470,6 +470,11 @@ def _print_apply(res):
     return "\n".join(lines)
 
 
+def _client_reserve(c):
+    """Memory declared for a co-located benchmark client at baseline time (--reserve-mem), in bytes."""
+    return int(c.state.get("client_reserve") or 0)
+
+
 def _measured_overhead(c):
     """mysqld's memory beyond the buffer pool in the latest run on this host (PSS + swapped-out), in bytes, or None."""
     try:
@@ -500,6 +505,8 @@ def cmd_baseline(a):
     if a.reserve_mem:
         from .knowledge import parse_size
         opts["reserve_bytes"] = parse_size(a.reserve_mem)
+    if a.apply:
+        c.state.set("client_reserve", int(opts.get("reserve_bytes") or 0))
     mo = _measured_overhead(c)
     if mo:
         opts["measured_overhead_bytes"] = mo
@@ -774,6 +781,15 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     except Exception:
         pass
     inputs["agent_version"] = __version__  # which engine build measured and judged this run
+    try:  # memory budget of the configuration as measured, with mysqld's measured memory next to the model
+        from . import memory
+        mb = memory.budget(c.variables, c.hw(), _client_reserve(c), measured=((summary.get("dbproc_pss_mb") or 0) + (summary.get("dbproc_swap_mb") or 0)) * 2 ** 20 or None)
+        summary["memory_budget"] = {"needed": mb["needed"], "ram": mb["ram"], "headroom": mb["headroom"], "over_budget": mb["over_budget"],
+                                    "mysqld_model": mb["mysqld_bytes"], "mysqld_measured": mb.get("measured_mysqld_bytes"),
+                                    "active_connections": mb["active_connections"], "text": memory.text(mb)}
+        inputs["memory_budget"] = mb
+    except Exception:
+        pass
     if extra_inputs:
         inputs.update(extra_inputs)
         for k, v in (extra_inputs.get("probe") or {}).items():
@@ -865,11 +881,11 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
 def _update_best(sess):
     noise = float((sess.get("noise") or {}).get("noise_pct") or sess.get("noise_pct") or 2.0)
     runs = sess["runs"]
-    for key, sel in (("best", runs), ("best_safe", [r for r in runs if not tradeoffs_in(r.get("managed"))])):
+    for key, sel in (("best", runs), ("best_safe", [r for r in runs if not run_tradeoffs(r)])):
         b = engine.best_config(sel, sess["goal"], noise)
         if b:
             sess[key] = {"seq": b["seqs"][-1], "runs": b["seqs"], "label": b["label"], "goal_value": round(b["mean"], 4),
-                         "mean_of_runs": b["n"], "tradeoffs": tradeoffs_in(b["managed"])}
+                         "mean_of_runs": b["n"], "tradeoffs": run_tradeoffs(next((r for r in sel if r["seq"] == b["seqs"][-1]), {"managed": b["managed"]}))}
 
 
 def _fmt_run(run, diagnosis, goal):
@@ -1664,7 +1680,7 @@ def _engine_ctx(c, sess):
     bench_info = {k: b.get(k) for k in ("name", "run", "warmup", "duration", "goal_metric", "requires") if b.get(k) is not None}
     return {"bench": bench_info, "diagnosis_basis_run": basis, "goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
             "os_tuning": c.os_tuning_allowed() and sess.get("os_tuning", True), "os_facts": osf, "experience": experience,
-            "insights": insights, "param_impact": param_impact, "blocked": sorted(blocked),
+            "insights": insights, "param_impact": param_impact, "blocked": sorted(blocked), "client_reserve": _client_reserve(c),
             "failed": sess.get("failed_recs") or [],
             "scope": sess.get("scope") or ["knobs", "os"], "fs_device": _ap.fs_device,
             "variables": c.all_settings(), "summary": last.get("summary"), "inputs": last.get("inputs"),
@@ -2115,7 +2131,7 @@ def _safe_wins_in_tradeoff_phase(sess, best_safe):
     safe_cfg = next((r.get("managed") or {} for r in sess["runs"] if r["seq"] == best_safe["seq"]), {})
     out, seen = [], set()
     for r in sess["runs"]:
-        if r.get("verdict") != "improved" or (r.get("evaluation") or {}).get("confirmed") is False or not tradeoffs_in(r.get("managed")):
+        if r.get("verdict") != "improved" or (r.get("evaluation") or {}).get("confirmed") is False or not run_tradeoffs(r):
             continue
         own = [x for x in r.get("changes") or [] if str(x.get("source", "")).startswith("rec:")
                and not str(x["source"])[4:].startswith(("revert", "rollback"))]

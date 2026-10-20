@@ -615,6 +615,32 @@ def test_param_catalog_and_policy():
     assert not [i for i in res["items"] if any(c["variable"] in ("innodb_buffer_pool_size", "innodb_io_capacity") for c in i["changes"])]
 
 
+def test_memory_budget():
+    from tuning_agent import memory
+    GiB = 2 ** 30
+    hw = {"ram_bytes": 16 * GiB, "cpus": 8}
+    v = {"innodb_buffer_pool_size": str(11 * GiB), "max_connections": "151", "sort_buffer_size": str(256 * 1024),
+         "join_buffer_size": str(256 * 1024), "tmp_table_size": str(64 * 2 ** 20), "max_heap_table_size": str(64 * 2 ** 20),
+         "table_open_cache": "4000", "performance_schema": "ON"}
+    b = memory.budget(v, hw)
+    assert not b["over_budget"] and b["active_connections"] == 16
+    # 64 MB sort buffers for 16 active connections and a bigger pool: over the budget
+    b2 = memory.budget(dict(v, sort_buffer_size=str(512 * 2 ** 20)), hw)
+    assert b2["over_budget"]
+    # a candidate that pushes the configuration over the budget becomes a memory trade-off
+    ctx = {"goal": "tps", "policy": "benchmark", "hw": dict(HW, ram_bytes=16 * GiB, cpus=8), "variables": dict(VARS, **v),
+           "summary": OLTP[0], "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}}
+    res = engine.run_engine(ctx)
+    for it in res["items"]:
+        for t in it.get("tradeoffs") or []:
+            if t["category"] == "memory":
+                assert it["safety"] == "trade-off"
+    # runs that exceeded the budget are not production-safe
+    from tuning_agent.knowledge import run_tradeoffs
+    assert run_tradeoffs({"managed": {}, "summary": {"memory_budget": {"over_budget": True, "text": "x"}}})
+    assert not run_tradeoffs({"managed": {}, "summary": {"memory_budget": {"over_budget": False}}})
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

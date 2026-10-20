@@ -16,7 +16,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "agent"))
 from tuning_agent import engine, evaluate  # noqa: E402
-from tuning_agent.knowledge import tradeoffs_in  # noqa: E402
+from tuning_agent.knowledge import run_tradeoffs as tradeoffs_of_run, tradeoffs_in  # noqa: E402
 
 URL = "https://50-116-44-237.sslip.io"
 SKIP = ("server defaults", "baseline", "re-check", "best safe", "best with")
@@ -95,7 +95,7 @@ def main():
     check(not unconf, f"improvements confirmed by a repeat (unconfirmed: {unconf})")
 
     # 4) the reported best safe configuration is earned and carries no change that was neutral on its own
-    safe = [r for r in hist if not tradeoffs_in(r.get("managed"))]
+    safe = [r for r in hist if not tradeoffs_of_run(r)]
     best = engine.best_config(safe, s["goal"], float(noise.get("noise_pct") or 2.0))
     rep = (s.get("summary") or {}).get("best_safe")  # older agents stored only the overall best (may include trade-offs)
     if best:
@@ -132,7 +132,7 @@ def main():
 
     # 5) trade-off phase reached when the budget allowed it
     if s.get("policy") == "benchmark" and a.budget and len([r for r in hist if not r["label"].startswith(SKIP)]) >= a.budget:
-        check(any(tradeoffs_in(r.get("managed")) for r in hist), "trade-off phase reached")
+        check(any(tradeoffs_of_run(r) for r in hist), "trade-off phase reached")
 
     for line in notes + fails:
         print(line)

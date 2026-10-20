@@ -394,3 +394,14 @@ def setting_names(variable, value, current=None):
     new, cur = flags(value), flags(current)
     names = [f"{variable}:{k}" for k, x in new.items() if cur.get(k) != x]
     return names or [variable]
+
+
+def run_tradeoffs(run):
+    """What a measured configuration gives up: the static trade-offs of its settings plus a memory budget the host could
+    not hold under load (recorded per run at measurement time)."""
+    out = list(tradeoffs_in((run or {}).get("managed")))
+    mb = ((run or {}).get("summary") or {}).get("memory_budget") or {}
+    if mb.get("over_budget"):
+        out.append({"variable": "memory", "value": mb.get("text", ""), "category": "memory",
+                    "lost": "Production safety: memory budget exceeded - swapping / OOM under load."})
+    return out

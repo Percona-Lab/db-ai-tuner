@@ -14,7 +14,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "agent"))
 from tuning_agent import engine, evaluate  # noqa: E402
-from tuning_agent.knowledge import tradeoffs_in  # noqa: E402
+from tuning_agent.knowledge import run_tradeoffs as tradeoffs_of_run, tradeoffs_in  # noqa: E402
 
 URL = "https://50-116-44-237.sslip.io"
 FLAGS = ("not_steady", "unsteady_verdict", "client_saturated", "goal_server_mismatch_pct", "unstable_within_run", "swap_hazard")
@@ -45,7 +45,7 @@ def cell_card(run, st):
     defaults = mean([r for r in runs if r["label"].startswith("server defaults")])
     start = [r for r in runs if r["label"].startswith("baseline")]
     smean = mean(start)
-    safe = engine.best_config([r for r in runs if not tradeoffs_in(r.get("managed")) and r["verdict"] not in evaluate.EXCLUDED], goal, noise)
+    safe = engine.best_config([r for r in runs if not tradeoffs_of_run(r) and r["verdict"] not in evaluate.EXCLUDED], goal, noise)
     best = engine.best_config([r for r in runs if r["verdict"] not in evaluate.EXCLUDED], goal, noise)
     # search efficiency: the first run whose configuration already reached 90% of the best safe gain
     g_best = gain(goal, safe["mean"], smean) if safe else None

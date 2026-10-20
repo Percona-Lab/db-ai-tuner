@@ -9,6 +9,10 @@ def _round_down(n, unit):
     return max(unit, (int(n) // unit) * unit)
 
 
+def _tmp_size(ram):
+    return 64 * MiB if ram >= 8 * GiB else 32 * MiB
+
+
 def generate(hw, variables, flavor, version, opts=None):
     """Return list of {variable, value, reason}. Only variables the server knows are included."""
     opts = opts or {}
@@ -25,12 +29,18 @@ def generate(hw, variables, flavor, version, opts=None):
         if var in variables:
             out.append({"variable": var, "value": value, "reason": reason})
 
-    # -- buffer pool: what is left after OS + server overheads, capped at 75% of RAM
-    overhead = 400 * MiB + max_conn * 2 * MiB // 3
+    # -- buffer pool: what is left after the OS, a co-located client and everything else mysqld needs at this
+    # configuration (memory.budget: caches, connections, per-query buffers of 2 x CPUs active connections,
+    # performance_schema, fixed overhead), capped at 75% of RAM
+    from . import memory
+    planned = dict(variables, max_connections=str(max_conn), innodb_buffer_pool_size="0",
+                   tmp_table_size=str(_tmp_size(ram)), max_heap_table_size=str(_tmp_size(ram)))
+    nb = memory.budget(planned, hw)
+    overhead = nb["mysqld_bytes"]
     measured = int(opts.get("measured_overhead_bytes") or 0)
     if measured > overhead:  # mysqld's own memory beyond the buffer pool in the last run (PSS + swap) beats the estimate
         overhead = measured
-    bp = min(int(ram * 0.75), ram - reserve - overhead)
+    bp = min(int(ram * 0.75), int((ram - reserve - overhead) / (1 + memory.COST["bp_control"])))
     bp = max(bp, 128 * MiB)
     instances = 1
     if "innodb_buffer_pool_instances" in variables and flavor != "mariadb":
@@ -84,7 +94,7 @@ def generate(hw, variables, flavor, version, opts=None):
 
     # -- connections / caches
     add("max_connections", str(max_conn), f"{max_conn} connections for {cpus} CPUs (override with --max-connections).")
-    tmp = "64M" if ram >= 8 * GiB else "32M"
+    tmp = fmt_size(_tmp_size(ram))
     add("tmp_table_size", tmp, "In-memory temporary table limit scaled to RAM.")
     add("max_heap_table_size", tmp, "Matches tmp_table_size (the lower of the two applies).")
     if int(variables.get("table_open_cache", 0) or 0) < 4000:

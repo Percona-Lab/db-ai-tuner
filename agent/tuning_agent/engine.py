@@ -1563,6 +1563,25 @@ def run_engine(ctx):
                 continue
             keep.append(it)
         items = keep
+    # memory: a change to a memory-related setting must keep the configuration within this host's memory budget
+    # (memory.budget: caches, connections, 2 x CPUs active connections with their per-query buffers); beyond it the
+    # configuration may swap or be OOM-killed under load - a trade-off, never a safe change
+    from . import memory as _mem
+    hw_ = ctx.get("hw") or {}
+    if hw_.get("ram_bytes"):
+        cur_b = _mem.budget(ctx["variables"], hw_, ctx.get("client_reserve") or 0)
+        for it in items:
+            ch = {c["variable"]: c.get("proposed") for c in it.get("changes") or [] if c["variable"] in _mem.MEMORY_VARS and not c.get("unset")}
+            if not ch or it["kind"] not in ("config",):
+                continue
+            nb = _mem.budget(dict(ctx["variables"], **ch), hw_, ctx.get("client_reserve") or 0)
+            it.setdefault("evidence", {})["memory_budget"] = _mem.text(nb)
+            if nb["over_budget"] and nb["needed"] > cur_b["needed"]:
+                it["safety"] = "trade-off"
+                it["tradeoffs"] = list(it.get("tradeoffs") or []) + [{
+                    "variable": ", ".join(sorted(ch)), "value": ", ".join(f"{k}={v}" for k, v in ch.items()), "category": "memory",
+                    "lost": f"Production safety: the configuration would need {_mem.text(nb)} - under load it can swap or be "
+                            "OOM-killed. Measured only as a benchmark trade-off."}]
     benchmark = ctx.get("policy") == "benchmark"
     has_major = any(d.get("severity") in ("high", "medium") and d["type"] != "none" for d in ctx["diagnosis"])
     exp = ctx.get("experience") or {}

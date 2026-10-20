@@ -117,6 +117,30 @@ OPTIMIZER_FLAGS = [
 ]
 
 
+# memory cost per setting (agent/tuning_agent/memory.py budgets with these): memory is one pool shared by all options
+MEMORY_COST = {
+    "innodb_buffer_pool_size": "direct: its size, plus ~3% for control blocks / page hash / AHI",
+    "innodb_log_buffer_size": "direct: its size",
+    "key_buffer_size": "direct: its size",
+    "tmp_table_size": "per active connection (one in-memory temporary table), capped by temptable_max_ram",
+    "max_heap_table_size": "per active connection (with tmp_table_size, the lower applies)",
+    "temptable_max_ram": "global cap on in-memory temporary tables",
+    "sort_buffer_size": "per active connection, per sort - possibly more than once per query",
+    "join_buffer_size": "per active connection, per join - possibly more than once per query",
+    "read_buffer_size": "per active connection, per sequential scan",
+    "read_rnd_buffer_size": "per active connection, per sorted read",
+    "binlog_cache_size": "per active connection with a transaction (binary log on)",
+    "table_open_cache": "~8 KiB per cached table instance",
+    "table_definition_cache": "~6 KiB per cached table definition",
+    "max_prepared_stmt_count": "~16 KiB per prepared statement held (a cap; budgeted at up to 20 per connection)",
+    "max_connections": "~768 KiB base per allowed connection (+ performance_schema ~128 KiB); 2 x CPUs of them assumed active with all per-query buffers",
+    "performance_schema": "~192 MiB fixed + ~128 KiB per allowed connection",
+    "thread_cache_size": "~256 KiB per cached idle thread",
+    "os:hugepages": "pins 2 MiB per page: unusable by anything else, even when the buffer pool does not use it",
+    "os:swapfile": "disk, not memory: lets cold memory be swapped instead of OOM",
+}
+
+
 def main():
     # which rules change which variables: b.add("<id>", "<title>", [("<var>", ...), ...] and sweep("<id>", "<title>", "<var>", ...)
     import re
@@ -149,7 +173,7 @@ def main():
             "safety": trade[1] if trade else ("safe" if kb.get("risk") in (None, "none", "low") else kb.get("risk")),
             "safety_note": trade[2] if trade and len(trade) > 2 else None,
             "restart": (not kb.get("dynamic", True)) if kb else (bool(okb[1]) if okb else None),
-            "mechanism_tags": tags, "rules": rules,
+            "mechanism_tags": tags, "rules": rules, "memory_cost": MEMORY_COST.get(name),
         }
     if "optimizer_switch" in out:
         out["optimizer_switch"].update(impact="container", when="a list of independent optimizer flags: see the optimizer_switch:<flag> entries",

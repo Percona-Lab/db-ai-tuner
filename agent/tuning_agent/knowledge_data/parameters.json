@@ -6,6 +6,7 @@
    "description": "Listen backlog of mysqld (capped by net.core.somaxconn).",
    "impact": "low",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": "accept queue overflows during the run (listen_drops > 0)",
    "restart": true,
    "rules": [],
@@ -19,6 +20,7 @@
    "description": "Per-session binlog cache.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": "per active connection with a transaction (binary log on)",
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -34,6 +36,7 @@
    "mechanism_tags": [
     "commit"
    ],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [
@@ -51,6 +54,7 @@
    "mechanism_tags": [
     "commit"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -66,6 +70,7 @@
    "description": "Commit in binlog order.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -81,6 +86,7 @@
    "mechanism_tags": [
     "io"
    ],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [
@@ -99,6 +105,7 @@
     "commit",
     "cpu-commit"
    ],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [
@@ -114,6 +121,7 @@
    "description": "Client host: CPUs the database process may run on (all / CPU list such as 1-3), e.g. to keep it off the CPUs handling network interrupts.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -127,6 +135,7 @@
    "description": "Client host: CPU frequency governor.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -140,6 +149,7 @@
    "description": "Client host: Filesystem of the data directory on the experiment device (scope 'filesystem' only).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -153,6 +163,7 @@
    "description": "Client host: System-wide limit of in-flight asynchronous I/O requests (InnoDB native AIO).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -166,6 +177,7 @@
    "description": "Client host: Number of 2 MiB huge pages reserved (used by the buffer pool when large_pages=ON).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -179,6 +191,7 @@
    "description": "Client host: Automatic NUMA page migration (multi-socket hosts).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -192,6 +205,7 @@
    "description": "Client host: Group CPU time per terminal session (desktop feature).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -205,6 +219,7 @@
    "description": "Client host: Memory allocator for mysqld: glibc[:arena_max=N], jemalloc[:MALLOC_CONF], tcmalloc, mimalloc (LD_PRELOAD).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -218,6 +233,7 @@
    "description": "Client host: ext4 write barriers (OFF = nobarrier: DURABILITY TRADE-OFF).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -231,6 +247,7 @@
    "description": "Client host: Mount the data directory filesystem with noatime.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -247,6 +264,7 @@
     "network-loss",
     "network-rtt"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -262,6 +280,7 @@
    "description": "Client host: Packets processed per softirq round.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -275,6 +294,7 @@
    "description": "Client host: Time budget per softirq round.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -288,6 +308,7 @@
    "description": "Client host: Per-CPU packet backlog before softnet drops.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -301,6 +322,7 @@
    "description": "Client host: Max receive buffer an application may set.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -314,6 +336,7 @@
    "description": "Client host: RFS global flow table.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -327,6 +350,7 @@
    "description": "Client host: Upper bound of listen backlogs (MySQL back_log is capped by it).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -340,6 +364,7 @@
    "description": "Client host: Max send buffer an application may set.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -353,6 +378,7 @@
    "description": "Client host: Ephemeral ports for outgoing connections (clients).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -369,6 +395,7 @@
     "network-loss",
     "network-rtt"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -384,6 +411,7 @@
    "description": "Client host: Interval between keepalive probes.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -397,6 +425,7 @@
    "description": "Client host: Keepalive probes before the connection is dropped.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -410,6 +439,7 @@
    "description": "Client host: Idle time before TCP keepalive probes.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -423,6 +453,7 @@
    "description": "Client host: Half-open connection queue.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -436,6 +467,7 @@
    "description": "Client host: TCP receive buffer min/default/max (autotuning ceiling).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -451,6 +483,7 @@
    "mechanism_tags": [
     "network-rtt"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -466,6 +499,7 @@
    "description": "Client host: Reuse TIME_WAIT sockets for new outgoing connections (clients).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -479,6 +513,7 @@
    "description": "Client host: TCP send buffer min/default/max.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -492,6 +527,7 @@
    "description": "Client host: Connection tracking table size (firewalled hosts).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -505,6 +541,7 @@
    "description": "Client host: CPUs that handle the network card interrupts (auto / CPU list); irqbalance is stopped while managed.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -518,6 +555,7 @@
    "description": "Client host: OS read-ahead of the data device (no effect on InnoDB data files opened with O_DIRECT).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -534,6 +572,7 @@
     "client-bound",
     "softirq"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -549,6 +588,7 @@
    "description": "Client host: Block I/O scheduler of the data device.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -562,6 +602,7 @@
    "description": "Client host: Extra swap file managed by the agent (size, 0 = none): room for cold memory so caches can grow.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -575,6 +616,7 @@
    "description": "Client host: Transparent Huge Pages (never / madvise / always).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -588,6 +630,7 @@
    "description": "Client host: Dirty page cache that starts background writeback (affects buffered binlog/redo writes).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -601,6 +644,7 @@
    "description": "Client host: Dirty page cache (% of memory) that starts background writeback (used when dirty_background_bytes is 0).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -614,6 +658,7 @@
    "description": "Client host: Dirty page cache at which writers are throttled.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -627,6 +672,7 @@
    "description": "Client host: Age at which dirty page cache must be written back.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -640,6 +686,7 @@
    "description": "Client host: Dirty page cache (% of memory) at which writers are throttled (used when dirty_bytes is 0).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -653,6 +700,7 @@
    "description": "Client host: Interval of the background writeback thread.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -666,6 +714,7 @@
    "description": "Client host: Free memory the kernel keeps for atomic (network/driver) allocations.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -679,6 +728,7 @@
    "description": "Client host: Kernel preference for swapping anonymous memory (1 = only under real pressure).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -692,6 +742,7 @@
    "description": "Client host: Compressed in-memory cache for swapped pages (off / on[:compressor]): cheaper swap-ins.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -709,6 +760,7 @@
     "cpu",
     "io"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": true,
    "rules": [
@@ -724,6 +776,7 @@
    "description": "Redo fill % where adaptive flushing starts.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [],
@@ -742,6 +795,7 @@
     "cpu-pressure",
     "cpu-spin"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -758,6 +812,7 @@
    "description": "AHI partitions.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": true,
    "rules": [],
@@ -771,6 +826,7 @@
    "description": "Unit of buffer pool resizing.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": true,
    "rules": [],
@@ -790,6 +846,7 @@
     "cpu-pressure",
     "cpu-spin"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": true,
    "rules": [
@@ -813,6 +870,7 @@
     "oom",
     "swap"
    ],
+   "memory_cost": "direct: its size, plus ~3% for control blocks / page hash / AHI",
    "precondition": null,
    "restart": false,
    "rules": [
@@ -837,6 +895,7 @@
     "io-flush",
     "io-read"
    ],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [
@@ -853,6 +912,7 @@
    "description": "",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": null,
    "rules": [],
@@ -866,6 +926,7 @@
    "description": "Deadlock detection.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -883,6 +944,7 @@
     "io",
     "io-flush"
    ],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": true,
    "rules": [
@@ -902,6 +964,7 @@
     "commit",
     "io"
    ],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [
@@ -922,6 +985,7 @@
     "io-read",
     "memory"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": true,
    "rules": [
@@ -941,6 +1005,7 @@
     "io",
     "io-flush"
    ],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [
@@ -961,6 +1026,7 @@
     "io-read",
     "redo"
    ],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [
@@ -981,6 +1047,7 @@
     "io-read",
     "redo"
    ],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [
@@ -998,6 +1065,7 @@
    "description": "Upper bound of background flushing IOPS when behind.",
    "impact": "medium",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [],
@@ -1014,6 +1082,7 @@
     "commit",
     "redo"
    ],
+   "memory_cost": "direct: its size",
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [
@@ -1029,6 +1098,7 @@
    "description": "Size of each redo log file (older MySQL / MariaDB).",
    "impact": "high",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": true,
    "rules": [],
@@ -1042,6 +1112,7 @@
    "description": "Number of redo log files (older MySQL).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": true,
    "rules": [],
@@ -1060,6 +1131,7 @@
     "cpu-pressure",
     "sched-delay"
    ],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [
@@ -1078,6 +1150,7 @@
     "io",
     "io-flush"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -1094,6 +1167,7 @@
    "description": "Target maximum dirty page percentage.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [],
@@ -1111,6 +1185,7 @@
     "io-flush",
     "redo"
    ],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [
@@ -1130,6 +1205,7 @@
     "locks",
     "memory"
    ],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [
@@ -1145,6 +1221,7 @@
    "description": "Maximum delay in microseconds imposed by innodb_max_purge_lag.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [],
@@ -1158,6 +1235,7 @@
    "description": "Enable InnoDB metrics counters.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -1171,6 +1249,7 @@
    "description": "Interleave buffer pool allocation across NUMA nodes.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": true,
    "rules": [],
@@ -1184,6 +1263,7 @@
    "description": "Page cleaner threads.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": true,
    "rules": [],
@@ -1197,6 +1277,7 @@
    "description": "Threads for parallel clustered index reads (COUNT(*), CHECK TABLE).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -1213,6 +1294,7 @@
     "io",
     "locks"
    ],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": true,
    "rules": [
@@ -1231,6 +1313,7 @@
     "io",
     "io-read"
    ],
+   "memory_cost": null,
    "precondition": "pages are read from disk",
    "restart": false,
    "rules": [
@@ -1250,6 +1333,7 @@
     "io-read",
     "memory"
    ],
+   "memory_cost": null,
    "precondition": "pages are read from disk",
    "restart": false,
    "rules": [
@@ -1270,6 +1354,7 @@
     "io-read",
     "memory"
    ],
+   "memory_cost": null,
    "precondition": "pages are read from disk",
    "restart": true,
    "rules": [
@@ -1289,6 +1374,7 @@
     "io-flush",
     "redo"
    ],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [
@@ -1307,6 +1393,7 @@
     "concurrency",
     "cpu-spin"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -1322,6 +1409,7 @@
    "description": "Persistent optimizer statistics.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -1335,6 +1423,7 @@
    "description": "Pages sampled for persistent index statistics.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -1353,6 +1442,7 @@
     "cpu-spin",
     "sched-delay"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -1371,6 +1461,7 @@
     "concurrency",
     "cpu-pressure"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -1386,6 +1477,7 @@
    "description": "Use fdatasync() instead of fsync() where safe.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -1399,6 +1491,7 @@
    "description": "Background write I/O threads.",
    "impact": "low",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": true,
    "rules": [],
@@ -1415,6 +1508,7 @@
     "cpu",
     "io"
    ],
+   "memory_cost": "per active connection, per join - possibly more than once per query",
    "precondition": null,
    "restart": false,
    "rules": [
@@ -1430,6 +1524,7 @@
    "description": "Allocate the buffer pool from huge pages (needs vm.nr_hugepages and memlock).",
    "impact": "medium",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": true,
    "rules": [],
@@ -1443,6 +1538,7 @@
    "description": "Maximum concurrent client connections.",
    "impact": "low",
    "mechanism_tags": [],
+   "memory_cost": "~768 KiB base per allowed connection (+ performance_schema ~128 KiB); 2 x CPUs of them assumed active with all per-query buffers",
    "precondition": null,
    "restart": false,
    "rules": [
@@ -1461,6 +1557,7 @@
     "cpu",
     "io"
    ],
+   "memory_cost": "per active connection (with tmp_table_size, the lower applies)",
    "precondition": "on-disk temporary tables during the run (Created_tmp_disk_tables > 0)",
    "restart": false,
    "rules": [
@@ -1476,6 +1573,7 @@
    "description": "File descriptor limit for mysqld.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": true,
    "rules": [],
@@ -1493,6 +1591,7 @@
     "cpu-exec",
     "io-read"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2018,6 +2117,7 @@
     "sched-delay",
     "softirq"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2035,6 +2135,7 @@
    "mechanism_tags": [
     "cpu"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2050,6 +2151,7 @@
    "description": "Filesystem of the data directory on the experiment device (scope 'filesystem' only).",
    "impact": "medium",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": true,
    "rules": [],
@@ -2065,6 +2167,7 @@
    "mechanism_tags": [
     "io"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2083,6 +2186,7 @@
     "cpu",
     "memory"
    ],
+   "memory_cost": "pins 2 MiB per page: unusable by anything else, even when the buffer pool does not use it",
    "precondition": null,
    "restart": true,
    "rules": [
@@ -2098,6 +2202,7 @@
    "description": "Automatic NUMA page migration (multi-socket hosts).",
    "impact": "low",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2114,6 +2219,7 @@
     "cpu-pressure",
     "sched-delay"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2133,6 +2239,7 @@
     "cpu-allocator",
     "cpu-pressure"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": true,
    "rules": [
@@ -2151,6 +2258,7 @@
     "commit",
     "io"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2168,6 +2276,7 @@
    "mechanism_tags": [
     "io"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2186,6 +2295,7 @@
     "network-loss",
     "network-rtt"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2203,6 +2313,7 @@
    "mechanism_tags": [
     "softirq"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2220,6 +2331,7 @@
    "mechanism_tags": [
     "softirq"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2238,6 +2350,7 @@
     "network-loss",
     "softirq"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2253,6 +2366,7 @@
    "description": "Max receive buffer an application may set.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2266,6 +2380,7 @@
    "description": "RFS global flow table.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2279,6 +2394,7 @@
    "description": "Upper bound of listen backlogs (MySQL back_log is capped by it).",
    "impact": "low",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": "accept queue overflows during the run (listen_drops > 0)",
    "restart": false,
    "rules": [],
@@ -2292,6 +2408,7 @@
    "description": "Max send buffer an application may set.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2305,6 +2422,7 @@
    "description": "Ephemeral ports for outgoing connections (clients).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2321,6 +2439,7 @@
     "network-loss",
     "network-rtt"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2336,6 +2455,7 @@
    "description": "Interval between keepalive probes.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2349,6 +2469,7 @@
    "description": "Keepalive probes before the connection is dropped.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2362,6 +2483,7 @@
    "description": "Idle time before TCP keepalive probes.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2377,6 +2499,7 @@
    "mechanism_tags": [
     "connections"
    ],
+   "memory_cost": null,
    "precondition": "SYN queue drops during the run (syn_drops > 0)",
    "restart": false,
    "rules": [
@@ -2392,6 +2515,7 @@
    "description": "TCP receive buffer min/default/max (autotuning ceiling).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2407,6 +2531,7 @@
    "mechanism_tags": [
     "network-rtt"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2422,6 +2547,7 @@
    "description": "Reuse TIME_WAIT sockets for new outgoing connections (clients).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2435,6 +2561,7 @@
    "description": "TCP send buffer min/default/max.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2451,6 +2578,7 @@
     "connections",
     "network-loss"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2470,6 +2598,7 @@
     "sched-delay",
     "softirq"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2485,6 +2614,7 @@
    "description": "OS read-ahead of the data device (no effect on InnoDB data files opened with O_DIRECT).",
    "impact": "low",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2501,6 +2631,7 @@
     "cpu-pressure",
     "softirq"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2518,6 +2649,7 @@
    "mechanism_tags": [
     "io"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2533,6 +2665,7 @@
    "description": "Extra swap file managed by the agent (size, 0 = none): room for cold memory so caches can grow.",
    "impact": "low",
    "mechanism_tags": [],
+   "memory_cost": "disk, not memory: lets cold memory be swapped instead of OOM",
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2549,6 +2682,7 @@
     "cpu-mm",
     "memory"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2564,6 +2698,7 @@
    "description": "",
    "impact": "low",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": null,
    "rules": [],
@@ -2580,6 +2715,7 @@
     "commit",
     "io"
    ],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [
@@ -2595,6 +2731,7 @@
    "description": "Dirty page cache (% of memory) that starts background writeback (used when dirty_background_bytes is 0).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [],
@@ -2608,6 +2745,7 @@
    "description": "Dirty page cache at which writers are throttled.",
    "impact": "low",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [],
@@ -2621,6 +2759,7 @@
    "description": "Age at which dirty page cache must be written back.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [],
@@ -2634,6 +2773,7 @@
    "description": "Dirty page cache (% of memory) at which writers are throttled (used when dirty_bytes is 0).",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [],
@@ -2647,6 +2787,7 @@
    "description": "Interval of the background writeback thread.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [],
@@ -2660,6 +2801,7 @@
    "description": "Free memory the kernel keeps for atomic (network/driver) allocations.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2676,6 +2818,7 @@
     "memory-pressure",
     "swap"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2691,6 +2834,7 @@
    "description": "Compressed in-memory cache for swapped pages (off / on[:compressor]): cheaper swap-ins.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2707,6 +2851,7 @@
     "cpu-pfs",
     "cpu-pressure"
    ],
+   "memory_cost": "~192 MiB fixed + ~128 KiB per allowed connection",
    "precondition": null,
    "restart": true,
    "rules": [
@@ -2725,6 +2870,7 @@
     "cpu-pfs",
     "cpu-pressure"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2740,6 +2886,7 @@
    "description": "Buffer for multi-range reads / sorted row reads.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": "per active connection, per sorted read",
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2755,6 +2902,7 @@
    "mechanism_tags": [
     "sched-delay"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [
@@ -2770,6 +2918,7 @@
    "description": "Start without the binary log (option-file switch).",
    "impact": "high",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": true,
    "rules": [],
@@ -2785,6 +2934,7 @@
    "mechanism_tags": [
     "dns"
    ],
+   "memory_cost": null,
    "precondition": "measured time in host name resolution",
    "restart": true,
    "rules": [
@@ -2803,6 +2953,7 @@
     "cpu",
     "io"
    ],
+   "memory_cost": "per active connection, per sort - possibly more than once per query",
    "precondition": "sort merge passes during the run (Sort_merge_passes > 0)",
    "restart": false,
    "rules": [
@@ -2822,6 +2973,7 @@
     "commit",
     "io"
    ],
+   "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
    "restart": false,
    "rules": [
@@ -2839,6 +2991,7 @@
    "mechanism_tags": [
     "cpu-exec"
    ],
+   "memory_cost": "~6 KiB per cached table definition",
    "precondition": "table definition loading during the run (Opened_table_definitions > 0)",
    "restart": false,
    "rules": [
@@ -2857,6 +3010,7 @@
     "cpu-exec",
     "locks"
    ],
+   "memory_cost": "~8 KiB per cached table instance",
    "precondition": "table opening during the run (Opened_tables > 0)",
    "restart": false,
    "rules": [
@@ -2872,6 +3026,7 @@
    "description": "Partitions of the table open cache.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": "table opening during the run (Opened_tables > 0)",
    "restart": true,
    "rules": [],
@@ -2885,6 +3040,7 @@
    "description": "RAM the TempTable engine may use before spilling to mmap/disk.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": "global cap on in-memory temporary tables",
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2901,6 +3057,7 @@
     "connections",
     "cpu-mm"
    ],
+   "memory_cost": "~256 KiB per cached idle thread",
    "precondition": "thread creation during the run (Threads_created > 0)",
    "restart": false,
    "rules": [
@@ -2922,6 +3079,7 @@
     "cpu-spin",
     "sched-delay"
    ],
+   "memory_cost": null,
    "precondition": null,
    "restart": true,
    "rules": [
@@ -2937,6 +3095,7 @@
    "description": "Thread pool groups.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
@@ -2953,6 +3112,7 @@
     "cpu",
     "io"
    ],
+   "memory_cost": "per active connection (one in-memory temporary table), capped by temptable_max_ram",
    "precondition": "on-disk temporary tables during the run (Created_tmp_disk_tables > 0)",
    "restart": false,
    "rules": [
@@ -2968,6 +3128,7 @@
    "description": "Default transaction isolation level.",
    "impact": "unknown",
    "mechanism_tags": [],
+   "memory_cost": null,
    "precondition": null,
    "restart": false,
    "rules": [],
