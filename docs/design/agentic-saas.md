@@ -16,9 +16,15 @@
 | Observations | `tuner.db` (service database) | environments, sessions, runs with their metrics, profiles, verdicts, hypotheses: what happened |
 | Learnings | `learning.db` (separate database, never in the repository) | what the observations teach, beyond the code: insights with conditions, evidence and confidence; proposals for code changes |
 
-The code works without `learning.db`. With it, the tuner is better informed: insights rank candidates and appear as
-leads in the "why". Insights never bypass the evidence gate: measurements decide. `learning.db` can be exported and
-imported (snapshot), so a fresh service can start with what an earlier one learned.
+The tuner always uses `learning.db`. A new self-hosted installation starts with it empty and builds its own from its
+sessions. The hosted service fills it from every user's sessions, so it is the shared intelligence.
+
+- **OSS installations** improve with each code release.
+- **The hosted service** improves with each code release, and also between releases, as its learnings grow.
+- **How learnings are used:** insights rank candidates and appear as leads in the "why". They never bypass the
+  evidence gate: measurements decide.
+- **Persistence:** `learning.db` persists across resets of the observation database. It can be exported as a
+  snapshot.
 
 ## The learner (background process)
 
