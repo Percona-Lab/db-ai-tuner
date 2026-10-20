@@ -1477,7 +1477,8 @@ def run_engine(ctx):
             it["mechanism"] = MECHANISMS[it["id"]][1]
             it["addresses"] = matched
             it["relevance"] = rel
-        nomech = missing_mechanism(it["id"], ctx.get("summary")) if it["kind"] == "config" else None
+        nomech = missing_mechanism(it["id"], ctx.get("summary"), [{"variable": c["variable"]} for c in it.get("changes") or []],
+                                   inp.get("status_rates")) if it["kind"] == "config" else None
         if nomech:
             it["no_mechanism"] = nomech
             it["note"] = (it.get("note", "") + f" Validation only: {nomech}.").strip()

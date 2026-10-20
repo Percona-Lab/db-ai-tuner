@@ -13,7 +13,7 @@ import sys
 import time
 import uuid
 
-from . import __version__, baseline, bench, bottleneck, clientrole, collector, engine, evaluate, hostinfo, llmassist, mysqldb, ostune
+from . import __version__, baseline, bench, bottleneck, clientrole, collector, engine, evaluate, hostinfo, llmassist, mechanisms, mysqldb, ostune
 from .knowledge import tradeoffs_in
 from .applier import Applier
 from .knowledge import OPTIONS as KOPTIONS
@@ -1447,6 +1447,14 @@ def _recommend(c, sess, llm=False):
         its = [i for i in its if i["id"] not in done_ids]
         if its:
             for it in its:
+                # the same physical preconditions as rule-based experiments: no precondition, no experiment until the end
+                nomech = mechanisms.missing_for_variables(it["changes"], ctx.get("summary"), (ctx.get("inputs") or {}).get("status_rates"))
+                if nomech:
+                    it["no_mechanism"] = nomech
+                    it["note"] = f"Validation only: {nomech}."
+                    it.pop("sweep", None)
+                    it["hypothesis"] = {"kind": "validation", "text": f"Validation only - {nomech}. (LLM suggestion: {sg.get('rationale') or it.get('title')})"}
+                    continue
                 it["hypothesis"] = {"kind": "llm", "text": f"LLM ({sg.get('_model') or model}): {sg.get('rationale') or it.get('title')}"
                                     + (f" Mechanism: {sg['mechanism']}" if sg.get("mechanism") else "")}
             extra += its
@@ -1458,7 +1466,7 @@ def _recommend(c, sess, llm=False):
     sess["llm_pending"] = keep
     if extra:
         for it in extra:
-            it["score"] = engine.score(it, ctx.get("goal", "tps")) + (2 if why not in (None, "routine") else 0)
+            it["score"] = engine.score(it, ctx.get("goal", "tps")) + (2 if why not in (None, "routine") else 0) - (10 if it.get("no_mechanism") else 0)
             if it["safety"] == "trade-off" and ctx.get("policy") != "benchmark":
                 it["kind"] = "advice"
         ids = {i["id"] for i in res["items"]}

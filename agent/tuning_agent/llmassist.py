@@ -67,7 +67,10 @@ def context(ctx, res, meta=None):
             "on, why, and what should change. Build on hypotheses_tested (do not repeat refuted mechanisms; when an outcome is "
             "'moved', that component no longer limits the goal).",
             "Propose only settings whose mechanism is active in this workload (see load): no flushing, redo, commit or purge "
-            "settings when writes_active is false; no read-path settings when disk_reads_active is false.",
+            "settings when writes_active is false; no read-path settings when disk_reads_active is false; no connection-path "
+            "settings (skip_name_resolve, thread_cache_size, back_log) unless load.new_connections_per_s is substantial. "
+            "Every proposal needs a measured bottleneck it acts on and a physical mechanism; proposals without one are "
+            "only run at the end as validation.",
         ],
         "available_pseudo_variables": dict(_pseudo_available(ctx), **({"os:*": "operating-system settings listed in os_settings"}
                                                                         if ctx.get("os_tuning") else {})),
@@ -75,7 +78,8 @@ def context(ctx, res, meta=None):
                  "history_list_length_max": s.get("history_list_length_max"),
                  # what settings can act on: flushing/redo/commit settings need writes, read-path settings need disk reads
                  "writes_active": _activity(s)["writes"], "disk_reads_active": _activity(s)["reads"],
-                 "redo_mbs": s.get("redo_mbs"), "page_reads_from_disk_per_s": s.get("bp_disk_reads")},
+                 "redo_mbs": s.get("redo_mbs"), "page_reads_from_disk_per_s": s.get("bp_disk_reads"),
+                 "new_connections_per_s": s.get("net_conn_per_s")},
         "benchmark": (ctx.get("bench") or {}),
         "hardware": {"cpus": hw.get("cpus"), "ram_gib": round((hw.get("ram_bytes") or 0) / 2 ** 30, 1),
                      "disk": "HDD" if hw.get("disk_rotational") else "SSD", "filesystem": hw.get("filesystem")},

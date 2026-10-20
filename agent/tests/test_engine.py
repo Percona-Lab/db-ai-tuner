@@ -436,6 +436,18 @@ def test_verdicts():
     assert v == "repeat" and ev.get("drift")
 
 
+def test_variable_preconditions_cover_any_source():
+    # session 111: an LLM proposed skip_name_resolve on a pooled workload (0.28 connections/s) - nothing to act on
+    from tuning_agent import mechanisms as m
+    pooled = {"net_conn_per_s": 0.28, "redo_mbs": 3.0, "bp_disk_reads": 0}
+    assert m.missing_for_variables([{"variable": "skip_name_resolve"}], pooled, {})
+    assert m.missing_for_variables([{"variable": "skip_name_resolve"}], {"net_conn_per_s": 57}, {}) is None
+    assert m.missing_for_variables([{"variable": "innodb_read_ahead_threshold"}], pooled, {})
+    assert m.missing_for_variables([{"variable": "thread_pool_size"}], pooled, {}) is None  # no known precondition
+    # a mixed change keeps its experiment when one variable can act
+    assert m.missing_for_variables([{"variable": "skip_name_resolve"}, {"variable": "innodb_io_capacity"}], pooled, {}) is None
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

@@ -122,10 +122,58 @@ def activity(summary):
     return {"writes": writes, "reads": reads}
 
 
-def missing_mechanism(item_id, summary):
+# The same preconditions per variable, so a change from any source (rule, LLM, sweep) is checked by what it sets, not by
+# the name of the rule that proposed it. "connections": acts only when connections are created (DNS lookup, thread
+# creation, accept queue); "table-opens": acts only when tables are opened.
+_W = ("innodb_flush_log_at_trx_commit", "sync_binlog", "innodb_io_capacity", "innodb_io_capacity_max", "innodb_log_file_size",
+      "innodb_redo_log_capacity", "innodb_log_files_in_group", "innodb_max_dirty_pages_pct", "innodb_max_dirty_pages_pct_lwm",
+      "innodb_doublewrite", "innodb_flush_neighbors", "innodb_change_buffering", "innodb_change_buffer_max_size",
+      "innodb_purge_threads", "innodb_max_purge_lag", "innodb_max_purge_lag_delay", "innodb_log_buffer_size",
+      "innodb_adaptive_flushing", "innodb_adaptive_flushing_lwm", "innodb_flush_sync", "innodb_log_writer_threads",
+      "innodb_page_cleaners", "innodb_write_io_threads", "binlog_group_commit_sync_delay", "binlog_row_image",
+      "binlog_transaction_dependency_history_size", "innodb_flushing_avg_loops", "innodb_log_spin_cpu_abs_lwm",
+      "innodb_log_spin_cpu_pct_hwm", "innodb_log_wait_for_flush_spin_hwm", "os:vm.dirty_bytes", "os:vm.dirty_background_bytes",
+      "os:vm.dirty_ratio", "os:vm.dirty_background_ratio", "os:vm.dirty_expire_centisecs", "os:vm.dirty_writeback_centisecs")
+VAR_NEEDS = dict(
+    {v: "writes" for v in _W},
+    **{v: "reads" for v in ("innodb_read_ahead_threshold", "innodb_random_read_ahead", "innodb_read_io_threads")},
+    **{v: "connections" for v in ("skip_name_resolve", "thread_cache_size", "back_log", "max_connect_errors",
+                                  "os:net.core.somaxconn", "os:net.ipv4.tcp_max_syn_backlog", "host_cache_size")},
+    **{v: "table-opens" for v in ("table_open_cache", "table_open_cache_instances", "table_definition_cache")},
+)
+
+
+def missing_for_variables(changes, summary, rates=None):
+    """Why none of the changed variables can act in this workload (None = at least one can, or nothing is known)."""
+    if summary is None or not changes:
+        return None
+    s, r, a = summary, rates or {}, activity(summary)
+    why = []
+    for c in changes:
+        need = VAR_NEEDS.get(c.get("variable"))
+        if need is None:
+            return None  # a variable without a known precondition: cannot rule it out
+        if need == "writes" and not a["writes"]:
+            why.append(f"{c['variable']} only affects writes, flushing or commits and the workload writes almost nothing "
+                       f"(redo {(s.get('redo_mbs') or 0):.2f} MB/s)")
+        elif need == "reads" and not a["reads"]:
+            why.append(f"{c['variable']} only affects reads from disk and there are almost none ({(s.get('bp_disk_reads') or 0):.0f} page reads/s)")
+        elif need == "connections" and "net_conn_per_s" in s and (s.get("net_conn_per_s") or 0) < 1 and r.get("Threads_created", 0) < 1:
+            why.append(f"{c['variable']} only acts when connections are created and the workload opens "
+                       f"{(s.get('net_conn_per_s') or 0):.2f} connections/s")
+        elif need == "table-opens" and "Opened_tables" in r and r.get("Opened_tables", 0) < 0.1 and r.get("Opened_table_definitions", 0) < 0.05:
+            why.append(f"{c['variable']} only acts when tables are opened and the workload opens {r.get('Opened_tables', 0):.2f} tables/s")
+        else:
+            return None
+    return "; ".join(why) or None
+
+
+def missing_mechanism(item_id, summary, changes=None, rates=None):
     """Why the change has nothing to act on in this workload (None = it has)."""
     if summary is None:
         return None
+    if changes is not None and item_id not in WRITES | READS | ANY_IO:
+        return missing_for_variables(changes, summary, rates)
     a = activity(summary)
     if item_id in WRITES and not a["writes"]:
         return f"the workload writes almost nothing (redo {(summary.get('redo_mbs') or 0):.2f} MB/s): this setting only affects writes, flushing or commits"
