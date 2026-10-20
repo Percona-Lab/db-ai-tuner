@@ -106,9 +106,6 @@ def watchdog_scan():
     return alerts, {"environments": len(envs), "client_hosts": len(hosts), "active_sessions": len(active)}
 
 
-status.set_watchdog(watchdog_scan)
-status.start()
-learner.start()  # background learner: observations -> learning.db (docs/design/agentic-saas.md)
 
 
 @app.get("/status", response_class=HTMLResponse)
@@ -1783,3 +1780,9 @@ def agent_study_create(body: dict = Body(...), key=Depends(auth.agent_key)):
     if "notes" in upd:
         store.ex("UPDATE studies SET notes=? WHERE id=?", (str(upd["notes"])[:4000], st["id"]))
     return {"id": st["id"], "name": st["name"], "url": f"{PUBLIC_URL}/#/study/{st['id']}"}
+
+
+# background threads start last: their first scan uses functions defined anywhere in this module (now(), ...)
+status.set_watchdog(watchdog_scan)
+status.start()
+learner.start()  # background learner: observations -> learning.db (docs/design/agentic-saas.md)
