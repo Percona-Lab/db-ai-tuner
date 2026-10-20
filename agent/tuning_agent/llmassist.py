@@ -177,3 +177,63 @@ def sanitize(suggestions, ctx, res, model):
             "restart": any(not KB.get(c["variable"], {}).get("dynamic", True) for c in ch), "goals": ["tps", "latency"],
         })
     return items, rejected
+
+
+# ---------------- bottleneck analysis (components no rule acts on) ----------------
+def uncovered(res, top=3):
+    """The largest measured components of database time that no candidate with evidence acts on."""
+    parts = [p for p in res.get("breakdown") or [] if "network" not in p["tags"] and p.get("threads", 0) > 0
+             and p["name"] != "CPU (not profiled)"][:top]
+    cands = " | ".join(" ".join(i.get("addresses") or []) for i in res["items"] if i["kind"] == "config" and not i.get("no_mechanism"))
+    return [p for p in parts if p["name"] not in cands]
+
+
+def _cpus_class(n):
+    n = int(n or 1)
+    return "1-2" if n <= 2 else "3-8" if n <= 8 else "9-16" if n <= 16 else "17-64" if n <= 64 else "65+"
+
+
+def _evidence(ctx, comp):
+    inp = ctx.get("inputs") or {}
+    off = inp.get("offcpu") or {}
+    stacks = [st for st in off.get("top_stacks") or [] if st.get("category") == comp["name"]][:4]
+    cp = inp.get("cpu_profile") or {}
+    funcs = [f for f in cp.get("top_self") or []][:12] if comp["name"].startswith("CPU") else []
+    return {"stacks": stacks, "cpu_top_functions": funcs, "file_io": inp.get("file_io"), "top_waits": (inp.get("top_waits") or [])[:8]}
+
+
+def signature(ctx, res, comp):
+    """What makes two situations similar enough to reuse an analysis: server version, the component and where its time
+    is spent (top frames), workload, goal, hardware class and the settings that change commit / flushing behaviour."""
+    v = ctx["variables"]
+    ev = _evidence(ctx, comp)
+    frames = []
+    for st in ev["stacks"][:2]:
+        frames += [f for f in st.get("user", [])[:4] if not f.startswith("0x")]
+    frames += [f["fn"] for f in ev["cpu_top_functions"][:4]]
+    hw = ctx.get("hw") or {}
+    return {"flavor": ctx.get("flavor"), "version": ".".join(str(x) for x in (ctx.get("version") or ())[:2]),
+            "component": comp["name"], "frames": frames, "workload": (res.get("workload") or {}).get("type"),
+            "goal": ctx.get("goal"), "cpus": _cpus_class(hw.get("cpus")), "disk": "HDD" if hw.get("disk_rotational") else "SSD",
+            "settings": {k: v.get(k) for k in ("log_bin", "innodb_flush_log_at_trx_commit", "sync_binlog", "innodb_doublewrite",
+                                               "innodb_flush_method", "thread_handling") if k in v}}
+
+
+def analysis_context(ctx, res, comp, meta=None):
+    base = context(ctx, res, meta)
+    base["component"] = {k: comp.get(k) for k in ("name", "threads", "share_pct", "source", "tags")}
+    base["evidence"] = _evidence(ctx, comp)
+    return base
+
+
+def analysis_suggestions(r, comp):
+    """Analysis response -> suggestions in the format sanitize() takes, carrying the hypothesis."""
+    out = []
+    for ch in r.get("changes") or []:
+        out.append({"title": ch.get("title"), "changes": ch.get("changes"), "mechanism": ch.get("mechanism"),
+                    "expected_effect": ch.get("expected_effect"), "risk": ch.get("risk"), "rationale": ch.get("rationale"),
+                    "sweep_values": ch.get("sweep_values") or [], "_model": r.get("model"),
+                    "_analysis": {"component": comp["name"], "tags": comp.get("tags") or [], "share_pct": comp.get("share_pct"),
+                                  "hypothesis": r.get("hypothesis"), "confirm_by": r.get("confirm_by"),
+                                  "precondition": ch.get("precondition"), "cached_from": r.get("cached_from")}})
+    return out

@@ -152,6 +152,15 @@ class DB:
         except pymysql.MySQLError:
             return {}
 
+    def file_io(self):
+        """{event: [reads, read_ps, writes, write_ps, misc, misc_ps]} - file I/O time split by operation (misc = fsync, open...)."""
+        try:
+            return {r[0]: [int(x) for x in r[1:]] for r in self.rows(
+                "SELECT EVENT_NAME, COUNT_READ, SUM_TIMER_READ, COUNT_WRITE, SUM_TIMER_WRITE, COUNT_MISC, SUM_TIMER_MISC "
+                "FROM performance_schema.file_summary_by_event_name WHERE COUNT_STAR > 0")}
+        except pymysql.MySQLError:
+            return {}
+
     def wait_coverage(self):
         """How much of the wait instrumentation is on: {instruments, enabled, sync_enabled}."""
         try:

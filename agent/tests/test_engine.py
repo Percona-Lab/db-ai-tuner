@@ -458,6 +458,57 @@ def test_variable_preconditions_cover_any_source():
     assert any(p["name"].startswith("Connection setup: name resolution") for p in parts)
     assert bottleneck.relevance(("dns",), parts)[1]
 
+def test_offcpu_classification():
+    from tuning_agent import probes as pr
+    k_futex = "finish_task_switch\nschedule\nfutex_wait_queue\n__futex_wait"
+    k_io = "finish_task_switch\nschedule\nio_schedule\nfolio_wait_bit_common"
+    k_poll = "finish_task_switch\nschedule\nschedule_hrtimeout_range_clock\nschedule_hrtimeout_range"
+    # waiting for the group commit leader, not for the client (do_command is deeper in the same stack)
+    u = "pthread_cond_wait\nCommit_stage_manager::enroll_for\nMYSQL_BIN_LOG::ordered_commit\nha_commit_trans\ndispatch_command\ndo_command"
+    assert pr.offcpu_category(u, k_futex)[0].startswith("Waiting: commit - group commit queue")
+    # the redo fsync inside the binlog group commit is a redo flush wait (nearest meaningful frame), not a page fault
+    u = "fdatasync\nos_file_flush_func\nLog_file_handle::fsync\nlog_flush_low\nlog_write_up_to\ninnobase_flush_logs\nMYSQL_BIN_LOG::ordered_commit"
+    assert pr.offcpu_category(u, k_io)[0] == "Waiting: commit - redo flush"
+    assert pr.offcpu_category("ppoll\nvio_io_wait\nvio_read\nnet_read_packet\nmy_net_read\ndo_command", k_poll)[0] == "Waiting: client (next statement)"
+    assert pr.offcpu_category("pread64\nos_file_read_func\nbuf_read_page\nbuf_page_get_gen\nrow_search_mvcc", k_io)[0] == "Waiting: data page read"
+    assert pr.offcpu_category("x\nbuf_LRU_get_free_block\nbuf_page_init_for_read", k_futex)[0].startswith("Waiting: free buffer pool page")
+    assert pr.offcpu_category("x\ngetnameinfo\nip_to_hostname\nlogin_connection", k_poll)[0].startswith("Connection setup: name resolution")
+    assert pr.offcpu_category("memcpy\nrow_sel", "finish_task_switch\nschedule\nio_schedule\nexc_page_fault")[0] == "Waiting: page fault / swap-in"
+    out = "@off[connection, \n    k1\n    k2\n, \n    u1\n    u2\n]: 1500000000\n"
+    assert pr.parse_offcpu(out) == [("connection", "k1\nk2", "u1\nu2", 1500000000)]
+
+
+def test_breakdown_sources_and_evidence_gate():
+    from tuning_agent import bottleneck
+    summ = {"duration_s": 100, "mysqld_cpu_pct": 200, "tps": 1000}
+    # file I/O split: data reads are the read path, data writes flushing - a flushing change has no evidence on a read-bound run
+    fio = {"data": {"read_s": 300.0, "write_s": 0.5, "sync_s": 0.1}, "redo": {"write_s": 0.2, "sync_s": 0.3}}
+    parts = bottleneck.breakdown(summ, {"file_io": fio}, 4)
+    names = {p["name"] for p in parts}
+    assert "Waiting: data file reads" in names and "Waiting: data file I/O" not in names
+    assert bottleneck.acted_on(("io", "io-read", "memory"), parts)  # read-ahead: data reads
+    flush = bottleneck.acted_on(("redo", "io", "io-flush"), parts)  # io_capacity: only the tiny write component
+    assert [p["name"] for p in flush] == ["Waiting: data file writes / fsync (flushing)"]
+    ctx = {"breakdown": [p for p in parts if p["name"] != "Waiting: data file writes / fsync (flushing)"], "diagnosis": []}
+    assert engine.no_evidence({"id": "sweep-io-capacity"}, ctx)
+    assert engine.no_evidence({"id": "sweep-read-ahead"}, ctx) is None
+    # a diagnosis from counters / system statistics is evidence too (combination of sources)
+    assert engine.no_evidence({"id": "sweep-io-capacity"}, dict(ctx, diagnosis=[{"type": "io-flush", "severity": "medium"}])) is None
+    # the off-CPU profile replaces the performance_schema wait classes
+    off = {"foreground": {"Waiting: commit - redo flush": {"threads": 3.0, "seconds": 30, "tags": ["commit"]},
+                          "Waiting: client (next statement)": {"threads": 5.0, "seconds": 50, "tags": ["network"]}}}
+    parts = bottleneck.breakdown(summ, {"offcpu": off, "wait_classes": {"data_io": 99.0}}, 4)
+    names = [p["name"] for p in parts]
+    assert "Waiting: commit - redo flush" in names and "Waiting: data file I/O" not in names
+    # uncovered components go to the bottleneck analysis
+    from tuning_agent import llmassist
+    res = {"breakdown": parts, "items": [{"kind": "config", "addresses": ["Waiting: commit - redo flush (30%)"]}]}
+    assert "Waiting: commit - redo flush" not in [p["name"] for p in llmassist.uncovered(res)]
+    sig = llmassist.signature({"variables": {"log_bin": "OFF"}, "hw": {"cpus": 12}, "goal": "tps", "flavor": "percona",
+                               "version": (8, 4, 11), "inputs": {"offcpu": off}}, {"workload": {"type": "oltp-write"}}, parts[0])
+    assert sig["version"] == "8.4" and sig["cpus"] == "9-16" and sig["settings"] == {"log_bin": "OFF"}
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

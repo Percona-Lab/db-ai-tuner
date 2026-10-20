@@ -1365,6 +1365,29 @@ def _breaks_requirement(it, requires):
     return False
 
 
+def no_evidence(it, ctx):
+    """Why there is no evidence for this change (None = there is). Evidence is any combination of sources showing the
+    thing the change acts on: measured time (CPU profile, off-CPU profile, performance_schema waits, eBPF probes) or a
+    diagnosis grounded in status counters, performance_schema or system statistics (PSI, iowait, swap-in, free-page
+    waits, checkpoint age, ...). Changes whose mechanism is unknown cannot be judged and keep their place."""
+    tags = set((MECHANISMS.get(it["id"]) or ((),))[0]) | set(it.get("acts_on_tags") or ())
+    if not tags or it.get("source") == "requested":
+        return None
+    parts = ctx.get("breakdown") or []
+    if bottleneck.acted_on(tags, parts):
+        return None
+    # a generic diagnosis ("I/O pressure") is not evidence for a change aimed at a specific kind once the kind is known
+    rel = bottleneck.specific(tags, parts)
+    diag = {d["type"] for d in ctx.get("diagnosis") or [] if d["type"] != "none"}
+    if "io" in rel and rel & {"io-read", "io-flush", "commit", "redo"} and diag & {"io-read", "io-flush", "commit"}:
+        rel.discard("io")
+    if rel & diag:
+        return None
+    srcs = sorted({p.get("source", "") for p in ctx.get("breakdown") or []} - {""})
+    return (f"no evidence for what it acts on ({', '.join(sorted(tags))}): no measured time"
+            f"{' (' + '; '.join(srcs) + ')' if srcs else ''} and no counter or system statistic points at it")
+
+
 def _swapfile_bytes(val):
     try:
         return 0 if str(val or "0").lower() in ("0", "off", "") else parse_size(val)
@@ -1474,7 +1497,10 @@ def run_engine(ctx):
         rel, matched = relevance(it["id"], ctx["diagnosis"])
         if it["id"] in MECHANISMS and ctx["breakdown"]:
             rb, mb = bottleneck.relevance(MECHANISMS[it["id"]][0], ctx["breakdown"])
-            rd, md = relevance(it["id"], [d for d in ctx["diagnosis"] if d["type"] not in bottleneck.TAGS or d["type"] in ALSO_FROM_DIAGNOSIS])
+            # evidence combines sources: a diagnosis from counters / system statistics counts unless this run's measured
+            # time already covers that bottleneck (then its share decides)
+            in_time = {t for p in ctx["breakdown"] for t in p["tags"]}
+            rd, md = relevance(it["id"], [d for d in ctx["diagnosis"] if d["type"] not in in_time or d["type"] in ALSO_FROM_DIAGNOSIS])
             rel, matched = max(rb or 0, rd or 0), mb + md
         if rel is not None:
             it["mechanism"] = MECHANISMS[it["id"]][1]
@@ -1482,6 +1508,8 @@ def run_engine(ctx):
             it["relevance"] = rel
         nomech = missing_mechanism(it["id"], ctx.get("summary"), [{"variable": c["variable"]} for c in it.get("changes") or []],
                                    inp.get("status_rates"), inp) if it["kind"] == "config" else None
+        if not nomech and it["kind"] == "config" and ctx.get("summary"):
+            nomech = no_evidence(it, ctx)
         if nomech:
             it["no_mechanism"] = nomech
             it["note"] = (it.get("note", "") + f" Validation only: {nomech}.").strip()

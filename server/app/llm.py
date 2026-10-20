@@ -19,6 +19,7 @@ OPENROUTER = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "anthropic/claude-sonnet-5.5"
 MODES = ("off", "when-needed", "always")
 MAX_CALLS_PER_SESSION = 3
+MAX_ANALYSES_PER_SESSION = 6
 GATE_MIN_TRIES, GATE_MAX_WINS = 4, 0  # after 4 LLM experiments with 0 wins in a workload class, stop asking
 
 
@@ -164,6 +165,81 @@ def suggest(user_id, env_id, session_id, context, force=False, trigger="routine"
               usage.get("completion_tokens"), usage.get("cost"), json.dumps(content), err, payload, "suggest"))
     if status != "ok":
         return {"enabled": True, "error": err, "suggestions": []}
+    return {"enabled": True, "cached": False, "model": st["model"], "usage": usage, **content}
+
+
+ANALYZE_SYSTEM = """You are a MySQL-family database performance engineer helping an automated, evidence-driven tuner.
+The tuner measured where the database's time goes ("time_breakdown": average threads per state, from CPU and off-CPU
+profiles, performance_schema waits and file I/O, eBPF probes) and found a component that takes real time but that none of
+its rules acts on ("component", with the stacks / counters it saw in "evidence").
+1. State a hypothesis: why does this time occur in this workload and configuration? Ground it in the evidence given;
+   say what is uncertain.
+2. Propose at most 3 changes (server variables from "current_variables", or "os:<name>" from "os_settings") that could
+   reduce this component. For each give the physical mechanism - how the change shortens or removes this wait / work -
+   and the precondition that must hold for it to act. Do not propose changes whose mechanism does not touch this
+   component, and nothing the tuner already tried ("history") or has as a candidate ("rule_candidates").
+3. Say which measurement would confirm or refute the hypothesis after the change (which component should shrink).
+Outside reports and common advice are not evidence: use them only as leads, and say so. If no configuration change
+can act on this component (e.g. it is a property of the workload or schema), return no changes and explain."""
+
+ANALYZE_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["hypothesis", "confirm_by", "changes", "notes"],
+    "properties": {
+        "hypothesis": {"type": "string"}, "confirm_by": {"type": "string"}, "notes": {"type": "string"},
+        "changes": {"type": "array", "maxItems": 3, "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["title", "changes", "mechanism", "precondition", "expected_effect", "risk", "rationale", "sweep_values"],
+            "properties": {
+                "title": {"type": "string"},
+                "changes": {"type": "array", "minItems": 1, "maxItems": 4, "items": {
+                    "type": "object", "additionalProperties": False, "required": ["variable", "value"],
+                    "properties": {"variable": {"type": "string"}, "value": {"type": "string"}}}},
+                "mechanism": {"type": "string"}, "precondition": {"type": "string"},
+                "expected_effect": {"type": "string", "enum": ["large", "moderate", "small"]},
+                "risk": {"type": "string", "enum": ["none", "low", "durability", "replication", "observability", "semantics"]},
+                "rationale": {"type": "string"},
+                "sweep_values": {"type": "array", "maxItems": 6, "items": {"type": "string"}}}}}},
+}
+
+
+def analyze(user_id, env_id, session_id, context, signature):
+    """Bottleneck analysis for one uncovered component. Cached by the signature of the conditions (server version,
+    component, workload, hardware class, key settings, where the time is spent): similar conditions reuse the analysis,
+    and the agent still validates every change against the current server."""
+    st = settings(user_id)
+    if not st.get("configured") or st["mode"] == "off":
+        return {"enabled": False, "reason": "LLM assistance is not configured (account settings)"}
+    sig = json.dumps(signature, sort_keys=True, default=str)
+    h = "analyze:" + hashlib.sha256(sig.encode()).hexdigest()
+    hit = store.q1("SELECT id, session_id, model, response FROM llm_calls WHERE user_id=? AND prompt_hash=? AND status='ok' AND cached=0 "
+                   "ORDER BY id DESC LIMIT 1", (user_id, h))
+    if hit:
+        store.ex("INSERT INTO llm_calls(user_id, env_id, session_id, ts, model, prompt_hash, status, cached, response, purpose, signature) "
+                 "VALUES (?,?,?,?,?,?,?,?,?,?,?)", (user_id, env_id, session_id, time.time(), hit["model"], h, "ok", 1, hit["response"], "analyze", sig))
+        return {"enabled": True, "cached": True, "cached_from": {"call": hit["id"], "session": hit["session_id"]}, "model": hit["model"],
+                **json.loads(hit["response"])}
+    n = store.q1("SELECT COUNT(*) n FROM llm_calls WHERE session_id=? AND status='ok' AND cached=0 AND purpose='analyze'", (session_id,))["n"]
+    if n >= MAX_ANALYSES_PER_SESSION:
+        return {"enabled": False, "reason": f"per-session limit of {MAX_ANALYSES_PER_SESSION} bottleneck analyses reached"}
+    payload = json.dumps(context, sort_keys=True, default=str)
+    key = decrypt(store.q1("SELECT llm_key_enc FROM users WHERE id=?", (user_id,))["llm_key_enc"])
+    body = {"model": st["model"], "temperature": 0.2, "usage": {"include": True},
+            "messages": [{"role": "system", "content": ANALYZE_SYSTEM}, {"role": "user", "content": payload}],
+            "response_format": {"type": "json_schema", "json_schema": {"name": "bottleneck_analysis", "strict": True, "schema": ANALYZE_SCHEMA}}}
+    t0 = time.time()
+    try:
+        d = _request("POST", OPENROUTER + "/chat/completions", key, body)
+        content = json.loads(d["choices"][0]["message"]["content"])
+        usage = d.get("usage") or {}
+        status, err = "ok", None
+    except Exception as e:  # noqa
+        content, usage, status, err = {"hypothesis": "", "confirm_by": "", "changes": [], "notes": ""}, {}, "error", str(e)[:500]
+    store.ex("INSERT INTO llm_calls(user_id, env_id, session_id, ts, model, prompt_hash, status, cached, latency_s, prompt_tokens, "
+             "completion_tokens, cost, response, error, context, purpose, signature) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             (user_id, env_id, session_id, time.time(), st["model"], h, status, 0, round(time.time() - t0, 2), usage.get("prompt_tokens"),
+              usage.get("completion_tokens"), usage.get("cost"), json.dumps(content), err, payload, "analyze", sig))
+    if status != "ok":
+        return {"enabled": True, "error": err, "changes": []}
     return {"enabled": True, "cached": False, "model": st["model"], "usage": usage, **content}
 
 

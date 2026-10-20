@@ -102,6 +102,7 @@ MIGRATIONS = [
     ("environments", "activity", "TEXT"),
     ("environments", "activity_at", "REAL"),
     ("llm_calls", "purpose", "TEXT"),
+    ("llm_calls", "signature", "TEXT"),
 ]
 
 

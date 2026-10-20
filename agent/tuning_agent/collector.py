@@ -231,9 +231,32 @@ def full_snapshot(db, device):
             d["SCHEMA_NAME"] = d.get("SCHEMA_NAME") or ""
             snap["digests"].append(d)
         snap["waits"] = db.waits()
+        snap["file_io"] = db.file_io()
         snap["wait_coverage"] = db.wait_coverage()
     snap["data_bytes"], snap["tables"] = db.table_sizes()
     return snap
+
+
+# file I/O by what it is for: data pages (read path vs flushing), doublewrite, redo, binlog, temporary files
+FILE_KINDS = (("innodb_data_file", "data"), ("innodb_dblwr_file", "doublewrite"), ("innodb_log_file", "redo"),
+              ("innodb_temp_file", "temp"), ("binlog", "binlog"), ("relaylog", "binlog"))
+
+
+def file_io_delta(a, b):
+    """{kind: {read_s, write_s, sync_s, reads, writes, syncs}} over the window (sync = fsync and other misc operations)."""
+    out = {}
+    for name, v in b.items():
+        v0 = a.get(name) or [0] * 6
+        d = [x - y for x, y in zip(v, v0)]
+        if any(x < 0 for x in d):
+            continue  # truncated
+        kind = next((k for pat, k in FILE_KINDS if pat in name), "other")
+        o = out.setdefault(kind, {"reads": 0, "read_s": 0.0, "writes": 0, "write_s": 0.0, "syncs": 0, "sync_s": 0.0})
+        o["reads"] += d[0]; o["read_s"] += d[1] / 1e12
+        o["writes"] += d[2]; o["write_s"] += d[3] / 1e12
+        o["syncs"] += d[4]; o["sync_s"] += d[5] / 1e12
+    return {k: {x: round(y, 4) if isinstance(y, float) else y for x, y in v.items()} for k, v in out.items()
+            if v["read_s"] + v["write_s"] + v["sync_s"] > 0}
 
 
 def db_wait_coverage(snap):
@@ -368,6 +391,7 @@ def analyze_window(a, b, samples):
         "checkpoint_age_pct_max": mx("db", "checkpoint_age_pct"),
         "bp_dirty_pct_avg": avg("db", "bp_dirty_pct"),
         "history_list_length_max": mx("db", "history_list_length"),
+        "ibuf_size_max": mx("db", "ibuf_size"),
         "tps_cv_pct": stdev_pct("db", "tps"),
         "cpu_busy": os_rates.get("cpu_busy"),
         "cpu_user": os_rates.get("cpu_user"),
@@ -447,6 +471,8 @@ def analyze_window(a, b, samples):
             by[r["class"]] = by.get(r["class"], 0) + r["time_s"]
         inputs["wait_classes"] = {k: round(v, 3) for k, v in sorted(by.items(), key=lambda x: -x[1])}
         inputs["wait_instruments"] = db_wait_coverage(b)
+    if a.get("file_io") and b.get("file_io"):
+        inputs["file_io"] = file_io_delta(a["file_io"], b["file_io"])
     # top statements in window
     if a.get("digests") is not None and b.get("digests"):
         prev = {(d["SCHEMA_NAME"], d["DIGEST"]): d for d in a["digests"]}

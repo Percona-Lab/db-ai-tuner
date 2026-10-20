@@ -1065,6 +1065,18 @@ def agent_llm_suggest(body: dict = Body(...), key=Depends(auth.agent_key)):
     return res
 
 
+@app.post("/api/v1/agent/llm/analyze")
+def agent_llm_analyze(body: dict = Body(...), key=Depends(auth.agent_key)):
+    s = agent_session(body.get("session_id"), key)
+    res = llm.analyze(key["user_id"], s["env_id"], s["id"], body.get("context") or {}, body.get("signature") or {})
+    if res.get("enabled") and not res.get("error"):
+        comp = (body.get("signature") or {}).get("component")
+        store.ex("INSERT INTO events(env_id, session_id, ts, type, message) VALUES (?,?,?,?,?)",
+                 (s["env_id"], s["id"], now(), "llm", f"{res.get('model')}: bottleneck analysis of {comp}: {len(res.get('changes') or [])} change(s)"
+                  + (f" (cached from session {res['cached_from']['session']})" if res.get("cached") else "")))
+    return res
+
+
 @app.get("/api/v1/agent/sessions/{sid}/experiments")
 def agent_experiments(sid: int, status: str = "queued", key=Depends(auth.agent_key)):
     agent_session(sid, key)

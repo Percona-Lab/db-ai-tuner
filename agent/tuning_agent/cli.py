@@ -673,6 +673,7 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
         a_snap["hist"] = [tuple(x) for x in a_snap["hist"]]
     a_snap["stmt"] = tuple(a_snap["stmt"]) if a_snap.get("stmt") else None
     a_snap["waits"] = {k: tuple(v) for k, v in (a_snap.get("waits") or {}).items()}
+    a_snap["file_io"] = {k: list(v) for k, v in (a_snap.get("file_io") or {}).items()}
     samples = SampleStore(c.state.dir).window(a_snap["t"], b_snap["t"])
     restarted = int(float(b_snap["status"].get("Uptime", 0))) < (b_snap["t"] - a_snap["t"])
     if restarted:
@@ -839,7 +840,7 @@ def _warmup(c, spec):
 
 
 def _maybe_profile(c, sess, prof, warmup_s):
-    """CPU profile for a slice of this run when the workload is CPU-bound and this configuration was not profiled yet.
+    """CPU profile for a slice of this run when this configuration was not profiled yet.
     agent.ini: cpu_profiling = auto (default) | always | off, profile_hz (49), profile_seconds (20)."""
     from . import cpuprof
     mode = str(c.cfg.get("cpu_profiling", "auto")).lower()
@@ -847,10 +848,8 @@ def _maybe_profile(c, sess, prof, warmup_s):
         return None
     key = evaluate.config_key({k: v["value"] for k, v in c.state.get("managed", {}).items()})
     done = sess.get("profiled_configs") or []
-    if mode == "auto":
-        runs = [x for x in sess.get("runs", []) if (x.get("summary") or {}).get("cpu_busy") is not None]
-        if not runs or runs[-1]["summary"]["cpu_busy"] < 60 or repr(key) in done:
-            return None
+    if mode == "auto" and repr(key) in done:  # once per configuration: where the CPU goes is part of every breakdown
+        return None
     if not cpuprof.ensure_perf(log):
         log("CPU profiling skipped: perf is not available")
         return None
@@ -861,6 +860,46 @@ def _maybe_profile(c, sess, prof, warmup_s):
     c.state.set("session", sess)
     log(f"   CPU profile: {secs}s at {p.hz} Hz at the end of the warm-up (outside the measured window)")
     return p
+
+
+OFFCPU_GAP = 30  # s between the end of the off-CPU slice and the CPU profile: bpftrace symbolises its maps at exit
+
+
+def _maybe_offcpu(c, sess, warmup_s, cpu_secs):
+    """Off-CPU profile (eBPF): what connection threads wait for, by stack, once per configuration. It runs before the CPU
+    profile so the two never overlap (kprobe overhead would show up as CPU). agent.ini: offcpu_profiling = auto | off,
+    offcpu_seconds (10)."""
+    from . import probes
+    if str(c.cfg.get("offcpu_profiling", "auto")).lower() == "off" or not probes.available():
+        return None
+    key = repr(evaluate.config_key({k: v["value"] for k, v in c.state.get("managed", {}).items()}))
+    if key in (sess.get("offcpu_configs") or []):
+        return None
+    secs = int(c.cfg.get("offcpu_seconds", 10))
+    end_before = (cpu_secs + 5 if cpu_secs else 0) + OFFCPU_GAP
+    if warmup_s < secs + end_before + 10:
+        return None
+    pid = hostinfo.mysqld_pid()
+    if not pid:
+        return None
+    o = probes.OffCpu(pid, secs, c.state.dir).start(delay=warmup_s - secs - end_before)
+    sess.setdefault("offcpu_configs", []).append(key)
+    c.state.set("session", sess)
+    log(f"   off-CPU profile: {secs}s, {end_before}s before the measured window")
+    return o
+
+
+def _finish_offcpu(o):
+    o.join(timeout=o.seconds + 900)
+    try:
+        res = o.result()
+    except Exception as e:  # never fail a run because of the profiler
+        return {"error": str(e)[:300]}
+    fg = res.get("foreground") or {}
+    if fg:
+        log("   off-CPU (connection threads): " + ", ".join(f"{k.replace('Waiting: ', '')} {v['threads']:.2f}" for k, v in list(fg.items())[:5]))
+    res["in_measured_window"] = False
+    return res
 
 
 def _start_probes(c, seconds):
@@ -971,7 +1010,7 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         prof.timeout += int(sess["run_seconds"]) - prof.duration
         prof.duration = int(sess["run_seconds"])
     r = bench.Running(prof.command(), logfile)
-    profiler = None
+    profiler = offcpu = None
     try:
         warm = warmup_override if warmup_override is not None else prof.warmup
         if str(warm) == "auto":
@@ -980,6 +1019,7 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
             waited = int(warm or 0)
             # CPU profile during the end of the warm-up: the load is already on, and the measured window stays untouched
             profiler = _maybe_profile(c, sess, prof, waited)
+            offcpu = _maybe_offcpu(c, sess, waited, profiler.seconds if profiler else 0)
             if waited:
                 log(f"warm-up {waited}s ...")
                 c.activity("warm-up", label, waited)
@@ -1039,6 +1079,8 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     extra = {"bench": {**prof.describe(), "requirements": requirements, "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:]}, "probe": env_probe}
     if profiler:
         extra["cpu_profile"] = _finish_profile(c, profiler, t_meas0)
+    if offcpu:
+        extra["offcpu"] = _finish_offcpu(offcpu)
     if probes:
         extra["probes"] = probes.result()
         nr = extra["probes"].get("name_resolution")
@@ -1455,6 +1497,31 @@ def _recommend(c, sess, llm=False):
             res["llm"] = {"model": model, "trigger": why, "cached": r.get("cached"), "notes": r.get("notes")}
         elif why != "routine" and r.get("reason"):
             res["llm"] = {"skipped": r.get("reason"), "trigger": why}
+    # measured time no candidate acts on: ask for a bottleneck analysis (hypothesis, changes, mechanism), cached by the
+    # conditions so similar situations reuse it
+    if ctx.get("summary"):
+        analyzed = set(sess.get("analyzed_components") or [])
+        for comp in llmassist.uncovered(res):
+            if comp["name"] in analyzed:
+                continue
+            try:
+                ra = c.client.post("/llm/analyze", {"session_id": sess["id"], "context": llmassist.analysis_context(ctx, res, comp),
+                                                     "signature": llmassist.signature(ctx, res, comp)})
+            except Exception as e:  # optional
+                ra = {"enabled": False, "reason": str(e)}
+            res.setdefault("analyses", []).append({"component": comp["name"], "share_pct": comp.get("share_pct"),
+                                                   **{k: ra.get(k) for k in ("enabled", "reason", "hypothesis", "confirm_by", "notes",
+                                                                             "cached", "cached_from", "model", "error")},
+                                                   "changes": len(ra.get("changes") or [])})
+            if not ra.get("enabled"):
+                break  # not configured or over the limit: nothing more to ask this round
+            analyzed.add(comp["name"])
+            if ra.get("error"):
+                continue
+            log(f"   bottleneck analysis of {comp['name']} ({comp.get('share_pct')}%)" + (" [cached from similar conditions]" if ra.get("cached") else "")
+                + f": {(ra.get('hypothesis') or '')[:200]}")
+            fresh += llmassist.analysis_suggestions(ra, comp)
+        sess["analyzed_components"] = sorted(analyzed)
     seen, allsg = set(), []
     for sg in fresh + pending:
         k = json.dumps(sorted((str(x.get("variable")), str(x.get("value"))) for x in sg.get("changes") or []))
@@ -1476,6 +1543,18 @@ def _recommend(c, sess, llm=False):
                     it["note"] = f"Validation only: {nomech}."
                     it.pop("sweep", None)
                     it["hypothesis"] = {"kind": "validation", "text": f"Validation only - {nomech}. (LLM suggestion: {sg.get('rationale') or it.get('title')})"}
+                    continue
+                an = sg.get("_analysis")
+                if an:  # from a bottleneck analysis: it targets one measured component
+                    it["acts_on_tags"] = an["tags"]
+                    it["addresses"] = [f"{an['component']} ({an.get('share_pct') or 0:.0f}%)"]
+                    cf = an.get("cached_from") or {}
+                    it["hypothesis"] = {"kind": "llm-analysis", "target": [an["component"]], "tags": an["tags"], "share_pct": an.get("share_pct"),
+                                        "text": f"{an['component']} takes {an.get('share_pct') or 0:.0f}% of database time and no rule acts on it. "
+                                                f"Hypothesis ({sg.get('_model') or model}{', reused from similar conditions in session ' + str(cf.get('session')) if cf else ''}): "
+                                                f"{an.get('hypothesis') or ''} Mechanism: {sg.get('mechanism') or ''} "
+                                                f"{'Precondition: ' + an['precondition'] + ' ' if an.get('precondition') else ''}"
+                                                f"Prediction: {an.get('confirm_by') or 'this component shrinks per transaction'}"}
                     continue
                 it["hypothesis"] = {"kind": "llm", "text": f"LLM ({sg.get('_model') or model}): {sg.get('rationale') or it.get('title')}"
                                     + (f" Mechanism: {sg['mechanism']}" if sg.get("mechanism") else "")}
@@ -1507,7 +1586,8 @@ def _recommend(c, sess, llm=False):
     run_id = sess["runs"][-1]["id"] if sess["runs"] else None
     r = c.client.post("/recommendations", {"session_id": sess["id"], "run_id": run_id, "goal": sess["goal"], "policy": sess["policy"],
                                            "items": res["items"], "diagnosis": res["diagnosis"], "next": res["next"],
-                                           "workload": res.get("workload"), "phase": res.get("phase"), "llm": res.get("llm")})
+                                           "workload": res.get("workload"), "phase": res.get("phase"),
+                                           "llm": dict(res.get("llm") or {}, **({"analyses": res["analyses"]} if res.get("analyses") else {})) or None})
     sess["last_recommendation"] = {"id": r.get("recommendation_id"), "items": res["items"], "next": res["next"]}
     c.state.set("session", sess)
     return res
@@ -1808,6 +1888,12 @@ def cmd_autotune(a):
         c.state.set("session", sess)
     if a.tradeoffs and sess["policy"] != "benchmark":
         raise Fail("--tradeoffs needs a session with --policy benchmark")
+    if str(c.cfg.get("debug_symbols", "auto")).lower() != "off":
+        from . import probes
+        try:
+            probes.ensure_debug_symbols(log)
+        except Exception as e:  # profiles still work with exported symbols
+            log(f"debug symbols: {e}")
     if "filesystem" in (sess.get("scope") or []) and c.all_settings().get("os:datadir_fs") == "rootfs":
         log("== scope includes filesystem: moving the data directory to ext4 on the experiment device first (fair baseline)")
         _apply_and_record(c, [{"variable": "os:datadir_fs", "value": "ext4", "reason": "filesystem scope: common baseline device",

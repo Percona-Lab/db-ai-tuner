@@ -176,10 +176,24 @@ def missing_for_variables(changes, summary, rates=None, inputs=None):
     return "; ".join(why) or None
 
 
+# Mechanisms whose activity a counter shows directly (evidence, not a threshold: the thing exists or it does not)
+def _no_ibuf(s):
+    if "ibuf_size_max" not in s:
+        return None  # not measured: cannot rule it out
+    return None if s["ibuf_size_max"] > 0 else "the change buffer held no pages in the window (InnoDB status): disabling it changes nothing"
+
+
+COUNTER_PRECONDITIONS = {"change-buffer-off": _no_ibuf}
+
+
 def missing_mechanism(item_id, summary, changes=None, rates=None, inputs=None):
     """Why the change has nothing to act on in this workload (None = it has)."""
     if summary is None:
         return None
+    if item_id in COUNTER_PRECONDITIONS:
+        why = COUNTER_PRECONDITIONS[item_id](summary)
+        if why:
+            return why
     if changes is not None and item_id not in WRITES | READS | ANY_IO:
         return missing_for_variables(changes, summary, rates, inputs)
     a = activity(summary)

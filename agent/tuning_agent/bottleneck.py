@@ -49,7 +49,11 @@ WAIT_PARTS = {
 
 # bottleneck types the breakdown can measure; other diagnoses (network backlog, flush pressure, memory / swap, redo
 # capacity, ...) keep counting through the diagnosis
-TAGS = {t for _, ts in list(CPU_PARTS.values()) + list(WAIT_PARTS.values()) for t in ts} | {"sched-delay", "cpu-pressure", "locks", "dns"}
+from .probes import OFFCPU_CATEGORIES  # noqa: E402
+
+OFFCPU_TAGS = [(c, t) for c, t, _, _ in OFFCPU_CATEGORIES] + [("Waiting: page fault / swap-in", ("memory", "swap")),
+                                                                ("Waiting: client (next statement)", ("network",))]
+TAGS = {t for _, ts in list(CPU_PARTS.values()) + list(WAIT_PARTS.values()) + OFFCPU_TAGS for t in ts} | {"sched-delay", "cpu-pressure", "locks", "dns"}
 
 
 def breakdown(summary, inputs, cpus):
@@ -79,15 +83,36 @@ def breakdown(summary, inputs, cpus):
             add("CPU (not profiled)", on_cpu + queue, ("cpu",), "mysqld CPU time (running + waiting for a CPU)")
     else:
         add("Waiting for a CPU (run queue)", queue, ("sched-delay", "cpu-pressure"), "scheduler statistics")
-    if dur:
-        for cls, sec in (inp.get("wait_classes") or {}).items():
-            if cls in WAIT_PARTS:
-                name, tags = WAIT_PARTS[cls]
-                add(name, sec / dur, tags, "performance_schema waits (incl. background threads)")
     nr = ((inp.get("probes") or {}).get("name_resolution") or {})
+    fg = offcpu_foreground(inp)
+    if fg:
+        # every blocked moment of the connection threads, classified by where they blocked: replaces the
+        # performance_schema wait classes and row lock counters (which miss uninstrumented waits)
+        for cat, c in fg.items():
+            if "dns" in c.get("tags", ()) and nr:
+                continue  # the uprobes cover the whole measured window, the off-CPU slice only a part
+            add(cat, c.get("threads") or 0, c.get("tags") or (), "eBPF off-CPU profile of connection threads (end of warm-up)")
+    else:
+        fio = inp.get("file_io") or {}
+        split = {"data_io", "redo_io", "binlog_io"} if fio else set()
+        if dur and fio:
+            # performance_schema file summaries split the file I/O wait time by operation: reads of data pages are the
+            # read path, data / doublewrite writes and their fsyncs are flushing, redo and binlog writes + fsyncs commit
+            for name, tags, secs in (
+                    ("Waiting: data file reads", ("io", "io-read"), _fs(fio, "data", "read_s")),
+                    ("Waiting: data file writes / fsync (flushing)", ("io", "io-flush"),
+                     _fs(fio, "data", "write_s", "sync_s") + _fs(fio, "doublewrite", "write_s", "sync_s", "read_s")),
+                    ("Waiting: redo log writes / fsync (commit)", ("commit",), _fs(fio, "redo", "write_s", "sync_s", "read_s")),
+                    ("Waiting: binary log writes / fsync (commit)", ("commit",), _fs(fio, "binlog", "write_s", "sync_s", "read_s"))):
+                add(name, secs / dur, tags, "performance_schema file I/O by operation (incl. background threads)")
+        if dur:
+            for cls, sec in (inp.get("wait_classes") or {}).items():
+                if cls in WAIT_PARTS and cls not in split:
+                    name, tags = WAIT_PARTS[cls]
+                    add(name, sec / dur, tags, "performance_schema waits (incl. background threads)")
+        lw, lms = s.get("row_lock_waits") or 0, s.get("row_lock_wait_avg_ms") or 0
+        add("Waiting: row locks", lw * lms / 1000.0, ("locks",), "InnoDB row lock counters")
     add("Connection setup: name resolution (DNS)", nr.get("threads") or 0, ("dns",), "eBPF uprobes on libc getnameinfo / getaddrinfo")
-    lw, lms = s.get("row_lock_waits") or 0, s.get("row_lock_wait_avg_ms") or 0
-    add("Waiting: row locks", lw * lms / 1000.0, ("locks",), "InnoDB row lock counters")
     tot = sum(p["threads"] for p in parts)
     if not tot:
         return []
@@ -104,11 +129,42 @@ def breakdown(summary, inputs, cpus):
     return out
 
 
+def _fs(fio, kind, *keys):
+    return sum((fio.get(kind) or {}).get(k, 0) for k in keys)
+
+
+def offcpu_foreground(inputs):
+    """{category: {threads, seconds, tags}} of the connection threads' off-CPU time, or {} when not measured."""
+    o = (inputs or {}).get("offcpu") or {}
+    return {} if o.get("error") else (o.get("foreground") or {})
+
+
+SPECIFIC = {"io": {"io-read", "io-flush", "commit", "redo"},
+            "cpu": {"cpu-spin", "cpu-allocator", "cpu-pfs", "cpu-parse", "cpu-futex", "cpu-mm", "cpu-network"}}
+
+
+def specific(relieves, parts):
+    """A change that names a specific kind (io-read, cpu-pfs, ...) acts on that kind, not on all I/O or all CPU - as soon
+    as the breakdown measures that family separately (a CPU profile, file I/O split by operation, an off-CPU profile)."""
+    rel = set(relieves)
+    measured = {t for p in parts for t in p["tags"]}
+    for generic, kinds in SPECIFIC.items():
+        if generic in rel and rel & kinds and measured & kinds:
+            rel.discard(generic)
+    return rel
+
+
+def acted_on(relieves, parts):
+    """Components (with time) a change with these relieved tags acts on."""
+    rel = specific(relieves, parts)
+    return [p for p in parts if rel & set(p["tags"]) and "network" not in p["tags"] and p.get("threads", 0) > 0]
+
+
 def relevance(relieves, parts):
     """(0..3, matched component names): the share of database time a change can act on."""
     if not parts:
         return None, []
-    rel = set(relieves)
+    rel = specific(relieves, parts)
     hit = [p for p in parts if rel & set(p["tags"]) and "network" not in p["tags"]]
     share = sum(p["share_pct"] for p in hit)
     score = 3 if share >= 30 else 2 if share >= 15 else 1 if share >= 5 else 0
