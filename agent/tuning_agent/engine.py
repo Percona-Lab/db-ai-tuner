@@ -412,8 +412,9 @@ def recommend(ctx):
         b.add("purge-lag", "Throttle DML when purge falls behind", [("innodb_max_purge_lag", str(max(200000, int(hll * 0.8)))),
                                                                      ("innodb_max_purge_lag_delay", "1000000")],
               f"History list peaked at {hll:,.0f} undo records: purge cannot keep up, so reads walk ever longer version chains. "
-              "A purge lag limit slows writers slightly to keep history bounded (Percona / Mark Callaghan insert-benchmark advice). "
+              "A purge lag limit slows writers slightly to keep history bounded. "
               "Experiment: it trades write throughput for stable read latency.", {"history_list_length_max": hll}, impact=1, confidence=1)
+        b.items[-1]["lead"] = "Practitioners report it for insert-heavy benchmarks; unverified here."
     if have_run and v.get("log_bin") == "ON" and _int(v, "binlog_transaction_dependency_history_size", 25000) > 1000 and (s.get("cpu_busy") or 0) >= 80 \
             and wtype in ("oltp-write", "mixed") and "binlog_transaction_dependency_history_size" in v:
         b.add("writeset-history", "Smaller WRITESET dependency history", [("binlog_transaction_dependency_history_size", "1000")],
@@ -634,9 +635,10 @@ def recommend(ctx):
         if cb == "none" and (s.get("bp_hit_pct") or 100) < 99.5 and writes > 50:
             b.add("change-buffer", "Buffer secondary index changes", [("innodb_change_buffering", "all")],
                   "Write-heavy workload whose secondary-index pages are often not in memory: the change buffer defers those reads "
-                  "(Mark Callaghan measured 0.48x throughput without it on an I/O-bound insert benchmark). MySQL 8.4 disables it by "
-                  "default (merge work, slower crash recovery). Experiment.",
+                  f"({(s.get('bp_hit_pct') or 0):.2f}% buffer pool hit ratio, {writes:.0f} row changes/s), at the cost of merge work and "
+                  "slower crash recovery. Experiment.",
                   {"bp_hit_pct": s.get("bp_hit_pct"), "writes_per_s": round(writes, 1)}, impact=2, confidence=1)
+            b.items[-1]["lead"] = "Published benchmarks report a large loss without it on I/O-bound inserts; our own A/B measured about -23% (cold regime). Unverified for this workload."
         elif cb and cb != "none" and writes > 50:
             b.add("change-buffer-off", "Disable change buffering", [("innodb_change_buffering", "none")],
                   f"Write-heavy workload with change buffering '{cb}' (9.7 default): merges of buffered secondary-index changes compete "
@@ -852,12 +854,14 @@ def recommend(ctx):
                   impact=2, confidence=2)
 
     # ---------------- sweeps: measure several values where a single step is a guess ----
-    def sweep(id_, title, var, values, rationale, evidence, impact=2):
+    def sweep(id_, title, var, values, rationale, evidence, impact=2, lead=None):
         values = [x for x in dict.fromkeys(values) if x is not None and normalize(var, x) != normalize(var, v.get(var))]
         if var in v and len(values) >= 2:
             b.add(id_, title, [(var, values[0])], rationale + f" Values: {', '.join(map(str, values))}.", evidence, impact=impact, confidence=2)
             if b.items and b.items[-1]["id"] == id_:
                 b.items[-1]["sweep"] = {"variable": var, "values": [str(x) for x in values]}
+                if lead:
+                    b.items[-1]["lead"] = lead
     diag_types = {d["type"] for d in ctx.get("diagnosis") or [] if d.get("severity") in ("high", "medium")}
     # Memory overcommit with swap: when the working set misses memory and RAM is used up, a larger buffer pool can win
     # even if cold memory (idle processes, unused allocations) moves to swap: the cache saves more reads than swap costs.
@@ -900,9 +904,11 @@ def recommend(ctx):
     write_heavy = wtype in ("oltp-write", "mixed")
     if have_run and io_bound and write_heavy and "innodb_max_dirty_pages_pct_lwm" in v:
         sweep("sweep-dirty-lwm", "Sweep the dirty-page low-water mark", "innodb_max_dirty_pages_pct_lwm", ["0", "30", "80"],
-              "Two schools: Percona sets the pre-flush low-water mark to 0, Mark Callaghan runs 80 so dirty pages absorb more "
-              "updates before being written (write combining). Which wins depends on the update locality of the workload.",
-              {"bp_dirty_pct_avg": s.get("bp_dirty_pct_avg"), "checkpoint_age_pct_max": ck}, impact=2)
+              f"Dirty pages averaged {s.get('bp_dirty_pct_avg') or 0:.0f}% and checkpoint age peaked at {ck:.0f}%. The low-water mark sets when "
+              "background flushing starts: lower writes pages earlier (smoother, less checkpoint pressure), higher lets hot pages absorb "
+              "more updates per write (less write I/O). The better side depends on update locality, so it is measured, not assumed.",
+              {"bp_dirty_pct_avg": s.get("bp_dirty_pct_avg"), "checkpoint_age_pct_max": ck}, impact=2,
+              lead="Practitioners run opposite settings (0 vs 80) and each reports a win; unverified here, it only motivates the test.")
     wait_free = rates.get("Innodb_buffer_pool_wait_free", 0)
     if have_run and io_bound and "innodb_lru_scan_depth" in v and (wait_free > 0 or write_heavy):
         lru = _int(v, "innodb_lru_scan_depth", 1024)
@@ -947,8 +953,9 @@ def recommend(ctx):
         vals = [str(pt * 2), "8", "1"] if hll_max > 300000 else [x for x in ("1", "8") if x != str(pt)] + [str(pt * 2)]
         sweep("sweep-purge-threads", "Sweep purge threads", "innodb_purge_threads", vals,
               f"Undo history reached {hll_max:,.0f} entries with {pt} purge thread(s). More purge threads help large I/O-bound boxes "
-              "and hurt small CPU-bound ones (opposite results in Mark Callaghan's benchmarks): measure.",
-              {"history_list_length_max": hll_max}, impact=3 if hll_max > 1000000 else 2 if hll_max > 300000 else 1)
+              "and hurt small CPU-bound ones: the direction depends on the machine, so it is measured.",
+              {"history_list_length_max": hll_max}, impact=3 if hll_max > 1000000 else 2 if hll_max > 300000 else 1,
+              lead="Published results disagree between large and small machines; unverified here.")
     if have_run and ck >= 75 and _on(v, "innodb_flush_sync"):
         b.add("flush-sync-off", "Respect io_capacity_max during sync flushing", [("innodb_flush_sync", "OFF")],
               f"Checkpoint age reached {ck:.0f}%: InnoDB then flushes as fast as it can, ignoring io_capacity_max and starving reads. "
@@ -958,8 +965,9 @@ def recommend(ctx):
         bpi = _int(v, "innodb_buffer_pool_instances", 8)
         if bpi < 32:
             sweep("sweep-bp-instances", "Sweep buffer pool instances", "innodb_buffer_pool_instances", [str(x) for x in (16, 32) if x > bpi],
-                  f"{cpus} CPUs: more buffer pool instances split the LRU/free-list mutexes (Vadim Tkachenko's 64-instance result, "
-                  "Mark Callaghan's many-core configs). Needs a restart.", {"innodb_buffer_pool_instances": bpi}, impact=1)
+                  f"{cpus} CPUs with {bpi} buffer pool instance(s) and contention/CPU/I-O pressure diagnosed: more instances split the LRU and "
+                  "free-list mutexes. Needs a restart.", {"innodb_buffer_pool_instances": bpi}, impact=1,
+                  lead="Reported to help on many-core servers; unverified here.")
     if have_run and "cpu-spin" in diag_types and "innodb_spin_wait_delay" in v:
         sweep("sweep-spin-wait-delay", "Sweep the spin-wait delay", "innodb_spin_wait_delay", ["2", "12", "24"],
               "The CPU profile shows threads spinning on InnoDB latches. The pause between spin rounds trades CPU for wake-up latency; "
@@ -1346,6 +1354,13 @@ def _breaks_requirement(it, requires):
 
 def hypothesis(it, ctx):
     """Why the tuner wants to test this change, stated as a testable claim about the last run."""
+    h = _hypothesis(it, ctx)
+    if it.get("lead"):  # outside reports only motivate a test; the claim stays what this run's measurements say
+        h["lead"] = it["lead"]
+    return h
+
+
+def _hypothesis(it, ctx):
     first = (it.get("rationale") or "").split(". ")[0].strip().rstrip(".")
     if it["kind"] == "revert":
         return {"text": f"{it.get('title')}: {first}.", "kind": "revert"}
