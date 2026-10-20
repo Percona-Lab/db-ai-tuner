@@ -89,3 +89,11 @@ def agent_key(request: Request):
     if not r["last_used"] or now - r["last_used"] > 60:
         store.ex("UPDATE api_keys SET last_used=? WHERE id=?", (now, r["id"]))
     return dict(r)
+
+
+def require_admin(request: Request):
+    """Administrators only (users.is_admin): cross-account views such as the learned tuning experience."""
+    u = current_user(request)
+    if u.get("share") or not u.get("is_admin"):
+        raise HTTPException(403, "administrators only")
+    return u

@@ -73,7 +73,7 @@ function setNav(active) {
   }
   document.body.classList.remove("ro");
   nav.innerHTML = `<a href="#/" class="${active === "envs" ? "on" : ""}">Environments</a><a href="#/studies" class="${active === "studies" ? "on" : ""}">Studies</a><a href="#/connect" class="${active === "connect" ? "on" : ""}">Connect agent</a>` +
-    `<a href="#/policies" class="${active === "policies" ? "on" : ""}">Policies</a><a href="#/account" class="${active === "account" ? "on" : ""}">Account</a><span class="right">${esc(ME.email)}</span><a href="#" id="logout">Log out</a>`;
+    `<a href="#/policies" class="${active === "policies" ? "on" : ""}">Policies</a>${ME.is_admin ? `<a href="#/learning" class="${active === "learning" ? "on" : ""}">Learning</a>` : ""}<a href="#/account" class="${active === "account" ? "on" : ""}">Account</a><span class="right">${esc(ME.email)}</span><a href="#" id="logout">Log out</a>`;
   document.getElementById("logout").onclick = async e => { e.preventDefault(); await api("/api/auth/logout", { method: "POST", body: {} }); ME = null; location.hash = "#/"; };
 }
 
@@ -355,6 +355,35 @@ tuning-agent session stop</code></pre>
     sessionStorage.setItem("newkey", r.api_key); connectPage();
   };
   window.addEventListener("hashchange", () => sessionStorage.removeItem("newkey"), { once: true });
+}
+
+// ------------------------------------------------------------------ learning (admin)
+async function learningPage() {
+  setNav("learning");
+  if (!ME.is_admin) { $view.innerHTML = '<p class="muted">Administrators only.</p>'; return; }
+  const d = await api("/api/admin/learning");
+  const st = (sessions) => sessions.map(s => `<a href="#/session/${s}">#${s}</a>`).join(" ");
+  const pct = v => v == null ? "" : (v > 0 ? "+" : "") + v + "%";
+  const filt = (() => { try { return sessionStorage.getItem("learnFilter") || ""; } catch (x) { return ""; } })();
+  const ex = d.experience.filter(e => !filt || (e.idea + " " + e.workload).toLowerCase().includes(filt.toLowerCase()));
+  let h = `<h1>Learning${info("What the tuner has learned across all sessions and accounts. Agents receive the part that matches their own account and conditions (workload type, CPU class, concurrency class) to rank experiments; ideas that keep losing in comparable sessions are tried last. Hypothesis outcomes per targeted component set how credible an idea is for a given bottleneck. Bottleneck analyses are reused for similar conditions. Snapshots freeze this view as a downloadable file.")}</h1>
+  <p class="muted">${d.runs} measured runs behind it.</p>
+  <h3>Snapshots${info("A frozen copy of this page's data, kept in the database and downloadable as JSON - for example before the database is reset.")}</h3>
+  <div class="card"><div class="row"><input id="snapLabel" placeholder="label (e.g. before reset 2026-10-20)" style="flex:1"><button class="btn" id="snapNow">Save snapshot</button></div>
+  ${d.snapshots.length ? `<table style="margin-top:8px"><tbody>${d.snapshots.map(x => `<tr><td>#${x.id}</td><td>${esc(x.label || "")}</td><td class="muted">${new Date(x.created * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC</td><td class="num">${x.runs} runs</td><td><a href="/api/admin/learning/snapshots/${x.id}">download</a></td></tr>`).join("")}</tbody></table>` : ""}</div>
+  <h3>Experience by idea and conditions${info("Each experiment is counted for the rule (idea) that proposed it, in the conditions of its run. wins = improved or efficiency gain; losses = regressed or efficiency loss; mean delta = average goal change against the parent configuration.")}</h3>
+  <div class="row" style="margin-bottom:6px"><input id="learnFilter" placeholder="filter by idea or workload" value="${esc(filt)}" style="max-width:320px"></div>
+  <div class="card tablewrap"><table><thead><tr><th>Idea</th><th>Workload</th><th>CPUs</th><th>Connections</th><th class="num">n</th><th class="num">wins</th><th class="num">losses</th><th class="num">neutral</th><th class="num">mean Δ</th><th>Sessions</th></tr></thead><tbody>
+  ${ex.map(e => `<tr><td class="mono">${esc(e.idea)}</td><td>${esc(e.workload)}</td><td>${esc(e.cpu_class)}</td><td>${esc(e.concurrency_class)}</td><td class="num">${e.n}</td><td class="num">${e.wins}</td><td class="num">${e.losses}</td><td class="num">${e.neutral}</td><td class="num">${pct(e.mean_delta_pct)}</td><td style="font-size:12px">${st(e.sessions.slice(-8))}${e.sessions.length > 8 ? " …" : ""}</td></tr>`).join("")}</tbody></table></div>
+  <h3>Hypothesis track record${info("For each idea and the component of database time it targeted: supported = goal improved and the targeted time shrank; moved = the targeted time shrank but the goal did not move (that component was not the limit); refuted = neither; improved by another mechanism = goal improved but not through the targeted time.")}</h3>
+  <div class="card tablewrap"><table><thead><tr><th>Idea</th><th>Targeted component</th><th class="num">n</th><th class="num">supported</th><th class="num">moved</th><th class="num">refuted</th><th class="num">other mechanism</th></tr></thead><tbody>
+  ${d.hypotheses.map(x => `<tr><td class="mono">${esc(x.id)}</td><td>${esc(x.target)}</td><td class="num">${x.n}</td><td class="num">${x.supported}</td><td class="num">${x.moved}</td><td class="num">${x.refuted}</td><td class="num">${x["improved-other-mechanism"] || 0}</td></tr>`).join("") || '<tr><td colspan="7" class="muted">none yet</td></tr>'}</tbody></table></div>
+  <h3>Bottleneck analyses (LLM)${info("Analyses of measured components no rule acted on, cached by the conditions they were made in (server version, component, top stack frames, workload, goal, hardware class, commit / flush settings) and reused for similar conditions.")}</h3>
+  ${d.llm_analyses.map(a => `<div class="card" style="margin-bottom:8px"><b>${esc(a.component || "?")}</b> <span class="muted">first in <a href="#/session/${a.first_session}">#${a.first_session}</a>, used ${a.uses}x (${a.reuses} reused), ${esc(a.model || "")}</span>${info("Conditions: " + esc(JSON.stringify(a.conditions)) + (a.frames && a.frames.length ? ". Frames: " + esc(a.frames.join(" < ")) : ""))}
+    <p style="margin:6px 0">${esc(a.hypothesis || "")}</p>${a.changes.length ? `<ul style="margin:4px 0 0 18px">${a.changes.map(c => `<li>${esc(c.title || "")}: <span class="mono">${esc((c.changes || []).map(x => x.variable + "=" + x.value).join(", "))}</span> - ${esc(c.mechanism || "")}</li>`).join("")}</ul>` : '<p class="muted" style="margin:0">no configuration change proposed</p>'}</div>`).join("") || '<p class="muted">none yet</p>'}`;
+  $view.innerHTML = h;
+  document.getElementById("learnFilter").onchange = e => { try { sessionStorage.setItem("learnFilter", e.target.value); } catch (x) { } learningPage(); };
+  document.getElementById("snapNow").onclick = async () => { await api("/api/admin/learning/snapshots", { method: "POST", body: { label: document.getElementById("snapLabel").value } }); learningPage(); };
 }
 
 async function policiesPage() {
@@ -1234,6 +1263,7 @@ async function route() {
     if (parts[0] === "connect") return await connectPage();
     if (parts[0] === "account") return await accountPage();
     if (parts[0] === "policies") return await policiesPage();
+    if (parts[0] === "learning") return await learningPage();
     if (parts[0] === "env") return await envPage(+parts[1]);
     if (parts[0] === "studies") return await studiesPage();
     if (parts[0] === "study") return await studyPage(+parts[1]);

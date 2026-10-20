@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY, env_id INTEGER NOT NULL, session_id INTEGER, ts REAL NOT NULL, type TEXT, message TEXT, data TEXT);
 CREATE INDEX IF NOT EXISTS events_env ON events(env_id, ts);
 CREATE INDEX IF NOT EXISTS events_session ON events(session_id, ts);
+CREATE TABLE IF NOT EXISTS learning_snapshots (
+  id INTEGER PRIMARY KEY, created REAL NOT NULL, created_by INTEGER, label TEXT, runs INTEGER, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS llm_calls (
   id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, env_id INTEGER, session_id INTEGER, ts REAL NOT NULL, model TEXT, prompt_hash TEXT,
   status TEXT, cached INTEGER DEFAULT 0, latency_s REAL, prompt_tokens INTEGER, completion_tokens INTEGER, cost REAL, response TEXT, error TEXT);
@@ -103,6 +105,7 @@ MIGRATIONS = [
     ("environments", "activity_at", "REAL"),
     ("llm_calls", "purpose", "TEXT"),
     ("llm_calls", "signature", "TEXT"),
+    ("users", "is_admin", "INTEGER DEFAULT 0"),
 ]
 
 

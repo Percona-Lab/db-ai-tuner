@@ -312,7 +312,7 @@ def me(request: Request):
         return {"user": {"email": "shared view", "name": None, "share": {"kind": sh["kind"], "id": sh["object_id"],
                                                                          "name": obj["name"] if obj else None, "label": sh["label"]}},
                 "server": PUBLIC_URL}
-    return {"user": {"id": u["id"], "email": u["email"], "name": u["name"]}, "server": PUBLIC_URL}
+    return {"user": {"id": u["id"], "email": u["email"], "name": u["name"], "is_admin": bool(u.get("is_admin"))}, "server": PUBLIC_URL}
 
 
 @app.post("/api/auth/password")
@@ -1021,6 +1021,74 @@ def agent_experience(workload: str = None, cpus: int = None, conns: int = None, 
             e["mean_delta_pct"] = round(sum(x) / len(x), 2) if x else None
     return {"workload": workload, "cpu_class": cpu_class(cpus) if cpus else None, "concurrency_class": conc_class(conns) if conns else None,
             "experience": out, "experience_all": wide, "hypotheses": list(hyp.values()), "hypotheses_all": list(hyp_wide.values())}
+
+
+def learning_data():
+    """Everything the tuner has learned across sessions (all accounts): outcomes of each idea by workload, CPU class
+    and concurrency class; hypothesis outcomes by the component they targeted; cached LLM bottleneck analyses. This is
+    what agents receive (per account) through /experience; here it is shown whole for review."""
+    rows = store.q(
+        "SELECT r.changes, r.verdict, r.evaluation, json_extract(r.inputs, '$.workload.type') AS wl, "
+        "json_extract(e.facts, '$.hardware.cpus') AS cpus, json_extract(r.summary, '$.threads_connected_avg') AS conns, r.session_id "
+        "FROM runs r JOIN tsessions s ON s.id=r.session_id JOIN environments e ON e.id=s.env_id WHERE r.status='done' AND r.verdict IN "
+        "('improved','efficiency-gain','neutral','regressed','efficiency-loss')")
+    ctx, hyp = {}, {}
+    sessions = {}
+    for r in rows:
+        key = (r["wl"] or "-", cpu_class(r["cpus"]) if r["cpus"] else "-", conc_class(r["conns"]) if r["conns"] else "-")
+        d = ctx.setdefault(key, {})
+        before = {k: v["n"] for k, v in d.items()}
+        _experience_add(d, r)
+        for rid, e in d.items():
+            if e["n"] != before.get(rid, 0):
+                sessions.setdefault((key, rid), set()).add(r["session_id"])
+        _hypothesis_add(hyp, r)
+    experience = []
+    for (wl, cc, kc), d in ctx.items():
+        for rid, e in d.items():
+            x = e["deltas"]
+            experience.append({"idea": rid, "workload": wl, "cpu_class": cc, "concurrency_class": kc, "n": e["n"], "wins": e["wins"],
+                               "losses": e["losses"], "neutral": e["neutral"], "mean_delta_pct": round(sum(x) / len(x), 2) if x else None,
+                               "sessions": sorted(sessions.get(((wl, cc, kc), rid), ()))})
+    experience.sort(key=lambda e: (e["idea"], -e["n"]))
+    an = store.q("SELECT prompt_hash, MIN(id) first_id, MIN(session_id) first_session, COUNT(*) uses, SUM(cached) reuses, "
+                 "MAX(signature) signature, MAX(CASE WHEN cached=0 THEN response END) response, MAX(model) model "
+                 "FROM llm_calls WHERE purpose='analyze' AND status='ok' GROUP BY prompt_hash ORDER BY first_id")
+    analyses = []
+    for a in an:
+        resp, sig = store.uj(a["response"], {}) or {}, store.uj(a["signature"], {}) or {}
+        analyses.append({"component": sig.get("component"), "conditions": {k: sig.get(k) for k in ("flavor", "version", "workload", "goal", "cpus", "disk", "settings")},
+                         "frames": sig.get("frames"), "hypothesis": resp.get("hypothesis"), "confirm_by": resp.get("confirm_by"),
+                         "changes": [{"title": c.get("title"), "changes": c.get("changes"), "mechanism": c.get("mechanism")} for c in resp.get("changes") or []],
+                         "model": a["model"], "first_session": a["first_session"], "uses": a["uses"], "reuses": a["reuses"] or 0})
+    return {"runs": len(rows), "experience": experience, "hypotheses": sorted(hyp.values(), key=lambda h: (h["id"], -h["n"])),
+            "llm_analyses": analyses}
+
+
+@app.get("/api/admin/learning")
+def admin_learning(request: Request):
+    auth.require_admin(request)
+    d = learning_data()
+    d["snapshots"] = [dict(r) for r in store.q("SELECT id, created, label, runs FROM learning_snapshots ORDER BY id DESC")]
+    return d
+
+
+@app.post("/api/admin/learning/snapshots")
+def admin_learning_snapshot(request: Request, body: dict = Body(default={})):
+    u = auth.require_admin(request)
+    d = learning_data()
+    sid = store.ex("INSERT INTO learning_snapshots(created, created_by, label, runs, data) VALUES (?,?,?,?,?)",
+                   (now(), u["id"], (body.get("label") or "")[:200], d["runs"], json.dumps(d)))
+    return {"id": sid, "runs": d["runs"]}
+
+
+@app.get("/api/admin/learning/snapshots/{sid}")
+def admin_learning_snapshot_get(sid: int, request: Request):
+    auth.require_admin(request)
+    r = store.q1("SELECT * FROM learning_snapshots WHERE id=?", (sid,))
+    if not r:
+        raise HTTPException(404, "no such snapshot")
+    return JSONResponse(json.loads(r["data"]), headers={"Content-Disposition": f'attachment; filename="aituner-learning-{sid}.json"'})
 
 
 def _hypothesis_add(out, r):
