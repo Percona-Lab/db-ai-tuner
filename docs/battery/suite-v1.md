@@ -12,11 +12,19 @@ cell.
 | Dimension | Levels |
 |---|---|
 | Workload | OLTP read-only, OLTP read-write, write-intensive ingest, key-value / many small queries, analytical, mixed (HTAP) |
-| Data : RAM | in memory (≈0.25x), boundary (≈1x), I/O-bound (≈2–3x), heavy I/O (≈10x) |
+| Data : RAM | ≈0.25x, ≈1x, ≈2–3x, ≈10x - a size, not a bottleneck class |
+| Access distribution | uniform, zipfian / pareto (hot set), special (sysbench default) |
+| Write intensity | read-only, mixed, update-only / insert-only |
 | Concurrency | 1 stream (analytics), 16, 64, 256, 1024, 4096 connections |
 | Topology | single server with a co-located client (most cells); client-server (all high-concurrency cells) |
 | Statement shape | many small statements (point selects, TATP, YCSB) vs complex queries (TPC-H, JOB, CH) |
 | Goal | throughput for most cells; tail latency for one OLTP cell; total query time for analytical cells |
+
+**Data size does not decide the bottleneck.** 10x data with a skewed access pattern can be CPU-bound (the hot set fits
+in memory). A data set that fits in memory can be I/O-bound when writes are intensive enough: uniform update-only
+sysbench is bound by flushing and redo. Each cell's "Exercises" column is the expectation it was chosen for. The
+bottleneck is what the run measures (time breakdown, diagnosis), recorded per cell in the scorecard. A cell whose
+measured bottleneck differs from its expectation stays in the suite, because that is a finding.
 
 ## Hardware classes
 
@@ -35,17 +43,19 @@ Core cells run at every engine milestone. Extended cells run before a release, o
 
 ### Single server (class S, client co-located)
 
-| ID | Tier | Benchmark | Data : RAM | Conc. | Goal | Exercises |
+| ID | Tier | Benchmark | Data : RAM | Conc. | Goal | Expected to exercise (to be confirmed by measurement) |
 |---|---|---|---|---|---|---|
 | RO-1 | core | sysbench oltp_point_select, 16 x 1M | 0.25x | 64 | tps | CPU path: performance_schema, AHI, allocator, spin |
 | RO-2 | core | sysbench oltp_read_only, 32 x 4M | 3x | 64 | tps | read I/O: buffer pool, read-ahead, I/O threads; flushing settings must be validation-only |
-| RO-3 | ext | sysbench oltp_read_only, pareto, 64 x 8M | 10x | 16 | tps | heavy random reads, low concurrency |
+| RO-3 | ext | sysbench oltp_read_only, uniform, 64 x 8M | 10x | 16 | tps | heavy random reads, low concurrency |
+| RO-4 | core | sysbench oltp_read_only, pareto (hot set), 64 x 8M | 10x | 64 | tps | large data but a hot set in memory: expected CPU-bound despite 10x |
 | RW-1 | core | sysbench oltp_read_write, 16 x 1M, binlog on | 0.25x | 16 | tps | commit path: redo / binlog fsync, group commit |
 | RW-2 | core | sysbench oltp_read_write, 32 x 4M | 3x | 64 | tps | flushing plus reads together |
 | RW-3 | core | HammerDB TPROC-C 80W | ≈0.5x | 16 | NEW_ORDER p99 | tail latency, CPU-bound OLTP |
 | RW-4 | core | HammerDB TPROC-C 800W, all warehouses | ≈5x | 64 | NOPM | I/O-bound OLTP, flush plus read |
 | WI-1 | core | Insert Benchmark l.i1, steady state | ≈2x | 8 | inserts/s | flush-bound ingest, secondary indexes, change buffer, purge |
 | WI-2 | ext | sysbench oltp_update_index, sync_binlog=1 | 1x | 64 | tps | write-only at the memory boundary |
+| WI-3 | core | sysbench oltp_update_non_index, uniform, 16 x 1M | 0.25x | 64 | tps | data in memory but write-intensive: expected flush- and redo-bound |
 | KV-1 | core | BenchBase YCSB-A, zipfian | 2x | 64 | tps | skewed key-value reads and updates |
 | KV-2 | ext | BenchBase TATP | 0.25x | 64 | tps | many tiny transactions |
 | AN-1 | core | TPC-H SF10 (go-tpc), 22 queries | ≈1x | 1 | total time | scans, sorts, joins, read-ahead |
@@ -55,7 +65,7 @@ Core cells run at every engine milestone. Extended cells run before a release, o
 
 ### Client-server, high concurrency (class L)
 
-| ID | Tier | Benchmark | Data : RAM | Conc. | Goal | Exercises |
+| ID | Tier | Benchmark | Data : RAM | Conc. | Goal | Expected to exercise (to be confirmed by measurement) |
 |---|---|---|---|---|---|---|
 | HC-1 | core | sysbench oltp_point_select, plain statements | 0.25x | 1024 | tps | contention, thread pool, scheduler |
 | HC-2 | core | sysbench oltp_point_select, plain statements | 0.25x | 4096 | tps | connection scaling, thread pool, memory per connection |
@@ -89,6 +99,7 @@ explains what the tuning session finds.
 |---|---|
 | Gain vs formula baseline: safe / with trade-offs | how much tuning finds |
 | Gain vs server defaults | context: how much the baseline alone gives |
+| Measured bottleneck: top time-breakdown components and diagnoses, vs the cell's expectation | does the engine see what limits the workload, and is the cell still the cell it was meant to be |
 | Runs to reach 90% of the session's best | search efficiency |
 | Experiments with evidence vs validation-only, share of measured time they targeted | evidence discipline |
 | Hypothesis outcomes: supported / moved / refuted / improved by another mechanism | how well the engine understands the bottleneck |
@@ -102,9 +113,9 @@ web app shows a cell's history across engine builds as a study per suite version
 
 ## Cost and time
 
-- **Core cells:** 13 single-server and 3 client-server cells, about 8 hours each, all run in parallel.
+- **Core cells:** 15 single-server and 3 client-server cells, about 8 hours each, all run in parallel.
 - **Wall clock:** about 10 hours for the core suite.
-- **Core suite:** about 13 x 8 h x $0.216 (class S) plus 3 x 8 h x $1.30 (class L pair), roughly $55 per suite run.
+- **Core suite:** about 15 x 8 h x $0.216 (class S) plus 3 x 8 h x $1.30 (class L pair), roughly $57 per suite run.
 - **Extended cells:** add roughly $50.
 - **VMs:** created per suite run and deleted when their cells finish, as in Battery 1 and 2.
 
@@ -112,5 +123,5 @@ web app shows a cell's history across engine builds as a study per suite version
 
 - Implement the runner (`bench/suite/run.sh <version> <cells...>`): it provisions per hardware class, sets up each
   cell from a cell definition (profile plus data build), runs the session, collects the scorecard, and deletes the VMs.
-- Build the cells that are new: RO-3, RW-2 at 3x, WI-2, AN-3, HC-2/3 (4096 connections), HC-5, and the ladder.
+- Build the cells that are new: RO-3, RO-4, RW-2 at 3x, WI-2, WI-3, AN-3, HC-2/3 (4096 connections), HC-5, and the ladder.
 - Scorecard page in the web app, comparing suite runs.
