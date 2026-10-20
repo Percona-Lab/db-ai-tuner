@@ -57,7 +57,7 @@ MECHANISMS = {
     "os-autogroup": (("cpu-pressure", "sched-delay"), "mysqld threads compete for CPU individually, not as one group."),
     "os-aio": (("io",), "Native async I/O stays available."),
     "ps-lite": (("cpu-pfs", "cpu-pressure"), "Less instrumentation work per statement and allocation."),
-    "sweep-dirty-lwm": (("io", "redo", "commit", "io-flush"), "Dirty pages absorb more updates before being written, or flushing starts earlier."),
+    "sweep-dirty-lwm": (("io", "redo", "io-flush"), "Dirty pages absorb more updates before being written, or flushing starts earlier."),
     "sweep-lru-depth": (("io", "io-flush"), "Free pages ready for user threads (no single-page flushes)."),
     "sweep-read-io-threads": (("io", "memory", "io-read"), "More asynchronous reads in flight."),
     "sweep-purge-threads": (("locks", "io"), "Purge keeps up with undo history."),
@@ -134,6 +134,15 @@ _W = ("innodb_flush_log_at_trx_commit", "sync_binlog", "innodb_io_capacity", "in
       "binlog_transaction_dependency_history_size", "innodb_flushing_avg_loops", "innodb_log_spin_cpu_abs_lwm",
       "innodb_log_spin_cpu_pct_hwm", "innodb_log_wait_for_flush_spin_hwm", "os:vm.dirty_bytes", "os:vm.dirty_background_bytes",
       "os:vm.dirty_ratio", "os:vm.dirty_background_ratio", "os:vm.dirty_expire_centisecs", "os:vm.dirty_writeback_centisecs")
+# variables whose mechanism acts only on an event a status counter counts: if the counter did not move, nothing to act on
+VAR_COUNTERS = {"thread_cache_size": ("Threads_created", "thread creation"), "table_open_cache": ("Opened_tables", "table opening"),
+                "table_open_cache_instances": ("Opened_tables", "table opening"),
+                "table_definition_cache": ("Opened_table_definitions", "table definition loading"),
+                "tmp_table_size": ("Created_tmp_disk_tables", "on-disk temporary tables"),
+                "max_heap_table_size": ("Created_tmp_disk_tables", "on-disk temporary tables"),
+                "sort_buffer_size": ("Sort_merge_passes", "sort merge passes"),
+                "os:net.ipv4.tcp_max_syn_backlog": ("_syn_drops", "SYN queue drops"), "back_log": ("_listen_drops", "accept queue overflows"),
+                "os:net.core.somaxconn": ("_listen_drops", "accept queue overflows")}
 VAR_NEEDS = dict(
     {v: "writes" for v in _W},
     **{v: "reads" for v in ("innodb_read_ahead_threshold", "innodb_random_read_ahead", "innodb_read_io_threads")},
@@ -152,8 +161,17 @@ def missing_for_variables(changes, summary, rates=None, inputs=None):
     if summary is None or not changes:
         return None
     s, a = summary, activity(summary)
+    r = dict(rates or {})
+    if "net_listen_overflows" in s or "net_listen_drops" in s:
+        r["_listen_drops"] = (s.get("net_listen_overflows") or 0) + (s.get("net_listen_drops") or 0)
+    if "net_tcp_req_q_full_drop" in s:
+        r["_syn_drops"] = s.get("net_tcp_req_q_full_drop") or 0
     why = []
     for c in changes:
+        cnt = VAR_COUNTERS.get(c.get("variable"))
+        if cnt and cnt[0] in r and r[cnt[0]] <= 0:
+            why.append(f"{c['variable']} only acts on {cnt[1]}, which did not happen in the window ({cnt[0].lstrip('_')} = 0)")
+            continue
         need = VAR_NEEDS.get(c.get("variable"))
         if need is None:
             return None  # a variable without a known precondition: cannot rule it out
@@ -180,7 +198,8 @@ def missing_for_variables(changes, summary, rates=None, inputs=None):
 def _no_ibuf(s):
     if "ibuf_size_max" not in s:
         return None  # not measured: cannot rule it out
-    return None if s["ibuf_size_max"] > 0 else "the change buffer held no pages in the window (InnoDB status): disabling it changes nothing"
+    # "Ibuf: size 1" is the empty change buffer (its root page): buffered changes start at 2
+    return None if s["ibuf_size_max"] > 1 else "the change buffer held no buffered changes in the window (InnoDB status: size 1 = empty): disabling it changes nothing"
 
 
 def _never(counter, what):

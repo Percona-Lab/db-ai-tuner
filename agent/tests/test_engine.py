@@ -539,13 +539,32 @@ def test_storage_and_stability_signals():
             for g, r, d in ((178, 4.2, 0), (171, 4.5, 0), (164, 4.8, 2), (157, 5.2, 0))]
     txt = " | ".join(evaluate.disturbances(runs))
     assert "data reads" in txt and "below half its median" in txt
-    # a swapping configuration is not the best when a configuration without swap-ins exists
-    hist = [{"seq": 1, "label": "baseline", "managed": {"a": {"value": "1"}}, "verdict": "reference", "goal_value": 100,
-             "summary": {"dbproc_swap_mb": 0, "swap_in": 0}},
-            {"seq": 2, "label": "x", "managed": {"a": {"value": "2"}}, "verdict": "improved", "goal_value": 104,
-             "summary": {"dbproc_swap_mb": 2300, "swap_in": 2000}, "evaluation": {"parent_runs": [1]}}]
+    # swap-ins of mysqld memory break ties between configurations; they never promote a worse one (#125 run 8)
+    sw = {"dbproc_swap_mb": 2300, "dbproc_workingset_refault_anon_per_s": 500}
+    hist = [{"seq": 1, "label": "baseline", "managed": {"a": {"value": "1"}}, "verdict": "reference", "goal_value": 100, "summary": dict(sw)},
+            {"seq": 2, "label": "x", "managed": {"a": {"value": "2"}}, "verdict": "efficiency-gain", "goal_value": 100.5,
+             "summary": {"dbproc_swap_mb": 10, "dbproc_workingset_refault_anon_per_s": 0}, "evaluation": {"parent_runs": [1]}}]
+    assert engine.best_config(hist, "tps", 2.0)["seqs"] == [2]
+    hist[1].update(verdict="regressed", goal_value=65)
     assert engine.best_config(hist, "tps", 2.0)["seqs"] == [1]
-    assert engine.swap_hazard({"dbproc_swap_mb": 10, "swap_in": 1}) and not engine.swap_hazard({"dbproc_swap_mb": 10, "swap_in": 0})
+    assert engine.swap_hazard(sw) and not engine.swap_hazard({"dbproc_swap_mb": 10, "dbproc_workingset_refault_anon_per_s": 0, "swap_in": 40})
+
+
+def test_evidence_gate_holes():
+    from tuning_agent import mechanisms as m
+    # zero counters are evidence that the event did not happen
+    assert m.missing_for_variables([{"variable": "thread_cache_size"}], {"redo_mbs": 1}, {"Threads_created": 0})
+    assert m.missing_for_variables([{"variable": "thread_cache_size"}], {"redo_mbs": 1}, {"Threads_created": 2.5}) is None
+    assert m.missing_for_variables([{"variable": "os:net.ipv4.tcp_max_syn_backlog"}], {"net_tcp_req_q_full_drop": 0}, {})
+    # an empty change buffer has size 1
+    assert m.missing_mechanism("change-buffer-off", {"ibuf_size_max": 1, "redo_mbs": 1}, [], {}, {})
+    assert m.missing_mechanism("change-buffer-off", {"ibuf_size_max": 900, "redo_mbs": 1}, [{"variable": "innodb_change_buffering"}], {}, {}) is None
+    # Amdahl: a component below the noise threshold cannot show an effect
+    parts = [{"name": "CPU: SQL execution", "threads": 5.0, "share_pct": 99.8, "tags": ["cpu", "cpu-exec"]},
+             {"name": "Waiting: data file reads", "threads": 0.01, "share_pct": 0.2, "tags": ["io", "io-read"]}]
+    assert "could not exceed" in engine.no_evidence({"id": "sweep-read-ahead"}, {"breakdown": parts, "diagnosis": [], "noise_pct": 2.0})
+    parts[1]["share_pct"], parts[0]["share_pct"] = 20.0, 80.0
+    assert engine.no_evidence({"id": "sweep-read-ahead"}, {"breakdown": parts, "diagnosis": [], "noise_pct": 2.0}) is None
 
 
 if __name__ == "__main__":

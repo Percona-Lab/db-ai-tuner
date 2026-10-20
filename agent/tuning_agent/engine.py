@@ -77,9 +77,13 @@ def harmful_swap(s):
 
 
 def swap_hazard(s):
-    """mysqld memory was paged back in from swap during the window (presence, not a rate: any such fault can stall a
-    thread that holds a latch)."""
-    return (s.get("dbproc_swap_mb") or 0) > 0 and ((s.get("dbproc_pswpin_per_s") or 0) > 0 or (s.get("swap_in") or 0) > 0)
+    """mysqld's own memory was paged back in from swap during the window: its cgroup's anonymous refaults (evicted
+    anonymous pages faulted back = swap-ins), not host-wide swap-in, which also counts other processes' cold pages."""
+    if (s.get("dbproc_swap_mb") or 0) <= 0:
+        return False
+    if "dbproc_workingset_refault_anon_per_s" in s:
+        return (s.get("dbproc_workingset_refault_anon_per_s") or 0) > 0
+    return (s.get("swap_in") or 0) > 0  # no cgroup statistics: host swap-in while mysqld has swapped memory
 
 
 def bp_round(v, n, up=False):
@@ -1225,14 +1229,6 @@ def best_config(history, goal="tps", noise=2.0):
         return any((r.get("verdict") in KEEP and (r.get("evaluation") or {}).get("confirmed") is not False
                     and not (r.get("verdict") == "improved" and (r.get("evaluation") or {}).get("not_steady")))
                    or (is_practice_run(r) and r.get("verdict") == "neutral") for r in rs)
-    # a configuration whose mysqld memory is read back from swap during the window is a hazard even when it measures
-    # well: a thread blocked on a swap-in while holding a latch or lock stalls everything queued behind it (session 88's
-    # "best" configuration swapped ~2,000 pages/s back in). Prefer configurations without it when there are any.
-    def swaps(c):
-        return any(swap_hazard(r.get("summary") or {}) for r in history if config_key(r.get("managed")) == c["key"])
-    clean = [c for c in scores if not swaps(c)]
-    if clean and len(clean) < len(scores):
-        scores = clean
     kept_cfgs = [c for c in scores if kept(c)]
     if kept_cfgs:
         bk = kept_cfgs[0]
@@ -1278,7 +1274,12 @@ def best_config(history, goal="tps", noise=2.0):
                     eff[key] = eff.get(key, 0.0) + (x / lo - 1)
     for c in tied:
         c["resource_score"] = round(eff.get(c["key"], 0.0), 4)
-    tied.sort(key=lambda c: (c["key"] in beaten, not c["kept"], -c["practices"], c["resource_score"], -c["n"],
+    # swapping mysqld memory back in is a hazard (a thread waiting for a swap-in while holding a latch stalls the ones
+    # queued behind it): among configurations tied on the goal, the one without swap-ins wins. Only a tie-break - it
+    # never promotes a configuration that measured worse (#125: the -35% run was the only one without cold swap)
+    for c in tied:
+        c["swap_hazard"] = any(swap_hazard(r.get("summary") or {}) for r in history if config_key(r.get("managed")) == c["key"])
+    tied.sort(key=lambda c: (c["key"] in beaten, not c["kept"], c["swap_hazard"], -c["practices"], c["resource_score"], -c["n"],
                              c["mean"] if goal == "latency" else -c["mean"]))
     return tied[0]
 
@@ -1390,8 +1391,20 @@ def no_evidence(it, ctx):
     if not tags or it.get("source") == "requested":
         return None
     parts = ctx.get("breakdown") or []
-    if bottleneck.acted_on(tags, parts):
-        return None
+    hit = bottleneck.acted_on(tags, parts)
+    if hit:
+        # Amdahl: removing the targeted time entirely gains at most its share of the busy (non-idle-client) time; when
+        # that is below the noise threshold the experiment cannot show an effect (#132: read-ahead sweep on 0.2% I/O)
+        idle = sum(p["share_pct"] for p in parts if "network" in p["tags"])
+        share = sum(p["share_pct"] for p in hit)
+        busy_share = 100.0 * share / max(1e-6, 100.0 - idle)
+        noise = float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 0)
+        if not noise or busy_share >= noise:
+            return None
+        diag_hit = {d["type"] for d in ctx.get("diagnosis") or [] if d["type"] != "none"} & bottleneck.specific(tags, parts)
+        if not diag_hit:
+            return (f"what it acts on takes {busy_share:.1f}% of the busy database time "
+                    f"({', '.join(p['name'] for p in hit[:3])}): even removing it could not exceed the ±{noise:.1f}% noise")
     # a generic diagnosis ("I/O pressure") is not evidence for a change aimed at a specific kind once the kind is known
     rel = bottleneck.specific(tags, parts)
     diag = {d["type"] for d in ctx.get("diagnosis") or [] if d["type"] != "none"}

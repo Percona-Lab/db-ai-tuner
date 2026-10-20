@@ -259,6 +259,11 @@ def file_io_delta(a, b):
             if v["read_s"] + v["write_s"] + v["sync_s"] > 0}
 
 
+ZERO_EVIDENCE = {"Threads_created", "Opened_tables", "Opened_table_definitions", "Created_tmp_disk_tables", "Created_tmp_tables",
+                 "Sort_merge_passes", "Innodb_buffer_pool_wait_free", "Innodb_log_waits", "Innodb_row_lock_waits",
+                 "Select_full_join", "Select_scan", "Connections", "Aborted_connects", "Innodb_buffer_pool_reads"}
+
+
 def _pctl(vals, q):
     v = sorted(vals)
     return v[min(len(v) - 1, int(round(q * (len(v) - 1))))]
@@ -364,7 +369,8 @@ def analyze_window(a, b, samples):
     deltas = {}
     for k, v in sb.items():
         x, y = _num(sa.get(k)), _num(v)
-        if x is not None and y is not None and y != x:
+        # unchanged counters stay (as 0) for the ones evidence checks read: "it never happened" is evidence too
+        if x is not None and y is not None and (y != x or k in ZERO_EVIDENCE):
             deltas[k] = y - x
     rates = DBSampler(None)
     rates.variables = b["variables"]

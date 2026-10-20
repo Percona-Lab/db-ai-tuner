@@ -314,6 +314,28 @@ def _reset_restarts(c):
         return False
 
 
+PAIRS = (("innodb_io_capacity", "innodb_io_capacity_max"),)
+
+
+def _order_pairs(changes, current=None):
+    """A value and its ceiling set live: the ceiling goes first when the new ceiling still covers the current value
+    (raising), otherwise the value goes first (lowering) - else InnoDB clamps the value to the old ceiling (#125 run 8
+    measured io_capacity 4000 while 8000 was requested)."""
+    out = list(changes)
+    for base, mx in PAIRS:
+        b = next((ch for ch in out if ch["variable"] == base), None)
+        m = next((ch for ch in out if ch["variable"] == mx), None)
+        if b is None or m is None:
+            continue
+        try:
+            cur_base = float((current or {}).get(base) or 0)
+            ceiling_first = float(m.get("value") or 0) >= cur_base
+        except (TypeError, ValueError):
+            continue
+        out = [ch for ch in out if ch is not b and ch is not m] + ([m, b] if ceiling_first else [b, m])
+    return out
+
+
 def _apply_and_record(c, changes, source, reason_default="", restart=None):
     allow = c.cfg.get("allow_restart", "true").lower() == "true" if restart is None else restart
     defer = source in ("autotune", "rollback") or str(source).startswith("exp:")
@@ -332,6 +354,10 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
                                 "reason": "companion: InnoDB caps innodb_io_capacity at innodb_io_capacity_max"})
         except Exception:
             pass
+    try:
+        changes = _order_pairs(changes, c.db.variables())
+    except Exception:
+        changes = _order_pairs(changes)
     ap = Applier(c.cfg, c.state, c.db, log=log)
     try:
         res = ap.apply(changes, allow_restart=allow, defer_restart=defer and _reset_restarts(c)) if changes else {
