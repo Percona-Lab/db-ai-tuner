@@ -1981,8 +1981,8 @@ def _run_experiment(c, prof, exp):
             results.append({"arm": label(arm), "status": "failed", "reason": "; ".join(res.get("errors") or ["apply failed"])})
             continue
         vals = []
-        for i in range(int(exp.get("repeats") or 1)):
-            run, _ = _bench_run(c, prof, f"exp#{eid} {label(arm)}" + (f" ({i + 1}/{exp['repeats']})" if (exp.get("repeats") or 1) > 1 else ""))
+        for rep in range(int(exp.get("repeats") or 1)):  # not `i`: that is the arm index of the while loop (#142 re-ran one arm forever)
+            run, _ = _bench_run(c, prof, f"exp#{eid} {label(arm)}" + (f" ({rep + 1}/{exp['repeats']})" if (exp.get("repeats") or 1) > 1 else ""))
             if run.get("goal_value") is not None:
                 vals.append(run["goal_value"])
         mean = sum(vals) / len(vals) if vals else None

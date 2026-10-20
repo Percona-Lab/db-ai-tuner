@@ -985,6 +985,42 @@ def test_swap_hazard_needs_measured_cost():
     assert not evaluate.swap_cost(dict(s, dbproc_workingset_refault_anon_per_s=0), 3.6)
 
 
+def test_sweep_measures_each_arm_once():
+    # AMD #142: the repeat loop reused the arm index, so a 2-point agent sweep re-ran its second point forever
+    from tuning_agent import cli
+    seen = []
+
+    class St:
+        def __init__(self):
+            self.d = {"managed": {"innodb_thread_concurrency": {"value": "0"}}}
+        def get(self, k, default=None):
+            return self.d.get(k, default)
+
+    class Cl:
+        def post(self, *a, **k):
+            return {}
+
+    class C:
+        state, client = St(), Cl()
+        def session(self):
+            return {"goal": "tps", "noise_pct": 2.0, "runs": [{"seq": 2, "managed": {"innodb_thread_concurrency": "0"}, "goal_value": 1000,
+                                                               "verdict": "improved"}]}
+    saved = (cli._validate_changes, cli._goto_managed, cli._bench_run, cli.log)
+    try:
+        cli._validate_changes = lambda c, arm, force=False: (arm, [])
+        cli._goto_managed = lambda *a, **k: {}
+        def bench(c, prof, label=None, **k):
+            seen.append(label)
+            assert len(seen) < 10, seen
+            return {"goal_value": 1000 + len(seen)}, None
+        cli._bench_run, cli.log = bench, (lambda *a, **k: None)
+        cli._run_experiment(C(), None, {"id": 1, "kind": "sweep", "created_by": "agent:x",
+                                        "spec": {"variable": "innodb_thread_concurrency", "values": ["48", "24"]}})
+    finally:
+        cli._validate_changes, cli._goto_managed, cli._bench_run, cli.log = saved
+    assert seen == ["exp#1 innodb_thread_concurrency=48", "exp#1 innodb_thread_concurrency=24"], seen
+
+
 def test_apply_failure_is_a_failed_experiment():
     # EPYC 1000W: huge pages could not be reserved -> the applier raised and autotune crashed; it must come back as
     # a rolled-back result that autotune records as a failed experiment
