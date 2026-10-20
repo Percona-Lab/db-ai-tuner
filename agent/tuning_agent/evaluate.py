@@ -512,6 +512,12 @@ def _verdict(run, history, goal, noise):
     st = s.get("steady_state") or {}
     if st and not st.get("steady"):  # deferred work still accumulating at the end of the window: result may be optimistic
         details["not_steady"] = st.get("growing")
+    if s.get("tput_dip_samples"):  # the average hides stalls inside the window
+        details["unstable_within_run"] = {k: s.get(k) for k in ("tput_dip_samples", "tput_dip_longest_samples", "tput_samples",
+                                                                "tput_min_vs_median_pct", "blk_write_max_ms", "blk_flush_max_ms",
+                                                                "disk_w_await_ms_max", "disk_r_await_ms_max")}
+    if (s.get("dbproc_swap_mb") or 0) > 0 and ((s.get("dbproc_pswpin_per_s") or 0) > 0 or (s.get("swap_in") or 0) > 0):
+        details["swap_hazard"] = {"dbproc_swap_mb": s.get("dbproc_swap_mb"), "swap_in": s.get("swap_in")}
     if d_goal is None:
         return "neutral", details
     if d_goal > goal_noise:
@@ -564,6 +570,18 @@ def disturbances(runs):
     if sw:
         out.append(f"mysqld has {max(s['dbproc_swap_mb'] for s in sw):.0f} MB in swap and pages are read back during the window "
                    f"(up to {max(s['swap_in'] for s in sw):.0f} pages/s in {len(sw)} of {len(ss)} runs)")
+    # storage latency moving run after run at a similar load (SSD garbage collection, cloud volume throttling / burst
+    # credits): reads and writes apart, as either path alone can drift
+    for k, what in (("disk_r_await_ms", "data reads"), ("disk_w_await_ms", "writes"), ("blk_flush_p99_ms", "device flushes (p99)")):
+        vals = [s.get(k) for s in ss if s.get(k) is not None]
+        if len(vals) >= 4:
+            d = [b - a for a, b in zip(vals, vals[1:])]
+            if all(x > 0 for x in d) or all(x < 0 for x in d):
+                out.append(f"storage latency of {what} moved in the same direction every run ({', '.join(f'{v:.2f}' for v in vals)} ms)")
+    # instability inside the windows: throughput below half its median (stalls)
+    dips = [(s.get("tput_dip_samples") or 0, s.get("tput_dip_longest_samples") or 0) for s in ss if s.get("tput_dip_samples")]
+    if dips:
+        out.append(f"throughput fell below half its median inside {len(dips)} of {len(ss)} runs (longest stall {max(x[1] for x in dips)} samples)")
     st = [s.get("cpu_steal") or 0 for s in ss]
     if st and max(st) >= 3:
         out.append(f"hypervisor CPU steal up to {max(st):.1f}%")

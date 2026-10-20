@@ -521,6 +521,33 @@ def test_environment_disturbances():
     assert evaluate.disturbances(quiet) == []
 
 
+def test_storage_and_stability_signals():
+    from tuning_agent import probes as pr, collector as col
+    out = "@h[271581186, WS]: \n[64, 128)   90 |@@@@|\n[128, 256)   9 |@|\n[32K, 64K)   1 |@|\n\n@h[271581186, R]: \n[64, 128)  100 |@@|\n" \
+          "@mx[271581186, WS]: 41000\n@mx[271581186, R]: 120\n"
+    b = pr.parse_block(out)
+    ws = b[(271581186, "WS")]
+    assert ws["max_us"] == 41000 and pr._quantile(ws["buckets"], 0.5) == 128 and pr._quantile(ws["buckets"], 0.999) == 65536
+    assert pr._op("WS") == "write" and pr._op("FWS") == "flush+write" and pr._op("F") == "flush" and pr._op("R") == "read"
+    S = [{"db": {"tps": v}, "os": {"disk_w_await_ms": w}} for v, w in [(100, 1), (98, 1.2), (20, 9), (15, 12), (101, 1), (99, 1.1)]]
+    st = col.within_run_stability(S)
+    assert st["tput_dip_samples"] == 2 and st["tput_dip_longest_samples"] == 2
+    sp = col.sample_spread(S, "os", ("disk_w_await_ms",))
+    assert sp["disk_w_await_ms_max"] == 12 and sp["disk_w_await_ms_p50"] == 1.1
+    # disturbances: storage latency drifting run after run, stalls inside the windows
+    runs = [{"goal_value": g, "summary": {"disk_r_await_ms": r, "tput_dip_samples": d, "tput_dip_longest_samples": d}}
+            for g, r, d in ((178, 4.2, 0), (171, 4.5, 0), (164, 4.8, 2), (157, 5.2, 0))]
+    txt = " | ".join(evaluate.disturbances(runs))
+    assert "data reads" in txt and "below half its median" in txt
+    # a swapping configuration is not the best when a configuration without swap-ins exists
+    hist = [{"seq": 1, "label": "baseline", "managed": {"a": {"value": "1"}}, "verdict": "reference", "goal_value": 100,
+             "summary": {"dbproc_swap_mb": 0, "swap_in": 0}},
+            {"seq": 2, "label": "x", "managed": {"a": {"value": "2"}}, "verdict": "improved", "goal_value": 104,
+             "summary": {"dbproc_swap_mb": 2300, "swap_in": 2000}, "evaluation": {"parent_runs": [1]}}]
+    assert engine.best_config(hist, "tps", 2.0)["seqs"] == [1]
+    assert engine.swap_hazard({"dbproc_swap_mb": 10, "swap_in": 1}) and not engine.swap_hazard({"dbproc_swap_mb": 10, "swap_in": 0})
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

@@ -384,3 +384,133 @@ def ensure_debug_symbols(log=print, min_free_gb=20):
                 log(f"   {dbg} not installed: {(r.stderr or r.stdout).strip()[-200:]}")
             return r.returncode == 0
     return False
+
+
+# ---------------- block I/O latency (tail) ----------------
+# Device service time of every block request (issue -> complete), as a log2 histogram per device and operation (R read,
+# W write, F flush / FUA, D discard). Averages hide stalls: a write path with p50 0.1 ms and p99.9 40 ms (e.g. stalled
+# log writes, SSD garbage collection, cloud volume throttling) makes commit latency and throughput unstable.
+BLOCK_SCRIPT = (
+    "tracepoint:block:block_rq_issue {{ @s[args->dev, args->sector] = nsecs; }}\n"
+    "tracepoint:block:block_rq_complete /@s[args->dev, args->sector]/ {{ $us = (nsecs - @s[args->dev, args->sector]) / 1000; "
+    "$op = args->rwbs; @h[args->dev, $op] = hist($us); @mx[args->dev, $op] = max($us); delete(@s[args->dev, args->sector]); }}\n"
+    "interval:s:{secs} {{ exit(); }}\n"
+    "END {{ clear(@s); }}\n")
+_UNIT = {"": 1, "K": 1024, "M": 1024 ** 2, "G": 1024 ** 3}
+_BUCKET = re.compile(r"^\[(\d+)([KMG]?),\s*(\d+)([KMG]?)\)\s+(\d+)")
+_OPS = {"R": "read", "W": "write", "D": "discard", "N": "other"}
+
+
+def _op(rwbs):
+    """rwbs flags -> operation: a leading F is a cache flush (alone, or before a write: FWS), a trailing F is FUA."""
+    if not rwbs:
+        return "other"
+    if rwbs[0] == "F":
+        return "flush" if len(rwbs) == 1 or rwbs[1] not in "RW" else "flush+write"
+    return _OPS.get(rwbs[0], rwbs)
+
+
+def parse_block(out):
+    """{(dev, op): {"buckets": [(lo_us, hi_us, count)], "max_us": n}}"""
+    res, key = {}, None
+    for line in out.splitlines():
+        m = re.match(r"^@(h|mx)\[(\d+), ([A-Z]*)\]:\s*(\d+)?", line)
+        if m:
+            k = (int(m.group(2)), m.group(3))
+            if m.group(1) == "mx":
+                res.setdefault(k, {"buckets": []})["max_us"] = int(m.group(4) or 0)
+                key = None
+            else:
+                key = k
+                res.setdefault(k, {"buckets": []})
+            continue
+        b = _BUCKET.match(line.strip())
+        if b and key is not None:
+            lo = int(b.group(1)) * _UNIT[b.group(2)]
+            hi = int(b.group(3)) * _UNIT[b.group(4)]
+            res[key]["buckets"].append((lo, hi, int(b.group(5))))
+    return res
+
+
+def _quantile(buckets, q):
+    n = sum(c for _, _, c in buckets)
+    if not n:
+        return None
+    acc = 0
+    for lo, hi, c in buckets:
+        acc += c
+        if acc >= q * n:
+            return hi  # upper bound of the log2 bucket (pessimistic within 2x)
+    return buckets[-1][1]
+
+
+def _devname(dev):
+    maj, mn = dev >> 20, dev & 0xFFFFF
+    try:
+        for line in open(f"/sys/dev/block/{maj}:{mn}/uevent"):
+            if line.startswith("DEVNAME="):
+                return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return f"{maj}:{mn}"
+
+
+class BlockLatency:
+    """Background bpftrace block latency histogram over the measured window; result() afterwards."""
+
+    def __init__(self, seconds):
+        self.seconds = max(5, int(seconds))
+        self.out = self.err = None
+        self._p = self._th = None
+
+    def start(self):
+        self._p = subprocess.Popen(["nice", "-n", "10", "bpftrace", "-e", BLOCK_SCRIPT.format(secs=self.seconds)],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        def wait():
+            try:
+                self.out, err = self._p.communicate(timeout=self.seconds + 120)
+                if self._p.returncode != 0 and not self.out:
+                    self.err = (err or "").strip()[-300:]
+            except Exception as e:  # noqa
+                self.err = str(e)[:300]
+        self._th = threading.Thread(target=wait, daemon=True)
+        self._th.start()
+        return self
+
+    def stop(self):
+        if self._p and self._p.poll() is None:
+            try:
+                self._p.send_signal(2)
+            except OSError:
+                pass
+        if self._th:
+            self._th.join(60)
+
+    def result(self):
+        if self.err or not self.out:
+            return {"error": self.err or "no block I/O traced"}
+        out = {}
+        for (dev, op), v in parse_block(self.out).items():
+            n = sum(c for _, _, c in v["buckets"])
+            if not n:
+                continue
+            name = f"{_devname(dev)}:{_op(op)}"
+            prev = out.get(name)
+            if prev:  # several rwbs variants (WS, W, WM...) of one operation: merge the histograms
+                v = {"buckets": prev["_b"] + v["buckets"], "max_us": max(prev["max_us"] or 0, v.get("max_us") or 0)}
+                n = sum(c for _, _, c in v["buckets"])
+            v["buckets"] = _merge(v["buckets"])
+            out[name] = {"_b": v["buckets"], "count": n, "p50_us": _quantile(v["buckets"], 0.5), "p99_us": _quantile(v["buckets"], 0.99),
+                         "p999_us": _quantile(v["buckets"], 0.999), "max_us": v.get("max_us"),
+                         "slow_10ms": sum(c for lo, _, c in v["buckets"] if lo >= 8192)}
+        for x in out.values():
+            x.pop("_b", None)
+        return {"by_device_op": out}
+
+
+def _merge(buckets):
+    acc = {}
+    for lo, hi, c in buckets:
+        acc[(lo, hi)] = acc.get((lo, hi), 0) + c
+    return sorted((lo, hi, c) for (lo, hi), c in acc.items())

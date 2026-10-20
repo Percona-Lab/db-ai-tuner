@@ -710,6 +710,21 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
         inputs.update(extra_inputs)
         for k, v in (extra_inputs.get("probe") or {}).items():
             summary["probe_" + k] = v
+        # storage tail latency of the data device (eBPF block histogram): read / write / flush p99, worst I/O, slow I/Os
+        bl = (extra_inputs.get("block_latency") or {}).get("by_device_op") or {}
+        if bl:
+            dev = (hostinfo.device_for_path(c.datadir()) or "").split("/")[-1]
+            base = re.sub(r"p\d+$", "", dev) if dev.startswith(("nvme", "mmcblk")) else re.sub(r"\d+$", "", dev)
+            mine = {k.split(":", 1)[1]: v for k, v in bl.items() if k.split(":", 1)[0] in (dev, base)} or \
+                {k.split(":", 1)[1]: v for k, v in sorted(bl.items(), key=lambda x: x[1]["count"])}
+            for op in ("read", "write", "flush", "flush+write"):
+                v = mine.get(op)
+                if v:
+                    key = op.replace("+", "_")
+                    summary[f"blk_{key}_p99_ms"] = round((v.get("p99_us") or 0) / 1000, 3)
+                    summary[f"blk_{key}_p999_ms"] = round((v.get("p999_us") or 0) / 1000, 3)
+                    summary[f"blk_{key}_max_ms"] = round((v.get("max_us") or 0) / 1000, 3)
+                    summary[f"blk_{key}_slow_ios"] = v.get("slow_10ms")
     summary["tradeoffs"] = tradeoffs_in(m["managed"])
     clients = {}
     for h in c.client_hosts():
@@ -919,7 +934,10 @@ def _start_probes(c, seconds):
         return None
     try:
         pid = hostinfo.mysqld_pid()
-        return probes.Probes(pid, seconds).start() if pid else None
+        p = probes.Probes(pid, seconds).start() if pid else None
+        if p:
+            p.block = probes.BlockLatency(seconds).start()  # storage tail latency over the same window
+        return p
     except Exception as e:  # never fail a run because of a probe
         log(f"   eBPF probes not started: {e}")
         return None
@@ -1061,6 +1079,8 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
                 raise TooSlow(f"run exceeded {limit:.0f}s (2.5x the typical run time): configuration rejected")
         if probes:
             probes.stop()
+            if getattr(probes, "block", None):
+                probes.block.stop()
         b_snap = _end_snapshot(c)
         rc = r.wait(max(10, prof.timeout - (time.time() - r.t0)))
     except BaseException as exc:
@@ -1093,6 +1113,12 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         extra["offcpu"] = _finish_offcpu(offcpu)
     if probes:
         extra["probes"] = probes.result()
+        if getattr(probes, "block", None):
+            extra["block_latency"] = probes.block.result()
+            bl = extra["block_latency"].get("by_device_op") or {}
+            if bl:
+                log("   block I/O latency: " + ", ".join(f"{k} p99 {v['p99_us'] / 1000:.2f} ms / max {(v.get('max_us') or 0) / 1000:.1f} ms"
+                                                       for k, v in sorted(bl.items(), key=lambda x: -x[1]["count"])[:3]))
         nr = extra["probes"].get("name_resolution")
         if nr:
             log(f"   eBPF probes: name resolution {nr['calls']} calls, {nr['seconds']:.3f} s in the window")

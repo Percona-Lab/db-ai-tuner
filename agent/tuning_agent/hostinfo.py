@@ -352,7 +352,7 @@ class OSCounters:
             for line in _read("/proc/diskstats").splitlines():
                 p = line.split()
                 if len(p) >= 14 and p[2] == self.device:
-                    s["disk"] = [int(x) for x in p[3:14]]
+                    s["disk"] = [int(x) for x in p[3:20]]  # 11 fields, + discards (4) and flushes (2) on newer kernels
                     break
         rx = tx = 0
         for line in _read("/proc/net/dev").splitlines()[2:]:
@@ -441,6 +441,12 @@ class OSCounters:
             out["disk_w_mbs"] = round(d[6] * 512 / dt / 2 ** 20, 2)
             out["disk_util"] = round(min(100.0, d[9] / (dt * 10.0)), 1)
             out["disk_await_ms"] = round((d[3] + d[7]) / ios, 2) if ios else 0.0
+            # reads and writes separately: a slow write path (log writes, flushing) hides behind fast reads in the average
+            out["disk_r_await_ms"] = round(d[3] / d[0], 3) if d[0] else None
+            out["disk_w_await_ms"] = round(d[7] / d[4], 3) if d[4] else None
+            if len(d) >= 17:  # device cache flushes (fsync / FUA barriers): their latency is the commit path's floor
+                out["disk_flush_per_s"] = round(d[15] / dt, 1)
+                out["disk_flush_await_ms"] = round(d[16] / d[15], 3) if d[15] else None
             out["disk_queue"] = b["disk"][8]
         if "net" in a:
             out["net_rx_mbs"] = round((b["net"][0] - a["net"][0]) / dt / 2 ** 20, 3)

@@ -259,6 +259,47 @@ def file_io_delta(a, b):
             if v["read_s"] + v["write_s"] + v["sync_s"] > 0}
 
 
+def _pctl(vals, q):
+    v = sorted(vals)
+    return v[min(len(v) - 1, int(round(q * (len(v) - 1))))]
+
+
+def sample_spread(samples, group, keys):
+    """p50 / p95 / max and CV of each metric over the run's samples: how much a latency moves inside the window."""
+    out = {}
+    for k in keys:
+        vals = [s[group][k] for s in samples if s.get(group, {}).get(k) is not None]
+        if len(vals) < 3:
+            continue
+        m = sum(vals) / len(vals)
+        out[f"{k}_p50"] = round(_pctl(vals, 0.5), 3)
+        out[f"{k}_p95"] = round(_pctl(vals, 0.95), 3)
+        out[f"{k}_max"] = round(max(vals), 3)
+        if m:
+            out[f"{k}_cv_pct"] = round(100.0 * (sum((v - m) ** 2 for v in vals) / (len(vals) - 1)) ** 0.5 / m, 1)
+    return out
+
+
+def within_run_stability(samples, key="tps"):
+    """Throughput dips inside the window: samples below half the median (stalls, e.g. log write or flushing stalls,
+    swap-in storms), the longest run of such samples, and the worst sample relative to the median."""
+    vals = [s["db"][key] for s in samples if s.get("db", {}).get(key) is not None]
+    if len(vals) < 5:
+        vals = [s["db"]["qps"] for s in samples if s.get("db", {}).get("qps") is not None]
+        if len(vals) < 5:
+            return {}
+    med = _pctl(vals, 0.5)
+    if not med:
+        return {}
+    low = [v < 0.5 * med for v in vals]
+    longest = cur = 0
+    for x in low:
+        cur = cur + 1 if x else 0
+        longest = max(longest, cur)
+    return {"tput_dip_samples": sum(low), "tput_dip_longest_samples": longest, "tput_samples": len(vals),
+            "tput_min_vs_median_pct": round(100.0 * min(vals) / med, 1)}
+
+
 def db_wait_coverage(snap):
     return snap.get("wait_coverage")
 
@@ -393,6 +434,11 @@ def analyze_window(a, b, samples):
         "history_list_length_max": mx("db", "history_list_length"),
         "ibuf_size_max": mx("db", "ibuf_size"),
         "tps_cv_pct": stdev_pct("db", "tps"),
+        # storage latency, reads and writes apart (window average and the spread of the 10 s samples)
+        **{k: os_rates.get(k) for k in ("disk_r_await_ms", "disk_w_await_ms", "disk_flush_await_ms", "disk_flush_per_s")},
+        **sample_spread(samples, "os", ("disk_r_await_ms", "disk_w_await_ms", "disk_flush_await_ms")),
+        # stability inside the window: throughput dips and stalls (a run can average well and still stall)
+        **within_run_stability(samples),
         "cpu_busy": os_rates.get("cpu_busy"),
         "cpu_user": os_rates.get("cpu_user"),
         "cpu_sys": os_rates.get("cpu_sys"),

@@ -76,6 +76,12 @@ def harmful_swap(s):
             or (s.get("oom_kills") or 0) > 0)
 
 
+def swap_hazard(s):
+    """mysqld memory was paged back in from swap during the window (presence, not a rate: any such fault can stall a
+    thread that holds a latch)."""
+    return (s.get("dbproc_swap_mb") or 0) > 0 and ((s.get("dbproc_pswpin_per_s") or 0) > 0 or (s.get("swap_in") or 0) > 0)
+
+
 def bp_round(v, n, up=False):
     """MySQL sizes the buffer pool in multiples of chunk_size x instances (and silently rounds up otherwise)."""
     chunk = _int(v, "innodb_buffer_pool_chunk_size", 0) or 128 * MiB
@@ -1219,6 +1225,14 @@ def best_config(history, goal="tps", noise=2.0):
         return any((r.get("verdict") in KEEP and (r.get("evaluation") or {}).get("confirmed") is not False
                     and not (r.get("verdict") == "improved" and (r.get("evaluation") or {}).get("not_steady")))
                    or (is_practice_run(r) and r.get("verdict") == "neutral") for r in rs)
+    # a configuration whose mysqld memory is read back from swap during the window is a hazard even when it measures
+    # well: a thread blocked on a swap-in while holding a latch or lock stalls everything queued behind it (session 88's
+    # "best" configuration swapped ~2,000 pages/s back in). Prefer configurations without it when there are any.
+    def swaps(c):
+        return any(swap_hazard(r.get("summary") or {}) for r in history if config_key(r.get("managed")) == c["key"])
+    clean = [c for c in scores if not swaps(c)]
+    if clean and len(clean) < len(scores):
+        scores = clean
     kept_cfgs = [c for c in scores if kept(c)]
     if kept_cfgs:
         bk = kept_cfgs[0]
