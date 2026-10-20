@@ -415,9 +415,48 @@ def overview():
             "interval_hours": INTERVAL_H, "db_path": DB_PATH}
 
 
+RESTRUCTURE = {"type": "object", "additionalProperties": False, "required": ["items"], "properties": {"items": {"type": "array", "items": {
+    "type": "object", "additionalProperties": False, "required": ["id", "problem", "proposal", "expected_effect"],
+    "properties": {"id": {"type": "integer"}, "problem": {"type": "string"}, "proposal": {"type": "string"},
+                   "expected_effect": {"type": "string"}}}}}}
+
+
+def restructure_proposals(batch=15):
+    """Proposals written before the structured format: split each text into problem / proposed change / expected
+    effect (wording only - the same content, nothing added)."""
+    c = db()
+    rows = c.execute("SELECT id, title, body FROM proposals WHERE proposal IS NULL").fetchall()
+    key, st = llm.service_key(), llm.settings()
+    if not rows or not key:
+        return 0
+    done = 0
+    for i in range(0, len(rows), batch):
+        part = [{"id": r["id"], "title": r["title"], "text": r["body"]} for r in rows[i:i + batch]]
+        body = {"model": st["model"], "temperature": 0, "messages": [
+            {"role": "system", "content": "Split each proposal text into: problem (what the runs showed, with run numbers), proposal "
+                                          "(the concrete change to the tuner, one or two sentences), expected_effect (what would improve). "
+                                          "Use only what the text says; do not add claims. If the text has no expected effect, say what "
+                                          "the proposal itself implies in a few words."},
+            {"role": "user", "content": json.dumps(part)}],
+            "response_format": {"type": "json_schema", "json_schema": {"name": "split", "strict": True, "schema": RESTRUCTURE}}}
+        try:
+            d = llm._request("POST", llm.OPENROUTER + "/chat/completions", key, body, timeout=240)
+            for it in json.loads(d["choices"][0]["message"]["content"])["items"]:
+                c.execute("UPDATE proposals SET body=?, proposal=?, expected_effect=? WHERE id=? AND proposal IS NULL",
+                          (it["problem"], it["proposal"], it["expected_effect"], it["id"]))
+                done += 1
+        except Exception:
+            break
+    return done
+
+
 # ------------------------------------------------------------------------------------------------ background thread
 def _loop():
     time.sleep(120)
+    try:
+        restructure_proposals()
+    except Exception:
+        pass
     while True:
         try:
             last = db().execute("SELECT MAX(started) t FROM learner_runs WHERE trigger='timer'").fetchone()["t"] or 0
