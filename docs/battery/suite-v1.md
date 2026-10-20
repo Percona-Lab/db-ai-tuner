@@ -31,10 +31,11 @@ measured bottleneck differs from its expectation stays in the suite, because tha
 | Class | Server | Client | Used for |
 |---|---|---|---|
 | S | Linode g6-dedicated-8: 8 vCPU, 16 GB, local SSD | co-located | single-server cells; comparable with Battery 1 and 2 |
-| L | Linode g6-dedicated-32: 32 vCPU, 64 GB | g6-dedicated-16 (16 vCPU), same data centre | client-server cells, 1024–4096 connections |
+| L | Linode g6-dedicated-16: 16 vCPU, 32 GB (32 vCPU plans need a Linode support request) | g6-dedicated-8 (8 vCPU), same data centre | client-server cells, 1024–4096 connections |
 | BM | bare metal (EPYC 4245P NVMe, E-2286G NVMe / SATA) | co-located | low-noise storage reference (extended) |
 
-4096 connections need 32 vCPU or more on the server. The cells raise `ulimit -n`, `max_connections`, `back_log` and
+4096 connections were planned for 32 vCPU servers. Until the account can deploy them, class L uses 16 vCPU (as the
+contention study's tuner-big did). The cells raise `ulimit -n`, `max_connections`, `back_log` and
 `somaxconn` as benchmark prerequisites (`[requires]`); these are never tuned.
 
 ## Cells
@@ -113,9 +114,9 @@ web app shows a cell's history across engine builds as a study per suite version
 
 ## Cost and time
 
-- **Core cells:** 15 single-server and 3 client-server cells, about 8 hours each, all run in parallel.
+- **Core cells:** 13 single-server and 3 client-server cells, about 8 hours each, all run in parallel.
 - **Wall clock:** about 10 hours for the core suite.
-- **Core suite:** about 15 x 8 h x $0.216 (class S) plus 3 x 8 h x $1.30 (class L pair), roughly $57 per suite run.
+- **Core suite:** about 13 x 8 h x $0.216 (class S) plus 3 x 8 h x $0.65 (class L pair), roughly $38 per suite run.
 - **Extended cells:** add roughly $50.
 - **VMs:** created per suite run and deleted when their cells finish, as in Battery 1 and 2.
 

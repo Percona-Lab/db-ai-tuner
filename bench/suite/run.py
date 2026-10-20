@@ -23,7 +23,7 @@ OPS = os.path.join(ROOT, "ops")
 SSH = ["ssh", "-F", os.path.join(OPS, "ssh_config"), "-o", "ConnectTimeout=15"]
 VERSION = "v1"
 REGION = "us-southeast"
-CLASSES = {"S": ("g6-dedicated-8", None), "L": ("g6-dedicated-32", "g6-dedicated-16")}
+CLASSES = {"S": ("g6-dedicated-8", None), "L": ("g6-dedicated-16", "g6-dedicated-8")}  # 32 vCPU plans need a Linode support request
 CELLS = {  # cell -> (tier, class)
     "RO-1": ("core", "S"), "RO-2": ("core", "S"), "RO-4": ("core", "S"), "RW-1": ("core", "S"), "RW-2": ("core", "S"),
     "RW-3": ("core", "S"), "RW-4": ("core", "S"), "WI-1": ("core", "S"), "WI-3": ("core", "S"), "KV-1": ("core", "S"),
@@ -37,8 +37,11 @@ BENCH_DIRS = ["ibench", "benchbase", "job"]
 def linode(method, path, body=None):
     req = urllib.request.Request("https://api.linode.com/v4" + path, method=method, data=json.dumps(body).encode() if body else None,
                                  headers={"Authorization": "Bearer " + os.environ["LINODE_TOKEN"], "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.loads(r.read() or b"{}")
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Linode {method} {path}: {e.code} {e.read()[:300].decode(errors='replace')}") from None
 
 
 def log(st, msg):
@@ -85,9 +88,9 @@ def delete(st):
     for vm in st.get("vms", []):
         try:
             linode("DELETE", f"/linode/instances/{vm['id']}")
-        except urllib.error.HTTPError as e:
-            if e.code != 404:
-                log(st, f"delete {vm['label']} failed: {e.code}")
+        except RuntimeError as e:
+            if " 404 " not in str(e):
+                log(st, f"delete {vm['label']} failed: {e}")
     time.sleep(10)
     left = {i["id"] for i in linode("GET", "/linode/instances?page_size=500")["data"]}
     gone = [vm["label"] for vm in st.get("vms", []) if vm["id"] not in left]

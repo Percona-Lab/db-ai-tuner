@@ -91,13 +91,13 @@ case $CELL in
     $GT ch prepare -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D ch --warehouses 500 -T 8 >> $B/prep.log 2>&1
     printf '[bench]\nname = MX-1 CH-benCHmark 500W: 32 TPC-C threads + 1 analytical stream\n%s\nrun = %s ch run -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D ch --warehouses 500 -T 32 -t 1 --time {total}s --interval 30s --conn-params max_execution_time=120000 --ap-conn-params max_execution_time=120000 --ignore-error\nwarmup = 300\nduration = 600\ntimeout = 2400\ngoal_metric = tpmc_whole_run\n\n[metrics]\ntpmc_whole_run = tpmC: ([\\d.]+)\nqphh_whole_run = QphH: ([\\d.]+)\n' "$RESET" "$GT" > $P; MAX=14 ;;
   HC-1|HC-2) [ -n "$CLI" ] || { echo SETUPFAILED: $CELL needs a client host; exit 1; }
-    TH=$([ $CELL = HC-1 ] && echo 1024 || echo 4096); sb_prepare 16 4000000
-    sb_profile "$CELL sysbench oltp_point_select, 16 x 4M rows (~15 GB, in memory), $TH connections from a separate client (plain statements)" oltp_point_select 16 4000000 $TH "--rand-type=uniform --db-ps-mode=disable" 300 600 "data_state = read-only"
+    TH=$([ $CELL = HC-1 ] && echo 1024 || echo 4096); sb_prepare 16 2000000
+    sb_profile "$CELL sysbench oltp_point_select, 16 x 2M rows (~8 GB, in memory), $TH connections from a separate client (plain statements)" oltp_point_select 16 2000000 $TH "--rand-type=uniform --db-ps-mode=disable" 300 600 "data_state = read-only"
     REQ="max_connections = $((TH + 100))
 back_log = 4096"; BASELINE_ARGS="--max-connections $((TH + 100))" ;;
   HC-3) [ -n "$CLI" ] || { echo SETUPFAILED: $CELL needs a client host; exit 1; }
-    sb_prepare 16 8000000
-    sb_profile "HC-3 sysbench oltp_read_write, 16 x 8M rows (~30 GB), 4096 connections from a separate client (plain statements)" oltp_read_write 16 8000000 4096 "--db-ps-mode=disable" 600 600 "$RESET"
+    sb_prepare 16 4000000
+    sb_profile "HC-3 sysbench oltp_read_write, 16 x 4M rows (~15 GB, ~0.5x RAM), 4096 connections from a separate client (plain statements)" oltp_read_write 16 4000000 4096 "--db-ps-mode=disable" 600 600 "$RESET"
     REQ="max_connections = 4200
 back_log = 4096"; BASELINE_ARGS="--max-connections 4200" ;;
   *) echo "SETUPFAILED: unknown cell $CELL"; exit 1 ;;
