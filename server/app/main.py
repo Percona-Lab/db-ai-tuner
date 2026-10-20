@@ -1107,11 +1107,18 @@ def admin_learner_run(request: Request, body: dict = Body(default={})):
     return {"started": True}
 
 
+@app.post("/api/admin/learner/prune")
+def admin_learner_prune(request: Request):
+    auth.require_admin(request)
+    learner.revalidate()
+    return {"archived": learner.prune()}
+
+
 @app.patch("/api/admin/insights/{iid}")
 def admin_insight(iid: int, request: Request, body: dict = Body(...)):
     auth.require_admin(request)
-    if body.get("status") not in ("observed", "repeated", "contested", "contradicted", "implemented", "retired-by-admin"):
-        raise HTTPException(400, "status: observed | repeated | contested | contradicted | implemented | retired-by-admin")
+    if body.get("status") not in ("observed", "repeated", "contested", "contradicted", "implemented", "retired-by-admin", "archived"):
+        raise HTTPException(400, "status: observed | repeated | contested | contradicted | implemented | retired-by-admin | archived")
     learner.db().execute("UPDATE insights SET status=?, notes=COALESCE(?, notes), updated=? WHERE id=?",
                          (body["status"], body.get("notes"), now(), iid))
     return {"ok": True}
