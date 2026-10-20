@@ -892,12 +892,12 @@ def _warmup(c, spec):
             return round(el)
 
 
-def _maybe_profile(c, sess, prof, warmup_s):
+def _maybe_profile(c, sess, prof, warmup_s, in_window=False):
     """CPU profile for a slice of this run when this configuration was not profiled yet.
     agent.ini: cpu_profiling = auto (default) | always | off, profile_hz (49), profile_seconds (20)."""
     from . import cpuprof
     mode = str(c.cfg.get("cpu_profiling", "auto")).lower()
-    if mode == "off" or warmup_s < 30:  # needs room for the profile before the measured window starts
+    if mode == "off" or (warmup_s < 30 and not in_window):  # needs room for the profile before the measured window starts
         return None
     key = evaluate.config_key({k: v["value"] for k, v in c.state.get("managed", {}).items()})
     done = sess.get("profiled_configs") or []
@@ -906,12 +906,19 @@ def _maybe_profile(c, sess, prof, warmup_s):
     if not cpuprof.ensure_perf(log):
         log("CPU profiling skipped: perf is not available")
         return None
-    secs = min(int(c.cfg.get("profile_seconds", 20)), warmup_s - 10)
+    secs = int(c.cfg.get("profile_seconds", 20)) if in_window else min(int(c.cfg.get("profile_seconds", 20)), warmup_s - 10)
     p = cpuprof.Profiler(c.state.dir, secs, int(sess.get("profile_hz") or c.cfg.get("profile_hz", 49)))
-    p.start(delay=max(0, warmup_s - secs - 5))  # ends 5 s before the measurement starts
+    p.in_window = in_window
+    if in_window:
+        # no warm-up (an analytical query set that runs to completion): a short low-rate slice early in the window -
+        # without it the breakdown has no CPU detail at all (JOB)
+        p.start(delay=15)
+        log(f"   CPU profile: {secs}s at {p.hz} Hz early in the measured window (the benchmark has no warm-up)")
+    else:
+        p.start(delay=max(0, warmup_s - secs - 5))  # ends 5 s before the measurement starts
+        log(f"   CPU profile: {secs}s at {p.hz} Hz at the end of the warm-up (outside the measured window)")
     sess.setdefault("profiled_configs", []).append(repr(key))
     c.state.set("session", sess)
-    log(f"   CPU profile: {secs}s at {p.hz} Hz at the end of the warm-up (outside the measured window)")
     return p
 
 
@@ -979,7 +986,7 @@ def _finish_profile(c, p, t_meas0):
         res = p.process(pids)
     except Exception as e:  # never fail a run because of the profiler
         return {"error": str(e)[:300]}
-    res["in_measured_window"] = False  # taken at the end of the warm-up
+    res["in_measured_window"] = bool(getattr(p, "in_window", False))
     cats = res.get("categories") or {}
     if cats:
         log("   CPU profile: " + ", ".join(f"{k} {v}%" for k, v in list(cats.items())[:5])
@@ -1087,6 +1094,8 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         m, warn, url = _measure_start(c, label, notes, warmed=True)
         t_meas0 = time.time()
         probes = _start_probes(c, prof.duration if prof.duration > 0 else prof.timeout)
+        if profiler is None and not waited:
+            profiler = _maybe_profile(c, c.session(), prof, 0, in_window=True)
         if prof.duration > 0:
             log(f"measuring run {m['seq']} for {prof.duration}s ...")
             c.activity("measuring", f"run #{m['seq']} {label or ''}", prof.duration)
@@ -1809,6 +1818,20 @@ def _goto_managed(c, target, reason, source):
     return _apply_and_record(c, changes, source.split(":")[0]) if changes else None
 
 
+def _num(v):
+    """Numeric value of a setting (sizes like 4G included), or None."""
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        try:
+            from .knowledge import parse_size
+            return float(parse_size(str(v)))
+        except Exception:
+            return None
+
+
 def _run_experiment(c, prof, exp):
     """Measure every arm of an experiment from the same parent configuration; keep the best arm only if it beats noise."""
     sess = c.session()
@@ -1822,7 +1845,21 @@ def _run_experiment(c, prof, exp):
     noise = float((sess.get("noise") or {}).get("noise_pct") or sess.get("noise_pct") or 2.0)
     c.client.post(f"/experiments/{eid}", {"status": "running"})
     results, problems = [], []
+    # an agent's sweep stops going further in a direction once a smaller step that way was worse beyond noise
+    # (#125: io_capacity 4000 was -12%, then 8000 cost a -35% run); sweeps a person asked for run every point
+    auto = str(exp.get("created_by") or "").startswith(("agent:", "llm:")) and exp["kind"] == "sweep"
+    pv = _num(parent.get(spec.get("variable"))) if auto else None
+    worse_at = {}
     for arm in arms:
+        if auto and pv is not None:
+            x = _num(arm[0]["value"])
+            if x is not None and x != pv:
+                side = 1 if x > pv else -1
+                if side in worse_at and abs(x - pv) > worse_at[side]:
+                    results.append({"arm": label(arm), "status": "skipped",
+                                    "reason": "a smaller step in the same direction was already worse beyond noise"})
+                    log(f"   {label(arm)}: skipped (a smaller step this way was already worse beyond noise)")
+                    continue
         ok, errs = _validate_changes(c, arm, force=bool(exp.get("force")))
         if errs:
             problems.append(f"{label(arm)}: " + "; ".join(errs))
@@ -1845,6 +1882,11 @@ def _run_experiment(c, prof, exp):
         d = _improvement(goal, mean, pm["goal"]) if (pm and mean is not None) else None
         results.append({"arm": label(arm), "status": "measured", "runs": len(vals), "goal_mean": round(mean, 4) if mean is not None else None,
                         "delta_pct": d, "verdict": None if d is None else ("better" if d > noise else "worse" if d < -noise else "within noise")})
+        if auto and pv is not None and d is not None and d < -noise:
+            x = _num(arm[0]["value"])
+            if x is not None and x != pv:
+                side = 1 if x > pv else -1
+                worse_at[side] = min(worse_at.get(side, float("inf")), abs(x - pv))
         log(f"   {label(arm)}: {mean} ({'' if d is None else f'{d:+.1f}%'})")
     measured = [r for r in results if r["status"] == "measured" and r.get("delta_pct") is not None]
     best = max(measured, key=lambda r: r["delta_pct"], default=None)

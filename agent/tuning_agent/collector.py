@@ -356,7 +356,7 @@ def steady_state(samples):
     if tp and tp[0]:
         drift = 100.0 * (tp[1] - tp[0]) / tp[0]
         ev["throughput_drift_pct"] = round(drift, 1)
-        if drift <= -5:
+        if abs(drift) >= 5:  # falling: debt being paid; rising: still warming up (caches filling, #124 +4-9%)
             growing.append(f"throughput {drift:+.0f}% from the first to the last third")
     return {"steady": not growing, "growing": growing, "evidence": ev} if ev else None
 

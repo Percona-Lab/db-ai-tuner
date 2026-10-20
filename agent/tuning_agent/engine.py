@@ -232,9 +232,12 @@ def diagnose(ctx):
                 add(kind, "medium", f"Wait profile: {names[top_cls]} accounts for {share:.0f}% of non-row wait time "
                     f"({threads:.1f} threads waiting on average).", {"wait_classes": wc, "duration_s": dur})
     lw = s.get("row_lock_waits") or 0
-    if lw > 0 and tps > 0 and lw / tps > 0.02:
-        add("locks", "medium" if lw / tps < 0.1 else "high",
-            f"Row lock contention: {lw:.1f} waits/s (avg {s.get('row_lock_wait_avg_ms', 0):.1f} ms) for {tps:.0f} tps. "
+    # units of work: transactions, or statements when they autocommit (Com_commit stays 0: C4's 9,000 lock waits/s
+    # went undiagnosed)
+    work = tps or s.get("handler_commits") or s.get("statements_per_s") or s.get("qps") or 0
+    if lw > 0 and work > 0 and lw / work > 0.02:
+        add("locks", "medium" if lw / work < 0.1 else "high",
+            f"Row lock contention: {lw:.1f} waits/s (avg {s.get('row_lock_wait_avg_ms', 0):.1f} ms) for {work:.0f} transactions or statements/s. "
             "Usually a workload/schema property; config helps little.", {"row_lock_waits": lw, "row_lock_wait_avg_ms": s.get("row_lock_wait_avg_ms")})
     if (s.get("oom_kills") or 0) > 0:
         add("oom", "high", f"The kernel OOM killer fired {s['oom_kills']} time(s) during the measurement: memory is over-committed "
@@ -485,8 +488,12 @@ def recommend(ctx):
         b.add("spin-loops", "Spin less before sleeping on mutexes", [("innodb_sync_spin_loops", "10")],
               f"CPU saturated with {tr:.0f} running threads on {cpus} CPUs: shorter spinning gives cycles back to useful work. Experiment.",
               {"cpu_busy": busy, "threads_running_avg": tr, "innodb_sync_spin_loops": v.get("innodb_sync_spin_loops")}, impact=2, confidence=1)
+    # runnable threads as the scheduler sees them: sampled Threads_running undercounts when the run queue is long (C3:
+    # Threads_running 12-14 while ~500 threads waited for a CPU at 97% run-queue wait - the pool was never proposed)
+    active = max(tr, (s.get("dbproc_runq_wait_threads") or 0) + min(cpus, busy / 100.0 * cpus))
     if have_run and "thread_handling" in v and v.get("thread_handling") == "one-thread-per-connection" and \
-            (tr > cpus * 4 and busy >= 70 or tr > cpus and (s.get("dbproc_runq_wait_pct") or 0) >= 15):
+            (active > cpus * 4 and busy >= 70 or active > cpus and (s.get("dbproc_runq_wait_pct") or 0) >= 15):
+        tr = active
         b.add("thread-pool", "Try the thread pool", [("thread_handling", "pool-of-threads")],
               f"{tr:.0f} concurrently running threads on {cpus} CPUs; a thread pool caps active threads and reduces context switching. "
               "Can lower throughput for commit-heavy loads (smaller group commits). Experiment.",
@@ -1225,6 +1232,11 @@ def best_config(history, goal="tps", noise=2.0):
     # neutral run (e.g. one sweep point) that happens to have the highest number is not a candidate.
     def kept(c):
         rs = [r for r in history if config_key(r.get("managed")) == c["key"]]
+        # a configuration that gives something up (durability, observability, ...) has to earn it with the goal itself,
+        # not with efficiency alone (TATP kept doublewrite OFF for +0.03%)
+        if any(tradeoff_of(k, m.get("value") if isinstance(m, dict) else m) for k, m in (c.get("managed") or {}).items()):
+            return any(r.get("verdict") == "improved" and (r.get("evaluation") or {}).get("confirmed") is not False
+                       and not (r.get("evaluation") or {}).get("not_steady") for r in rs)
         # an improvement measured while deferred work (flushing, purge, change-buffer merges) still piled up is not earned
         return any((r.get("verdict") in KEEP and (r.get("evaluation") or {}).get("confirmed") is not False
                     and not (r.get("verdict") == "improved" and (r.get("evaluation") or {}).get("not_steady")))

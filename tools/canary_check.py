@@ -112,6 +112,24 @@ def main():
         stray = sorted(extra - kept_vars)
         check(not stray, f"best safe config has no change without a winning run behind it (stray: {stray})")
 
+    # 4b) the best safe configuration is not measurably worse than the starting configuration
+    if best:
+        start = next((x for x in hist if x["label"].startswith("baseline")), None)
+        if start:
+            sm = [x["goal_value"] for x in hist if evaluate.config_key(x.get("managed")) == evaluate.config_key(start.get("managed"))
+                  and x.get("goal_value") is not None and x["verdict"] not in evaluate.EXCLUDED]
+            if sm:
+                smean = sum(sm) / len(sm)
+                worse = (best["mean"] - smean) / abs(smean) * 100 * (-1 if s["goal"] == "latency" else 1)
+                nz = float(noise.get("noise_pct") or 2.0)
+                check(worse > -evaluate.mean_noise(nz, best["n"], len(sm)),
+                      f"best safe config not worse than the start beyond noise ({worse:+.1f}% vs start, noise ±{nz}%)")
+
+    # 4c) no run judged while the benchmark client was saturated; the session ran a known agent build
+    capped = [r["seq"] for r in hist if evaluate.client_saturated(r.get("summary") or {}) and r["verdict"] not in evaluate.EXCLUDED]
+    check(not capped, f"no client-saturated run judged ({capped})")
+    check(bool(s.get("agent_version")), f"agent build recorded for the session ({s.get('agent_version')})")
+
     # 5) trade-off phase reached when the budget allowed it
     if s.get("policy") == "benchmark" and a.budget and len([r for r in hist if not r["label"].startswith(SKIP)]) >= a.budget:
         check(any(tradeoffs_in(r.get("managed")) for r in hist), "trade-off phase reached")
