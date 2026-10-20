@@ -1486,8 +1486,8 @@
   },
   "optimizer_switch": {
    "category": "optimizer",
-   "description": "Optimizer feature flags (the agent only changes individual flags).",
-   "impact": "high",
+   "description": "Optimizer flags (on / off each); the tuner changes them one flag at a time.",
+   "impact": "container",
    "mechanism_tags": [
     "cpu-btree",
     "cpu-exec",
@@ -1501,7 +1501,513 @@
    "safety": "safe",
    "safety_note": null,
    "scope": "mysql",
-   "when": "analytics with correlated subqueries (subquery_to_derived: TPC-H +70%)"
+   "when": "a list of independent optimizer flags: see the optimizer_switch:<flag> entries"
+  },
+  "optimizer_switch:batched_key_access": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag batched_key_access (server default off).",
+   "impact": "medium",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower. With mrr_cost_based=off it is used even when not cheaper",
+   "scope": "mysql",
+   "server_default": "off",
+   "when": "joins doing many random index lookups into data larger than memory (needs mrr=on and a join buffer)"
+  },
+  "optimizer_switch:block_nested_loop": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag block_nested_loop (server default on).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "joins without usable indexes (8.0.20+: controls hash join use)"
+  },
+  "optimizer_switch:condition_fanout_filter": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag condition_fanout_filter (server default on).",
+   "impact": "medium",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower. Estimates change join orders",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "join order estimates on filtered columns (JOB-like multi-joins)"
+  },
+  "optimizer_switch:derived_condition_pushdown": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag derived_condition_pushdown (server default on).",
+   "impact": "medium",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "conditions pushed into derived tables"
+  },
+  "optimizer_switch:derived_merge": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag derived_merge (server default on).",
+   "impact": "medium",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "derived tables / views merged into the outer query"
+  },
+  "optimizer_switch:duplicateweedout": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag duplicateweedout (server default on).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "semijoin strategy choice"
+  },
+  "optimizer_switch:engine_condition_pushdown": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag engine_condition_pushdown (server default on).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "NDB only"
+  },
+  "optimizer_switch:favor_range_scan": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag favor_range_scan (server default off).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "off",
+   "when": "range scans vs ref access choice (9.x)"
+  },
+  "optimizer_switch:firstmatch": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag firstmatch (server default on).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "semijoin strategy choice"
+  },
+  "optimizer_switch:hash_join": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag hash_join (server default on).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "equi-joins without usable indexes (no-op on 8.0.20+, see block_nested_loop)"
+  },
+  "optimizer_switch:hash_set_operations": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag hash_set_operations (server default on).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "UNION / INTERSECT / EXCEPT with large inputs"
+  },
+  "optimizer_switch:hypergraph_optimizer": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag hypergraph_optimizer (server default off).",
+   "impact": "high",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower. Experimental: plans and supported features differ; debug builds only in many versions",
+   "scope": "mysql",
+   "server_default": "off",
+   "when": "complex multi-way joins (experimental optimizer in 8.0-9.x builds that include it)"
+  },
+  "optimizer_switch:index_condition_pushdown": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag index_condition_pushdown (server default on).",
+   "impact": "medium",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "range scans with extra conditions on index columns (fewer row reads)"
+  },
+  "optimizer_switch:index_merge": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag index_merge (server default on).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "OR / AND conditions over several indexed columns"
+  },
+  "optimizer_switch:index_merge_intersection": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag index_merge_intersection (server default on).",
+   "impact": "medium",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower. Turning it off is a common fix for intersect plans",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "AND over several indexes; known to pick slow intersections on correlated columns"
+  },
+  "optimizer_switch:index_merge_sort_union": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag index_merge_sort_union (server default on).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "OR over ranges on several indexes"
+  },
+  "optimizer_switch:index_merge_union": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag index_merge_union (server default on).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "OR over several indexed columns"
+  },
+  "optimizer_switch:loosescan": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag loosescan (server default on).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "semijoin strategy choice"
+  },
+  "optimizer_switch:materialization": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag materialization (server default on).",
+   "impact": "medium",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "IN-subqueries (semijoin materialization)"
+  },
+  "optimizer_switch:mrr": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag mrr (server default on).",
+   "impact": "medium",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "range / ref reads of secondary indexes on disk-bound data (reads in primary-key order)"
+  },
+  "optimizer_switch:mrr_cost_based": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag mrr_cost_based (server default on).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower. Off forces MRR even where it is slower",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "forcing MRR / BKA on regardless of cost"
+  },
+  "optimizer_switch:prefer_ordering_index": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag prefer_ordering_index (server default on).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower. Off is a common fix for slow ORDER BY LIMIT plans",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "ORDER BY ... LIMIT choosing an ordering index over a better filter"
+  },
+  "optimizer_switch:semijoin": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag semijoin (server default on).",
+   "impact": "medium",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "IN / EXISTS subqueries"
+  },
+  "optimizer_switch:skip_scan": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag skip_scan (server default on).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "range on the second column of a composite index"
+  },
+  "optimizer_switch:subquery_materialization_cost_based": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag subquery_materialization_cost_based (server default on).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "choice between materialization and EXISTS rewrite"
+  },
+  "optimizer_switch:subquery_to_derived": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag subquery_to_derived (server default off).",
+   "impact": "high",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [
+    "subquery-to-derived"
+   ],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower. Can slow queries the default plan handled well",
+   "scope": "mysql",
+   "server_default": "off",
+   "when": "analytics with correlated scalar subqueries in SELECT / WHERE (TPC-H +70%)"
+  },
+  "optimizer_switch:use_index_extensions": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag use_index_extensions (server default on).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower.",
+   "scope": "mysql",
+   "server_default": "on",
+   "when": "secondary indexes used with their implicit primary-key columns"
+  },
+  "optimizer_switch:use_invisible_indexes": {
+   "category": "optimizer",
+   "description": "optimizer_switch flag use_invisible_indexes (server default off).",
+   "impact": "low",
+   "mechanism_tags": [
+    "cpu-exec",
+    "io-read"
+   ],
+   "parent": "optimizer_switch",
+   "precondition": "statements whose plans use this strategy",
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": "Does not change query results; plans change, so some queries may get slower. On makes the optimizer use indexes marked invisible",
+   "scope": "mysql",
+   "server_default": "off",
+   "when": "testing invisible indexes"
   },
   "os:cpu_affinity": {
    "category": "os/cpu",

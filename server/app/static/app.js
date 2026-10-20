@@ -363,10 +363,10 @@ async function parametersPage() {
   const d = await api("/api/parameters");
   const st = (() => { try { return JSON.parse(sessionStorage.getItem("paramFilter") || "{}"); } catch (x) { return {}; } })();
   const q = (st.q || "").toLowerCase(), fi = st.impact || "", fs = st.scope || "";
-  const rank = { high: 0, medium: 1, low: 2, unknown: 3 };
+  const rank = { high: 0, medium: 1, low: 2, unknown: 3, container: 4 };
   const rows = d.parameters.filter(p => (!q || (p.name + " " + p.description + " " + (p.when || "")).toLowerCase().includes(q))
     && (!fi || p.effective_impact === fi) && (!fs || p.scope === fs))
-    .sort((a, b) => (rank[a.effective_impact] - rank[b.effective_impact]) || a.name.localeCompare(b.name));
+    .sort((a, b) => ((rank[a.effective_impact] ?? 3) - (rank[b.effective_impact] ?? 3)) || a.name.localeCompare(b.name));
   const impBadge = p => { const l = p.learned && p.learned.impact !== "unknown" ? p.learned : null;
     const tip = `Shipped estimate: ${p.impact}` + (l ? `. Measured: ${l.impact} - ${l.runs} single-setting experiments in ${l.sessions} session(s): ${l.improved} improved, ${l.regressed} regressed, ${l.neutral} within noise; median change of the decisive ones ${l.median_abs_delta_pct}% (max ${l.max_abs_delta_pct}%). A summary of experiment data, not a law.` : ". Not measured often enough yet to replace the estimate.")
       + (p.learned_by_workload ? " By workload: " + Object.entries(p.learned_by_workload).map(([w, v]) => `${w} ${v.impact} (${v.runs} runs)`).join(", ") + "." : "");
@@ -376,7 +376,7 @@ async function parametersPage() {
     return `<select data-${admin ? "def" : "pol"}="${esc(p.name)}" style="font-size:12px;width:auto">${opts.map(o => `<option value="${o}" ${o === cur ? "selected" : ""}>${o === "default" ? `default (${p.default_mode})` : o}</option>`).join("")}</select>`; };
   $view.innerHTML = `<h1>Parameters${info("The MySQL and operating-system settings the tuner works with. Impact: how much a setting can move results when it counts (shipped estimate; replaced by the measured impact once enough single-setting experiments exist - a summary of experiment data, not a law). When it counts: the conditions or measured bottleneck in which it matters. Precondition: what must happen in the workload for it to act at all (otherwise the tuner does not try it). Safety: safe, or what a value gives up (durability, observability, replication, semantics). Your policy: the tuner never changes a blocked setting in your sessions; 'default' follows the service default.")}</h1>
   <div class="row" style="margin-bottom:8px;gap:8px;flex-wrap:wrap"><input id="pq" placeholder="search" value="${esc(st.q || "")}" style="max-width:260px">
-   <select id="pimp" style="width:auto"><option value="">any impact</option>${["high", "medium", "low", "unknown"].map(x => `<option ${x === fi ? "selected" : ""}>${x}</option>`).join("")}</select>
+   <select id="pimp" style="width:auto"><option value="">any impact</option>${["high", "medium", "low", "unknown", "container"].map(x => `<option ${x === fi ? "selected" : ""}>${x}</option>`).join("")}</select>
    <select id="pscope" style="width:auto"><option value="">MySQL and OS</option>${["mysql", "os", "pseudo"].map(x => `<option ${x === fs ? "selected" : ""}>${x}</option>`).join("")}</select>
    <span class="muted" style="font-size:12.5px">${rows.length} of ${d.parameters.length} · blocked for you: ${d.parameters.filter(p => p.mode === "block").length}</span></div>
   <div class="card tablewrap"><table><thead><tr><th>Parameter</th><th>Impact</th><th>When it counts</th><th>Safety</th><th>Restart</th><th>Your policy</th>${d.admin ? "<th>Service default</th>" : ""}</tr></thead><tbody>

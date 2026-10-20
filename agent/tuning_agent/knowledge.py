@@ -374,3 +374,23 @@ def effective_impact(variable, learned=None):
     if le and le.get("impact") and le.get("impact") != "unknown":
         return le["impact"], "learned"
     return (catalog().get(variable) or {}).get("impact", "unknown"), "shipped"
+
+
+CONTAINERS = {"optimizer_switch"}  # variables that are lists of independent flags: catalog, policy and learning per flag
+
+
+def setting_names(variable, value, current=None):
+    """The catalog names a change touches: the variable itself, or for a flag container (optimizer_switch) one name per
+    flag the value sets differently from the current value ("optimizer_switch:subquery_to_derived")."""
+    if variable not in CONTAINERS:
+        return [variable]
+    def flags(v):
+        out = {}
+        for part in str(v or "").split(","):
+            k, _, x = part.strip().partition("=")
+            if k:
+                out[k.strip()] = x.strip().lower()
+        return out
+    new, cur = flags(value), flags(current)
+    names = [f"{variable}:{k}" for k, x in new.items() if cur.get(k) != x]
+    return names or [variable]

@@ -1557,7 +1557,7 @@ def run_engine(ctx):
     if blocked:
         keep = []
         for it in items:
-            hit = sorted({c["variable"] for c in it.get("changes") or []} & blocked)
+            hit = sorted({n for c in it.get("changes") or [] for n in [c["variable"]] + knowledge.setting_names(c["variable"], c.get("proposed"), c.get("current"))} & blocked)
             if hit and it["kind"] != "revert" and not it["id"].startswith(("revert", "rollback")):
                 ctx.setdefault("_blocked_items", []).append({"id": it["id"], "variables": hit})
                 continue
@@ -1601,7 +1601,8 @@ def run_engine(ctx):
         if it["kind"] == "config" and it.get("changes"):
             # parameter catalog: what the changed settings can move when they count (learned impact overrides the shipped
             # prior once there is measured evidence in these conditions)
-            imps = [knowledge.effective_impact(c["variable"], ctx.get("param_impact")) for c in it["changes"]]
+            names = [n for c in it["changes"] for n in knowledge.setting_names(c["variable"], c.get("proposed"), c.get("current"))]
+            imps = [knowledge.effective_impact(n, ctx.get("param_impact")) for n in names]
             best_imp = max(imps, key=lambda x: knowledge.IMPACT_SCORE.get(x[0], 0))
             it["param_impact"] = {"impact": best_imp[0], "source": best_imp[1]}
             it["score_prior"] = it.get("score_prior", 0) + knowledge.IMPACT_SCORE.get(best_imp[0], 0)

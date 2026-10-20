@@ -1,7 +1,7 @@
 """Optional LLM suggestions (through the tuner server / OpenRouter), sanitized before they can become experiments."""
 import re
 
-from .knowledge import KB, normalize, parse_size, tradeoff_of
+from .knowledge import KB, normalize, parse_size, setting_names, tradeoff_of
 from .mechanisms import activity as _activity
 
 DENY = {"datadir", "socket", "port", "server_id", "read_only", "super_read_only", "sql_mode", "character_set_server",
@@ -138,8 +138,8 @@ def sanitize(suggestions, ctx, res, model):
             val = str(c["value"]).strip().strip("'\"")
             if var in DENY:
                 why = f"{var} is not tunable by the agent"
-            elif var in set(ctx.get("blocked") or []):
-                why = f"{var} is blocked by the parameter policy"
+            elif set([var] + setting_names(var, val, v.get(var))) & set(ctx.get("blocked") or []):
+                why = f"{var} ({', '.join(sorted(set([var] + setting_names(var, val, v.get(var))) & set(ctx.get('blocked') or [])))}) is blocked by the parameter policy"
             elif var not in v and not (var in PSEUDO and var in _pseudo_available(ctx)):
                 why = f"{var} does not exist on this server"
             elif var in PSEUDO and PSEUDO[var] and val.lower() not in PSEUDO[var]:

@@ -82,6 +82,41 @@ PRIORS = {
 }
 
 
+# optimizer_switch is a container: each flag is its own setting with its own impact and safety. None of them changes
+# query results; the risk of every flag is plan regressions (some queries faster, others slower), so they are "safe"
+# for correctness but need the whole workload measured. (flag, server default, impact, when it counts, note)
+OPTIMIZER_FLAGS = [
+    ("subquery_to_derived", "off", "high", "analytics with correlated scalar subqueries in SELECT / WHERE (TPC-H +70%)", "can slow queries the default plan handled well"),
+    ("batched_key_access", "off", "medium", "joins doing many random index lookups into data larger than memory (needs mrr=on and a join buffer)", "with mrr_cost_based=off it is used even when not cheaper"),
+    ("mrr", "on", "medium", "range / ref reads of secondary indexes on disk-bound data (reads in primary-key order)", ""),
+    ("mrr_cost_based", "on", "low", "forcing MRR / BKA on regardless of cost", "off forces MRR even where it is slower"),
+    ("block_nested_loop", "on", "low", "joins without usable indexes (8.0.20+: controls hash join use)", ""),
+    ("hash_join", "on", "low", "equi-joins without usable indexes (no-op on 8.0.20+, see block_nested_loop)", ""),
+    ("index_merge", "on", "low", "OR / AND conditions over several indexed columns", ""),
+    ("index_merge_union", "on", "low", "OR over several indexed columns", ""),
+    ("index_merge_sort_union", "on", "low", "OR over ranges on several indexes", ""),
+    ("index_merge_intersection", "on", "medium", "AND over several indexes; known to pick slow intersections on correlated columns", "turning it off is a common fix for intersect plans"),
+    ("engine_condition_pushdown", "on", "low", "NDB only", ""),
+    ("index_condition_pushdown", "on", "medium", "range scans with extra conditions on index columns (fewer row reads)", ""),
+    ("materialization", "on", "medium", "IN-subqueries (semijoin materialization)", ""),
+    ("semijoin", "on", "medium", "IN / EXISTS subqueries", ""),
+    ("loosescan", "on", "low", "semijoin strategy choice", ""),
+    ("firstmatch", "on", "low", "semijoin strategy choice", ""),
+    ("duplicateweedout", "on", "low", "semijoin strategy choice", ""),
+    ("subquery_materialization_cost_based", "on", "low", "choice between materialization and EXISTS rewrite", ""),
+    ("use_index_extensions", "on", "low", "secondary indexes used with their implicit primary-key columns", ""),
+    ("condition_fanout_filter", "on", "medium", "join order estimates on filtered columns (JOB-like multi-joins)", "estimates change join orders"),
+    ("derived_merge", "on", "medium", "derived tables / views merged into the outer query", ""),
+    ("derived_condition_pushdown", "on", "medium", "conditions pushed into derived tables", ""),
+    ("use_invisible_indexes", "off", "low", "testing invisible indexes", "on makes the optimizer use indexes marked invisible"),
+    ("skip_scan", "on", "low", "range on the second column of a composite index", ""),
+    ("prefer_ordering_index", "on", "low", "ORDER BY ... LIMIT choosing an ordering index over a better filter", "off is a common fix for slow ORDER BY LIMIT plans"),
+    ("hypergraph_optimizer", "off", "high", "complex multi-way joins (experimental optimizer in 8.0-9.x builds that include it)", "experimental: plans and supported features differ; debug builds only in many versions"),
+    ("hash_set_operations", "on", "low", "UNION / INTERSECT / EXCEPT with large inputs", ""),
+    ("favor_range_scan", "off", "low", "range scans vs ref access choice (9.x)", ""),
+]
+
+
 def main():
     # which rules change which variables: b.add("<id>", "<title>", [("<var>", ...), ...] and sweep("<id>", "<title>", "<var>", ...)
     import re
@@ -116,6 +151,17 @@ def main():
             "restart": (not kb.get("dynamic", True)) if kb else (bool(okb[1]) if okb else None),
             "mechanism_tags": tags, "rules": rules,
         }
+    if "optimizer_switch" in out:
+        out["optimizer_switch"].update(impact="container", when="a list of independent optimizer flags: see the optimizer_switch:<flag> entries",
+                                       description="Optimizer flags (on / off each); the tuner changes them one flag at a time.")
+    for flag, default, impact, when, note in OPTIMIZER_FLAGS:
+        out[f"optimizer_switch:{flag}"] = {
+            "scope": "mysql", "category": "optimizer", "parent": "optimizer_switch", "server_default": default,
+            "description": f"optimizer_switch flag {flag} (server default {default}).", "impact": impact, "when": when,
+            "precondition": "statements whose plans use this strategy", "safety": "safe",
+            "safety_note": ("Does not change query results; plans change, so some queries may get slower. " + note[:1].upper() + note[1:]).strip(),
+            "restart": False, "mechanism_tags": ["cpu-exec", "io-read"],
+            "rules": sorted(r for r in rules_by_var.get("optimizer_switch", set()) if flag.replace("_", "-") in r or r in ("bka-mrr",) and flag in ("batched_key_access", "mrr", "mrr_cost_based"))}
     path = os.path.join(ROOT, "agent", "tuning_agent", "knowledge_data", "parameters.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:

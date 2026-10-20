@@ -414,7 +414,16 @@ def collect_param_evidence(c=None):
             continue
         own = [x for x in _uj(r["changes"], []) or [] if str(x.get("source", "")).startswith(("rec:", "exp:"))
                and not str(x.get("source", ""))[4:].startswith(("revert", "rollback"))]
-        vars_ = {x.get("variable") for x in own if x.get("variable") not in COMPANIONS} or {x.get("variable") for x in own}
+        # flag containers (optimizer_switch): the evidence belongs to the flag that changed
+        names = []
+        for x in own:
+            if x.get("variable") == "optimizer_switch":
+                o = dict(p.split("=", 1) for p in str(x.get("old") or "").split(",") if "=" in p)
+                n = dict(p.split("=", 1) for p in str(x.get("new") or "").split(",") if "=" in p)
+                names += [f"optimizer_switch:{k.strip()}" for k, v in n.items() if o.get(k) != v] or ["optimizer_switch"]
+            else:
+                names.append(x.get("variable"))
+        vars_ = {v for v in names if v not in COMPANIONS} or set(names)
         if len(vars_) != 1:
             continue  # several settings at once: the effect cannot be attributed to one of them
         var = vars_.pop()
@@ -424,6 +433,8 @@ def collect_param_evidence(c=None):
         a["improved" if r["verdict"] in GOOD else "regressed" if r["verdict"] in BAD else "neutral"] += 1
         if ev.get("goal_delta_pct") is not None:
             a["deltas"].append(round(ev["goal_delta_pct"], 2))
+    if any(v.startswith("optimizer_switch:") for v, _ in acc):  # evidence recorded before flags were split out
+        c.execute("DELETE FROM param_evidence WHERE variable='optimizer_switch'")
     for (var, sid), a in acc.items():
         c.execute("INSERT OR REPLACE INTO param_evidence VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                   (var, sid, a["wl"], a["cpu"], a["runs"], a["improved"], a["regressed"], a["neutral"], _j(a["deltas"]), a["legacy"], time.time()))
