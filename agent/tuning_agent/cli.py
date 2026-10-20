@@ -1180,8 +1180,9 @@ def _noise_plan(c, prof, runs, n):
             log(f"   WARNING: {wu['text']}")
             c.event("warmup", wu["text"], wu)
             base = int(getattr(prof, "base_warmup", prof.warmup) if str(prof.warmup).isdigit() else 0)
-            if prof.adaptive and prof.can_resize() and base and int(prof.warmup) < 3 * base:
-                new = min(3 * base, int(prof.warmup) * 2)
+            cap = max(3 * base, 3600)  # up to an hour: large I/O-bound sets take long to reach steady state
+            if prof.adaptive and prof.can_resize() and base and int(prof.warmup) < cap:
+                new = min(cap, int(prof.warmup) * 2)
                 sess["warmup_seconds"] = new
                 wu["applied_warmup_s"] = new
                 note = f"Measured with a {prof.warmup} s warm-up that did not reach steady state; superseded by calibration with {new} s."
