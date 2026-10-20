@@ -84,6 +84,14 @@ def create(st, role, typ):
     raise RuntimeError(f"{label}: no ssh")
 
 
+def fetch_logs(st, alias):
+    """Keep the session / setup / queue logs (the checker and the scorecard read them) before the VMs go."""
+    d = os.path.join(OPS, "suite", st["run"])
+    for f in ("session-suite.log", "setup.log", "queue.log", "suite.ini"):
+        subprocess.run(["scp", "-F", os.path.join(OPS, "ssh_config"), "-q", f"{alias}:/root/bench/{f}", os.path.join(d, f"{st['cell']}-{f}")],
+                       timeout=300)
+
+
 def delete(st):
     for vm in st.get("vms", []):
         try:
@@ -148,6 +156,7 @@ def cell(run, cell_id):
         st["status"] = "done"
         st["ended"] = time.time()
         log(st, "finished")
+        fetch_logs(st, srv)
         delete(st)
     except Exception as e:  # noqa - the VMs stay for inspection
         st["status"] = "failed"

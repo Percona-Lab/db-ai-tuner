@@ -1544,11 +1544,16 @@ def cmd_calibrate(a):
          _fmt_cal(cal) + ("\nRe-evaluated: " + ", ".join(f"run {s} {o}->{n}" for s, o, n in changed) if changed else ""))
 
 
+KEEP_ON_REJUDGE = ("hypothesis",)
+
+
 def _reevaluate(c, sess):
     noise = sess.get("noise") or ({"noise_pct": sess["noise_pct"]} if sess.get("noise_pct") else None)
     changed = []
     for i, r in enumerate(sess["runs"]):
         v, ev = evaluate.verdict(r, sess["runs"][:i], sess["goal"], noise)
+        # what the verdict does not recompute stays: the hypothesis this run tested and its outcome
+        ev = dict(ev, **{k: (r.get("evaluation") or {})[k] for k in KEEP_ON_REJUDGE if k in (r.get("evaluation") or {})})
         if v != r.get("verdict") or ev != r.get("evaluation"):
             changed.append((r["seq"], r.get("verdict"), v))
             r["verdict"], r["evaluation"] = v, ev
