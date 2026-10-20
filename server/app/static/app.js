@@ -92,7 +92,7 @@ function setNav(active) {
 // ------------------------------------------------------------------ pages
 function landing() {
   setNav();
-  $view.innerHTML = `<section class="hero"><h1>Tune MySQL with an agent you can drive from Claude Code</h1>
+  $view.innerHTML = `<section class="hero"><img class="hero-logo" src="/static/logo.svg" alt="AI DB Tuner logo"><h1>Tune MySQL with an agent you can drive from Claude Code</h1>
   <p class="sub" style="max-width:720px">Register, install the <code>tuning-agent</code> next to your database with your API key, and run tuning sessions:
   a hardware-and-version baseline, measured runs under your benchmark, ranked recommendations with the evidence behind them, and one-command apply / rollback.
   Every run's configuration diff, database and OS metrics and decision inputs land here.</p>
