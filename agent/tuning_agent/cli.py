@@ -1078,7 +1078,9 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     os.makedirs(logdir, exist_ok=True)
     seq = len(sess["runs"]) + 1
     logfile = os.path.join(logdir, f"s{sess['id']}-run{seq}.log")
-    if not prof.reset and prof.restart_before_run:
+    # a writing benchmark's reset restores the data and restarts mysqld itself; a read-only or seasoned one keeps its
+    # data, so the clean start is a restart (before any warm-up step its "reset" runs, e.g. tpch_warm.sh)
+    if prof.restart_before_run and (not prof.reset or prof.data_state in ("read-only", "seasoned")):
         log("clean start: restarting mysqld and dropping the OS page cache")
         c.activity("clean start", "restarting mysqld")
         ok, err = Applier(c.cfg, c.state, c.db, log=log).restart()
