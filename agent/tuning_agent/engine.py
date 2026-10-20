@@ -91,6 +91,29 @@ def _numval(var, x):
             return None
 
 
+def nice_value(var, x):
+    """An agent-generated value snapped to a round one (knowledge.nice_number), in the setting's own notation."""
+    n = _numval(var, x)
+    if n is None or n in (float("inf"),):
+        return x
+    r = knowledge.nice_number(var, n)
+    if r == n:
+        return x
+    return fmt_size(int(r)) if (KB.get(var) or {}).get("kind") == "size" else (str(int(r)) if r == int(r) else str(r))
+
+
+def nice_values(var, values, current=None):
+    """Sweep points snapped to round values, duplicates and the current value dropped, order kept."""
+    out, seen = [], {_numval(var, current)} if current is not None else set()
+    for x in values:
+        y = nice_value(var, x)
+        k = _numval(var, y)
+        if k not in seen:
+            seen.add(k)
+            out.append(y)
+    return out
+
+
 def shaped_values(var, values, current, direction=None):
     """Sweep points ordered (and completed) by how the setting's response is expected to look (catalog):
     saturating - upward from the current value, smallest step first (the sweep stops once a step stops helping);
@@ -99,6 +122,7 @@ def shaped_values(var, values, current, direction=None):
     ahead less) - that side first, nearest first, then the other side."""
     shape = knowledge.response_shape(var)
     cur = _numval(var, current)
+    values = nice_values(var, values, current)
     nums = [(x, _numval(var, x)) for x in values]
     if cur is None or any(n is None for _, n in nums) or shape not in ("saturating", "optimum"):
         return values, shape
@@ -349,6 +373,10 @@ class Builder:
                 risk = r
             if not meta.get("dynamic", False):
                 restart = True
+            if var not in ((self.ctx.get("bench") or {}).get("requires") or {}) and var != "max_connections":
+                val = nice_value(var, val)  # 1072 -> 1000: a round value that performs the same reads and is recommended better
+                if normalize(var, self.v.get(var)) == normalize(var, val):
+                    continue
             ch.append({"variable": var, "current": self.v.get(var), "proposed": val})
         if kind == "config" and not ch:
             return
@@ -1121,16 +1149,21 @@ def apply_history(items, history):
     """Mark/skip items already tried."""
     tried = {}
     tried_ids = {}
+    swept = {}  # variable -> last run of an agent sweep over it (screening skips points: the first value may never run)
     for run in history:
         for c in run.get("changes") or []:
             tried[(c["variable"], normalize(c["variable"], c.get("new")))] = run
             src = c.get("source") or ""
             if src.startswith("rec:"):
                 tried_ids[src[4:]] = run
+            if src.startswith("exp:"):
+                swept[c["variable"]] = run
     out = []
     for it in items:
         prior = [tried.get((c["variable"], normalize(c["variable"], c["proposed"]))) for c in it["changes"]]
         prior = [p for p in prior if p] or ([tried_ids[it["id"]]] if it["id"] in tried_ids and it["kind"] == "config" else [])
+        if not prior and it.get("sweep") and it["sweep"]["variable"] in swept:
+            prior = [swept[it["sweep"]["variable"]]]
         if prior:
             p = prior[-1]
             it["tried_in_run"] = p.get("seq")
@@ -1140,6 +1173,25 @@ def apply_history(items, history):
                 it["note"] = f"Already tried in run #{p.get('seq')} ({p.get('verdict')})."
         out.append(it)
     return out
+
+
+def _retest_after_shift(it, ctx):
+    """Coordinate-wise tuning can stop at a local optimum: a setting found flat early can matter once another change moved
+    the bottleneck (a larger buffer pool turns an I/O-bound run CPU-bound). A change tried without effect is tried again
+    when the measured share of time it acts on grew by more than the noise threshold since that run."""
+    if it.get("tried_verdict") not in ("neutral", "efficiency-loss") or it.get("confidence") != 0:
+        return
+    h = it.get("hypothesis") or {}
+    run = next((r for r in ctx.get("history") or [] if r.get("seq") == it.get("tried_in_run")), None)
+    then = (((run or {}).get("evaluation") or {}).get("hypothesis") or {}).get("share_pct")
+    now = h.get("share_pct")
+    noise = float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0)
+    if then is None or now is None or now - then <= noise:
+        return
+    it["confidence"] = 1
+    it["retest"] = {"run": it.get("tried_in_run"), "share_then_pct": then, "share_now_pct": now}
+    it["note"] = (f"Tried in run #{it.get('tried_in_run')} without effect, when {', '.join(h.get('target') or [])} took {then:.0f}% of "
+                  f"the time; now {now:.0f}%: the bottleneck shifted, tested again.")
 
 
 def config_key(managed):
@@ -1680,6 +1732,7 @@ def run_engine(ctx):
                     it["score_prior"] = it.get("score_prior", 0) + (1 if x["direction"] == "helps" else -2 if x["direction"] == "hurts" else -1)
         if it["kind"] in ("config", "revert"):
             it["hypothesis"] = hypothesis(it, ctx)
+            _retest_after_shift(it, ctx)
             rd_, rn_ = rescore(it, ctx.get("hypotheses"))
             cd_, cn_ = credibility(it, ctx.get("hypothesis_experience"))
             if cn_:

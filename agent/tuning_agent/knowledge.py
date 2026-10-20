@@ -140,6 +140,66 @@ def fmt_size(n):
     return str(n)
 
 
+POW2_INTS = ("threads", "concurrency", "instances", "cleaners", "thread_pool_size", "thread_pool_max_active")
+
+
+def _pow2(n):
+    return n > 0 and (n & (n - 1)) == 0
+
+
+def _one_digit(n):
+    """1000, 3000, 40: one significant digit."""
+    n = abs(int(n))
+    while n >= 10 and n % 10 == 0:
+        n //= 10
+    return n < 10
+
+
+def roundness(var, value):
+    """0 = round (one significant digit, a power of two, whole GiB / power-of-two size), 1 = two significant digits,
+    2 = anything else. Among settings that perform the same, the rounder value is the one to recommend."""
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        n = parse_size(str(value))
+        if n is None:
+            return 0
+    if n != int(n):
+        return 2
+    n = int(n)
+    if abs(n) <= 10 or _pow2(abs(n)) or _one_digit(n):
+        return 0
+    if (KB.get(var) or {}).get("kind") == "size" and n % (512 * 1024 ** 2) == 0:
+        return 0
+    digits = str(abs(n)).rstrip("0")
+    return 1 if len(digits) <= 2 else 2
+
+
+def nice_number(var, x):
+    """Snap an agent-generated value with three or more significant digits (or a fraction) to a round one: sizes to a power of two below 1 GiB, to 512 MiB steps up to 8 GiB
+    and whole GiB above; thread-like counts to a power of two; other counts and percentages to one significant digit
+    (1072 -> 1000, 47 -> 50). Small values (<= 10) and already round values are kept."""
+    if x is None or x in (float("inf"), float("-inf")):
+        return x
+    kind = (KB.get(var) or {}).get("kind")
+    if roundness(var, x) < 2:  # two significant digits (24 = 2 x 12 cores, 1500) carry meaning: kept
+        return x
+    import math
+    if kind == "size":
+        G, M = 1024 ** 3, 1024 ** 2
+        if x >= 8 * G:
+            return round(x / G) * G
+        if x >= G:
+            return max(G, round(x / (512 * M)) * 512 * M)
+        return float(2 ** round(math.log2(max(x, 1024))))
+    if abs(x) <= 10:
+        return float(round(x))
+    if any(t in var for t in POW2_INTS):
+        return float(2 ** round(math.log2(x)))
+    e = 10 ** int(math.floor(math.log10(abs(x))))
+    return float(round(x / e) * e)
+
+
 def human_size(n):
     n = float(n)
     for u in ("B", "KiB", "MiB", "GiB", "TiB"):

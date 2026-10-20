@@ -985,41 +985,100 @@ def test_swap_hazard_needs_measured_cost():
     assert not evaluate.swap_cost(dict(s, dbproc_workingset_refault_anon_per_s=0), 3.6)
 
 
-def test_sweep_measures_each_arm_once():
-    # AMD #142: the repeat loop reused the arm index, so a 2-point agent sweep re-ran its second point forever
+def _sweep_sim(values, goals, parent="0", var="innodb_thread_concurrency", noise=2.0, server=None):
+    """Drive _run_experiment for an agent sweep with stubbed measurement: goals maps value -> goal (parent mean 1000)."""
     from tuning_agent import cli
-    seen = []
+    seen, kept = [], {}
 
     class St:
         def __init__(self):
-            self.d = {"managed": {"innodb_thread_concurrency": {"value": "0"}}}
+            self.d = {"managed": {var: {"value": parent}} if parent is not None else {}}
         def get(self, k, default=None):
             return self.d.get(k, default)
 
     class Cl:
-        def post(self, *a, **k):
+        def post(self, path, body):
+            if body.get("results"):
+                kept.update(body)
             return {}
 
+    class Db:
+        def variables(self):
+            return server or {}
+
     class C:
-        state, client = St(), Cl()
+        state, client, db = St(), Cl(), Db()
         def session(self):
-            return {"goal": "tps", "noise_pct": 2.0, "runs": [{"seq": 2, "managed": {"innodb_thread_concurrency": "0"}, "goal_value": 1000,
-                                                               "verdict": "improved"}]}
+            return {"goal": "tps", "noise_pct": noise, "runs": [{"seq": 2, "managed": {var: parent} if parent is not None else {},
+                                                                 "goal_value": 1000, "verdict": "improved"}]}
     saved = (cli._validate_changes, cli._goto_managed, cli._bench_run, cli.log)
     try:
         cli._validate_changes = lambda c, arm, force=False: (arm, [])
         cli._goto_managed = lambda *a, **k: {}
         def bench(c, prof, label=None, **k):
-            seen.append(label)
-            assert len(seen) < 10, seen
-            return {"goal_value": 1000 + len(seen)}, None
+            seen.append(label.split("=", 1)[1])
+            assert len(seen) < 12, seen
+            return {"goal_value": goals.get(seen[-1], 1000)}, None
         cli._bench_run, cli.log = bench, (lambda *a, **k: None)
-        cli._run_experiment(C(), None, {"id": 1, "kind": "sweep", "created_by": "agent:x",
-                                        "spec": {"variable": "innodb_thread_concurrency", "values": ["48", "24"]}})
+        cli._run_experiment(C(), None, {"id": 1, "kind": "sweep", "created_by": "agent:x", "spec": {"variable": var, "values": values}})
     finally:
         cli._validate_changes, cli._goto_managed, cli._bench_run, cli.log = saved
-    assert seen == ["exp#1 innodb_thread_concurrency=48", "exp#1 innodb_thread_concurrency=24"], seen
+    return seen, kept.get("results", {}).get("kept")
 
+
+def test_sweep_measures_each_arm_once():
+    # AMD #142: the repeat loop reused the arm index, so a 2-point agent sweep re-ran its second point forever.
+    # Thread concurrency 0 = unlimited: 24 is the widest step down from it, screened first; flat -> 48 is not measured
+    seen, kept = _sweep_sim(["48", "24"], {"48": 1001, "24": 1001})
+    assert seen == ["24"] and kept is None, seen
+
+
+def test_sweep_screens_then_refines():
+    # #27: the optimum at the far end (concurrency 4) - the widest step finds it, nearer values are refined after it
+    seen, kept = _sweep_sim(["16", "8", "4"], {"4": 1050, "8": 1003, "16": 1000})
+    assert seen[0] == "4" and kept == "innodb_thread_concurrency=4", (seen, kept)
+    # a hint (between half the threshold and the threshold) is not called flat: the next value is measured too
+    seen, _ = _sweep_sim(["16", "8", "4"], {"4": 1015, "8": 1004, "16": 1000})
+    assert seen[:2] == ["4", "16"], seen
+    # more is better up to a point (thread_cache_size, saturating): refine upward from the smallest after a sensitive
+    # widest step, stop at the knee and keep the cheapest value within noise of the best
+    seen, kept = _sweep_sim(["64", "128", "256", "1024"], {"1024": 1060, "64": 1020, "128": 1055, "256": 1061},
+                            parent="16", var="thread_cache_size")
+    assert seen == ["1024", "64", "128"] and kept == "thread_cache_size=128", (seen, kept)
+    # the parent value comes from the server when the setting is not managed yet
+    seen, _ = _sweep_sim(["2000", "1000", "4000"], {}, parent=None, var="innodb_io_capacity", server={"innodb_io_capacity": "200"})
+    assert seen == ["4000"], seen
+
+
+def test_flat_sweep_retested_after_bottleneck_shift():
+    # a sweep screened flat (only its widest point ran) counts as tried; once the share of time it acts on grows beyond
+    # the noise threshold, it is tried again (local optimum guard for interacting settings)
+    hist = [{"seq": 9, "label": "exp#5 innodb_thread_concurrency=8", "verdict": "neutral", "managed": {},
+             "changes": [{"variable": "innodb_thread_concurrency", "old": "0", "new": "8", "source": "exp:5"}],
+             "evaluation": {"hypothesis": {"kind": "bottleneck", "share_pct": 6.0, "target": ["CPU: spinning on latches"]}}}]
+    it = {"id": "sweep-thread-concurrency", "kind": "config", "confidence": 2, "sweep": {"variable": "innodb_thread_concurrency", "values": ["32", "8"]},
+          "changes": [{"variable": "innodb_thread_concurrency", "current": "0", "proposed": "32"}]}
+    it = engine.apply_history([it], hist)[0]
+    assert it["tried_in_run"] == 9 and it["confidence"] == 0
+    it["hypothesis"] = {"kind": "bottleneck", "share_pct": 7.5, "target": ["CPU: spinning on latches"]}
+    engine._retest_after_shift(it, {"history": hist, "noise_pct": 2.0})
+    assert it["confidence"] == 0  # +1.5 points: within noise
+    it["hypothesis"]["share_pct"] = 31.0
+    engine._retest_after_shift(it, {"history": hist, "noise_pct": 2.0})
+    assert it["confidence"] == 1 and it["retest"]["share_now_pct"] == 31.0
+
+
+def test_round_values():
+    from tuning_agent.knowledge import nice_number, roundness
+    assert nice_number("innodb_io_capacity", 1072) == 1000 and nice_number("innodb_io_capacity", 1500) == 1500
+    assert nice_number("innodb_thread_concurrency", 24) == 24 and nice_number("table_open_cache", 6311) == 6000
+    assert nice_number("sort_buffer_size", 300 * 1024) == 256 * 1024
+    assert roundness("innodb_io_capacity", 1000) < roundness("innodb_io_capacity", 1072)
+    assert engine.nice_values("innodb_io_capacity", ["1072", "1000", "2150"], "200") == ["1000", "2000"]
+    from tuning_agent import cli
+    best = {"arm": "innodb_io_capacity=1072", "delta_pct": 5.0}
+    other = {"arm": "innodb_io_capacity=1000", "delta_pct": 4.2}
+    assert cli._good_enough([best, other], best, 2.0, "innodb_io_capacity", 200, "optimum") is other
 
 def test_apply_failure_is_a_failed_experiment():
     # EPYC 1000W: huge pages could not be reserved -> the applier raised and autotune crashed; it must come back as

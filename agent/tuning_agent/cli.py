@@ -1928,6 +1928,71 @@ def _num(v):
             return None
 
 
+def _sv(var, x):
+    """A sweep value as a number for ordering and distances (sizes parsed; thread concurrency 0 = unlimited = above any
+    limit)."""
+    n = engine._numval(var, x)
+    return 1e12 if n == float("inf") else n
+
+
+def _screen_order(arms, pv):
+    """Sensitivity before refinement: on each side of the parent value, the widest step first (the strongest signal, and
+    an optimum at the far end is not missed - #27 thread concurrency 4), then the rest nearest first. Sides in the order
+    the sweep listed them (evidence direction / bracket order first)."""
+    sides = []
+    for a in arms:
+        x = _sv(a[0]["variable"], a[0]["value"])
+        sd = 0 if x is None else (1 if x > pv else -1)
+        if sd not in sides:
+            sides.append(sd)
+    out = []
+    for sd in sides:
+        mine = [a for a in arms if (lambda x: (0 if x is None else (1 if x > pv else -1)))(_sv(a[0]["variable"], a[0]["value"])) == sd]
+        if sd == 0:
+            out += mine
+            continue
+        mine.sort(key=lambda a: abs(_sv(a[0]["variable"], a[0]["value"]) - pv))
+        out += mine[-1:] + mine[:-1]
+    return out
+
+
+def _extend_optimum(results, pv, noise, worse_at, last_value, spec):
+    meas = [(r, _sv(spec["variable"], r["arm"].split("=", 1)[1])) for r in results if r["status"] == "measured" and r.get("delta_pct") is not None]
+    meas = [(r, x) for r, x in meas if x is not None]
+    if not meas:
+        return None
+    br, bx = max(meas, key=lambda p: p[0]["delta_pct"])
+    side = 1 if bx > pv else -1
+    farthest = all(abs(x - pv) <= abs(bx - pv) for r, x in meas if (x > pv) == (side > 0))
+    if not (br["delta_pct"] > noise and farthest and side not in worse_at):
+        return None
+    nx = bx * 2 if side > 0 else bx / 2
+    if side < 0 and nx < 1:
+        return None
+    size = isinstance(last_value, str) and last_value[-1:].upper() in "KMG"
+    val = engine.fmt_size(int(nx)) if size else str(int(nx))
+    val = engine.nice_value(spec["variable"], val)
+    if any(_sv(spec["variable"], r["arm"].split("=", 1)[1]) == _sv(spec["variable"], val) for r in results):
+        return None
+    return val
+
+
+def _good_enough(measured, best, noise, var, pv, shape):
+    """The value to keep: among those within noise of the best (they cannot be told apart), the cheapest - the smaller
+    value for memory-costing / more-is-better settings - then the roundest, then the smallest change from the parent.
+    The exact optimum is rarely resolvable within noise; a value that costs less and reads better is worth more."""
+    from .knowledge import KB, catalog, roundness
+    tied = [r for r in measured if r["delta_pct"] > noise and r["delta_pct"] >= best["delta_pct"] - noise]
+    if len(tied) < 2:
+        return best
+    costly = shape == "saturating" or (KB.get(var) or {}).get("kind") == "size" or bool((catalog().get(var) or {}).get("memory_cost"))
+    def key(r):
+        v = r["arm"].split("=", 1)[1]
+        x = _sv(var, v)
+        return (x if costly and x is not None else 0, roundness(var, v), abs((x if x is not None else 0) - (pv or 0)))
+    return min(tied, key=key)
+
+
 def _run_experiment(c, prof, exp):
     """Measure every arm of an experiment from the same parent configuration; keep the best arm only if it beats noise."""
     sess = c.session()
@@ -1944,25 +2009,51 @@ def _run_experiment(c, prof, exp):
     # an agent's sweep stops going further in a direction once a smaller step that way was worse beyond noise
     # (#125: io_capacity 4000 was -12%, then 8000 cost a -35% run); sweeps a person asked for run every point
     auto = str(exp.get("created_by") or "").startswith(("agent:", "llm:")) and exp["kind"] == "sweep"
-    pv = _num(parent.get(spec.get("variable"))) if auto else None
+    pv = None
+    if auto and exp["kind"] == "sweep":
+        cur = parent.get(spec.get("variable"))
+        if cur is None:  # not managed yet: the server's running value (most sweeps start from a default)
+            try:
+                cur = c.db.variables().get(spec["variable"])
+            except Exception:
+                cur = None
+        pv = _sv(spec["variable"], cur)
     worse_at = {}
     from .knowledge import response_shape
     shape = response_shape(spec.get("variable")) if exp["kind"] == "sweep" else None
-    best_gain, saturated, extended = 0.0, False, 0
+    extended = 0
     arms = list(arms)
+    screen = auto and pv is not None and shape in ("saturating", "optimum")
+    if screen:
+        arms = _screen_order(arms, pv)
+    side_of = lambda arm: (1 if (_sv(arm[0]["variable"], arm[0]["value"]) or pv) > pv else -1) if screen else 0  # noqa: E731
+    state, best_on = {}, {}  # side -> screen / hint / flat / sensitive / knee; side -> best delta measured there
     i = -1
-    while i + 1 < len(arms):
+    while True:
+        if i + 1 >= len(arms):
+            # an inner optimum may lie beyond the best value when it is the farthest one tried on its side and beat the
+            # parent: one more step that way (at most twice), with a round value
+            nxt = _extend_optimum(results, pv, noise, worse_at, arms[-1][0]["value"], spec) if (
+                auto and shape == "optimum" and extended < 2 and pv is not None) else None
+            if not nxt:
+                break
+            arms.append([{"variable": spec["variable"], "value": nxt}])
+            extended += 1
+            log(f"   optimum may lie beyond the best value so far: one more step, {spec['variable']}={nxt}")
         i += 1
         arm = arms[i]
-        if auto and saturated:
-            results.append({"arm": label(arm), "status": "skipped", "reason": "saturated: the previous step did not gain beyond noise"})
-            log(f"   {label(arm)}: skipped (saturated: a smaller step no longer helped beyond noise)")
+        side = side_of(arm)
+        if screen and state.get(side) in ("flat", "knee"):
+            why = ("screened: the widest step this way moved the goal less than half the noise threshold" if state[side] == "flat"
+                   else "knee reached: a smaller value already performs within noise of the best one, larger ones only cost more")
+            results.append({"arm": label(arm), "status": "skipped", "reason": why})
+            log(f"   {label(arm)}: skipped ({why})")
             continue
         if auto and pv is not None:
-            x = _num(arm[0]["value"])
+            x = _sv(arm[0]["variable"], arm[0]["value"])
             if x is not None and x != pv:
-                side = 1 if x > pv else -1
-                if side in worse_at and abs(x - pv) > worse_at[side]:
+                sd = 1 if x > pv else -1
+                if sd in worse_at and abs(x - pv) > worse_at[sd]:
                     results.append({"arm": label(arm), "status": "skipped",
                                     "reason": "a smaller step in the same direction was already worse beyond noise"})
                     log(f"   {label(arm)}: skipped (a smaller step this way was already worse beyond noise)")
@@ -1989,39 +2080,30 @@ def _run_experiment(c, prof, exp):
         d = _improvement(goal, mean, pm["goal"]) if (pm and mean is not None) else None
         results.append({"arm": label(arm), "status": "measured", "runs": len(vals), "goal_mean": round(mean, 4) if mean is not None else None,
                         "delta_pct": d, "verdict": None if d is None else ("better" if d > noise else "worse" if d < -noise else "within noise")})
-        if auto and pv is not None and d is not None and d < -noise:
-            x = _num(arm[0]["value"])
-            if x is not None and x != pv:
-                side = 1 if x > pv else -1
-                worse_at[side] = min(worse_at.get(side, float("inf")), abs(x - pv))
-        if auto and shape == "saturating" and d is not None:
-            # more is better up to a point: once a bigger value adds nothing beyond noise, bigger ones will not either
-            if d - best_gain < noise:
-                saturated = True
-            best_gain = max(best_gain, d)
-        if auto and shape == "optimum" and i + 1 == len(arms) and extended < 2 and pv is not None:
-            # an inner optimum: when the best value so far is the farthest one tried on its side and beat the parent,
-            # the optimum may lie beyond it - one more step that way
-            meas = [(r, _num(r["arm"].split("=", 1)[1])) for r in results if r["status"] == "measured" and r.get("delta_pct") is not None]
-            meas = [(r, x) for r, x in meas if x is not None]
-            if meas:
-                br, bx = max(meas, key=lambda p: p[0]["delta_pct"])
-                side = 1 if bx > pv else -1
-                farthest = all(abs(x - pv) <= abs(bx - pv) for r, x in meas if (x > pv) == (side > 0))
-                if br["delta_pct"] > noise and farthest and side not in worse_at:
-                    nx = bx * 2 if side > 0 else bx / 2
-                    if side < 0 and nx < 1:
-                        nx = None
-                    if nx is not None:
-                        size = isinstance(arm[0]["value"], str) and arm[0]["value"][-1:].upper() in "KMG"
-                        val = engine.fmt_size(int(nx)) if size else str(int(nx))
-                        arms.append([{"variable": spec["variable"], "value": val}])
-                        extended += 1
-                        log(f"   optimum may lie beyond {br['arm']}: one more step, {spec['variable']}={val}")
         log(f"   {label(arm)}: {mean} ({'' if d is None else f'{d:+.1f}%'})")
+        if auto and pv is not None and d is not None and d < -noise:
+            x = _sv(arm[0]["variable"], arm[0]["value"])
+            if x is not None and x != pv:
+                sd = 1 if x > pv else -1
+                worse_at[sd] = min(worse_at.get(sd, float("inf")), abs(x - pv))
+        if screen and d is not None:
+            st = state.get(side, "screen")
+            best_on[side] = max(best_on.get(side, d), d)
+            if st == "screen":
+                # sensitivity first: the widest step on this side. Clearly flat -> the rest of the side is skipped; a hint
+                # (between half the threshold and the threshold) -> the next value is measured too; beyond noise -> refine
+                state[side] = "sensitive" if abs(d) > noise else "hint" if abs(d) > noise / 2 else "flat"
+                if state[side] == "flat":
+                    log(f"   screened flat this way ({d:+.1f}%, threshold ±{noise}%): no smaller step can be told apart from noise")
+            elif st == "hint":
+                state[side] = "sensitive" if abs(d) > noise else "flat"
+            elif st == "sensitive" and shape == "saturating" and side > 0 and d > noise and d >= best_on[side] - noise:
+                # more is better up to a point: refining upward from the smallest value, the first one within noise of the
+                # best measured is the knee - larger values only cost more
+                state[side] = "knee"
     measured = [r for r in results if r["status"] == "measured" and r.get("delta_pct") is not None]
     best = max(measured, key=lambda r: r["delta_pct"], default=None)
-    keep = best if best and best["delta_pct"] > noise else None
+    keep = _good_enough(measured, best, noise, spec.get("variable"), pv, shape) if best and best["delta_pct"] > noise else None
     if keep:
         arm = next(a for a in arms if label(a) == keep["arm"])
         target = dict(parent)
@@ -2029,6 +2111,8 @@ def _run_experiment(c, prof, exp):
             target[x["variable"]] = x["value"]
         _goto_managed(c, target, f"experiment #{eid}: best value, {keep['delta_pct']:+.1f}% vs parent", f"exp:{eid}")
         msg = f"kept {keep['arm']} ({keep['delta_pct']:+.1f}% vs parent mean {pm['goal']:.4g}, noise ±{noise}%)"
+        if keep is not best:
+            msg += f"; within noise of the best ({best['arm']} {best['delta_pct']:+.1f}%) and cheaper / rounder"
     else:
         _goto_managed(c, parent, f"experiment #{eid}: no value beat the parent beyond noise", f"exp:{eid}")
         msg = "no value beat the parent configuration beyond noise; parent kept" + (f" (best: {best['arm']} {best['delta_pct']:+.1f}%)" if best else "")

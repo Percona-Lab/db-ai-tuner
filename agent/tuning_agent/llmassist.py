@@ -136,6 +136,9 @@ def sanitize(suggestions, ctx, res, model):
             var = c["variable"].strip()
             var = var if var.startswith("os:") else var.lower().replace("-", "_")
             val = str(c["value"]).strip().strip("'\"")
+            if var in KB and var != "max_connections":
+                from .engine import nice_value
+                val = str(nice_value(var, val))  # a model's 1072 is tried as 1000
             if var in DENY:
                 why = f"{var} is not tunable by the agent"
             elif set([var] + setting_names(var, val, v.get(var))) & set(ctx.get("blocked") or []):

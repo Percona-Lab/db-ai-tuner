@@ -1,0 +1,4219 @@
+[
+ {
+  "session": 10,
+  "exp": 1,
+  "by": "cli",
+  "variable": "innodb_buffer_pool_size",
+  "parent_value": null,
+  "noise": null,
+  "values": [
+   "1G",
+   "2G"
+  ],
+  "arms": null,
+  "kept": null,
+  "goal": "tps",
+  "name": "sysbench 1 GB in-memory, uniform"
+ },
+ {
+  "session": 18,
+  "exp": 2,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.64,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 20559.74,
+    "delta_pct": 1.31,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 20396.0,
+    "delta_pct": 0.51,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "net-1: point_select from same DC (0.24 ms)"
+ },
+ {
+  "session": 27,
+  "exp": 3,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 457.14,
+    "delta_pct": 5.02,
+    "verdict": "better"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 436.23,
+    "delta_pct": 0.21,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": "innodb_thread_concurrency=4",
+  "goal": "tps",
+  "name": "CH-benCHmark 10W (TPC-C + analytical stream)"
+ },
+ {
+  "session": 31,
+  "exp": 4,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.66,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 692.25,
+    "delta_pct": 0.6,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 679.64,
+    "delta_pct": -1.24,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "compat: MySQL Community Server - GPL 9.7.2"
+ },
+ {
+  "session": 34,
+  "exp": 5,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "32",
+   "64"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 145637.0,
+    "delta_pct": -0.3,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=64",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 147616.0,
+    "delta_pct": 1.06,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 200W on 16 CPUs (free range: knobs, OS, filesystems"
+ },
+ {
+  "session": 39,
+  "exp": 6,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "12",
+   "24"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=12",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2067.26,
+    "delta_pct": -0.9,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=24",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2052.53,
+    "delta_pct": -1.61,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "sysbench 10 GB on tuner-sb16g (16 GB RAM, 6 vCPU)"
+ },
+ {
+  "session": 40,
+  "exp": 12,
+  "by": "agent:sweep-io-capacity",
+  "variable": "innodb_io_capacity",
+  "parent_value": "2000",
+  "noise": 5.98,
+  "values": [
+   "1000",
+   "4000",
+   "8000"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_io_capacity=1000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 863.36,
+    "delta_pct": 0.96,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_io_capacity=4000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 850.6,
+    "delta_pct": -0.53,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_io_capacity=8000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 849.3,
+    "delta_pct": -0.68,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "sysbench 10 GB on tuner-sb4g (4 GB RAM, 2 vCPU)"
+ },
+ {
+  "session": 40,
+  "exp": 8,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 5.98,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 864.51,
+    "delta_pct": -1.31,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 881.68,
+    "delta_pct": 0.65,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "sysbench 10 GB on tuner-sb4g (4 GB RAM, 2 vCPU)"
+ },
+ {
+  "session": 41,
+  "exp": 11,
+  "by": "agent:sweep-io-capacity",
+  "variable": "innodb_io_capacity",
+  "parent_value": "2000",
+  "noise": 2.0,
+  "values": [
+   "1000",
+   "4000",
+   "8000"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_io_capacity=1000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 369.23,
+    "delta_pct": 2.13,
+    "verdict": "better"
+   },
+   {
+    "arm": "innodb_io_capacity=4000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 348.84,
+    "delta_pct": -3.51,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_io_capacity=8000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 347.62,
+    "delta_pct": -3.85,
+    "verdict": "worse"
+   }
+  ],
+  "kept": "innodb_io_capacity=1000",
+  "goal": "tps",
+  "name": "sysbench 10 GB on tuner-sb1g (1 GB RAM, 1 vCPU)"
+ },
+ {
+  "session": 41,
+  "exp": 7,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "2",
+   "4"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=2",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 309.27,
+    "delta_pct": -14.13,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 333.52,
+    "delta_pct": -7.39,
+    "verdict": "worse"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "sysbench 10 GB on tuner-sb1g (1 GB RAM, 1 vCPU)"
+ },
+ {
+  "session": 42,
+  "exp": 9,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 4.47,
+  "values": [
+   "2",
+   "4"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=2",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 326.73,
+    "delta_pct": -12.93,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 350.77,
+    "delta_pct": -6.52,
+    "verdict": "worse"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "sysbench 10 GB on tuner-sb2g (2 GB RAM, 1 vCPU)"
+ },
+ {
+  "session": 43,
+  "exp": 17,
+  "by": "agent:sweep-io-capacity",
+  "variable": "innodb_io_capacity",
+  "parent_value": "2000",
+  "noise": 2.0,
+  "values": [
+   "1000",
+   "4000",
+   "8000"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_io_capacity=1000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 191809.0,
+    "delta_pct": -0.11,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_io_capacity=4000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 192928.0,
+    "delta_pct": 0.48,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_io_capacity=8000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 192044.0,
+    "delta_pct": 0.02,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 200W on bare metal E-2286G (free range)"
+ },
+ {
+  "session": 43,
+  "exp": 16,
+  "by": "agent:sweep-bp",
+  "variable": "innodb_buffer_pool_size",
+  "parent_value": "19G",
+  "noise": 2.0,
+  "values": [
+   "21G",
+   "24G"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_buffer_pool_size=21G",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 192546.0,
+    "delta_pct": 0.28,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_buffer_pool_size=24G",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 191788.0,
+    "delta_pct": -0.12,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 200W on bare metal E-2286G (free range)"
+ },
+ {
+  "session": 43,
+  "exp": 14,
+  "by": "llm:llm-binlog-group-commit-sync-delay",
+  "variable": "binlog_group_commit_sync_delay",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "50",
+   "100",
+   "300",
+   "1000"
+  ],
+  "arms": [
+   {
+    "arm": "binlog_group_commit_sync_delay=50",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 145184.0,
+    "delta_pct": 0.03,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "binlog_group_commit_sync_delay=100",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 145189.0,
+    "delta_pct": 0.03,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "binlog_group_commit_sync_delay=300",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 144944.0,
+    "delta_pct": -0.14,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "binlog_group_commit_sync_delay=1000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 145094.0,
+    "delta_pct": -0.04,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 200W on bare metal E-2286G (free range)"
+ },
+ {
+  "session": 43,
+  "exp": 13,
+  "by": "llm:llm-innodb-purge-threads",
+  "variable": "innodb_purge_threads",
+  "parent_value": "1",
+  "noise": 2.0,
+  "values": [
+   "2",
+   "4",
+   "6"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_purge_threads=2",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 144798.0,
+    "delta_pct": -0.24,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_purge_threads=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 144869.0,
+    "delta_pct": -0.19,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_purge_threads=6",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 144691.0,
+    "delta_pct": -0.31,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 200W on bare metal E-2286G (free range)"
+ },
+ {
+  "session": 43,
+  "exp": 10,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "24",
+   "48"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=24",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 145359.0,
+    "delta_pct": 0.04,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=48",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 145283.0,
+    "delta_pct": -0.02,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 200W on bare metal E-2286G (free range)"
+ },
+ {
+  "session": 45,
+  "exp": 15,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 3.4,
+  "values": [
+   "8",
+   "16"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1645.63,
+    "delta_pct": 0.09,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1573.63,
+    "delta_pct": -4.29,
+    "verdict": "worse"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "sysbench 10 GB on tuner-sb8g (8 GB RAM, 4 vCPU)"
+ },
+ {
+  "session": 56,
+  "exp": 20,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2428.38,
+    "delta_pct": -1.6,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2451.84,
+    "delta_pct": -0.65,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 1: O2 sysbench oltp_read_write in memory (16 x 1.5M "
+ },
+ {
+  "session": 58,
+  "exp": 18,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 12.18,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 830.25,
+    "delta_pct": -8.65,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 861.7,
+    "delta_pct": -5.19,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "method check: sysbench 1 GB uniform, new engine (compare #7)"
+ },
+ {
+  "session": 59,
+  "exp": 19,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 27620.0,
+    "delta_pct": -0.58,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 27144.0,
+    "delta_pct": -2.29,
+    "verdict": "worse"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "method check: HammerDB 200W 10 VU, new engine (compare #11)"
+ },
+ {
+  "session": 60,
+  "exp": 43,
+  "by": "agent:sweep-io-capacity",
+  "variable": "innodb_io_capacity",
+  "parent_value": "2000",
+  "noise": 2.0,
+  "values": [
+   "1000",
+   "4000",
+   "8000"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_io_capacity=1000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 4440.79,
+    "delta_pct": -3.07,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_io_capacity=4000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 4461.65,
+    "delta_pct": -3.56,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_io_capacity=8000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 4480.24,
+    "delta_pct": -3.99,
+    "verdict": "worse"
+   }
+  ],
+  "kept": null,
+  "goal": "latency",
+  "name": "Battery 1: A2 go-tpc TPC-H SF10, 22 queries, 1 stream, 300 s"
+ },
+ {
+  "session": 63,
+  "exp": 23,
+  "by": "agent:sweep-purge-threads",
+  "variable": "innodb_purge_threads",
+  "parent_value": "1",
+  "noise": 2.0,
+  "values": [
+   "8",
+   "2"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_purge_threads=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1833.7,
+    "delta_pct": 1.37,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_purge_threads=2",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1862.26,
+    "delta_pct": 2.94,
+    "verdict": "better"
+   }
+  ],
+  "kept": "innodb_purge_threads=2",
+  "goal": "tps",
+  "name": "Battery 1: M1 CH-benCHmark 50W: 32 TPC-C threads + 1 analyti"
+ },
+ {
+  "session": 63,
+  "exp": 21,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1808.03,
+    "delta_pct": 0.46,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1813.38,
+    "delta_pct": 0.76,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 1: M1 CH-benCHmark 50W: 32 TPC-C threads + 1 analyti"
+ },
+ {
+  "session": 64,
+  "exp": 24,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 85919.0,
+    "delta_pct": -5.43,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 84689.0,
+    "delta_pct": -6.78,
+    "verdict": "worse"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 200W on bare metal Intel Xeon (free range)"
+ },
+ {
+  "session": 65,
+  "exp": 28,
+  "by": "llm:llm-innodb-lru-scan-depth",
+  "variable": "innodb_lru_scan_depth",
+  "parent_value": "1024",
+  "noise": 3.7,
+  "values": [
+   "128",
+   "256",
+   "512"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_lru_scan_depth=128",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 76398.0,
+    "delta_pct": -1.87,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_lru_scan_depth=256",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 78345.0,
+    "delta_pct": 0.64,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_lru_scan_depth=512",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 77315.0,
+    "delta_pct": -0.69,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 1: O5 HammerDB TPROC-C 80W, 64 VU, 2 + 5 min"
+ },
+ {
+  "session": 65,
+  "exp": 26,
+  "by": "llm:llm-innodb-purge-threads",
+  "variable": "innodb_purge_threads",
+  "parent_value": "1",
+  "noise": 3.7,
+  "values": [
+   "2",
+   "4"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_purge_threads=2",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 74567.0,
+    "delta_pct": -3.94,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_purge_threads=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 76777.0,
+    "delta_pct": -1.09,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 1: O5 HammerDB TPROC-C 80W, 64 VU, 2 + 5 min"
+ },
+ {
+  "session": 65,
+  "exp": 22,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 4.09,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 74313.0,
+    "delta_pct": -0.95,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 74349.0,
+    "delta_pct": -0.9,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 1: O5 HammerDB TPROC-C 80W, 64 VU, 2 + 5 min"
+ },
+ {
+  "session": 67,
+  "exp": 33,
+  "by": "agent:sweep-io-capacity",
+  "variable": "innodb_io_capacity",
+  "parent_value": "2000",
+  "noise": 2.0,
+  "values": [
+   "1000",
+   "4000",
+   "8000"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_io_capacity=1000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1787.15,
+    "delta_pct": 0.24,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_io_capacity=4000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1775.99,
+    "delta_pct": -0.38,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_io_capacity=8000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1774.31,
+    "delta_pct": -0.48,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 1: M2 CH-benCHmark 500W: 32 TPC-C threads + 1 analyt"
+ },
+ {
+  "session": 67,
+  "exp": 27,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1800.12,
+    "delta_pct": -0.37,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1809.87,
+    "delta_pct": 0.17,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 1: M2 CH-benCHmark 500W: 32 TPC-C threads + 1 analyt"
+ },
+ {
+  "session": 68,
+  "exp": 30,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "32",
+   "64"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 168189.0,
+    "delta_pct": -0.16,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=64",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 167357.0,
+    "delta_pct": -0.65,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 2000W on 16 dedicated vCPU (extensive)"
+ },
+ {
+  "session": 70,
+  "exp": 31,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 83116.0,
+    "delta_pct": -0.79,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 81993.0,
+    "delta_pct": -2.13,
+    "verdict": "worse"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 1: O6 HammerDB TPROC-C 800W, 64 VU, 5 + 10 min"
+ },
+ {
+  "session": 72,
+  "exp": 35,
+  "by": "agent:sweep-io-capacity",
+  "variable": "innodb_io_capacity",
+  "parent_value": "2000",
+  "noise": 2.0,
+  "values": [
+   "1000",
+   "4000",
+   "8000"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_io_capacity=1000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2135.37,
+    "delta_pct": 0.7,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_io_capacity=4000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2109.66,
+    "delta_pct": -0.51,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_io_capacity=8000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2119.17,
+    "delta_pct": -0.07,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 1: O4 sysbench oltp_read_write I/O-bound (32 x 10M r"
+ },
+ {
+  "session": 72,
+  "exp": 34,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2095.7,
+    "delta_pct": -1.62,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2146.91,
+    "delta_pct": 0.78,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 1: O4 sysbench oltp_read_write I/O-bound (32 x 10M r"
+ },
+ {
+  "session": 73,
+  "exp": 32,
+  "by": "agent:sweep-dirty-lwm",
+  "variable": "innodb_max_dirty_pages_pct_lwm",
+  "parent_value": "10.000000",
+  "noise": 3.56,
+  "values": [
+   "0",
+   "30",
+   "80"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_max_dirty_pages_pct_lwm=0",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2457.55,
+    "delta_pct": -0.37,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_max_dirty_pages_pct_lwm=30",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2459.76,
+    "delta_pct": -0.28,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_max_dirty_pages_pct_lwm=80",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2430.58,
+    "delta_pct": -1.46,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 1: O3 sysbench oltp_read_write in memory (16 x 1.5M "
+ },
+ {
+  "session": 73,
+  "exp": 29,
+  "by": "agent:sweep-io-capacity",
+  "variable": "innodb_io_capacity",
+  "parent_value": "2000",
+  "noise": 3.56,
+  "values": [
+   "1000",
+   "4000",
+   "8000"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_io_capacity=1000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2475.46,
+    "delta_pct": -0.77,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_io_capacity=4000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2469.72,
+    "delta_pct": -1.0,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_io_capacity=8000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2443.87,
+    "delta_pct": -2.04,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 1: O3 sysbench oltp_read_write in memory (16 x 1.5M "
+ },
+ {
+  "session": 73,
+  "exp": 25,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 4.27,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2240.16,
+    "delta_pct": -6.31,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2260.66,
+    "delta_pct": -5.45,
+    "verdict": "worse"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 1: O3 sysbench oltp_read_write in memory (16 x 1.5M "
+ },
+ {
+  "session": 74,
+  "exp": 36,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "24",
+   "48"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=24",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 151254.0,
+    "delta_pct": -0.66,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=48",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 151243.0,
+    "delta_pct": -0.67,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 2000W on bare metal E-2286G (free range)"
+ },
+ {
+  "session": 77,
+  "exp": 47,
+  "by": "llm:llm-rg-innodb-bg-cpus",
+  "variable": "rg:innodb_bg_cpus",
+  "parent_value": null,
+  "noise": 1.39,
+  "values": [
+   "0-1",
+   "0"
+  ],
+  "arms": [
+   {
+    "arm": "rg:innodb_bg_cpus=0-1",
+    "status": "rejected",
+    "reason": "rg:innodb_bg_cpus does not exist on this server"
+   },
+   {
+    "arm": "rg:innodb_bg_cpus=0",
+    "status": "rejected",
+    "reason": "rg:innodb_bg_cpus does not exist on this server"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: O2 sysbench oltp_read_write in memory (16 x 1.5M "
+ },
+ {
+  "session": 77,
+  "exp": 38,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2472.45,
+    "delta_pct": 0.07,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2487.5,
+    "delta_pct": 0.68,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: O2 sysbench oltp_read_write in memory (16 x 1.5M "
+ },
+ {
+  "session": 78,
+  "exp": 42,
+  "by": "llm:llm-rg-innodb-bg-cpus",
+  "variable": "rg:innodb_bg_cpus",
+  "parent_value": null,
+  "noise": 2.0,
+  "values": [
+   "6-7",
+   "4-7"
+  ],
+  "arms": [
+   {
+    "arm": "rg:innodb_bg_cpus=6-7",
+    "status": "rejected",
+    "reason": "rg:innodb_bg_cpus does not exist on this server"
+   },
+   {
+    "arm": "rg:innodb_bg_cpus=4-7",
+    "status": "rejected",
+    "reason": "rg:innodb_bg_cpus does not exist on this server"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: O1 sysbench oltp_read_write in memory (16 x 1.5M "
+ },
+ {
+  "session": 80,
+  "exp": 44,
+  "by": "agent:sweep-bp-instances",
+  "variable": "innodb_buffer_pool_instances",
+  "parent_value": "8",
+  "noise": 4.24,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_buffer_pool_instances=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 3811.01,
+    "delta_pct": 2.09,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_buffer_pool_instances=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 3818.89,
+    "delta_pct": 2.3,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: C1 sysbench oltp_read_write in-memory 16x1M, 64 c"
+ },
+ {
+  "session": 80,
+  "exp": 37,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "32",
+   "64"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 3673.96,
+    "delta_pct": -2.8,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_thread_concurrency=64",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 3659.45,
+    "delta_pct": -3.18,
+    "verdict": "worse"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: C1 sysbench oltp_read_write in-memory 16x1M, 64 c"
+ },
+ {
+  "session": 82,
+  "exp": 55,
+  "by": "llm:llm-innodb-page-cleaners",
+  "variable": "innodb_page_cleaners",
+  "parent_value": "8",
+  "noise": 3.34,
+  "values": [
+   "2",
+   "4"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_page_cleaners=2",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1594.41,
+    "delta_pct": 1.18,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_page_cleaners=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1589.37,
+    "delta_pct": 0.86,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: M1 CH-benCHmark 50W: 32 TPC-C threads + 2 analyti"
+ },
+ {
+  "session": 82,
+  "exp": 50,
+  "by": "llm:llm-innodb-lru-scan-depth",
+  "variable": "innodb_lru_scan_depth",
+  "parent_value": "1024",
+  "noise": 3.63,
+  "values": [
+   "256",
+   "512"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_lru_scan_depth=256",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1589.79,
+    "delta_pct": 0.89,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_lru_scan_depth=512",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1598.27,
+    "delta_pct": 1.43,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: M1 CH-benCHmark 50W: 32 TPC-C threads + 2 analyti"
+ },
+ {
+  "session": 82,
+  "exp": 49,
+  "by": "llm:llm-rg-innodb-bg-cpus",
+  "variable": "rg:innodb_bg_cpus",
+  "parent_value": null,
+  "noise": 3.63,
+  "values": [
+   "0-1",
+   "0"
+  ],
+  "arms": [
+   {
+    "arm": "rg:innodb_bg_cpus=0-1",
+    "status": "rejected",
+    "reason": "rg:innodb_bg_cpus does not exist on this server"
+   },
+   {
+    "arm": "rg:innodb_bg_cpus=0",
+    "status": "rejected",
+    "reason": "rg:innodb_bg_cpus does not exist on this server"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: M1 CH-benCHmark 50W: 32 TPC-C threads + 2 analyti"
+ },
+ {
+  "session": 82,
+  "exp": 45,
+  "by": "agent:sweep-purge-threads",
+  "variable": "innodb_purge_threads",
+  "parent_value": "1",
+  "noise": 4.02,
+  "values": [
+   "8",
+   "2"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_purge_threads=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1612.29,
+    "delta_pct": 1.74,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_purge_threads=2",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1633.43,
+    "delta_pct": 3.07,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: M1 CH-benCHmark 50W: 32 TPC-C threads + 2 analyti"
+ },
+ {
+  "session": 82,
+  "exp": 39,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 5.25,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1587.22,
+    "delta_pct": -0.14,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1588.59,
+    "delta_pct": -0.06,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: M1 CH-benCHmark 50W: 32 TPC-C threads + 2 analyti"
+ },
+ {
+  "session": 83,
+  "exp": 46,
+  "by": "llm:llm-rg-innodb-bg-cpus",
+  "variable": "rg:innodb_bg_cpus",
+  "parent_value": null,
+  "noise": 1.63,
+  "values": [
+   "0-1",
+   "0"
+  ],
+  "arms": [
+   {
+    "arm": "rg:innodb_bg_cpus=0-1",
+    "status": "rejected",
+    "reason": "rg:innodb_bg_cpus does not exist on this server"
+   },
+   {
+    "arm": "rg:innodb_bg_cpus=0",
+    "status": "rejected",
+    "reason": "rg:innodb_bg_cpus does not exist on this server"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: O5 HammerDB TPROC-C 80W, 64 VU, 2 + 5 min"
+ },
+ {
+  "session": 83,
+  "exp": 40,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 76458.0,
+    "delta_pct": -0.64,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 76274.0,
+    "delta_pct": -0.87,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: O5 HammerDB TPROC-C 80W, 64 VU, 2 + 5 min"
+ },
+ {
+  "session": 84,
+  "exp": 41,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1985.72,
+    "delta_pct": -8.01,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2044.34,
+    "delta_pct": -5.29,
+    "verdict": "worse"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: O3 sysbench oltp_read_write in memory (16 x 1.5M "
+ },
+ {
+  "session": 86,
+  "exp": 71,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 3.09,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2322.55,
+    "delta_pct": 2.46,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2301.1,
+    "delta_pct": 1.52,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: O4 sysbench oltp_read_write I/O-bound (32 x 10M r"
+ },
+ {
+  "session": 86,
+  "exp": 53,
+  "by": "agent:sweep-purge-threads",
+  "variable": "innodb_purge_threads",
+  "parent_value": "4",
+  "noise": 2.0,
+  "values": [
+   "4",
+   "8",
+   "1"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_purge_threads=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2073.53,
+    "delta_pct": null,
+    "verdict": null
+   },
+   {
+    "arm": "innodb_purge_threads=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1990.14,
+    "delta_pct": null,
+    "verdict": null
+   },
+   {
+    "arm": "innodb_purge_threads=1",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 2144.73,
+    "delta_pct": null,
+    "verdict": null
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: O4 sysbench oltp_read_write I/O-bound (32 x 10M r"
+ },
+ {
+  "session": 86,
+  "exp": 48,
+  "by": "agent:sweep-purge-threads",
+  "variable": "innodb_purge_threads",
+  "parent_value": "1",
+  "noise": null,
+  "values": [
+   "2",
+   "8"
+  ],
+  "arms": null,
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: O4 sysbench oltp_read_write I/O-bound (32 x 10M r"
+ },
+ {
+  "session": 87,
+  "exp": 54,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1622.01,
+    "delta_pct": 1.68,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1617.4,
+    "delta_pct": 1.39,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: M2 CH-benCHmark 500W: 32 TPC-C threads + 2 analyt"
+ },
+ {
+  "session": 88,
+  "exp": 106,
+  "by": "cli",
+  "variable": "innodb_buffer_pool_size",
+  "parent_value": "23622320128",
+  "noise": 37.68,
+  "values": [
+   "24G",
+   "25G",
+   "26G",
+   "27G",
+   "28G",
+   "29G",
+   "30G",
+   "32G",
+   "34G",
+   "36G"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_buffer_pool_size=24G",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 137396.0,
+    "delta_pct": null,
+    "verdict": null
+   },
+   {
+    "arm": "innodb_buffer_pool_size=25G",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 128348.0,
+    "delta_pct": null,
+    "verdict": null
+   },
+   {
+    "arm": "innodb_buffer_pool_size=26G",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 123988.0,
+    "delta_pct": null,
+    "verdict": null
+   },
+   {
+    "arm": "innodb_buffer_pool_size=27G",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 123774.0,
+    "delta_pct": null,
+    "verdict": null
+   },
+   {
+    "arm": "innodb_buffer_pool_size=28G",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 116432.0,
+    "delta_pct": null,
+    "verdict": null
+   },
+   {
+    "arm": "innodb_buffer_pool_size=29G",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 111142.0,
+    "delta_pct": null,
+    "verdict": null
+   },
+   {
+    "arm": "innodb_buffer_pool_size=30G",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 111301.0,
+    "delta_pct": null,
+    "verdict": null
+   },
+   {
+    "arm": "innodb_buffer_pool_size=32G",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 113940.0,
+    "delta_pct": null,
+    "verdict": null
+   },
+   {
+    "arm": "innodb_buffer_pool_size=34G",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 102990.0,
+    "delta_pct": null,
+    "verdict": null
+   },
+   {
+    "arm": "innodb_buffer_pool_size=36G",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 93342.0,
+    "delta_pct": null,
+    "verdict": null
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 1000W I/O-bound, 128 VU, binlog off (EPYC 4245P): t"
+ },
+ {
+  "session": 88,
+  "exp": 101,
+  "by": "cli",
+  "variable": "innodb_log_spin_cpu_pct_hwm",
+  "parent_value": "50",
+  "noise": 37.68,
+  "values": [
+   "10",
+   "100"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_log_spin_cpu_pct_hwm=10",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 130086.0,
+    "delta_pct": -20.36,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_log_spin_cpu_pct_hwm=100",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 125928.0,
+    "delta_pct": -22.91,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 1000W I/O-bound, 128 VU, binlog off (EPYC 4245P): t"
+ },
+ {
+  "session": 88,
+  "exp": 100,
+  "by": "cli",
+  "variable": "innodb_log_spin_cpu_abs_lwm",
+  "parent_value": "80",
+  "noise": 37.68,
+  "values": [
+   "0",
+   "200"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_log_spin_cpu_abs_lwm=0",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 131040.0,
+    "delta_pct": -19.78,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_log_spin_cpu_abs_lwm=200",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 129881.0,
+    "delta_pct": -20.49,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 1000W I/O-bound, 128 VU, binlog off (EPYC 4245P): t"
+ },
+ {
+  "session": 88,
+  "exp": 99,
+  "by": "cli",
+  "variable": "innodb_log_wait_for_flush_spin_hwm",
+  "parent_value": "400",
+  "noise": 37.68,
+  "values": [
+   "0",
+   "4000"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_log_wait_for_flush_spin_hwm=0",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 132830.0,
+    "delta_pct": -18.68,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_log_wait_for_flush_spin_hwm=4000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 131121.0,
+    "delta_pct": -19.73,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 1000W I/O-bound, 128 VU, binlog off (EPYC 4245P): t"
+ },
+ {
+  "session": 88,
+  "exp": 97,
+  "by": "cli",
+  "variable": "innodb_redo_log_capacity",
+  "parent_value": "7680M",
+  "noise": 37.68,
+  "values": [
+   "16G",
+   "32G"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_redo_log_capacity=16G",
+    "status": "rejected",
+    "reason": "innodb_redo_log_capacity=16G exceeds the memory budget of this 30.4 GiB host (use force to override)"
+   },
+   {
+    "arm": "innodb_redo_log_capacity=32G",
+    "status": "rejected",
+    "reason": "innodb_redo_log_capacity=32G exceeds the memory budget of this 30.4 GiB host (use force to override)"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 1000W I/O-bound, 128 VU, binlog off (EPYC 4245P): t"
+ },
+ {
+  "session": 88,
+  "exp": 96,
+  "by": "cli",
+  "variable": "innodb_log_buffer_size",
+  "parent_value": "64M",
+  "noise": 37.68,
+  "values": [
+   "16M",
+   "256M"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_log_buffer_size=16M",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 134056.0,
+    "delta_pct": -17.93,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_log_buffer_size=256M",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 131472.0,
+    "delta_pct": -19.51,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 1000W I/O-bound, 128 VU, binlog off (EPYC 4245P): t"
+ },
+ {
+  "session": 88,
+  "exp": 95,
+  "by": "cli",
+  "variable": "innodb_log_write_ahead_size",
+  "parent_value": "8192",
+  "noise": 39.91,
+  "values": [
+   "512",
+   "4096",
+   "16384"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_log_write_ahead_size=512",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 152237.0,
+    "delta_pct": -6.8,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_log_write_ahead_size=4096",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 140060.0,
+    "delta_pct": -14.25,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_log_write_ahead_size=16384",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 136143.0,
+    "delta_pct": -16.65,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 1000W I/O-bound, 128 VU, binlog off (EPYC 4245P): t"
+ },
+ {
+  "session": 88,
+  "exp": 91,
+  "by": "agent:sweep-read-ahead",
+  "variable": "innodb_read_ahead_threshold",
+  "parent_value": "56",
+  "noise": 39.91,
+  "values": [
+   "8",
+   "32",
+   "64"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_read_ahead_threshold=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 194070.0,
+    "delta_pct": 16.27,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_read_ahead_threshold=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 217683.0,
+    "delta_pct": 30.41,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_read_ahead_threshold=64",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 213949.0,
+    "delta_pct": 28.18,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 1000W I/O-bound, 128 VU, binlog off (EPYC 4245P): t"
+ },
+ {
+  "session": 88,
+  "exp": 76,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 40.78,
+  "values": [
+   "24",
+   "48"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=24",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 115564.0,
+    "delta_pct": -8.32,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=48",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 122721.0,
+    "delta_pct": -2.64,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 1000W I/O-bound, 128 VU, binlog off (EPYC 4245P): t"
+ },
+ {
+  "session": 88,
+  "exp": 74,
+  "by": "agent:sweep-read-io-threads",
+  "variable": "innodb_read_io_threads",
+  "parent_value": "6",
+  "noise": 40.61,
+  "values": [
+   "8",
+   "16"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_read_io_threads=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 125316.0,
+    "delta_pct": -0.58,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_read_io_threads=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 125505.0,
+    "delta_pct": -0.43,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 1000W I/O-bound, 128 VU, binlog off (EPYC 4245P): t"
+ },
+ {
+  "session": 88,
+  "exp": 67,
+  "by": "agent:sweep-lru-depth",
+  "variable": "innodb_lru_scan_depth",
+  "parent_value": "1024",
+  "noise": 37.94,
+  "values": [
+   "256",
+   "2048",
+   "4096"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_lru_scan_depth=256",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 126070.0,
+    "delta_pct": -1.27,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_lru_scan_depth=2048",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 114854.0,
+    "delta_pct": -10.06,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_lru_scan_depth=4096",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 114742.0,
+    "delta_pct": -10.15,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 1000W I/O-bound, 128 VU, binlog off (EPYC 4245P): t"
+ },
+ {
+  "session": 88,
+  "exp": 61,
+  "by": "agent:sweep-dirty-lwm",
+  "variable": "innodb_max_dirty_pages_pct_lwm",
+  "parent_value": "10.000000",
+  "noise": 32.22,
+  "values": [
+   "0",
+   "30",
+   "80"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_max_dirty_pages_pct_lwm=0",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 128289.0,
+    "delta_pct": -8.96,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_max_dirty_pages_pct_lwm=30",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 126598.0,
+    "delta_pct": -10.16,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_max_dirty_pages_pct_lwm=80",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 126990.0,
+    "delta_pct": -9.88,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 1000W I/O-bound, 128 VU, binlog off (EPYC 4245P): t"
+ },
+ {
+  "session": 88,
+  "exp": 52,
+  "by": "agent:sweep-io-capacity",
+  "variable": "innodb_io_capacity",
+  "parent_value": "2000",
+  "noise": 10.04,
+  "values": [
+   "1000",
+   "4000",
+   "8000"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_io_capacity=1000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 131749.0,
+    "delta_pct": -15.3,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_io_capacity=4000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 129788.0,
+    "delta_pct": -16.56,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_io_capacity=8000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 127691.0,
+    "delta_pct": -17.91,
+    "verdict": "worse"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "HammerDB 1000W I/O-bound, 128 VU, binlog off (EPYC 4245P): t"
+ },
+ {
+  "session": 89,
+  "exp": 59,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 49967.0,
+    "delta_pct": -9.27,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 55451.0,
+    "delta_pct": 0.68,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: O6 HammerDB TPROC-C 800W all-warehouse, 64 VU, 5 "
+ },
+ {
+  "session": 90,
+  "exp": 51,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 843.55,
+    "delta_pct": -0.6,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 843.58,
+    "delta_pct": -0.59,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "canary 2026-10-19 12:08 agent 0.1.0+unknown"
+ },
+ {
+  "session": 91,
+  "exp": 65,
+  "by": "llm:llm-innodb-max-dirty-pages-pct-lwm",
+  "variable": "innodb_max_dirty_pages_pct_lwm",
+  "parent_value": "10.000000",
+  "noise": 14.34,
+  "values": [
+   "30",
+   "50",
+   "70"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_max_dirty_pages_pct_lwm=30",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1394.02,
+    "delta_pct": -4.11,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_max_dirty_pages_pct_lwm=50",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1391.31,
+    "delta_pct": -4.29,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_max_dirty_pages_pct_lwm=70",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1379.13,
+    "delta_pct": -5.13,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: O1 sysbench oltp_read_write in memory (16 x 1.5M "
+ },
+ {
+  "session": 91,
+  "exp": 58,
+  "by": "llm:llm-innodb-purge-threads",
+  "variable": "innodb_purge_threads",
+  "parent_value": "1",
+  "noise": 14.21,
+  "values": [
+   "2",
+   "4"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_purge_threads=2",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1386.38,
+    "delta_pct": -6.74,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_purge_threads=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1368.49,
+    "delta_pct": -7.94,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: O1 sysbench oltp_read_write in memory (16 x 1.5M "
+ },
+ {
+  "session": 91,
+  "exp": 57,
+  "by": "llm:llm-rg-innodb-bg-cpus",
+  "variable": "rg:innodb_bg_cpus",
+  "parent_value": null,
+  "noise": 14.21,
+  "values": [
+   "6-7",
+   "4-7"
+  ],
+  "arms": [
+   {
+    "arm": "rg:innodb_bg_cpus=6-7",
+    "status": "rejected",
+    "reason": "rg:innodb_bg_cpus does not exist on this server"
+   },
+   {
+    "arm": "rg:innodb_bg_cpus=4-7",
+    "status": "rejected",
+    "reason": "rg:innodb_bg_cpus does not exist on this server"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: O1 sysbench oltp_read_write in memory (16 x 1.5M "
+ },
+ {
+  "session": 92,
+  "exp": 80,
+  "by": "llm:llm-rg-innodb-bg-cpus",
+  "variable": "rg:innodb_bg_cpus",
+  "parent_value": null,
+  "noise": 24.22,
+  "values": [
+   "0-1",
+   "0-2",
+   "6-7"
+  ],
+  "arms": [
+   {
+    "arm": "rg:innodb_bg_cpus=0-1",
+    "status": "rejected",
+    "reason": "rg:innodb_bg_cpus does not exist on this server"
+   },
+   {
+    "arm": "rg:innodb_bg_cpus=0-2",
+    "status": "rejected",
+    "reason": "rg:innodb_bg_cpus does not exist on this server"
+   },
+   {
+    "arm": "rg:innodb_bg_cpus=6-7",
+    "status": "rejected",
+    "reason": "rg:innodb_bg_cpus does not exist on this server"
+   }
+  ],
+  "kept": null,
+  "goal": "latency",
+  "name": "HammerDB 200W tail latency (NEW_ORDER P99), 16 VU, binlog of"
+ },
+ {
+  "session": 92,
+  "exp": 68,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 25.57,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 16.89,
+    "delta_pct": 6.58,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 16.457,
+    "delta_pct": 8.98,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "latency",
+  "name": "HammerDB 200W tail latency (NEW_ORDER P99), 16 VU, binlog of"
+ },
+ {
+  "session": 93,
+  "exp": 62,
+  "by": "llm:llm-sort-buffer-size",
+  "variable": "sort_buffer_size",
+  "parent_value": "262144",
+  "noise": 5.26,
+  "values": [
+   "2M",
+   "8M",
+   "32M"
+  ],
+  "arms": [
+   {
+    "arm": "sort_buffer_size=2M",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 99.24,
+    "delta_pct": 0.6,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "sort_buffer_size=8M",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 100.99,
+    "delta_pct": -1.15,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "sort_buffer_size=32M",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 99.17,
+    "delta_pct": 0.67,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "latency",
+  "name": "Battery 2: A1 go-tpc TPC-H SF1, 22 queries, 1 stream, 120 s "
+ },
+ {
+  "session": 93,
+  "exp": 60,
+  "by": "llm:llm-innodb-parallel-read-threads",
+  "variable": "innodb_parallel_read_threads",
+  "parent_value": "4",
+  "noise": 3.27,
+  "values": [
+   "8",
+   "16"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_parallel_read_threads=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 97.71,
+    "delta_pct": 1.48,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_parallel_read_threads=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 95.29,
+    "delta_pct": 3.92,
+    "verdict": "better"
+   }
+  ],
+  "kept": "innodb_parallel_read_threads=16",
+  "goal": "latency",
+  "name": "Battery 2: A1 go-tpc TPC-H SF1, 22 queries, 1 stream, 120 s "
+ },
+ {
+  "session": 94,
+  "exp": 70,
+  "by": "llm:llm-innodb-purge-threads",
+  "variable": "innodb_purge_threads",
+  "parent_value": "1",
+  "noise": 2.28,
+  "values": [
+   "2",
+   "4"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_purge_threads=2",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 83395.0,
+    "delta_pct": -0.37,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_purge_threads=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 86330.0,
+    "delta_pct": 3.14,
+    "verdict": "better"
+   }
+  ],
+  "kept": "innodb_purge_threads=4",
+  "goal": "tps",
+  "name": "Battery 2: O5 HammerDB TPROC-C 80W, 64 VU, 2 + 5 min"
+ },
+ {
+  "session": 94,
+  "exp": 69,
+  "by": "llm:llm-rg-innodb-bg-cpus",
+  "variable": "rg:innodb_bg_cpus",
+  "parent_value": null,
+  "noise": 2.28,
+  "values": [
+   "0",
+   "0-1",
+   "6-7"
+  ],
+  "arms": [
+   {
+    "arm": "rg:innodb_bg_cpus=0",
+    "status": "rejected",
+    "reason": "rg:innodb_bg_cpus does not exist on this server"
+   },
+   {
+    "arm": "rg:innodb_bg_cpus=0-1",
+    "status": "rejected",
+    "reason": "rg:innodb_bg_cpus does not exist on this server"
+   },
+   {
+    "arm": "rg:innodb_bg_cpus=6-7",
+    "status": "rejected",
+    "reason": "rg:innodb_bg_cpus does not exist on this server"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: O5 HammerDB TPROC-C 80W, 64 VU, 2 + 5 min"
+ },
+ {
+  "session": 94,
+  "exp": 63,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.5,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 81643.0,
+    "delta_pct": -2.3,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 82568.0,
+    "delta_pct": -1.19,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: O5 HammerDB TPROC-C 80W, 64 VU, 2 + 5 min"
+ },
+ {
+  "session": 95,
+  "exp": 56,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 4.83,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 792.32,
+    "delta_pct": -2.94,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 797.43,
+    "delta_pct": -2.31,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "canary 2026-10-19 12:48 agent 0.1.0+5204bc4"
+ },
+ {
+  "session": 96,
+  "exp": 73,
+  "by": "agent:sweep-bp-instances",
+  "variable": "innodb_buffer_pool_instances",
+  "parent_value": "8",
+  "noise": 13.94,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_buffer_pool_instances=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 3793.6,
+    "delta_pct": -0.38,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_buffer_pool_instances=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 3753.09,
+    "delta_pct": -1.45,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: C2 sysbench oltp_read_write in-memory 16x1M, 1024"
+ },
+ {
+  "session": 96,
+  "exp": 64,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "32",
+   "64"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 3642.26,
+    "delta_pct": -2.61,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_thread_concurrency=64",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 3601.34,
+    "delta_pct": -3.7,
+    "verdict": "worse"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: C2 sysbench oltp_read_write in-memory 16x1M, 1024"
+ },
+ {
+  "session": 97,
+  "exp": 66,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 4.51,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 786.32,
+    "delta_pct": -0.27,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 805.48,
+    "delta_pct": 2.16,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "canary 2026-10-19 13:46 agent 0.1.0+3bceadc"
+ },
+ {
+  "session": 98,
+  "exp": 72,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 4.27,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 773.21,
+    "delta_pct": -0.26,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 798.13,
+    "delta_pct": 2.95,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "canary 2026-10-19 14:50 agent 0.1.0+222f6b0"
+ },
+ {
+  "session": 100,
+  "exp": 77,
+  "by": "cli",
+  "variable": "innodb_redo_log_capacity",
+  "parent_value": "7680M",
+  "noise": 2.0,
+  "values": [
+   "4G",
+   "23G"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_redo_log_capacity=4G",
+    "status": "measured",
+    "runs": 2,
+    "goal_mean": 93688.5,
+    "delta_pct": 1.03,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_redo_log_capacity=23G",
+    "status": "measured",
+    "runs": 2,
+    "goal_mean": 93495.5,
+    "delta_pct": 0.83,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Settings validation, HammerDB 500W I/O-bound, 64 VU (E-2286G"
+ },
+ {
+  "session": 103,
+  "exp": 75,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 4.27,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 753.49,
+    "delta_pct": 1.77,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 725.67,
+    "delta_pct": -1.99,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "canary 2026-10-19 15:48 agent 0.1.0+a39ad3d"
+ },
+ {
+  "session": 106,
+  "exp": 89,
+  "by": "agent:sweep-io-capacity",
+  "variable": "innodb_io_capacity",
+  "parent_value": "2000",
+  "noise": 3.38,
+  "values": [
+   "1000",
+   "4000",
+   "8000"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_io_capacity=1000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 17768.8,
+    "delta_pct": 6.65,
+    "verdict": "better"
+   },
+   {
+    "arm": "innodb_io_capacity=4000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 14770.6,
+    "delta_pct": -11.35,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_io_capacity=8000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 14260.8,
+    "delta_pct": -14.41,
+    "verdict": "worse"
+   }
+  ],
+  "kept": "innodb_io_capacity=1000",
+  "goal": "tps",
+  "name": "ibench pilot: ibench-li1 tuning"
+ },
+ {
+  "session": 109,
+  "exp": 78,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 4.56,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 819.83,
+    "delta_pct": 2.69,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 805.25,
+    "delta_pct": 0.87,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "canary 2026-10-19 16:48 agent 0.1.0+d76b755"
+ },
+ {
+  "session": 111,
+  "exp": 88,
+  "by": "llm:llm-thread-cache-size",
+  "variable": "thread_cache_size",
+  "parent_value": "20",
+  "noise": 1.21,
+  "values": [
+   "256",
+   "1100"
+  ],
+  "arms": [
+   {
+    "arm": "thread_cache_size=256",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 105436.33,
+    "delta_pct": 1.45,
+    "verdict": "better"
+   },
+   {
+    "arm": "thread_cache_size=1100",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 104217.35,
+    "delta_pct": 0.27,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": "thread_cache_size=256",
+  "goal": "tps",
+  "name": "Battery 2: C3 sysbench oltp_point_select 16x1M, 1024 connect"
+ },
+ {
+  "session": 111,
+  "exp": 81,
+  "by": "agent:sweep-bp-instances",
+  "variable": "innodb_buffer_pool_instances",
+  "parent_value": "8",
+  "noise": 1.39,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_buffer_pool_instances=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 104317.4,
+    "delta_pct": -0.1,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_buffer_pool_instances=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 103655.58,
+    "delta_pct": -0.73,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: C3 sysbench oltp_point_select 16x1M, 1024 connect"
+ },
+ {
+  "session": 111,
+  "exp": 79,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "32",
+   "64"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 104126.14,
+    "delta_pct": 0.43,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=64",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 102060.07,
+    "delta_pct": -1.56,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: C3 sysbench oltp_point_select 16x1M, 1024 connect"
+ },
+ {
+  "session": 113,
+  "exp": 92,
+  "by": "agent:sweep-read-ahead",
+  "variable": "innodb_read_ahead_threshold",
+  "parent_value": "56",
+  "noise": 2.0,
+  "values": [
+   "8",
+   "32",
+   "64"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_read_ahead_threshold=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1238.21,
+    "delta_pct": 2.19,
+    "verdict": "better"
+   },
+   {
+    "arm": "innodb_read_ahead_threshold=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1232.49,
+    "delta_pct": 2.64,
+    "verdict": "better"
+   },
+   {
+    "arm": "innodb_read_ahead_threshold=64",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1264.95,
+    "delta_pct": 0.07,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": "innodb_read_ahead_threshold=32",
+  "goal": "latency",
+  "name": "JOB pilot: optimizer-bound query set (latency)"
+ },
+ {
+  "session": 115,
+  "exp": 105,
+  "by": "agent:sweep-bp-instances",
+  "variable": "innodb_buffer_pool_instances",
+  "parent_value": "8",
+  "noise": 1.89,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_buffer_pool_instances=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 46981.66,
+    "delta_pct": -4.46,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_buffer_pool_instances=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 47891.07,
+    "delta_pct": -2.61,
+    "verdict": "worse"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: C4 sysbench oltp_update_non_index hot rows (paret"
+ },
+ {
+  "session": 115,
+  "exp": 104,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "32",
+   "64"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 27004.68,
+    "delta_pct": -44.33,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_thread_concurrency=64",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 39069.92,
+    "delta_pct": -19.46,
+    "verdict": "worse"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: C4 sysbench oltp_update_non_index hot rows (paret"
+ },
+ {
+  "session": 117,
+  "exp": 134,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 5.47,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 52.893,
+    "delta_pct": 0.91,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 53.025,
+    "delta_pct": 0.67,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "latency",
+  "name": "HammerDB 1000W all-warehouse tail latency (NEW_ORDER P99), 1"
+ },
+ {
+  "session": 117,
+  "exp": 126,
+  "by": "llm:llm-os-scheduler",
+  "variable": "os:scheduler",
+  "parent_value": "mq-deadline",
+  "noise": 6.31,
+  "values": [
+   "none",
+   "kyber"
+  ],
+  "arms": [
+   {
+    "arm": "os:scheduler=none",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 116.489,
+    "delta_pct": 7.3,
+    "verdict": "better"
+   },
+   {
+    "arm": "os:scheduler=kyber",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 122.645,
+    "delta_pct": 2.4,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": "os:scheduler=none",
+  "goal": "latency",
+  "name": "HammerDB 1000W all-warehouse tail latency (NEW_ORDER P99), 1"
+ },
+ {
+  "session": 117,
+  "exp": 120,
+  "by": "agent:sweep-read-io-threads",
+  "variable": "innodb_read_io_threads",
+  "parent_value": "4",
+  "noise": 7.32,
+  "values": [
+   "8",
+   "16"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_read_io_threads=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 122.071,
+    "delta_pct": 2.06,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_read_io_threads=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 127.254,
+    "delta_pct": -2.1,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "latency",
+  "name": "HammerDB 1000W all-warehouse tail latency (NEW_ORDER P99), 1"
+ },
+ {
+  "session": 117,
+  "exp": 119,
+  "by": "agent:sweep-lru-depth",
+  "variable": "innodb_lru_scan_depth",
+  "parent_value": "1024",
+  "noise": 8.18,
+  "values": [
+   "256",
+   "2048",
+   "4096"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_lru_scan_depth=256",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 121.894,
+    "delta_pct": 2.28,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_lru_scan_depth=2048",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 127.624,
+    "delta_pct": -2.31,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_lru_scan_depth=4096",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 123.837,
+    "delta_pct": 0.73,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "latency",
+  "name": "HammerDB 1000W all-warehouse tail latency (NEW_ORDER P99), 1"
+ },
+ {
+  "session": 117,
+  "exp": 114,
+  "by": "agent:sweep-dirty-lwm",
+  "variable": "innodb_max_dirty_pages_pct_lwm",
+  "parent_value": "10.000000",
+  "noise": 8.7,
+  "values": [
+   "0",
+   "30",
+   "80"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_max_dirty_pages_pct_lwm=0",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 124.379,
+    "delta_pct": 0.3,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_max_dirty_pages_pct_lwm=30",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 123.907,
+    "delta_pct": 0.68,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_max_dirty_pages_pct_lwm=80",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 133.904,
+    "delta_pct": -7.33,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "latency",
+  "name": "HammerDB 1000W all-warehouse tail latency (NEW_ORDER P99), 1"
+ },
+ {
+  "session": 117,
+  "exp": 107,
+  "by": "agent:sweep-io-capacity",
+  "variable": "innodb_io_capacity",
+  "parent_value": "2000",
+  "noise": 8.7,
+  "values": [
+   "1000",
+   "4000",
+   "8000"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_io_capacity=1000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 124.998,
+    "delta_pct": 1.58,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_io_capacity=4000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 127.68,
+    "delta_pct": -0.53,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_io_capacity=8000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 126.329,
+    "delta_pct": 0.53,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "latency",
+  "name": "HammerDB 1000W all-warehouse tail latency (NEW_ORDER P99), 1"
+ },
+ {
+  "session": 123,
+  "exp": 113,
+  "by": "agent:sweep-read-ahead",
+  "variable": "innodb_read_ahead_threshold",
+  "parent_value": "56",
+  "noise": 5.0,
+  "values": [
+   "8",
+   "32",
+   "64"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_read_ahead_threshold=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1157.27,
+    "delta_pct": 2.67,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_read_ahead_threshold=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1154.63,
+    "delta_pct": 2.89,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_read_ahead_threshold=64",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 1193.07,
+    "delta_pct": -0.34,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "latency",
+  "name": "JOB pilot: optimizer-bound query set (latency)"
+ },
+ {
+  "session": 124,
+  "exp": 111,
+  "by": "agent:sweep-dirty-lwm",
+  "variable": "innodb_max_dirty_pages_pct_lwm",
+  "parent_value": "10.000000",
+  "noise": 1.83,
+  "values": [
+   "0",
+   "30",
+   "80"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_max_dirty_pages_pct_lwm=0",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 33390.15,
+    "delta_pct": -0.05,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_max_dirty_pages_pct_lwm=30",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 33382.53,
+    "delta_pct": -0.07,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_max_dirty_pages_pct_lwm=80",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 32939.37,
+    "delta_pct": -1.4,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "BenchBase pilot: YCSB-A 50/50 read/update zipfian, 60M rows "
+ },
+ {
+  "session": 125,
+  "exp": 110,
+  "by": "agent:sweep-io-capacity",
+  "variable": "innodb_io_capacity",
+  "parent_value": "2000",
+  "noise": 4.59,
+  "values": [
+   "1000",
+   "4000",
+   "8000"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_io_capacity=1000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 23445.5,
+    "delta_pct": -1.83,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_io_capacity=4000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 20976.8,
+    "delta_pct": -12.16,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_io_capacity=8000",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 15486.3,
+    "delta_pct": -35.15,
+    "verdict": "worse"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "ibench pilot: ibench-li1-steady tuning"
+ },
+ {
+  "session": 126,
+  "exp": 108,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 5.67,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 763.29,
+    "delta_pct": -1.13,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 757.74,
+    "delta_pct": -1.85,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "canary 2026-10-20 02:50 agent 0.1.0+b410768"
+ },
+ {
+  "session": 127,
+  "exp": 112,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 7.47,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 779.85,
+    "delta_pct": -4.84,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 802.05,
+    "delta_pct": -2.13,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "canary 2026-10-20 04:05 agent 0.1.0+d155f7b"
+ },
+ {
+  "session": 128,
+  "exp": 118,
+  "by": "agent:sweep-bp-instances",
+  "variable": "innodb_buffer_pool_instances",
+  "parent_value": "8",
+  "noise": 5.18,
+  "values": [
+   "16",
+   "32"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_buffer_pool_instances=16",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 160784.0,
+    "delta_pct": -0.01,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_buffer_pool_instances=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 161170.0,
+    "delta_pct": 0.23,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: C5 HammerDB TPROC-C 100W, 256 VU from tuner-bigcl"
+ },
+ {
+  "session": 128,
+  "exp": 115,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 6.31,
+  "values": [
+   "32",
+   "64"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 144666.0,
+    "delta_pct": -7.82,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_thread_concurrency=64",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 149564.0,
+    "delta_pct": -4.7,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: C5 HammerDB TPROC-C 100W, 256 VU from tuner-bigcl"
+ },
+ {
+  "session": 129,
+  "exp": 116,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 7.47,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 797.35,
+    "delta_pct": -1.91,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 803.66,
+    "delta_pct": -1.13,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "canary 2026-10-20 05:23 agent 0.1.0+c0c4a7f"
+ },
+ {
+  "session": 131,
+  "exp": 124,
+  "by": "llm:llm-os-net-ipv4-tcp-max-syn-backlog",
+  "variable": "os:net.ipv4.tcp_max_syn_backlog",
+  "parent_value": "2048",
+  "noise": 11.56,
+  "values": [
+   "4096",
+   "8192",
+   "16384"
+  ],
+  "arms": [
+   {
+    "arm": "os:net.ipv4.tcp_max_syn_backlog=4096",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 64.24,
+    "delta_pct": 1.5,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "os:net.ipv4.tcp_max_syn_backlog=8192",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 64.89,
+    "delta_pct": 2.53,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "os:net.ipv4.tcp_max_syn_backlog=16384",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 66.27,
+    "delta_pct": 4.71,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: C6 connection storm: new connection + 5 point sel"
+ },
+ {
+  "session": 131,
+  "exp": 121,
+  "by": "llm:llm-thread-cache-size",
+  "variable": "thread_cache_size",
+  "parent_value": "16",
+  "noise": 11.56,
+  "values": [
+   "64",
+   "128",
+   "256"
+  ],
+  "arms": [
+   {
+    "arm": "thread_cache_size=64",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 65.57,
+    "delta_pct": 7.16,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "thread_cache_size=128",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 65.58,
+    "delta_pct": 7.17,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "thread_cache_size=256",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 61.28,
+    "delta_pct": 0.15,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Battery 2: C6 connection storm: new connection + 5 point sel"
+ },
+ {
+  "session": 132,
+  "exp": 123,
+  "by": "agent:sweep-read-ahead",
+  "variable": "innodb_read_ahead_threshold",
+  "parent_value": "56",
+  "noise": 2.0,
+  "values": [
+   "8",
+   "32",
+   "64"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_read_ahead_threshold=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 43456.92,
+    "delta_pct": 0.32,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_read_ahead_threshold=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 43451.36,
+    "delta_pct": 0.3,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_read_ahead_threshold=64",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 43596.58,
+    "delta_pct": 0.64,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "BenchBase pilot: TATP 1M subscribers, 256 terminals, 1 + 4 m"
+ },
+ {
+  "session": 133,
+  "exp": 127,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 5.8,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 772.84,
+    "delta_pct": -2.68,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 778.27,
+    "delta_pct": -2.0,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "canary 2026-10-20 11:55 agent 0.1.0+d5c2341"
+ },
+ {
+  "session": 134,
+  "exp": 128,
+  "by": "agent:sweep-read-ahead",
+  "variable": "innodb_read_ahead_threshold",
+  "parent_value": "56",
+  "noise": null,
+  "values": [
+   "8",
+   "32",
+   "64"
+  ],
+  "arms": null,
+  "kept": null,
+  "goal": "tps",
+  "name": "Read-only I/O-bound: sysbench oltp_read_only 37 GB, 64 threa"
+ },
+ {
+  "session": 135,
+  "exp": 129,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 5.8,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 790.95,
+    "delta_pct": 1.53,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 759.76,
+    "delta_pct": -2.47,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "canary 2026-10-20 13:09 agent 0.1.0+a84d1e4"
+ },
+ {
+  "session": 136,
+  "exp": 133,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 1.43,
+  "values": [
+   "24",
+   "48"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=24",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 17770.15,
+    "delta_pct": -2.42,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_thread_concurrency=48",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 18042.72,
+    "delta_pct": -0.93,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Read-only I/O-bound: sysbench oltp_read_only 37 GB, 64 threa"
+ },
+ {
+  "session": 136,
+  "exp": 131,
+  "by": "agent:sweep-read-ahead",
+  "variable": "innodb_read_ahead_threshold",
+  "parent_value": "56",
+  "noise": 2.0,
+  "values": [
+   "8",
+   "32",
+   "64"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_read_ahead_threshold=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 14569.24,
+    "delta_pct": -21.34,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_read_ahead_threshold=32",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 18042.41,
+    "delta_pct": -2.59,
+    "verdict": "worse"
+   },
+   {
+    "arm": "innodb_read_ahead_threshold=64",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 17982.44,
+    "delta_pct": -2.91,
+    "verdict": "worse"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Read-only I/O-bound: sysbench oltp_read_only 37 GB, 64 threa"
+ },
+ {
+  "session": 137,
+  "exp": 132,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 13.22,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 744.0008,
+    "delta_pct": -2.65,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 789.9742,
+    "delta_pct": 3.37,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "canary 2026-10-20 16:06 agent 0.1.0+b76902b"
+ },
+ {
+  "session": 140,
+  "exp": 136,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 2.0,
+  "values": [
+   "24",
+   "48"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=24",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 224884.8707,
+    "delta_pct": -0.18,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=48",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 223899.9523,
+    "delta_pct": -0.61,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "Bare-metal validation: point select in memory, 64 threads (t"
+ },
+ {
+  "session": 141,
+  "exp": 135,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": 8.68,
+  "values": [
+   "4",
+   "8"
+  ],
+  "arms": [
+   {
+    "arm": "innodb_thread_concurrency=4",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 766.5833,
+    "delta_pct": -3.01,
+    "verdict": "within noise"
+   },
+   {
+    "arm": "innodb_thread_concurrency=8",
+    "status": "measured",
+    "runs": 1,
+    "goal_mean": 777.5033,
+    "delta_pct": -1.62,
+    "verdict": "within noise"
+   }
+  ],
+  "kept": null,
+  "goal": "tps",
+  "name": "canary 2026-10-20 18:12 agent 0.1.0+e50d511"
+ },
+ {
+  "session": 142,
+  "exp": 137,
+  "by": "agent:sweep-thread-concurrency",
+  "variable": "innodb_thread_concurrency",
+  "parent_value": "0",
+  "noise": null,
+  "values": [
+   "48",
+   "24"
+  ],
+  "arms": null,
+  "kept": null,
+  "goal": "tps",
+  "name": "Read-only CPU-bound: sysbench point_select 9 GB in memory, 6"
+ }
+]
