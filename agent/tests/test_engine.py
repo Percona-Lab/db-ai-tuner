@@ -3,6 +3,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from tuning_agent.knowledge import parse_size
 from tuning_agent import engine, evaluate, llmassist  # noqa: E402
 
 GiB = 1024 ** 3
@@ -247,7 +248,9 @@ def test_bp_overcommit_with_cold_memory():
         VARS.pop("os:swapfile")
     assert "bp-overcommit" in it, sorted(it)
     ch = dict((c["variable"], c["proposed"]) for c in it["bp-overcommit"]["changes"])
-    assert ch.get("os:swapfile") == "1G" and "innodb_buffer_pool_size" in ch
+    # swap is extra OS tuning of this experiment: grown to about 1x RAM (the 512 MB partition counts)
+    sw = parse_size(ch.get("os:swapfile") or "0")
+    assert HW["ram_bytes"] - 1 * GiB <= sw + 512 * 2 ** 20 <= HW["ram_bytes"] and "innodb_buffer_pool_size" in ch, ch
 
 
 def test_practice_bundle_bisect_and_keep():

@@ -872,13 +872,19 @@ def recommend(ctx):
             and s.get("bp_hit_pct", 100) < 99.5 and (not data_bytes or bp < data_bytes):
         extra_swap = []
         room = min(int(ram * 0.15), cold + swap_free // 2)
-        if ctx.get("os_tuning") and swap_free < 1 * GiB and ram >= 2 * GiB:
-            size = 1 * GiB if ram <= 8 * GiB else 2 * GiB
-            extra_swap = [("os:swapfile", fmt_size(size))]
-            room = min(int(ram * 0.15), cold + (swap_free + size) // 2)
+        swap_after = swap_free
+        swap_total = (s.get("swap_total_mb") or 0) * MiB
+        if ctx.get("os_tuning") and swap_total < ram * 0.9 and ram >= 2 * GiB:
+            # extra OS tuning, part of this experiment: swap up to about 1x RAM (the agent's swap file replaces an earlier one),
+            # so a buffer pool that outgrows memory shows as swapping in the metrics instead of an OOM kill
+            own = _swapfile_bytes(v.get("os:swapfile"))
+            size = max(1 * GiB, (ram - (swap_total - own)) // GiB * GiB)
+            if size > own:
+                extra_swap = [("os:swapfile", fmt_size(size))]
+                swap_after = swap_free + size - own
+                room = min(int(ram * 0.15), cold + swap_after // 2)
         # the buffer pool must fit in RAM plus the swap it can use (half of it, 1 GiB for the rest of the server): beyond that
         # mysqld is OOM-killed instead of slow
-        swap_after = swap_free + (size if extra_swap else 0)
         room = min(room, max(0, ram + swap_after // 2 - 1 * GiB - bp))
         new = bp_round(v, bp + room)
         if new >= bp + max(128 * MiB, bp * 0.05):
@@ -1354,6 +1360,13 @@ def _breaks_requirement(it, requires):
             if str(ch.get("proposed")).lower() != str(want).lower():
                 return True
     return False
+
+
+def _swapfile_bytes(val):
+    try:
+        return 0 if str(val or "0").lower() in ("0", "off", "") else parse_size(val)
+    except Exception:
+        return 0
 
 
 def hypothesis(it, ctx):

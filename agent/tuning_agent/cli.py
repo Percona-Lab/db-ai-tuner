@@ -428,31 +428,6 @@ def _print_apply(res):
     return "\n".join(lines)
 
 
-def _swap_safety_net(c, hw):
-    """Swap of about 1x RAM by default: a memory shortfall then shows up as slowness (swapping, visible in the metrics) and
-    not as an OOM kill that ends the run. Smaller swap or none stays available as an explicit OS experiment."""
-    try:
-        ram = hw["ram_bytes"]
-        sw = {}
-        for line in open("/proc/meminfo"):
-            k, _, val = line.partition(":")
-            sw[k] = int(val.split()[0]) * 1024 if val.split() else 0
-        agent_file = 0
-        if ostune.SWAPFILE in open("/proc/swaps").read():
-            agent_file = os.path.getsize(ostune.SWAPFILE)
-        other = sw.get("SwapTotal", 0) - agent_file
-        want = ram - other
-        want = min(want, max(0, (hw.get("disk_free_bytes") or 0) - 10 * 2 ** 30))  # keep 10 GB of the disk free
-        want = want // 2 ** 28 * 2 ** 28  # 256 MB steps
-        if want < 512 * 2 ** 20 or agent_file >= want * 0.95:
-            return None
-        return {"variable": "os:swapfile", "value": engine.fmt_size(want),
-                "reason": f"Swap safety net: {human_size(other + want)} in total (1x RAM where the disk allows): a memory shortfall then "
-                          "shows up as swapping in the metrics instead of an OOM kill that ends the run.", "source": "baseline"}
-    except Exception:
-        return None
-
-
 def cmd_baseline(a):
     c = Ctx()
     v = c.variables
@@ -473,13 +448,8 @@ def cmd_baseline(a):
     for it in items:
         mark = "*" if it["change"] else " "
         text.append(f" {mark} {it['variable']:<34} {str(it['current']):>14} -> {it['value']:<10} {it['reason']}")
-    swap_change = _swap_safety_net(c, hw) if c.os_tuning_allowed() and not getattr(a, "no_os_tuning", False) else None
-    if swap_change:
-        text.append(f" * {swap_change['variable']:<34} -> {swap_change['value']:<10} {swap_change['reason']}")
     if a.apply:
         changes = [{"variable": it["variable"], "value": it["value"], "reason": it["reason"], "source": "baseline"} for it in items]
-        if swap_change:
-            changes.append(swap_change)
         res = _apply_and_record(c, changes, "baseline")
         out["applied"] = res
         text.append("Applied:\n" + _print_apply(res))
