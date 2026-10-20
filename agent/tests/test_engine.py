@@ -509,6 +509,18 @@ def test_breakdown_sources_and_evidence_gate():
     assert sig["version"] == "8.4" and sig["cpus"] == "9-16" and sig["settings"] == {"log_bin": "OFF"}
 
 
+def test_environment_disturbances():
+    # session 88 calibration: mysqld swapping back in and the goal falling run after run
+    runs = [{"goal_value": 177826, "summary": {"swap_in": 2374, "dbproc_swap_mb": 2294}},
+            {"goal_value": 171427, "summary": {"swap_in": 2639, "dbproc_swap_mb": 2384}},
+            {"goal_value": 164090, "summary": {"swap_in": 2417, "dbproc_swap_mb": 2452}}]
+    d = evaluate.disturbances(runs + [{"goal_value": 156647, "summary": {"swap_in": 2022, "dbproc_swap_mb": 2407}}])
+    assert len(d) == 2 and "swap" in d[0] and "same direction" in d[1]
+    assert len(evaluate.disturbances(runs)) == 1  # three runs: a monotonic pair of steps is not evidence
+    quiet = [{"goal_value": g, "summary": {"swap_in": 0, "dbproc_swap_mb": 10}} for g in (100, 103, 101)]
+    assert evaluate.disturbances(quiet) == []
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

@@ -552,3 +552,27 @@ def query_impact(stmts_now, stmts_parent, top=12):
     losers = [r for r in rows if r["faster_pct"] < -QUERY_NOISE_PCT]
     return {"rows": rows, "winners": len(winners), "losers": len(losers), "noise_pct": QUERY_NOISE_PCT,
             "mixed": bool(winners and losers)}
+
+
+def disturbances(runs):
+    """Measured sources of run-to-run shifts in a set of runs of one configuration (evidence, not guesses):
+    mysqld memory swapped back in during the window, hypervisor CPU steal, the goal drifting run after run, an
+    unsteady window."""
+    out = []
+    ss = [(r.get("summary") or {}) for r in runs]
+    sw = [s for s in ss if (s.get("swap_in") or 0) > 0 and (s.get("dbproc_swap_mb") or 0) > 0]
+    if sw:
+        out.append(f"mysqld has {max(s['dbproc_swap_mb'] for s in sw):.0f} MB in swap and pages are read back during the window "
+                   f"(up to {max(s['swap_in'] for s in sw):.0f} pages/s in {len(sw)} of {len(ss)} runs)")
+    st = [s.get("cpu_steal") or 0 for s in ss]
+    if st and max(st) >= 3:
+        out.append(f"hypervisor CPU steal up to {max(st):.1f}%")
+    goals = [r.get("goal_value") for r in runs if r.get("goal_value") is not None]
+    if len(goals) >= 4:  # with 3 runs, two steps in the same direction happen by chance half the time
+        diffs = [b - a for a, b in zip(goals, goals[1:])]
+        if all(d < 0 for d in diffs) or all(d > 0 for d in diffs):
+            out.append(f"the goal moved in the same direction every run ({', '.join(f'{g:.4g}' for g in goals)})")
+    ns = [r for r in runs if ((r.get("summary") or {}).get("steady_state") or {}).get("steady") is False]
+    if ns:
+        out.append(f"{len(ns)} of {len(runs)} runs not at steady state")
+    return out

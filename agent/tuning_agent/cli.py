@@ -1301,7 +1301,20 @@ def _noise_plan(c, prof, runs, n):
     plan = evaluate.noise_plan(runs, cal, prof.duration, prof.max_duration)
     if ds["status"] == "drifting" and plan["action"] in ("between-runs", "longer-runs"):
         plan["text"] += " Likely cause: the data set is not restored between runs (set reset = ..., or data_state = seasoned)."
+    dist = evaluate.disturbances(runs)
+    if dist:
+        plan["disturbances"] = dist
+        plan["text"] += " Measured in the calibration runs: " + "; ".join(dist) + "."
     cal["plan"] = plan
+    if plan["action"] == "between-runs" and dist and plan.get("repeats", 2) > 2 \
+            and str(c.cfg.get("allow_noisy_environment", "false")).lower() != "true":
+        # tuning on top of a measured disturbance only finds noise (session 88: mysqld swapping 2.3 GB back and forth,
+        # noise growing from 10% to 40%, 50 runs that could not separate any setting): fix the environment first
+        _set_calibration(c, sess, cal)
+        msg = ("environment unfit for tuning: run-to-run noise ±" + str(cal.get("noise_pct")) + "% hides changes smaller than that, "
+               "and the calibration runs show why - " + "; ".join(dist) + ". Fix it (or set allow_noisy_environment = true in agent.ini).")
+        c.event("environment", msg, plan)
+        raise Fail(msg)
     if plan["action"] == "longer-runs" and not (prof.adaptive and prof.can_resize()):
         plan["applied"] = False
         plan["text"] += (" Not applied: adaptive_duration = off." if not prof.adaptive else
