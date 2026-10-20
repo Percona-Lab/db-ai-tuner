@@ -1110,8 +1110,8 @@ def admin_learner_run(request: Request, body: dict = Body(default={})):
 @app.patch("/api/admin/insights/{iid}")
 def admin_insight(iid: int, request: Request, body: dict = Body(...)):
     auth.require_admin(request)
-    if body.get("status") not in ("candidate", "validated", "retired", "implemented"):
-        raise HTTPException(400, "status: candidate | validated | retired | implemented")
+    if body.get("status") not in ("observed", "repeated", "contested", "contradicted", "implemented", "retired-by-admin"):
+        raise HTTPException(400, "status: observed | repeated | contested | contradicted | implemented | retired-by-admin")
     learner.db().execute("UPDATE insights SET status=?, notes=COALESCE(?, notes), updated=? WHERE id=?",
                          (body["status"], body.get("notes"), now(), iid))
     return {"ok": True}

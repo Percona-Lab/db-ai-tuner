@@ -26,6 +26,22 @@ sessions. The hosted service fills it from every user's sessions, so it is the s
 - **Persistence:** `learning.db` persists across resets of the observation database. It can be exported as a
   snapshot.
 
+## Learnings are summaries of experiment data, not truths
+
+A learning says what was measured, where, and how often it repeated:
+
+- **Phrasing:** "on a 2-CPU host at 16 connections, X raised TPS 10% (runs 5-6)", not "X improves TPS".
+- **Scope and caveats:** the conditions it was measured in, the sessions and hosts behind it, and what limits it
+  (single host, noise, unsteady runs, a confound, a narrow workload).
+- **Status** describes repeatability, not truth:
+  - observed: one session;
+  - repeated: supported in at least 2 sessions, by at least 2:1 of the runs;
+  - contested: runs disagree;
+  - contradicted: more runs against than for.
+- **Use:** agents present learnings as earlier results to test ("may not hold here"). Only repeated ones move the
+  ranking, and only slightly. Every change still has to show measured evidence and measured results on the system
+  being tuned.
+
 ## The learner (background process)
 
 The learner runs inside the service, every 6 hours by default, or when the admin starts it from the Learning page.
@@ -38,13 +54,13 @@ The learner runs inside the service, every 6 hours by default, or when the admin
    statement: a setting or mechanism, the conditions (workload, hardware, measured bottleneck components), the
    expected direction, and the sessions behind it. Where the code itself should change, the AI writes a proposal for
    a rule change, a missing measurement, or a bug.
-4. **Validate** every insight against the observation data, not the AI's word: it counts the runs that support and
-   contradict it under its conditions. Confidence comes from those counts. An insight with no data behind it stays a
-   "candidate" (shown to agents as an unverified lead). An insight contradicted more often than supported is retired.
+4. **Count** every insight against the observation data, not the AI's word: the runs that support and contradict it
+   under its conditions, per session and host. The status (observed / repeated / contested / contradicted) comes
+   from those counts, kept per session in `learning.db` so they outlive the observations.
 5. **Merge** duplicates, and keep a log of every learner pass: sessions read, calls, cost, errors.
 
 Agents receive the insights that match their conditions through `/experience`. The engine attaches them to matching
-candidates as leads (validated or not), with a small ranking prior for validated ones.
+candidates as leads, with a small ranking prior for repeated ones.
 
 ## Improving the code
 

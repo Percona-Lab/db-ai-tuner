@@ -1443,7 +1443,8 @@ def matching_insights(it, insights):
     for x in insights or []:
         vs = {str(s.get("variable")).lower(): str(s.get("value")).lower() for s in x.get("settings") or []}
         if vs and all(k in ch for k in vs) and all(not v or ch[k] == v for k, v in vs.items()):
-            out.append({k: x.get(k) for k in ("id", "statement", "direction", "status", "confidence", "support", "contradict")})
+            out.append({k: x.get(k) for k in ("id", "statement", "direction", "status", "confidence", "support", "contradict",
+                                               "sessions", "hosts", "caveats")})
     return out[:3]
 
 
@@ -1452,7 +1453,10 @@ def hypothesis(it, ctx):
     h = _hypothesis(it, ctx)
     leads = [it["lead"]] if it.get("lead") else []  # outside reports only motivate a test; the claim stays what this run measures
     for x in it.get("insights") or []:
-        leads.append(f"Learned ({x['status']}, {x['support']} supporting / {x['contradict']} contradicting runs): {x['statement']}")
+        # a summary of earlier experiments, not a fact about this system: it may not repeat here
+        leads.append(f"Earlier experiments ({x['status']}: {x['support']} runs for, {x['contradict']} against, "
+                     f"{x.get('sessions') or '?'} session(s) on {x.get('hosts') or '?'} host(s)) - may not hold here: {x['statement']}"
+                     + (f" Caveats: {x['caveats']}" if x.get("caveats") else ""))
     if leads:
         h["lead"] = " ".join(leads)
     return h
@@ -1580,8 +1584,8 @@ def run_engine(ctx):
             # what the learner extracted from earlier sessions in these conditions (learning.db): a lead and a small prior
             # for validated insights - the evidence gate above still decides whether the change runs at all
             it["insights"] = learned
-            for x in learned:
-                if x["status"] == "validated":
+            for x in learned:  # only results that repeated across sessions move the ranking, and only a little
+                if x["status"] == "repeated":
                     it["score_prior"] = it.get("score_prior", 0) + (1 if x["direction"] == "helps" else -2 if x["direction"] == "hurts" else -1)
         if it["kind"] in ("config", "revert"):
             it["hypothesis"] = hypothesis(it, ctx)

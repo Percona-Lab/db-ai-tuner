@@ -4,11 +4,16 @@ Observations (tuner.db: sessions, runs, metrics, verdicts, hypotheses) stay as m
 database (learning.db): insights with the conditions they hold in, the sessions behind them and support / contradiction
 counts computed from the observations; and proposals for changes to the tuner's code. See docs/design/agentic-saas.md.
 
+Learnings are summaries of experiment data, not truths: a result may not repeat, may hold only in the narrow
+conditions it was measured in, and may come from one host. Every insight carries its scope (conditions, sessions, hosts)
+and is phrased as what was measured; agents see it as an earlier result to test, never as a reason to skip measuring.
+
 Each pass (every TUNER_LEARNER_HOURS, default 6, or started by the admin):
 1. digest every session closed since the last pass (measured bottlenecks, experiments, outcomes, hypotheses);
 2. ask the AI (the service key) for insights and code proposals, given what is already known;
-3. validate each insight against the observations - runs that changed the same settings under the same conditions -
-   and set its confidence and status (candidate / validated / retired) from those counts, not from the AI's word;
+3. count each insight against the observations - runs that changed the same settings under the same conditions - and
+   set its status from those counts, not from the AI's word: observed (one session), repeated (several sessions agree),
+   contested (runs disagree), contradicted (more runs against than for);
 4. merge duplicates; log the pass (sessions, calls, cost, errors).
 """
 import fcntl
@@ -40,7 +45,7 @@ CREATE TABLE IF NOT EXISTS learner_runs (
 CREATE TABLE IF NOT EXISTS processed (session_id INTEGER PRIMARY KEY, processed REAL NOT NULL, learner_run INTEGER);
 CREATE TABLE IF NOT EXISTS evidence (
   insight_id INTEGER NOT NULL, session_id INTEGER NOT NULL, support INTEGER DEFAULT 0, contradict INTEGER DEFAULT 0,
-  neutral INTEGER DEFAULT 0, counted REAL, PRIMARY KEY (insight_id, session_id));
+  neutral INTEGER DEFAULT 0, counted REAL, env_id INTEGER, PRIMARY KEY (insight_id, session_id));
 """
 
 _local = threading.local()
@@ -54,6 +59,17 @@ def db():
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA journal_mode=WAL")
         c.executescript(SCHEMA)
+        cols = {r[1] for r in c.execute("PRAGMA table_info(evidence)")}
+        if "env_id" not in cols:
+            c.execute("ALTER TABLE evidence ADD COLUMN env_id INTEGER")
+        cols = {r[1] for r in c.execute("PRAGMA table_info(insights)")}
+        for col, typ in (("hosts", "INTEGER"), ("caveats", "TEXT"), ("support_sessions", "INTEGER")):
+            if col not in cols:
+                c.execute(f"ALTER TABLE insights ADD COLUMN {col} {typ}")
+        # earlier status names (they read like verdicts): observed / repeated / contradicted
+        c.execute("UPDATE insights SET status='observed' WHERE status='candidate'")
+        c.execute("UPDATE insights SET status='repeated' WHERE status='validated'")
+        c.execute("UPDATE insights SET status='contradicted' WHERE status='retired'")
         _local.c = c
     return c
 
@@ -119,8 +135,11 @@ def digest(sid):
 SYSTEM = """You review finished MySQL tuning sessions of an automated, evidence-driven tuner and extract what they teach.
 Input: one session digest (conditions, measured time breakdown, every experiment with its verdict against its parent
 configuration and the noise threshold, hypothesis outcomes, measurement flags) and a list of insights already known.
+These are summaries of experiment data, not general truths: one session on one host, with noise, in narrow conditions.
 Return:
-- insights: testable statements about a setting (or small group of settings) and its effect in stated conditions,
+- insights: what was measured about a setting (or small group of settings) and its effect, phrased as an observation
+  ("on a 2-CPU host at 16 connections, X raised TPS 10% (runs 5-6)"), never as a general rule. State the scope, and in
+  caveats what limits it (single host, noise level, unsteady runs, a confound, a narrow workload),
   grounded in this session's runs (cite run numbers). Use direction helps / hurts / no-effect. Conditions: workload
   type, CPU class, concurrency class, and the measured bottleneck components that made it work or not. If an existing
   insight says the same, return it with same_as = its id (this session then counts as more evidence). Do not state
@@ -135,9 +154,9 @@ SCHEMA_OUT = {
     "properties": {
         "insights": {"type": "array", "maxItems": 8, "items": {
             "type": "object", "additionalProperties": False,
-            "required": ["statement", "settings", "direction", "conditions", "runs", "same_as"],
+            "required": ["statement", "caveats", "settings", "direction", "conditions", "runs", "same_as"],
             "properties": {
-                "statement": {"type": "string"},
+                "statement": {"type": "string"}, "caveats": {"type": "string"},
                 "settings": {"type": "array", "minItems": 1, "maxItems": 4, "items": {
                     "type": "object", "additionalProperties": False, "required": ["variable", "value"],
                     "properties": {"variable": {"type": "string"}, "value": {"type": "string"}}}},
@@ -194,7 +213,7 @@ def validate(settings, direction, cond):
     """Count runs in the observations that changed these settings to these values under these conditions:
     (support, contradict, neutral, sessions)."""
     names = {_norm(s["variable"]): _norm(s["value"]) for s in settings}
-    rows = store.q("SELECT r.session_id, r.changes, r.verdict, json_extract(r.inputs, '$.workload.type') wl, "
+    rows = store.q("SELECT r.session_id, s.env_id, r.changes, r.verdict, json_extract(r.inputs, '$.workload.type') wl, "
                    "json_extract(e.facts, '$.hardware.cpus') cpus, json_extract(r.summary, '$.threads_connected_avg') conns "
                    "FROM runs r JOIN tsessions s ON s.id=r.session_id JOIN environments e ON e.id=s.env_id "
                    "WHERE r.status='done' AND r.verdict IN ('improved','efficiency-gain','neutral','regressed','efficiency-loss')")
@@ -211,7 +230,7 @@ def validate(settings, direction, cond):
             continue
         if cond.get("concurrency_class") and r["conns"] and _conc_class(r["conns"]) != cond["concurrency_class"]:
             continue
-        e = per.setdefault(r["session_id"], [0, 0, 0])
+        e = per.setdefault(r["session_id"], [0, 0, 0, r["env_id"]])
         if direction == "helps":
             e[0] += r["verdict"] in GOOD
             e[1] += r["verdict"] in BAD
@@ -230,22 +249,30 @@ def _count(c, iid, per):
     """Record this insight's evidence per session in learning.db and return the totals. Sessions that are no longer in
     the observations (a reset, another installation's data) keep the counts recorded when they were seen: learnings
     outlive the observations they came from."""
-    for sid, (a, b, n) in per.items():
-        c.execute("INSERT OR REPLACE INTO evidence VALUES (?,?,?,?,?,?)", (iid, sid, a, b, n, time.time()))
+    for sid, (a, b, n, env) in per.items():
+        c.execute("INSERT OR REPLACE INTO evidence(insight_id, session_id, support, contradict, neutral, counted, env_id) VALUES (?,?,?,?,?,?,?)",
+                  (iid, sid, a, b, n, time.time(), env))
     r = c.execute("SELECT COALESCE(SUM(support),0) s, COALESCE(SUM(contradict),0) c, COALESCE(SUM(neutral),0) n, "
-                  "GROUP_CONCAT(session_id) ids FROM evidence WHERE insight_id=?", (iid,)).fetchone()
+                  "GROUP_CONCAT(session_id) ids, SUM(support > contradict) ssess, COUNT(DISTINCT env_id) hosts "
+                  "FROM evidence WHERE insight_id=? AND (support + contradict + neutral) > 0", (iid,)).fetchone()
     ids = sorted(int(x) for x in (r["ids"] or "").split(",") if x)
+    c.execute("UPDATE insights SET support_sessions=?, hosts=? WHERE id=?", (r["ssess"] or 0, r["hosts"] or 0, iid))
     return r["s"], r["c"], r["n"], ids
 
 
-def _status(sup, con):
+def _status(sup, con, support_sessions=0):
+    """How well the experiment data repeats - not whether the statement is true:
+    observed: seen, but not repeated in another session; repeated: supported in at least 2 sessions and by at least
+    2:1 of the runs; contested: runs disagree; contradicted: more runs against than for."""
     n = sup + con
     conf = round((sup + 1) / (n + 2), 3)
     if n >= 3 and con > sup:
-        return "retired", conf
-    if sup >= 2 and conf >= 0.67:
-        return "validated", conf
-    return "candidate", conf
+        return "contradicted", conf
+    if sup >= 2 and support_sessions >= 2 and conf >= 0.67:
+        return "repeated", conf
+    if sup and con:
+        return "contested", conf
+    return "observed", conf
 
 
 def _key(settings, direction, cond):
@@ -326,7 +353,9 @@ def _store_insight(ins, dg, c):
     else:
         iid = row["id"]
     sup, con, neu, ids = _count(c, iid, per)
-    status, conf = _status(sup, con)
+    status, conf = _status(sup, con, c.execute("SELECT support_sessions FROM insights WHERE id=?", (iid,)).fetchone()[0] or 0)
+    if ins.get("caveats"):
+        c.execute("UPDATE insights SET caveats=? WHERE id=?", (ins["caveats"][:1000], iid))
     if row is not None and row["status"] == "implemented":
         status = "implemented"
     c.execute("UPDATE insights SET updated=?, support=?, contradict=?, neutral=?, confidence=?, status=?, sessions=? WHERE id=?",
@@ -337,9 +366,9 @@ def _store_insight(ins, dg, c):
 def revalidate(c=None):
     """Recount every live insight against the observations (they grow between passes)."""
     c = c or db()
-    for r in c.execute("SELECT * FROM insights WHERE status != 'implemented'").fetchall():
+    for r in c.execute("SELECT * FROM insights WHERE status NOT IN ('implemented', 'retired-by-admin')").fetchall():
         sup, con, neu, ids = _count(c, r["id"], validate(_uj(r["settings"], []), r["direction"], _uj(r["conditions"], {})))
-        status, conf = _status(sup, con)
+        status, conf = _status(sup, con, c.execute("SELECT support_sessions FROM insights WHERE id=?", (r["id"],)).fetchone()[0] or 0)
         c.execute("UPDATE insights SET support=?, contradict=?, neutral=?, confidence=?, status=? WHERE id=?",
                   (sup, con, neu, conf, status, r["id"]))
 
@@ -348,7 +377,7 @@ def revalidate(c=None):
 def matching(workload=None, cpu_class=None, concurrency_class=None):
     """Live insights whose conditions match (unset conditions match anything)."""
     out = []
-    for r in db().execute("SELECT * FROM insights WHERE status IN ('validated','candidate') ORDER BY confidence DESC"):
+    for r in db().execute("SELECT * FROM insights WHERE status IN ('repeated','observed','contested') ORDER BY confidence DESC"):
         cond = _uj(r["conditions"], {}) or {}
         if workload and cond.get("workload") and cond["workload"] != workload:
             continue
@@ -358,14 +387,16 @@ def matching(workload=None, cpu_class=None, concurrency_class=None):
             continue
         out.append({"id": r["id"], "statement": r["statement"], "settings": _uj(r["settings"], []), "direction": r["direction"],
                     "conditions": cond, "status": r["status"], "confidence": r["confidence"], "support": r["support"],
-                    "contradict": r["contradict"]})
+                    "contradict": r["contradict"], "sessions": len(_uj(r["sessions"], []) or []), "hosts": r["hosts"],
+                    "caveats": r["caveats"]})
     return out[:80]
 
 
 def overview():
     c = db()
     return {"insights": [dict(r, settings=_uj(r["settings"], []), conditions=_uj(r["conditions"], {}), sessions=_uj(r["sessions"], []))
-                         for r in c.execute("SELECT * FROM insights ORDER BY status='retired', confidence DESC, updated DESC")],
+                         for r in c.execute("SELECT * FROM insights ORDER BY status IN ('contradicted','retired-by-admin'), "
+                                            "status != 'repeated', confidence DESC, updated DESC")],
             "proposals": [dict(r, sessions=_uj(r["sessions"], [])) for r in c.execute("SELECT * FROM proposals ORDER BY status!='open', id DESC")],
             "runs": [dict(r) for r in c.execute("SELECT * FROM learner_runs ORDER BY id DESC LIMIT 20")],
             "processed": c.execute("SELECT COUNT(*) n FROM processed").fetchone()["n"],
