@@ -10,7 +10,7 @@ import tarfile
 import time
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import auth, learner, llm, status, store
@@ -112,13 +112,19 @@ learner.start()  # background learner: observations -> learning.db (docs/design/
 
 
 @app.get("/status", response_class=HTMLResponse)
-def server_status(h: int = 24):
-    """Public health page: host trends, database probes, request timings (no user data)."""
+def server_status(request: Request, h: int = 24):
+    """Service health page for the admin: host trends, database probes, request timings, watchdog, learner."""
+    u = auth.current_user(request, required=False)
+    if not u:
+        return RedirectResponse("/#/login", status_code=303)
+    if u.get("share") or not u.get("is_admin"):
+        return HTMLResponse("<p>The status page is for administrators.</p>", status_code=403)
     return HTMLResponse(status.html(max(1, min(int(h), 168))), headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/status.json")
-def server_status_json(h: int = 24):
+def server_status_json(request: Request, h: int = 24):
+    auth.require_admin(request)
     return status.report(max(1, min(int(h), 168)))
 
 

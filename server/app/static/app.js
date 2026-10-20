@@ -73,7 +73,7 @@ function setNav(active) {
   }
   document.body.classList.remove("ro");
   nav.innerHTML = `<a href="#/" class="${active === "envs" ? "on" : ""}">Environments</a><a href="#/studies" class="${active === "studies" ? "on" : ""}">Studies</a><a href="#/connect" class="${active === "connect" ? "on" : ""}">Connect agent</a>` +
-    `<a href="#/policies" class="${active === "policies" ? "on" : ""}">Policies</a>${ME.is_admin ? `<a href="#/learning" class="${active === "learning" ? "on" : ""}">Learning</a>` : ""}<a href="#/account" class="${active === "account" ? "on" : ""}">Account</a><span class="right">${esc(ME.email)}</span><a href="#" id="logout">Log out</a>`;
+    `<a href="#/policies" class="${active === "policies" ? "on" : ""}">Policies</a>${ME.is_admin ? `<a href="#/learning" class="${active === "learning" ? "on" : ""}">Learning</a><a href="/status">Status</a>` : ""}<a href="#/account" class="${active === "account" ? "on" : ""}">Account</a><span class="right">${esc(ME.email)}</span><a href="#" id="logout">Log out</a>`;
   document.getElementById("logout").onclick = async e => { e.preventDefault(); await api("/api/auth/logout", { method: "POST", body: {} }); ME = null; location.hash = "#/"; };
 }
 
