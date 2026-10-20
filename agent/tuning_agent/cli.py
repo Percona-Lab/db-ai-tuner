@@ -627,8 +627,18 @@ def _assess_hypothesis(c, sess, seq, verdict, evaluation, summary, inputs):
     change = None
     if targets and evaluation.get("parent_runs"):
         try:
-            with open(os.path.join(c.state.dir, f"run{evaluation['parent_runs'][-1]}_inputs.json")) as f:
-                par = json.load(f)
+            # the parent configuration's run with the most detail: profiles run once per configuration, so a repeat of
+            # the parent may have none - compare against the profiled one (same granularity on both sides)
+            pars = []
+            for pr in reversed(evaluation["parent_runs"]):
+                try:
+                    with open(os.path.join(c.state.dir, f"run{pr}_inputs.json")) as f:
+                        pars.append(json.load(f))
+                except OSError:
+                    pass
+            detail = lambda x: (bool(((x.get("inputs") or {}).get("cpu_profile") or {}).get("categories")),
+                                bool(((x.get("inputs") or {}).get("offcpu") or {}).get("foreground")))
+            par = max(pars, key=detail)
             pb = par["inputs"].get("time_breakdown") or bottleneck.breakdown(par["summary"], par["inputs"], (c.hw() or {}).get("cpus"))
             work = lambda s: (s.get("tps") or 0) or (s.get("qps") or 0) or 1.0  # per unit of work: transactions (queries)
             nb = inputs["time_breakdown"]
