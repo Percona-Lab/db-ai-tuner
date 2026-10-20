@@ -67,8 +67,8 @@ def context(ctx, res, meta=None):
             "on, why, and what should change. Build on hypotheses_tested (do not repeat refuted mechanisms; when an outcome is "
             "'moved', that component no longer limits the goal).",
             "Propose only settings whose mechanism is active in this workload (see load): no flushing, redo, commit or purge "
-            "settings when writes_active is false; no read-path settings when disk_reads_active is false; no connection-path "
-            "settings (skip_name_resolve, thread_cache_size, back_log) unless load.new_connections_per_s is substantial. "
+            "settings when writes_active is false; no read-path settings when disk_reads_active is false; no name-resolution "
+            "settings (skip_name_resolve) unless time_breakdown shows time in name resolution. "
             "Every proposal needs a measured bottleneck it acts on and a physical mechanism; proposals without one are "
             "only run at the end as validation.",
         ],

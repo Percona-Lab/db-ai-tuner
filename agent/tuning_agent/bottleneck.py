@@ -10,7 +10,8 @@ average number of threads in each state over the measured window - and rank the 
   locks, other files) - global summaries, so background threads (page cleaners, log writer) are included: an upper
   bound for what user threads wait on;
 * row lock waits (InnoDB status counters);
-* client / network (socket waits: the server waits for the next statement - the client or the network is the limit).
+* client / network (socket waits: the server waits for the next statement - the client or the network is the limit);
+* off-CPU time measured by eBPF probes (probes.py): name resolution during connect.
 
 Each component carries the bottleneck tags it maps to; mechanisms.MECHANISMS says which tags a change relieves, so an
 experiment's relevance is the share of time it can act on. Classes like "I/O-bound" remain convenience labels only.
@@ -48,7 +49,7 @@ WAIT_PARTS = {
 
 # bottleneck types the breakdown can measure; other diagnoses (network backlog, flush pressure, memory / swap, redo
 # capacity, ...) keep counting through the diagnosis
-TAGS = {t for _, ts in list(CPU_PARTS.values()) + list(WAIT_PARTS.values()) for t in ts} | {"sched-delay", "cpu-pressure", "locks"}
+TAGS = {t for _, ts in list(CPU_PARTS.values()) + list(WAIT_PARTS.values()) for t in ts} | {"sched-delay", "cpu-pressure", "locks", "dns"}
 
 
 def breakdown(summary, inputs, cpus):
@@ -83,6 +84,8 @@ def breakdown(summary, inputs, cpus):
             if cls in WAIT_PARTS:
                 name, tags = WAIT_PARTS[cls]
                 add(name, sec / dur, tags, "performance_schema waits (incl. background threads)")
+    nr = ((inp.get("probes") or {}).get("name_resolution") or {})
+    add("Connection setup: name resolution (DNS)", nr.get("threads") or 0, ("dns",), "eBPF uprobes on libc getnameinfo / getaddrinfo")
     lw, lms = s.get("row_lock_waits") or 0, s.get("row_lock_wait_avg_ms") or 0
     add("Waiting: row locks", lw * lms / 1000.0, ("locks",), "InnoDB row lock counters")
     tot = sum(p["threads"] for p in parts)

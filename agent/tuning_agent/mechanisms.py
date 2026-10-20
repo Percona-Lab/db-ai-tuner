@@ -85,7 +85,7 @@ MECHANISMS = {
     "sweep-thread-concurrency": (("concurrency", "cpu-pressure"), "Caps threads inside InnoDB."),
     "net-listen-backlog": (("connections",), "Bursts of connects queue instead of being dropped."),
     "net-syn-backlog": (("connections",), "Half-open connections queue instead of being dropped."),
-    "skip-name-resolve": (("connections",), "No reverse DNS lookup per connection."),
+    "skip-name-resolve": (("dns",), "No reverse DNS lookup per connection."),
     "net-netdev-backlog": (("softirq", "network-loss"), "Fewer packets dropped before protocol processing."),
     "net-netdev-budget": (("softirq",), "More packets per softirq round."),
     "net-rps": (("softirq", "cpu-pressure"), "Packet processing spread over all CPUs."),
@@ -123,8 +123,8 @@ def activity(summary):
 
 
 # The same preconditions per variable, so a change from any source (rule, LLM, sweep) is checked by what it sets, not by
-# the name of the rule that proposed it. "connections": acts only when connections are created (DNS lookup, thread
-# creation, accept queue); "table-opens": acts only when tables are opened.
+# the name of the rule that proposed it. "dns": acts only on time spent resolving client host names, measured by the eBPF
+# probes - no measurement means no evidence (not "probably fine").
 _W = ("innodb_flush_log_at_trx_commit", "sync_binlog", "innodb_io_capacity", "innodb_io_capacity_max", "innodb_log_file_size",
       "innodb_redo_log_capacity", "innodb_log_files_in_group", "innodb_max_dirty_pages_pct", "innodb_max_dirty_pages_pct_lwm",
       "innodb_doublewrite", "innodb_flush_neighbors", "innodb_change_buffering", "innodb_change_buffer_max_size",
@@ -137,17 +137,21 @@ _W = ("innodb_flush_log_at_trx_commit", "sync_binlog", "innodb_io_capacity", "in
 VAR_NEEDS = dict(
     {v: "writes" for v in _W},
     **{v: "reads" for v in ("innodb_read_ahead_threshold", "innodb_random_read_ahead", "innodb_read_io_threads")},
-    **{v: "connections" for v in ("skip_name_resolve", "thread_cache_size", "back_log", "max_connect_errors",
-                                  "os:net.core.somaxconn", "os:net.ipv4.tcp_max_syn_backlog", "host_cache_size")},
-    **{v: "table-opens" for v in ("table_open_cache", "table_open_cache_instances", "table_definition_cache")},
+    **{v: "dns" for v in ("skip_name_resolve", "host_cache_size")},
 )
 
 
-def missing_for_variables(changes, summary, rates=None):
+def name_resolution(inputs):
+    """(seconds, calls) spent resolving host names in the measured window, or None when it was not measured."""
+    nr = ((inputs or {}).get("probes") or {}).get("name_resolution")
+    return (nr["seconds"], nr["calls"]) if nr else None
+
+
+def missing_for_variables(changes, summary, rates=None, inputs=None):
     """Why none of the changed variables can act in this workload (None = at least one can, or nothing is known)."""
     if summary is None or not changes:
         return None
-    s, r, a = summary, rates or {}, activity(summary)
+    s, a = summary, activity(summary)
     why = []
     for c in changes:
         need = VAR_NEEDS.get(c.get("variable"))
@@ -158,22 +162,26 @@ def missing_for_variables(changes, summary, rates=None):
                        f"(redo {(s.get('redo_mbs') or 0):.2f} MB/s)")
         elif need == "reads" and not a["reads"]:
             why.append(f"{c['variable']} only affects reads from disk and there are almost none ({(s.get('bp_disk_reads') or 0):.0f} page reads/s)")
-        elif need == "connections" and "net_conn_per_s" in s and (s.get("net_conn_per_s") or 0) < 1 and r.get("Threads_created", 0) < 1:
-            why.append(f"{c['variable']} only acts when connections are created and the workload opens "
-                       f"{(s.get('net_conn_per_s') or 0):.2f} connections/s")
-        elif need == "table-opens" and "Opened_tables" in r and r.get("Opened_tables", 0) < 0.1 and r.get("Opened_table_definitions", 0) < 0.05:
-            why.append(f"{c['variable']} only acts when tables are opened and the workload opens {r.get('Opened_tables', 0):.2f} tables/s")
+        elif need == "dns":
+            nr = name_resolution(inputs)
+            if nr is None:
+                why.append(f"{c['variable']} only acts on host name resolution, and its time was not measured (no eBPF probe data)")
+            elif nr[0] <= 0:
+                why.append(f"{c['variable']} only acts on host name resolution, and the probes measured none in the window "
+                           f"({nr[1]} lookups)")
+            else:
+                return None
         else:
             return None
     return "; ".join(why) or None
 
 
-def missing_mechanism(item_id, summary, changes=None, rates=None):
+def missing_mechanism(item_id, summary, changes=None, rates=None, inputs=None):
     """Why the change has nothing to act on in this workload (None = it has)."""
     if summary is None:
         return None
     if changes is not None and item_id not in WRITES | READS | ANY_IO:
-        return missing_for_variables(changes, summary, rates)
+        return missing_for_variables(changes, summary, rates, inputs)
     a = activity(summary)
     if item_id in WRITES and not a["writes"]:
         return f"the workload writes almost nothing (redo {(summary.get('redo_mbs') or 0):.2f} MB/s): this setting only affects writes, flushing or commits"

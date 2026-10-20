@@ -186,7 +186,11 @@ def test_network_rules():
     assert not [i for i in quiet["items"] if i["id"].startswith(("net-", "client-", "skip-name"))]  # no network signal -> nothing
     noisy = dict(OLTP[0], net_listen_overflows=3.0, net_conn_per_s=400, net_softnet_drops=2, softirq_max_cpu_pct=70,
                  softirq_avg_cpu_pct=20, rtt_avg_ms=18, conntrack_fill_pct=90, threads_running_avg=12)
+    # a high connection rate alone is not evidence for skip_name_resolve: measured DNS time is
     res = engine.run_engine({**base, "variables": v, "summary": noisy})
+    assert "skip-name-resolve" not in {i["id"] for i in res["items"]}
+    dns = dict(OLTP[1], probes={"name_resolution": {"seconds": 12.0, "calls": 4000, "threads": 0.04}})
+    res = engine.run_engine({**base, "variables": v, "summary": noisy, "inputs": dns})
     it = {i["id"]: i for i in res["items"]}
     for k in ("net-listen-backlog", "skip-name-resolve", "client-pooling", "net-netdev-backlog", "net-rps", "net-conntrack",
               "net-no-slow-start-idle", "net-bbr", "client-compression", "eevdf-oversubscription"):
@@ -437,16 +441,22 @@ def test_verdicts():
 
 
 def test_variable_preconditions_cover_any_source():
-    # session 111: an LLM proposed skip_name_resolve on a pooled workload (0.28 connections/s) - nothing to act on
+    # session 111: an LLM proposed skip_name_resolve with no evidence of name resolution time
     from tuning_agent import mechanisms as m
-    pooled = {"net_conn_per_s": 0.28, "redo_mbs": 3.0, "bp_disk_reads": 0}
-    assert m.missing_for_variables([{"variable": "skip_name_resolve"}], pooled, {})
-    assert m.missing_for_variables([{"variable": "skip_name_resolve"}], {"net_conn_per_s": 57}, {}) is None
-    assert m.missing_for_variables([{"variable": "innodb_read_ahead_threshold"}], pooled, {})
-    assert m.missing_for_variables([{"variable": "thread_pool_size"}], pooled, {}) is None  # no known precondition
-    # a mixed change keeps its experiment when one variable can act
-    assert m.missing_for_variables([{"variable": "skip_name_resolve"}, {"variable": "innodb_io_capacity"}], pooled, {}) is None
-
+    s = {"redo_mbs": 3.0, "bp_disk_reads": 0}
+    var = [{"variable": "skip_name_resolve"}]
+    assert "not measured" in m.missing_for_variables(var, s, {}, {})
+    none = {"probes": {"name_resolution": {"seconds": 0.0, "calls": 0, "threads": 0}}}
+    assert "measured none" in m.missing_for_variables(var, s, {}, none)
+    some = {"probes": {"name_resolution": {"seconds": 4.2, "calls": 900, "threads": 0.014}}}
+    assert m.missing_for_variables(var, s, {}, some) is None
+    assert m.missing_for_variables([{"variable": "innodb_read_ahead_threshold"}], s, {}, {})
+    assert m.missing_for_variables([{"variable": "thread_pool_size"}], s, {}, {}) is None  # no known precondition
+    # measured DNS time becomes a component of the time breakdown that skip-name-resolve acts on
+    from tuning_agent import bottleneck
+    parts = bottleneck.breakdown({"duration_s": 300, "mysqld_cpu_pct": 100}, some, 4)
+    assert any(p["name"].startswith("Connection setup: name resolution") for p in parts)
+    assert bottleneck.relevance(("dns",), parts)[1]
 
 if __name__ == "__main__":
     fails = 0

@@ -17,7 +17,7 @@ import re
 
 from .evaluate import mean_noise
 from . import bottleneck
-from .mechanisms import MECHANISMS, missing_mechanism, relevance
+from .mechanisms import MECHANISMS, missing_mechanism, name_resolution, relevance
 from .knowledge import KB, flags_subset, fmt_size, human_size, normalize, parse_size, tradeoff_of
 
 GiB = 1024 ** 3
@@ -762,10 +762,13 @@ def recommend(ctx):
                   "Half-open connections are dropped because the SYN queue is full.", {"syn_queue_drops_per_s": s.get("net_tcp_req_q_full_drop")},
                   impact=2, confidence=3)
         conn_rate = s.get("net_conn_per_s") or 0
-        if conn_rate > 5 and str(v.get("skip_name_resolve", "")).upper() == "OFF":
+        nr = name_resolution(ctx.get("inputs"))
+        if nr and nr[0] > 0 and str(v.get("skip_name_resolve", "")).upper() == "OFF":
+            dur = (s.get("duration_s") or 0) or 1
             b.add("skip-name-resolve", "Skip reverse DNS on connect", [("skip_name_resolve", "ON")],
-                  f"{conn_rate:.0f} new connections/s each pay a reverse DNS lookup; with DNS hiccups connects stall for seconds.",
-                  {"net_conn_per_s": conn_rate}, impact=2, confidence=2)
+                  f"eBPF probes measured {nr[0]:.2f} s in host name resolution ({nr[1]} lookups, "
+                  f"{1000 * nr[0] / max(nr[1], 1):.1f} ms each) during the {dur:.0f} s window: connecting threads wait on DNS.",
+                  {"name_resolution_s": nr[0], "lookups": nr[1], "net_conn_per_s": conn_rate}, impact=2, confidence=2)
         if conn_rate > 50 * cpus:
             b.add("client-pooling", "Use connection pooling in the application", [],
                   f"{conn_rate:.0f} TCP connections/s: per-request connections cost a TCP handshake, authentication and a server thread "
@@ -1478,7 +1481,7 @@ def run_engine(ctx):
             it["addresses"] = matched
             it["relevance"] = rel
         nomech = missing_mechanism(it["id"], ctx.get("summary"), [{"variable": c["variable"]} for c in it.get("changes") or []],
-                                   inp.get("status_rates")) if it["kind"] == "config" else None
+                                   inp.get("status_rates"), inp) if it["kind"] == "config" else None
         if nomech:
             it["no_mechanism"] = nomech
             it["note"] = (it.get("note", "") + f" Validation only: {nomech}.").strip()

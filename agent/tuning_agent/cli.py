@@ -863,6 +863,19 @@ def _maybe_profile(c, sess, prof, warmup_s):
     return p
 
 
+def _start_probes(c, seconds):
+    """eBPF off-CPU probes (name resolution, ...) over the measured window. agent.ini: probes = auto (default) | off."""
+    from . import probes
+    if str(c.cfg.get("probes", "auto")).lower() == "off" or not probes.available():
+        return None
+    try:
+        pid = hostinfo.mysqld_pid()
+        return probes.Probes(pid, seconds).start() if pid else None
+    except Exception as e:  # never fail a run because of a probe
+        log(f"   eBPF probes not started: {e}")
+        return None
+
+
 def _finish_profile(c, p, t_meas0):
     from . import cpuprof
     p.join(timeout=p.seconds + 120)
@@ -977,6 +990,7 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
             raise Fail(f"benchmark exited during warm-up (code {r.p.returncode}); tail:\n{r.output()[-1500:]}")
         m, warn, url = _measure_start(c, label, notes, warmed=True)
         t_meas0 = time.time()
+        probes = _start_probes(c, prof.duration if prof.duration > 0 else prof.timeout)
         if prof.duration > 0:
             log(f"measuring run {m['seq']} for {prof.duration}s ...")
             c.activity("measuring", f"run #{m['seq']} {label or ''}", prof.duration)
@@ -995,6 +1009,8 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
                 time.sleep(2)
             if r.alive():
                 raise TooSlow(f"run exceeded {limit:.0f}s (2.5x the typical run time): configuration rejected")
+        if probes:
+            probes.stop()
         b_snap = _end_snapshot(c)
         rc = r.wait(max(10, prof.timeout - (time.time() - r.t0)))
     except BaseException as exc:
@@ -1023,6 +1039,11 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     extra = {"bench": {**prof.describe(), "requirements": requirements, "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:]}, "probe": env_probe}
     if profiler:
         extra["cpu_profile"] = _finish_profile(c, profiler, t_meas0)
+    if probes:
+        extra["probes"] = probes.result()
+        nr = extra["probes"].get("name_resolution")
+        if nr:
+            log(f"   eBPF probes: name resolution {nr['calls']} calls, {nr['seconds']:.3f} s in the window")
     if goal_value is not None and sess.get("goal_metric") != prof.goal_metric:
         sess["goal_metric"] = prof.goal_metric
         c.state.set("session", sess)
@@ -1448,7 +1469,8 @@ def _recommend(c, sess, llm=False):
         if its:
             for it in its:
                 # the same physical preconditions as rule-based experiments: no precondition, no experiment until the end
-                nomech = mechanisms.missing_for_variables(it["changes"], ctx.get("summary"), (ctx.get("inputs") or {}).get("status_rates"))
+                nomech = mechanisms.missing_for_variables(it["changes"], ctx.get("summary"), (ctx.get("inputs") or {}).get("status_rates"),
+                                                          ctx.get("inputs"))
                 if nomech:
                     it["no_mechanism"] = nomech
                     it["note"] = f"Validation only: {nomech}."
