@@ -373,10 +373,6 @@ class Builder:
                 risk = r
             if not meta.get("dynamic", False):
                 restart = True
-            if var not in ((self.ctx.get("bench") or {}).get("requires") or {}) and var != "max_connections":
-                val = nice_value(var, val)  # 1072 -> 1000: a round value that performs the same reads and is recommended better
-                if normalize(var, self.v.get(var)) == normalize(var, val):
-                    continue
             ch.append({"variable": var, "current": self.v.get(var), "proposed": val})
         if kind == "config" and not ch:
             return
@@ -493,7 +489,7 @@ def recommend(ctx):
     # ---------------- ideas from blogs / benchmarks (docs/research/mysql-tuning-ideas.md) ----------------
     hll = s.get("history_list_length_max") or 0
     if have_run and hll > 200000 and "innodb_max_purge_lag" in v and _int(v, "innodb_max_purge_lag", 0) == 0 and wtype in ("oltp-write", "mixed"):
-        b.add("purge-lag", "Throttle DML when purge falls behind", [("innodb_max_purge_lag", str(max(200000, int(hll * 0.8)))),
+        b.add("purge-lag", "Throttle DML when purge falls behind", [("innodb_max_purge_lag", nice_value("innodb_max_purge_lag", str(max(200000, int(hll * 0.8))))),
                                                                      ("innodb_max_purge_lag_delay", "1000000")],
               f"History list peaked at {hll:,.0f} undo records: purge cannot keep up, so reads walk ever longer version chains. "
               "A purge lag limit slows writers slightly to keep history bounded. "
@@ -1156,8 +1152,8 @@ def apply_history(items, history):
             src = c.get("source") or ""
             if src.startswith("rec:"):
                 tried_ids[src[4:]] = run
-            if src.startswith("exp:"):
-                swept[c["variable"]] = run
+            if src.startswith("exp:") and str(run.get("label") or "").startswith(f"exp#{src[4:]} "):
+                swept[c["variable"]] = run  # the sweep's own runs, not a later run its restore was recorded with
     out = []
     for it in items:
         prior = [tried.get((c["variable"], normalize(c["variable"], c["proposed"]))) for c in it["changes"]]

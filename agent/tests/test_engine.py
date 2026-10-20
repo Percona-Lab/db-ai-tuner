@@ -1075,7 +1075,16 @@ def test_round_values():
     assert nice_number("sort_buffer_size", 300 * 1024) == 256 * 1024
     assert roundness("innodb_io_capacity", 1000) < roundness("innodb_io_capacity", 1072)
     assert engine.nice_values("innodb_io_capacity", ["1072", "1000", "2150"], "200") == ["1000", "2000"]
+    # review 2026-10-20: rounding must not touch computed pseudo settings, fractions, unknown sizes; never crash
+    assert nice_number("os:hugepages", 4192.0) == 4192.0 and nice_number("innodb_max_dirty_pages_pct_lwm", 0.5) == 0.5
+    assert nice_number("innodb_max_dirty_pages_pct", 99.9) == 99.9 and engine.nice_value("os:swapfile", "7G") == "7G"
+    assert roundness("innodb_flush_method", "O_DIRECT") == 2 and roundness("x", "inf") == 2 and roundness("x", "nan") == 2
+    assert nice_number("innodb_buffer_pool_size", 22.8 * 1024 ** 3) == 22 * 1024 ** 3  # memory rounds down
     from tuning_agent import cli
+    fm = {"arm": "innodb_flush_method=O_DIRECT_NO_FSYNC", "delta_pct": 5.5}
+    assert cli._good_enough([fm, {"arm": "innodb_flush_method=O_DIRECT", "delta_pct": 5.0}], fm, 2.0, "innodb_flush_method", None, "choice")
+    assert cli._extend_optimum([{"arm": "innodb_thread_concurrency=0", "status": "measured", "delta_pct": 9.0}], 8, 2.0, {}, "0",
+                               {"variable": "innodb_thread_concurrency"}) is None
     best = {"arm": "innodb_io_capacity=1072", "delta_pct": 5.0}
     other = {"arm": "innodb_io_capacity=1000", "delta_pct": 4.2}
     assert cli._good_enough([best, other], best, 2.0, "innodb_io_capacity", 200, "optimum") is other

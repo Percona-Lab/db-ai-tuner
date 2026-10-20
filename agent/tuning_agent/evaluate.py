@@ -457,7 +457,9 @@ def confirm_pass(runs, goal, noise):
         ev = dict(ev, confirmed=ok, confirmed_runs=[x["seq"] for x in mine], confirmed_delta_pct=d, confirmed_threshold_pct=round(thr, 2))
         if eff:
             ev["confirmed_kind"] = "efficiency-gain"
-        if not ok:
+        if not ok and d is None:
+            ev["note"] = "Not confirmed: no comparable parent mean."
+        elif not ok:
             ev["note"] = (f"Efficiency gain not confirmed: the mean of runs {ev['confirmed_runs']} is {d:+.2f}% vs the parent, worse than "
                           f"the ±{thr:.2f}% threshold for these run counts." if eff else
                           f"Not confirmed: the mean of runs {ev['confirmed_runs']} is {d:+.2f}% vs the parent, within the ±{thr:.2f}% "

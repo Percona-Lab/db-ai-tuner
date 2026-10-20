@@ -1966,10 +1966,12 @@ def _extend_optimum(results, pv, noise, worse_at, last_value, spec):
     farthest = all(abs(x - pv) <= abs(bx - pv) for r, x in meas if (x > pv) == (side > 0))
     if not (br["delta_pct"] > noise and farthest and side not in worse_at):
         return None
+    if bx >= 1e12:  # the best is "unlimited" (thread concurrency 0): nothing lies beyond it
+        return None
     nx = bx * 2 if side > 0 else bx / 2
     if side < 0 and nx < 1:
         return None
-    size = isinstance(last_value, str) and last_value[-1:].upper() in "KMG"
+    size = isinstance(last_value, str) and last_value[-1:].upper() in ("K", "M", "G")
     val = engine.fmt_size(int(nx)) if size else str(int(nx))
     val = engine.nice_value(spec["variable"], val)
     if any(_sv(spec["variable"], r["arm"].split("=", 1)[1]) == _sv(spec["variable"], val) for r in results):
@@ -2026,7 +2028,9 @@ def _run_experiment(c, prof, exp):
     screen = auto and pv is not None and shape in ("saturating", "optimum")
     if screen:
         arms = _screen_order(arms, pv)
-    side_of = lambda arm: (1 if (_sv(arm[0]["variable"], arm[0]["value"]) or pv) > pv else -1) if screen else 0  # noqa: E731
+    def side_of(arm):  # the same sides as _screen_order: non-numeric values are a side of their own (0)
+        x = _sv(arm[0]["variable"], arm[0]["value"]) if screen else None
+        return 0 if x is None else (1 if x > pv else -1)
     state, best_on = {}, {}  # side -> screen / hint / flat / sensitive / knee; side -> best delta measured there
     i = -1
     while True:
@@ -2344,8 +2348,9 @@ def cmd_autotune(a):
                 sess["pending_hypothesis"] = {"id": f"exp#{e['id']}", "kind": "requested",
                                               "text": f"Requested by {e.get('created_by') or 'a user'}" + (f": {e['reason']}" if e.get("reason") else "")}
                 c.state.set("session", sess)
+            n0 = len(c.session()["runs"])
             log("   " + _run_experiment(c, prof, e))
-            measured += len(e["spec"].get("values") or [1]) * int(e.get("repeats") or 1)
+            measured += max(1, len(c.session()["runs"]) - n0)  # runs it really made (screening skips, extensions add)
             continue
         c.activity("choosing next experiment", "diagnosis and recommendation")
         res = _recommend(c, sess)
@@ -2399,22 +2404,19 @@ def cmd_autotune(a):
             exp = next((e for e in _queued_experiments(c, sess) if e["id"] == eid), None)
             if exp:
                 log(f"== sweep {nxt}: {item['sweep']['variable']} = {', '.join(item['sweep']['values'])} (experiment #{eid})")
+                n0 = len(c.session()["runs"])
                 log("   " + _run_experiment(c, prof, exp))
-                measured += len(item["sweep"]["values"])
-                # an improved sweep point is a single run like any other improvement: confirm it before building on it
                 sess = c.session()
-                pts = [r for r in sess["runs"] if str(r.get("label") or "").startswith(f"exp#{eid} ") and r.get("verdict") == "improved"]
-                if pts and measured < a.max_runs:
-                    lower = sess["goal"] == "latency"
-                    bp = (min if lower else max)(pts, key=lambda r: r["goal_value"])
-                    cur = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
-                    want = bp.get("managed") or {}
-                    ch = [{"variable": k, "value": want.get(k), "reason": f"autotune: confirm sweep point run {bp['seq']}",
-                           "source": f"exp:{eid}"} for k in set(cur) | set(want) if normalize(k, cur.get(k)) != normalize(k, want.get(k))]
-                    if ch:
-                        _apply_and_record(c, ch, "autotune")
-                    log(f"   sweep point run {bp['seq']} improved: measuring it again to confirm")
-                    run, _ = _bench_run(c, prof, f"exp#{eid} {item['sweep']['variable']}={want.get(item['sweep']['variable'])} (confirm)")
+                measured += len(sess["runs"]) - n0  # screening skips points, the optimum extension adds some
+                # the sweep left the server on the value it kept (the cheapest / roundest within noise of the best): an
+                # improved sweep point is a single run like any other improvement - confirm that configuration
+                cur = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
+                pts = [r for r in sess["runs"] if str(r.get("label") or "").startswith(f"exp#{eid} ")
+                       and evaluate.config_key(r.get("managed")) == evaluate.config_key(cur)]
+                if pts and pts[-1].get("verdict") == "improved" and measured < a.max_runs:
+                    kp = pts[-1]
+                    log(f"   sweep point run {kp['seq']} improved: measuring it again to confirm")
+                    run, _ = _bench_run(c, prof, f"exp#{eid} {item['sweep']['variable']}={cur.get(item['sweep']['variable'])} (confirm)")
                     measured += 1
                     _confirm(c)
             sess = c.session()
@@ -2527,7 +2529,8 @@ def cmd_autotune(a):
             # configuration that is best after it (canary #141 confirmed an efficiency gain 5% low and stayed on it)
             _confirm(c)
             after = c.session().get("best_safe")
-            if after and after["seq"] != best_safe["seq"]:
+            cfg = lambda b: evaluate.config_key(next((r.get("managed") for r in c.session()["runs"] if r["seq"] == b["seq"]), {}))  # noqa: E731
+            if after and cfg(after) != cfg(best_safe):
                 log(f"   the confirmation changed the best safe configuration: run {best_safe['seq']} -> runs {after['runs']}")
                 goto(after, "best production-safe configuration after the confirmation")
     _finish_pending_restart(c)

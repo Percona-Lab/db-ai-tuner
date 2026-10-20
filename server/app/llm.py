@@ -20,6 +20,29 @@ DEFAULT_MODEL = "anthropic/claude-sonnet-5.5"
 MODES = ("off", "when-needed", "always")
 MAX_CALLS_PER_SESSION = 3
 MAX_ANALYSES_PER_SESSION = 6
+# the service key belongs to the operator: a budget per (non-admin) account and day for calls it pays for. Sessions are
+# free to create, so per-session limits alone do not bound spend.
+USER_DAILY_CALLS = 60
+USER_DAILY_COST = 2.0  # USD
+ANALYZE_PROMPT_VERSION = "1"
+
+
+def _is_admin(user_id):
+    r = store.q1("SELECT is_admin FROM users WHERE id=?", (user_id,))
+    return bool(r and r["is_admin"])
+
+
+def budget_left(user_id):
+    """None when the account may call the model now, else the reason it may not."""
+    if _is_admin(user_id):
+        return None
+    r = store.q1("SELECT COUNT(*) n, COALESCE(SUM(cost),0) c FROM llm_calls WHERE user_id=? AND cached=0 AND ts > ?",
+                 (user_id, time.time() - 86400))
+    if r["n"] >= USER_DAILY_CALLS:
+        return f"daily limit of {USER_DAILY_CALLS} AI calls for this account reached"
+    if r["c"] >= USER_DAILY_COST:
+        return f"daily AI budget of ${USER_DAILY_COST:.2f} for this account reached"
+    return None
 GATE_MIN_TRIES, GATE_MAX_WINS = 4, 0  # after 4 LLM experiments with 0 wins in a workload class, stop asking
 
 
@@ -143,6 +166,7 @@ def suggest(user_id, env_id, session_id, context, force=False, trigger="routine"
     st = settings(user_id)
     if not st.get("configured") or st["mode"] == "off":
         return {"enabled": False, "reason": "LLM assistance is not configured (account settings)"}
+    force = force and _is_admin(user_id)  # skipping the gates is an operator's choice, not an agent request's
     if st["mode"] == "when-needed" and trigger == "routine" and not force:
         return {"enabled": False, "reason": "rule-based recommendations are sufficient right now"}
     wl = (context.get("workload") or {}).get("type")
@@ -155,6 +179,10 @@ def suggest(user_id, env_id, session_id, context, force=False, trigger="routine"
     payload = json.dumps(context, sort_keys=True, default=str)
     h = hashlib.sha256((st["model"] + payload).encode()).hexdigest()
     hit = store.q1("SELECT response FROM llm_calls WHERE user_id=? AND prompt_hash=? AND status='ok' ORDER BY id DESC LIMIT 1", (user_id, h))
+    if not hit:
+        why = budget_left(user_id)
+        if why:
+            return {"enabled": False, "reason": why}
     if hit:
         store.ex("INSERT INTO llm_calls(user_id, env_id, session_id, ts, model, prompt_hash, status, cached, response) VALUES (?,?,?,?,?,?,?,?,?)",
                  (user_id, env_id, session_id, time.time(), st["model"], h, "ok", 1, hit["response"]))
@@ -221,8 +249,11 @@ def analyze(user_id, env_id, session_id, context, signature):
     st = settings(user_id)
     if not st.get("configured") or st["mode"] == "off":
         return {"enabled": False, "reason": "LLM assistance is not configured (account settings)"}
+    if not isinstance(signature, dict) or not signature.get("component"):
+        return {"enabled": False, "reason": "no bottleneck component in the analysis signature"}
     sig = json.dumps(signature, sort_keys=True, default=str)
-    h = "analyze:" + hashlib.sha256(sig.encode()).hexdigest()
+    # same conditions, same model, same prompt -> the same analysis can be reused
+    h = "analyze:" + hashlib.sha256(f"{st['model']}|{ANALYZE_PROMPT_VERSION}|{sig}".encode()).hexdigest()
     hit = store.q1("SELECT id, session_id, model, response FROM llm_calls WHERE user_id=? AND prompt_hash=? AND status='ok' AND cached=0 "
                    "ORDER BY id DESC LIMIT 1", (user_id, h))
     if hit:
@@ -233,6 +264,9 @@ def analyze(user_id, env_id, session_id, context, signature):
     n = store.q1("SELECT COUNT(*) n FROM llm_calls WHERE session_id=? AND status='ok' AND cached=0 AND purpose='analyze'", (session_id,))["n"]
     if n >= MAX_ANALYSES_PER_SESSION:
         return {"enabled": False, "reason": f"per-session limit of {MAX_ANALYSES_PER_SESSION} bottleneck analyses reached"}
+    why = budget_left(user_id)
+    if why:
+        return {"enabled": False, "reason": why}
     payload = json.dumps(context, sort_keys=True, default=str)
     key = service_key()
     body = {"model": st["model"], "temperature": 0.2, "usage": {"include": True},
@@ -269,6 +303,8 @@ def replay(user_id, call_id, model=None, context=None, patch=None):
     st = settings(user_id)
     model = model or row["model"] or st["model"]
     key = service_key()
+    if not key:
+        raise ValueError("AI assistance is not configured (no service key)")
     payload = json.dumps(ctx, sort_keys=True, default=str)
     body = {"model": model, "temperature": 0.2, "usage": {"include": True},
             "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": payload}],

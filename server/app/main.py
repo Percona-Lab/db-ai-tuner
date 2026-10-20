@@ -346,17 +346,20 @@ def put_llm_settings(request: Request, body: dict = Body(...)):
     u = auth.require_admin(request)  # the service's AI key and settings belong to the admin account
     if body.get("mode") and body["mode"] not in llm.MODES:
         raise HTTPException(400, "unknown mode")
+    # one service row holds the AI settings (llm._service_row): every admin edits that row, not their own
+    row = llm._service_row()
+    tid = row["id"] if row else u["id"]
     if body.get("key"):
         ok, info = llm.verify_key(body["key"].strip())
         if not ok:
             raise HTTPException(400, f"OpenRouter rejected the key ({info.get('error')})")
-        store.ex("UPDATE users SET llm_key_enc=? WHERE id=?", (llm.encrypt(body["key"].strip()), u["id"]))
+        store.ex("UPDATE users SET llm_key_enc=? WHERE id=?", (llm.encrypt(body["key"].strip()), tid))
     if body.get("remove_key"):
-        store.ex("UPDATE users SET llm_key_enc=NULL WHERE id=?", (u["id"],))
+        store.ex("UPDATE users SET llm_key_enc=NULL WHERE id=?", (tid,))
     if body.get("model"):
-        store.ex("UPDATE users SET llm_model=? WHERE id=?", (body["model"][:120], u["id"]))
+        store.ex("UPDATE users SET llm_model=? WHERE id=?", (body["model"][:120], tid))
     if body.get("mode"):
-        store.ex("UPDATE users SET llm_mode=? WHERE id=?", (body["mode"], u["id"]))
+        store.ex("UPDATE users SET llm_mode=? WHERE id=?", (body["mode"], tid))
     return get_llm_settings(request)
 
 
@@ -484,22 +487,12 @@ def revoke_share(share_id: int, request: Request):
 
 @app.post("/api/llm/replay")
 def llm_replay(request: Request, body: dict = Body(...)):
-    """Audit: re-ask a stored LLM call with another model and/or a patched context."""
-    u = auth.current_user(request)
+    """Audit: re-ask a stored LLM call with another model and/or a patched context (operator only: it spends the service key)."""
+    u = auth.require_admin(request)
     try:
         return llm.replay(u["id"], int(body["call_id"]), body.get("model"), body.get("context"), body.get("patch"))
     except ValueError as e:
         raise HTTPException(400, str(e))
-
-
-@app.get("/api/llm/calls")
-def llm_calls(request: Request, session_id: int = None):
-    u = auth.current_user(request)
-    q = "SELECT id, session_id, ts, model, status, cached, purpose, cost, response, context IS NOT NULL has_context FROM llm_calls WHERE user_id=?"
-    args = [u["id"]]
-    if session_id:
-        q += " AND session_id=?"; args.append(session_id)
-    return {"calls": [dict(r) for r in store.q(q + " ORDER BY id", args)]}
 
 
 @app.patch("/api/hosts/{host_id}")
@@ -969,7 +962,8 @@ def agent_session_start(body: dict = Body(...), key=Depends(auth.agent_key)):
     name = (body.get("name") or f"Session {n} ({'TPS' if goal == 'tps' else 'latency'})")[:120]
     sid = store.ex("INSERT INTO tsessions(env_id, name, goal, policy, noise_pct, workload, notes, created, os_tuning, agent_version) VALUES (?,?,?,?,?,?,?,?,?,?)",
                    (e["id"], name, goal, body.get("policy") or "safe", body.get("noise_pct") or 2.0, body.get("workload"), body.get("notes"), now(),
-                    1 if body.get("os_tuning", True) else 0, str(body.get("agent_version") or "")[:40] or None))
+                    1 if body.get("os_tuning", True) else 0,
+                    ((str(body.get("agent_version") or "")[:40] + (" stale" if want not in ("", "unknown") and have != want else "")) or None)))
     store.ex("INSERT INTO events(env_id, session_id, ts, type, message, data) VALUES (?,?,?,?,?,?)",
              (e["id"], sid, now(), "session", f"session started: goal={goal}, policy={body.get('policy') or 'safe'}", store.j(body)))
     study = None
@@ -1147,7 +1141,7 @@ def _set_policy(user_id, variable, mode, note):
     if mode not in ("tune", "block", "default"):
         raise HTTPException(400, "mode: tune | block | default")
     if mode == "default":
-        store.ex("DELETE FROM param_policy WHERE user_id=? AND variable=?", (user_id, variable))
+        store.ex("DELETE FROM param_policy WHERE user_id=? AND variable=?", (user_id, variable[:120]))
     else:
         store.ex("INSERT INTO param_policy(user_id, variable, mode, note, updated) VALUES (?,?,?,?,?) "
                  "ON CONFLICT(user_id, variable) DO UPDATE SET mode=excluded.mode, note=excluded.note, updated=excluded.updated",

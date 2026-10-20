@@ -402,7 +402,7 @@ def analyze_window(a, b, samples):
         vals = [s[group][key] for s in samples if s.get(group, {}).get(key) is not None]
         # short windows (canaries: 30-60 s) get smaller blocks rather than no within-run estimate: at least 4 blocks
         # when the samples allow, never fewer than 3
-        block = max(1, min(block, len(vals) // 4))
+        block = max(2, min(block, len(vals) // 4))  # >= 2 samples per block: adjacent 10 s samples are correlated
         k = len(vals) // block
         if k < 3:
             return None

@@ -18,18 +18,18 @@ CREATE TABLE IF NOT EXISTS environments (
   id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, agent_uid TEXT NOT NULL, name TEXT, hostname TEXT, agent_version TEXT,
   facts TEXT, created REAL NOT NULL, last_seen REAL, api_key_id INTEGER, UNIQUE(user_id, agent_uid));
 CREATE TABLE IF NOT EXISTS tsessions (
-  id INTEGER PRIMARY KEY, env_id INTEGER NOT NULL, name TEXT, goal TEXT, policy TEXT, noise_pct REAL, workload TEXT, notes TEXT,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, env_id INTEGER NOT NULL, name TEXT, goal TEXT, policy TEXT, noise_pct REAL, workload TEXT, notes TEXT,
   status TEXT NOT NULL DEFAULT 'active', created REAL NOT NULL, ended REAL, summary TEXT);
 CREATE TABLE IF NOT EXISTS runs (
-  id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL, seq INTEGER, label TEXT, notes TEXT, status TEXT NOT NULL DEFAULT 'measuring',
+  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, seq INTEGER, label TEXT, notes TEXT, status TEXT NOT NULL DEFAULT 'measuring',
   started REAL, ended REAL, config TEXT, managed TEXT, changes TEXT, summary TEXT, external TEXT, inputs TEXT, diagnosis TEXT,
   goal_value REAL, goal_source TEXT, delta_pct REAL, delta_vs_first_pct REAL, verdict TEXT);
 CREATE INDEX IF NOT EXISTS runs_session ON runs(session_id, seq);
 CREATE TABLE IF NOT EXISTS recommendations (
-  id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL, run_id INTEGER, created REAL NOT NULL, goal TEXT, policy TEXT,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, run_id INTEGER, created REAL NOT NULL, goal TEXT, policy TEXT,
   items TEXT, diagnosis TEXT, next TEXT);
 CREATE TABLE IF NOT EXISTS events (
-  id INTEGER PRIMARY KEY, env_id INTEGER NOT NULL, session_id INTEGER, ts REAL NOT NULL, type TEXT, message TEXT, data TEXT);
+  id INTEGER PRIMARY KEY AUTOINCREMENT, env_id INTEGER NOT NULL, session_id INTEGER, ts REAL NOT NULL, type TEXT, message TEXT, data TEXT);
 CREATE INDEX IF NOT EXISTS events_env ON events(env_id, ts);
 CREATE INDEX IF NOT EXISTS events_session ON events(session_id, ts);
 CREATE TABLE IF NOT EXISTS param_policy (
@@ -38,11 +38,11 @@ CREATE TABLE IF NOT EXISTS param_policy (
 CREATE TABLE IF NOT EXISTS learning_snapshots (
   id INTEGER PRIMARY KEY, created REAL NOT NULL, created_by INTEGER, label TEXT, runs INTEGER, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS llm_calls (
-  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, env_id INTEGER, session_id INTEGER, ts REAL NOT NULL, model TEXT, prompt_hash TEXT,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, env_id INTEGER, session_id INTEGER, ts REAL NOT NULL, model TEXT, prompt_hash TEXT,
   status TEXT, cached INTEGER DEFAULT 0, latency_s REAL, prompt_tokens INTEGER, completion_tokens INTEGER, cost REAL, response TEXT, error TEXT);
 CREATE INDEX IF NOT EXISTS llm_calls_hash ON llm_calls(user_id, prompt_hash);
 CREATE TABLE IF NOT EXISTS experiments (
-  id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL, created REAL NOT NULL, created_by TEXT, kind TEXT NOT NULL, spec TEXT NOT NULL,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, created REAL NOT NULL, created_by TEXT, kind TEXT NOT NULL, spec TEXT NOT NULL,
   repeats INTEGER DEFAULT 1, reason TEXT, force INTEGER DEFAULT 0, status TEXT NOT NULL DEFAULT 'queued', results TEXT, message TEXT, updated REAL);
 CREATE INDEX IF NOT EXISTS experiments_session ON experiments(session_id, status);
 CREATE TABLE IF NOT EXISTS hosts (
@@ -51,14 +51,14 @@ CREATE TABLE IF NOT EXISTS hosts (
 CREATE TABLE IF NOT EXISTS host_metrics (
   host_id INTEGER NOT NULL, ts REAL NOT NULL, data TEXT NOT NULL, PRIMARY KEY (host_id, ts)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS commands (
-  id INTEGER PRIMARY KEY, host_id INTEGER NOT NULL, session_id INTEGER, created REAL NOT NULL, action TEXT NOT NULL, payload TEXT,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, host_id INTEGER NOT NULL, session_id INTEGER, created REAL NOT NULL, action TEXT NOT NULL, payload TEXT,
   status TEXT NOT NULL DEFAULT 'queued', result TEXT, updated REAL);
 CREATE INDEX IF NOT EXISTS commands_host ON commands(host_id, status);
 CREATE TABLE IF NOT EXISTS shares (
-  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, token TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, object_id INTEGER NOT NULL,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, object_id INTEGER NOT NULL,
   label TEXT, created REAL NOT NULL, revoked REAL, last_used REAL, uses INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS studies (
-  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'compare', goal TEXT,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'compare', goal TEXT,
   target REAL, workload TEXT, notes TEXT, created REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS metrics (
   env_id INTEGER NOT NULL, ts REAL NOT NULL, data TEXT NOT NULL, PRIMARY KEY (env_id, ts)) WITHOUT ROWID;

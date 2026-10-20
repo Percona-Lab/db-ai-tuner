@@ -29,6 +29,7 @@ from . import llm, store
 DB_PATH = os.environ.get("TUNER_LEARNING_DB", "/var/lib/aituner/learning.db")
 INTERVAL_H = float(os.environ.get("TUNER_LEARNER_HOURS", "6"))
 MAX_CALLS_PER_PASS, MAX_CALLS_PER_DAY = 12, 48
+MAX_ATTEMPTS = 3  # a session whose digest fails this many passes in a row is skipped (the error is kept in `failures`)
 LOCK = DB_PATH + ".lock"
 
 SCHEMA = """
@@ -47,12 +48,21 @@ CREATE TABLE IF NOT EXISTS param_evidence (
   regressed INTEGER DEFAULT 0, neutral INTEGER DEFAULT 0, deltas TEXT, legacy INTEGER DEFAULT 0, counted REAL,
   PRIMARY KEY (variable, session_id));
 CREATE TABLE IF NOT EXISTS processed (session_id INTEGER PRIMARY KEY, processed REAL NOT NULL, learner_run INTEGER);
+CREATE TABLE IF NOT EXISTS failures (session_id INTEGER PRIMARY KEY, attempts INTEGER NOT NULL, last REAL, error TEXT);
 CREATE TABLE IF NOT EXISTS evidence (
   insight_id INTEGER NOT NULL, session_id INTEGER NOT NULL, support INTEGER DEFAULT 0, contradict INTEGER DEFAULT 0,
   neutral INTEGER DEFAULT 0, counted REAL, env_id INTEGER, PRIMARY KEY (insight_id, session_id));
 """
 
 _local = threading.local()
+
+
+def _alter(c, sql):
+    try:
+        c.execute(sql)
+    except sqlite3.OperationalError as e:  # another thread's first connection added it a moment ago
+        if "duplicate column" not in str(e):
+            raise
 
 
 def db():
@@ -65,17 +75,17 @@ def db():
         c.executescript(SCHEMA)
         cols = {r[1] for r in c.execute("PRAGMA table_info(evidence)")}
         if "env_id" not in cols:
-            c.execute("ALTER TABLE evidence ADD COLUMN env_id INTEGER")
+            _alter(c, "ALTER TABLE evidence ADD COLUMN env_id INTEGER")
         if "weight" not in cols:
-            c.execute("ALTER TABLE evidence ADD COLUMN weight REAL DEFAULT 1")
+            _alter(c, "ALTER TABLE evidence ADD COLUMN weight REAL DEFAULT 1")
         cols = {r[1] for r in c.execute("PRAGMA table_info(insights)")}
         for col, typ in (("hosts", "INTEGER"), ("caveats", "TEXT"), ("support_sessions", "INTEGER")):
             if col not in cols:
-                c.execute(f"ALTER TABLE insights ADD COLUMN {col} {typ}")
+                _alter(c, f"ALTER TABLE insights ADD COLUMN {col} {typ}")
         cols = {r[1] for r in c.execute("PRAGMA table_info(proposals)")}
         for col in ("proposal", "expected_effect"):
             if col not in cols:
-                c.execute(f"ALTER TABLE proposals ADD COLUMN {col} TEXT")
+                _alter(c, f"ALTER TABLE proposals ADD COLUMN {col} TEXT")
         # earlier proposals kept problem and proposal in one text: split at "Proposal:"
         for r in c.execute("SELECT id, body FROM proposals WHERE proposal IS NULL AND body LIKE '%Proposal:%'").fetchall():
             prob, _, prop = r["body"].partition("Proposal:")
@@ -138,7 +148,12 @@ def digest(sid):
             "diagnosis": sorted({d.get("type") for d in _uj(r["diagnosis"], []) or [] if d.get("type") not in (None, "none")})[:6] or None,
         })
     cal = _uj(s["calibration"], {}) if "calibration" in s.keys() else {}
-    return {"session": sid, "name": s["name"], "workload_text": s["workload"], "goal": s["goal"], "policy": s["policy"],
+    # free text written by an account (session name, workload description) reaches the model and, through insights, every
+    # other account's agents: only the operator's own sessions contribute it
+    own = bool(store.q1("SELECT u.is_admin FROM environments e JOIN users u ON u.id=e.user_id WHERE e.id=?", (s["env_id"],)) or {}).get("is_admin") \
+        if "env_id" in s.keys() else False
+    return {"session": sid, "name": s["name"] if own else None, "workload_text": s["workload"] if own else None, "goal": s["goal"],
+            "policy": s["policy"],
             "agent_version": s["agent_version"] if "agent_version" in s.keys() else None,
             "conditions": {"workload": wl, "cpu_class": _cpu_class(hw.get("cpus")), "concurrency_class": _conc_class(conns),
                            "cpus": hw.get("cpus"), "ram_gb": round((hw.get("ram_bytes") or 0) / 2 ** 30), "disk": hw.get("disk_model") or hw.get("disk")},
@@ -255,7 +270,7 @@ def validate(settings, direction, cond):
         if any(ev.get(k) for k in FLAWED):
             continue  # the run's own measurement was flawed: it is evidence of nothing
         # sessions from agent builds before build pinning (2026-10-20) ran with the bugs today's reviews found
-        e = per.setdefault(r["session_id"], [0, 0, 0, r["env_id"], 1.0 if r["agent_version"] else LEGACY_WEIGHT])
+        e = per.setdefault(r["session_id"], [0, 0, 0, r["env_id"], 1.0 if r["agent_version"] and "stale" not in r["agent_version"] else LEGACY_WEIGHT])
         if direction == "helps":
             e[0] += r["verdict"] in GOOD
             e[1] += r["verdict"] in BAD
@@ -274,6 +289,10 @@ def _count(c, iid, per):
     """Record this insight's evidence per session in learning.db and return the totals. Sessions that are no longer in
     the observations (a reset, another installation's data) keep the counts recorded when they were seen: learnings
     outlive the observations they came from."""
+    present = {r["id"] for r in store.q("SELECT id FROM tsessions")}
+    stale = [r[0] for r in c.execute("SELECT session_id FROM evidence WHERE insight_id=?", (iid,)) if r[0] in present and r[0] not in per]
+    for sid in stale:  # re-judged / flawed since: no longer evidence (sessions gone from the observations keep theirs)
+        c.execute("DELETE FROM evidence WHERE insight_id=? AND session_id=?", (iid, sid))
     for sid, (a, b, n, env, w) in per.items():
         prev = c.execute("SELECT support, contradict, neutral FROM evidence WHERE insight_id=? AND session_id=?", (iid, sid)).fetchone()
         changed = not prev or tuple(prev) != (a, b, n)
@@ -313,7 +332,8 @@ def _key(settings, direction, cond):
 def _known(limit=60):
     return [{"id": r["id"], "statement": r["statement"], "direction": r["direction"], "status": r["status"],
              "settings": _uj(r["settings"], []), "conditions": _uj(r["conditions"], {})}
-            for r in db().execute("SELECT * FROM insights WHERE status != 'retired' ORDER BY updated DESC LIMIT ?", (limit,))]
+            for r in db().execute("SELECT * FROM insights WHERE status NOT IN ('archived', 'retired-by-admin') ORDER BY updated DESC LIMIT ?",
+                                  (limit,))]
 
 
 def run_pass(trigger="timer", max_sessions=None):
@@ -335,11 +355,20 @@ def run_pass(trigger="timer", max_sessions=None):
                     if r["id"] not in done and not str(r["name"] or "").lower().startswith("canary")]
             limit = min(MAX_CALLS_PER_PASS if max_sessions is None else max_sessions, MAX_CALLS_PER_PASS, max(0, MAX_CALLS_PER_DAY - day))
             for sid in todo[:limit]:
-                dg = digest(sid)
-                if not dg or len(dg["runs"]) < 3:
-                    c.execute("INSERT OR REPLACE INTO processed VALUES (?,?,?)", (sid, time.time(), rid))
+                try:
+                    dg = digest(sid)
+                    if not dg or len(dg["runs"]) < 3:
+                        c.execute("INSERT OR REPLACE INTO processed VALUES (?,?,?)", (sid, time.time(), rid))
+                        continue
+                    res, cost = _ask(dg, _known(), admin["id"] if admin else None)
+                except Exception as e:  # noqa - one session (a digest the model rejects, a timeout) must not stall every pass
+                    f = c.execute("SELECT attempts FROM failures WHERE session_id=?", (sid,)).fetchone()
+                    n = (f["attempts"] if f else 0) + 1
+                    c.execute("INSERT OR REPLACE INTO failures VALUES (?,?,?,?)", (sid, n, time.time(), str(e)[:500]))
+                    if n >= MAX_ATTEMPTS:  # given up: recorded as processed, the error stays in `failures` for the admin
+                        c.execute("INSERT OR REPLACE INTO processed VALUES (?,?,?)", (sid, time.time(), rid))
+                    stats["errors"] = stats.get("errors", 0) + 1
                     continue
-                res, cost = _ask(dg, _known(), admin["id"] if admin else None)
                 stats["calls"] += 1
                 stats["cost"] += cost
                 stats["sessions"] += 1
@@ -353,11 +382,14 @@ def run_pass(trigger="timer", max_sessions=None):
                                _j([{"session": sid, "runs": p.get("runs")}]), "open", llm.settings().get("model")))
                     stats["proposals_new"] += 1
                 c.execute("INSERT OR REPLACE INTO processed VALUES (?,?,?)", (sid, time.time(), rid))
+        except Exception as e:  # noqa - logged in the pass record
+            err = str(e)[:500]
+        try:  # always: expiry and re-counting must not depend on the AI calls succeeding
             revalidate(c)
             stats["archived"] = prune(c)
             collect_param_evidence(c)
-        except Exception as e:  # noqa - logged in the pass record
-            err = str(e)[:500]
+        except Exception as e:  # noqa
+            err = ((err + " | ") if err else "") + str(e)[:300]
         c.execute("UPDATE learner_runs SET ended=?, sessions=?, calls=?, cost=?, insights_new=?, insights_updated=?, proposals_new=?, error=? "
                   "WHERE id=?", (time.time(), stats["sessions"], stats["calls"], round(stats["cost"], 4), stats["insights_new"],
                                  stats["insights_updated"], stats["proposals_new"], err, rid))
@@ -375,6 +407,8 @@ def _store_insight(ins, dg, c):
     row = None
     if ins.get("same_as"):
         row = c.execute("SELECT * FROM insights WHERE id=?", (ins["same_as"],)).fetchone()
+        if row is not None and row["key"] != key:
+            row = None  # the model named an insight about other settings / direction / conditions: not more evidence for it
     row = row or c.execute("SELECT * FROM insights WHERE key=?", (key,)).fetchone()
     per = validate(settings, ins["direction"], cond)
     new = row is None
@@ -388,10 +422,11 @@ def _store_insight(ins, dg, c):
     status, conf = _status(sup, con, c.execute("SELECT support_sessions FROM insights WHERE id=?", (iid,)).fetchone()[0] or 0)
     if ins.get("caveats"):
         c.execute("UPDATE insights SET caveats=? WHERE id=?", (ins["caveats"][:1000], iid))
-    if row is not None and row["status"] == "implemented":
-        status = "implemented"
-    c.execute("UPDATE insights SET updated=?, support=?, contradict=?, neutral=?, confidence=?, status=?, sessions=? WHERE id=?",
-              (time.time(), sup, con, neu, conf, status, _j(sorted(set(ids) | {dg["session"]})), iid))
+    if row is not None and row["status"] in ("implemented", "retired-by-admin"):
+        status = row["status"]
+    # `updated` (the expiry clock) moves only with new supporting evidence (_count), not because the model mentioned it again
+    c.execute("UPDATE insights SET support=?, contradict=?, neutral=?, confidence=?, status=?, sessions=? WHERE id=?",
+              (sup, con, neu, conf, status, _j(sorted(set(ids) | {dg["session"]})), iid))
     return new
 
 
@@ -427,7 +462,7 @@ def collect_param_evidence(c=None):
         if len(vars_) != 1:
             continue  # several settings at once: the effect cannot be attributed to one of them
         var = vars_.pop()
-        a = acc.setdefault((var, r["session_id"]), {"wl": r["wl"], "cpu": _cpu_class(r["cpus"]), "legacy": 0 if r["agent_version"] else 1,
+        a = acc.setdefault((var, r["session_id"]), {"wl": r["wl"], "cpu": _cpu_class(r["cpus"]), "legacy": 0 if r["agent_version"] and "stale" not in r["agent_version"] else 1,
                                                     "runs": 0, "improved": 0, "regressed": 0, "neutral": 0, "deltas": []})
         a["runs"] += 1
         a["improved" if r["verdict"] in GOOD else "regressed" if r["verdict"] in BAD else "neutral"] += 1
@@ -435,6 +470,10 @@ def collect_param_evidence(c=None):
             a["deltas"].append(round(ev["goal_delta_pct"], 2))
     if any(v.startswith("optimizer_switch:") for v, _ in acc):  # evidence recorded before flags were split out
         c.execute("DELETE FROM param_evidence WHERE variable='optimizer_switch'")
+    present = {r["id"] for r in store.q("SELECT id FROM tsessions")}
+    for var, sid in c.execute("SELECT variable, session_id FROM param_evidence").fetchall():
+        if sid in present and (var, sid) not in acc:  # re-judged / flawed since; sessions gone from the observations keep theirs
+            c.execute("DELETE FROM param_evidence WHERE variable=? AND session_id=?", (var, sid))
     for (var, sid), a in acc.items():
         c.execute("INSERT OR REPLACE INTO param_evidence VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                   (var, sid, a["wl"], a["cpu"], a["runs"], a["improved"], a["regressed"], a["neutral"], _j(a["deltas"]), a["legacy"], time.time()))
@@ -505,8 +544,8 @@ def revalidate(c=None):
     for r in c.execute("SELECT * FROM insights WHERE status NOT IN ('implemented', 'retired-by-admin', 'archived')").fetchall():
         sup, con, neu, ids = _count(c, r["id"], validate(_uj(r["settings"], []), r["direction"], _uj(r["conditions"], {})))
         status, conf = _status(sup, con, c.execute("SELECT support_sessions FROM insights WHERE id=?", (r["id"],)).fetchone()[0] or 0)
-        c.execute("UPDATE insights SET support=?, contradict=?, neutral=?, confidence=?, status=? WHERE id=?",
-                  (sup, con, neu, conf, status, r["id"]))
+        c.execute("UPDATE insights SET support=?, contradict=?, neutral=?, confidence=?, status=? WHERE id=? "
+                  "AND status NOT IN ('implemented', 'retired-by-admin', 'archived')", (sup, con, neu, conf, status, r["id"]))
 
 
 # ------------------------------------------------------------------------------------------------ for agents and admins

@@ -158,12 +158,18 @@ def _one_digit(n):
 def roundness(var, value):
     """0 = round (one significant digit, a power of two, whole GiB / power-of-two size), 1 = two significant digits,
     2 = anything else. Among settings that perform the same, the rounder value is the one to recommend."""
+    import math
     try:
         n = float(value)
     except (TypeError, ValueError):
-        n = parse_size(str(value))
+        try:
+            n = parse_size(str(value))
+        except Exception:
+            n = None
         if n is None:
-            return 0
+            return 2  # not a number (O_DIRECT, STATEMENT): no roundness preference
+    if not math.isfinite(n):
+        return 2
     if n != int(n):
         return 2
     n = int(n)
@@ -176,22 +182,25 @@ def roundness(var, value):
 
 
 def nice_number(var, x):
-    """Snap an agent-generated value with three or more significant digits (or a fraction) to a round one: sizes to a power of two below 1 GiB, to 512 MiB steps up to 8 GiB
+    """Snap an agent-generated value with three or more significant digits (or a fraction) to a round one: sizes down to a power of two below 1 GiB, to 512 MiB steps up to 8 GiB
     and whole GiB above; thread-like counts to a power of two; other counts and percentages to one significant digit
     (1072 -> 1000, 47 -> 50). Small values (<= 10) and already round values are kept."""
-    if x is None or x in (float("inf"), float("-inf")):
-        return x
+    import math
     kind = (KB.get(var) or {}).get("kind")
+    # integers and sizes only: fractions (dirty-page percentages 0.5 / 99.9), pseudo settings (os:hugepages page counts,
+    # os:swapfile) and settings unknown to the KB keep the exact value
+    if x is None or not math.isfinite(x) or x <= 0 or kind not in ("int", "size") or str(var).startswith(("os:", "client:", "rg:", "ps:")):
+        return x
     if roundness(var, x) < 2:  # two significant digits (24 = 2 x 12 cores, 1500) carry meaning: kept
         return x
-    import math
     if kind == "size":
         G, M = 1024 ** 3, 1024 ** 2
+        # sizes are memory: round down, never above what a budget or cap computed
         if x >= 8 * G:
-            return round(x / G) * G
+            return float(math.floor(x / G) * G)
         if x >= G:
-            return max(G, round(x / (512 * M)) * 512 * M)
-        return float(2 ** round(math.log2(max(x, 1024))))
+            return float(math.floor(x / (512 * M)) * 512 * M)
+        return float(2 ** math.floor(math.log2(max(x, 1024))))
     if abs(x) <= 10:
         return float(round(x))
     if any(t in var for t in POW2_INTS):
