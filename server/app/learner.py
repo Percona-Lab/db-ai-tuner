@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS learner_runs (
   id INTEGER PRIMARY KEY, started REAL NOT NULL, ended REAL, trigger TEXT, sessions INTEGER DEFAULT 0, calls INTEGER DEFAULT 0,
   cost REAL DEFAULT 0, insights_new INTEGER DEFAULT 0, insights_updated INTEGER DEFAULT 0, proposals_new INTEGER DEFAULT 0, error TEXT);
 CREATE TABLE IF NOT EXISTS processed (session_id INTEGER PRIMARY KEY, processed REAL NOT NULL, learner_run INTEGER);
+CREATE TABLE IF NOT EXISTS evidence (
+  insight_id INTEGER NOT NULL, session_id INTEGER NOT NULL, support INTEGER DEFAULT 0, contradict INTEGER DEFAULT 0,
+  neutral INTEGER DEFAULT 0, counted REAL, PRIMARY KEY (insight_id, session_id));
 """
 
 _local = threading.local()
@@ -195,8 +198,7 @@ def validate(settings, direction, cond):
                    "json_extract(e.facts, '$.hardware.cpus') cpus, json_extract(r.summary, '$.threads_connected_avg') conns "
                    "FROM runs r JOIN tsessions s ON s.id=r.session_id JOIN environments e ON e.id=s.env_id "
                    "WHERE r.status='done' AND r.verdict IN ('improved','efficiency-gain','neutral','regressed','efficiency-loss')")
-    sup = con = neu = 0
-    sess = set()
+    per = {}
     for r in rows:
         ch = {_norm(c.get("variable")): _norm(c.get("new")) for c in _uj(r["changes"], []) or []}
         if not names or any(k not in ch for k in names):
@@ -209,19 +211,31 @@ def validate(settings, direction, cond):
             continue
         if cond.get("concurrency_class") and r["conns"] and _conc_class(r["conns"]) != cond["concurrency_class"]:
             continue
-        sess.add(r["session_id"])
+        e = per.setdefault(r["session_id"], [0, 0, 0])
         if direction == "helps":
-            sup += r["verdict"] in GOOD
-            con += r["verdict"] in BAD
-            neu += r["verdict"] == "neutral"
+            e[0] += r["verdict"] in GOOD
+            e[1] += r["verdict"] in BAD
+            e[2] += r["verdict"] == "neutral"
         elif direction == "hurts":
-            sup += r["verdict"] in BAD
-            con += r["verdict"] in GOOD
-            neu += r["verdict"] == "neutral"
+            e[0] += r["verdict"] in BAD
+            e[1] += r["verdict"] in GOOD
+            e[2] += r["verdict"] == "neutral"
         else:  # no-effect
-            sup += r["verdict"] == "neutral"
-            con += r["verdict"] in GOOD + BAD
-    return sup, con, neu, sorted(sess)
+            e[0] += r["verdict"] == "neutral"
+            e[1] += r["verdict"] in GOOD + BAD
+    return per
+
+
+def _count(c, iid, per):
+    """Record this insight's evidence per session in learning.db and return the totals. Sessions that are no longer in
+    the observations (a reset, another installation's data) keep the counts recorded when they were seen: learnings
+    outlive the observations they came from."""
+    for sid, (a, b, n) in per.items():
+        c.execute("INSERT OR REPLACE INTO evidence VALUES (?,?,?,?,?,?)", (iid, sid, a, b, n, time.time()))
+    r = c.execute("SELECT COALESCE(SUM(support),0) s, COALESCE(SUM(contradict),0) c, COALESCE(SUM(neutral),0) n, "
+                  "GROUP_CONCAT(session_id) ids FROM evidence WHERE insight_id=?", (iid,)).fetchone()
+    ids = sorted(int(x) for x in (r["ids"] or "").split(",") if x)
+    return r["s"], r["c"], r["n"], ids
 
 
 def _status(sup, con):
@@ -303,26 +317,28 @@ def _store_insight(ins, dg, c):
     if ins.get("same_as"):
         row = c.execute("SELECT * FROM insights WHERE id=?", (ins["same_as"],)).fetchone()
     row = row or c.execute("SELECT * FROM insights WHERE key=?", (key,)).fetchone()
-    sup, con, neu, sess = validate(settings, ins["direction"], cond)
+    per = validate(settings, ins["direction"], cond)
+    new = row is None
+    if new:
+        iid = c.execute("INSERT INTO insights(key, created, updated, kind, statement, settings, conditions, direction, sessions, status, source) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?)", (key, time.time(), time.time(), "observation", ins["statement"][:1000], _j(settings),
+                                                         _j(cond), ins["direction"], "[]", "candidate", llm.settings().get("model"))).lastrowid
+    else:
+        iid = row["id"]
+    sup, con, neu, ids = _count(c, iid, per)
     status, conf = _status(sup, con)
-    if row:
-        if row["status"] == "implemented":
-            status = "implemented"
-        c.execute("UPDATE insights SET updated=?, support=?, contradict=?, neutral=?, confidence=?, status=?, sessions=? WHERE id=?",
-                  (time.time(), sup, con, neu, conf, status, _j(sorted(set(_uj(row["sessions"], []) or []) | set(sess) | {dg["session"]})), row["id"]))
-        return False
-    c.execute("INSERT INTO insights(key, created, updated, kind, statement, settings, conditions, direction, sessions, support, contradict, "
-              "neutral, confidence, status, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-              (key, time.time(), time.time(), "observation", ins["statement"][:1000], _j(settings), _j(cond), ins["direction"],
-               _j(sorted(set(sess) | {dg["session"]})), sup, con, neu, conf, status, llm.settings().get("model")))
-    return True
+    if row is not None and row["status"] == "implemented":
+        status = "implemented"
+    c.execute("UPDATE insights SET updated=?, support=?, contradict=?, neutral=?, confidence=?, status=?, sessions=? WHERE id=?",
+              (time.time(), sup, con, neu, conf, status, _j(sorted(set(ids) | {dg["session"]})), iid))
+    return new
 
 
 def revalidate(c=None):
     """Recount every live insight against the observations (they grow between passes)."""
     c = c or db()
     for r in c.execute("SELECT * FROM insights WHERE status != 'implemented'").fetchall():
-        sup, con, neu, sess = validate(_uj(r["settings"], []), r["direction"], _uj(r["conditions"], {}))
+        sup, con, neu, ids = _count(c, r["id"], validate(_uj(r["settings"], []), r["direction"], _uj(r["conditions"], {})))
         status, conf = _status(sup, con)
         c.execute("UPDATE insights SET support=?, contradict=?, neutral=?, confidence=?, status=? WHERE id=?",
                   (sup, con, neu, conf, status, r["id"]))
@@ -370,5 +386,10 @@ def _loop():
 
 
 def start():
+    try:  # a pass cut short by a service restart (deploy) is closed as interrupted; its unread sessions are read next time
+        db().execute("UPDATE learner_runs SET ended=?, error=COALESCE(error, 'interrupted (service restart)') "
+                     "WHERE ended IS NULL AND started < ?", (time.time(), time.time() - 5))
+    except Exception:
+        pass
     if INTERVAL_H > 0:
         threading.Thread(target=_loop, name="learner", daemon=True).start()
