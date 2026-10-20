@@ -497,6 +497,7 @@ def cmd_session(a):
             raise Fail(f"session #{old['id']} is still active: `tuning-agent session stop` it or pass --force")
         os_tuning = c.os_tuning_allowed() and not a.no_os_tuning
         r = c.client.post("/sessions", {"environment_id": c.env_id(), "name": a.name, "goal": a.goal, "policy": a.policy,
+                                        "agent_version": __version__, "allow_stale_agent": bool(getattr(a, "allow_stale_agent", False)),
                                         "noise_pct": a.noise_pct, "notes": a.notes, "workload": a.workload, "os_tuning": os_tuning,
                                         "study": a.study})
         warn = _maintenance_tasks(c)
@@ -732,6 +733,7 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
             inputs["swap_top"] = [{"process": n, "pid": p, "swap_mb": round(b / 2 ** 20, 1)} for n, p, b in top]
     except Exception:
         pass
+    inputs["agent_version"] = __version__  # which engine build measured and judged this run
     if extra_inputs:
         inputs.update(extra_inputs)
         for k, v in (extra_inputs.get("probe") or {}).items():
@@ -1228,6 +1230,11 @@ def _refresh_noise(c, sess, runs):
             c.client.post(f"/sessions/{sess['id']}/update", {"noise_pct": est["noise_pct"], "calibration": sess["noise"]})
         except Exception:
             pass
+        if old and est["noise_pct"] < old:
+            # a tighter threshold can turn earlier "neutral" runs into real effects (C5 thread pool +4.8% at ±6.3%)
+            ch = [x for x in _reevaluate(c, c.session()) if x[2] != x[1]]
+            if ch:
+                log("   re-judged with the tighter threshold: " + ", ".join(f"run {s}: {a} -> {b}" for s, a, b in ch))
 
 
 def _remember_noise(c, sess):
@@ -1353,6 +1360,13 @@ def _noise_plan(c, prof, runs, n):
     plan = evaluate.noise_plan(runs, cal, prof.duration, prof.max_duration)
     if ds["status"] == "drifting" and plan["action"] in ("between-runs", "longer-runs"):
         plan["text"] += " Likely cause: the data set is not restored between runs (set reset = ..., or data_state = seasoned)."
+    cl = [x for x in (evaluate.client_saturated(r.get("summary") or {}) for r in runs) if x]
+    if cl and str(c.cfg.get("allow_noisy_environment", "false")).lower() != "true":
+        msg = (f"environment unfit for tuning: the benchmark client limits the measurement ({cl[0]}, {len(cl)} of {len(runs)} "
+               "calibration runs) - no server setting can show an effect. Use a bigger client host or a lighter client "
+               "(or set allow_noisy_environment = true in agent.ini).")
+        c.event("environment", msg, {"client_saturated": cl})
+        raise Fail(msg)
     dist = evaluate.disturbances(runs)
     if dist:
         plan["disturbances"] = dist
@@ -2009,12 +2023,27 @@ def cmd_autotune(a):
             run, _ = _bench_run(c, prof, f"baseline ({len(runs) + 1}/{a.calibrate + extra})")
             log(f"   run {run['seq']}: goal {run['goal_value']}" + (" (unreliable: CPU steal, measured again)" if run.get("verdict") == "unreliable" else ""))
             runs.append(run)
+            cl = evaluate.client_saturated(run.get("summary") or {})
+            if cl and str(c.cfg.get("allow_noisy_environment", "false")).lower() != "true":
+                msg = (f"environment unfit for tuning: the benchmark client limits the measurement ({cl}) - no server setting "
+                       "can show an effect. Use a bigger client host or a lighter client (or set allow_noisy_environment = true).")
+                c.event("environment", msg, {"client_saturated": cl, "run": run["seq"]})
+                raise Fail(msg)
             if run.get("verdict") == "unreliable":
                 extra += 1
                 if extra > a.calibrate:  # the host is too noisy right now: calibrate with what we have
                     log("   WARNING: persistent CPU steal; calibrating with the runs available")
                     break
         runs = [r for r in runs if r.get("verdict") not in evaluate.EXCLUDED] or runs
+        slide = evaluate.calibration_slide(runs)
+        if slide:
+            # every run moved the same way by more than each run's own precision explains: the starting state is still
+            # settling (JOB: a 3-run slide set the threshold to ±5% and hid a ~2.8% read-ahead gain) - one more run, and
+            # calibrate on the latest ones
+            log(f"   calibration slide: {slide}; one more calibration run")
+            run, _ = _bench_run(c, prof, f"baseline ({len(runs) + 1}, after a calibration slide)")
+            log(f"   run {run['seq']}: goal {run['goal_value']}")
+            runs = (runs + [run])[-a.calibrate:]
         sess = c.session()
         cal = evaluate.calibrate(runs)
         _set_calibration(c, sess, cal)
@@ -2434,6 +2463,7 @@ def main(argv=None):
     s.add_argument("--noise-pct", type=float, default=None, help="fixed noise threshold (default: 2%% until calibrated)")
     s.add_argument("--no-os-tuning", action="store_true", help="do not tune operating-system settings in this session")
     s.add_argument("--scope", help="what may be tuned: knobs,os (default); add 'filesystem' for filesystem experiments")
+    s.add_argument("--allow-stale-agent", action="store_true", help="start even when this agent's build differs from the server's (results then do not reflect the server's engine)")
     s.add_argument("--study", help="study (name or id) this session belongs to; created if it does not exist. Studies compare "
                                    "sessions across environments (hardware scaling, minimum hardware for a target)")
     s.add_argument("--force", action="store_true")

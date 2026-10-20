@@ -947,13 +947,20 @@ def agent_event(body: dict = Body(...), key=Depends(auth.agent_key)):
 @app.post("/api/v1/agent/sessions")
 def agent_session_start(body: dict = Body(...), key=Depends(auth.agent_key)):
     e = agent_env(body.get("environment_id"), key)
+    # results only say something about the engine build that produced them: refuse stale agents (all 11 sessions of
+    # 2026-10-20 ran builds older than the fixes they were meant to exercise)
+    have = str(body.get("agent_version") or "").partition("+")[2]
+    want = _agent_build()
+    if want not in ("", "unknown") and have != want and not body.get("allow_stale_agent"):
+        raise HTTPException(409, f"agent build {have or 'unknown'} differs from the server's {want}: update the agent "
+                                 f"(curl -fsSL {PUBLIC_URL}/install.sh | bash) or start the session with --allow-stale-agent")
     goal = body.get("goal") if body.get("goal") in ("tps", "latency") else "tps"
     store.ex("UPDATE tsessions SET status='abandoned', ended=? WHERE env_id=? AND status='active'", (now(), e["id"]))
     n = store.q1("SELECT COUNT(*) n FROM tsessions WHERE env_id=?", (e["id"],))["n"] + 1
     name = (body.get("name") or f"Session {n} ({'TPS' if goal == 'tps' else 'latency'})")[:120]
-    sid = store.ex("INSERT INTO tsessions(env_id, name, goal, policy, noise_pct, workload, notes, created, os_tuning) VALUES (?,?,?,?,?,?,?,?,?)",
+    sid = store.ex("INSERT INTO tsessions(env_id, name, goal, policy, noise_pct, workload, notes, created, os_tuning, agent_version) VALUES (?,?,?,?,?,?,?,?,?,?)",
                    (e["id"], name, goal, body.get("policy") or "safe", body.get("noise_pct") or 2.0, body.get("workload"), body.get("notes"), now(),
-                    1 if body.get("os_tuning", True) else 0))
+                    1 if body.get("os_tuning", True) else 0, str(body.get("agent_version") or "")[:40] or None))
     store.ex("INSERT INTO events(env_id, session_id, ts, type, message, data) VALUES (?,?,?,?,?,?)",
              (e["id"], sid, now(), "session", f"session started: goal={goal}, policy={body.get('policy') or 'safe'}", store.j(body)))
     study = None

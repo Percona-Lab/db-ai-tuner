@@ -567,6 +567,24 @@ def test_evidence_gate_holes():
     assert engine.no_evidence({"id": "sweep-read-ahead"}, {"breakdown": parts, "diagnosis": [], "noise_pct": 2.0}) is None
 
 
+def test_noise_model_fixes():
+    # within-run estimate above the run-to-run CV: an unsteady window, never "longer runs"
+    runs = [{"summary": {"within_se_pct": 9.4}} for _ in range(3)]
+    p = evaluate.noise_plan(runs, {"goal_cv_pct": 1.8, "noise_pct": 4.6}, 300)
+    assert p["action"] == "unsteady-window"
+    # a plan never predicts more noise than now
+    runs = [{"summary": {"within_se_pct": 1.0}} for _ in range(3)]
+    p = evaluate.noise_plan(runs, {"goal_cv_pct": 1.6, "noise_pct": 4.0}, 300, max_duration=300)
+    assert p["action"] != "longer-runs"
+    # calibration slide beyond the runs' own precision
+    sl = [{"goal_value": g, "summary": {"within_se_pct": 0.3}} for g in (100, 97, 94)]
+    assert evaluate.calibration_slide(sl)
+    assert evaluate.calibration_slide([{"goal_value": g, "summary": {"within_se_pct": 3}} for g in (100, 99.5, 99)]) is None
+    # goal vs server throughput
+    ratio = evaluate._goal_server_ratio([{"goal_value": 3750, "summary": {"tps": 3750}}, {"goal_value": 3700, "summary": {"tps": 3690}}])
+    assert abs(evaluate.goal_server_check({"goal_value": 3135, "summary": {"tps": 3750}}, ratio)) > 10
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

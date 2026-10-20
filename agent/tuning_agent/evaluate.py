@@ -188,6 +188,14 @@ def noise_plan(runs, cal, duration, max_duration=None, target=NOISE_TARGET):
     if cv is None or not ses:
         return dict(out, action="unknown", text="No per-run sample data to separate within-run and between-run noise.")
     within = (sum(x * x for x in ses) / len(ses)) ** 0.5
+    if within > cv:
+        # each run's own estimate says it is noisier than repeats of it are: the in-window samples trend or oscillate
+        # (throughput rising or falling inside the window), which longer runs do not cure (#125: a plan that predicted
+        # a higher threshold, 4.6% -> 11.7%)
+        out.update(within_cv_pct=round(within, 2), between_cv_pct=None)
+        return dict(out, action="unsteady-window",
+                    text=f"The runs' own samples vary more ({within:.2f}%) than repeated runs do ({cv:.2f}% CV): throughput trends "
+                         "or oscillates inside the window. Longer runs would not lower the threshold; check steady state.")
     between = max(0.0, cv * cv - within * within) ** 0.5
     out.update(within_cv_pct=round(within, 2), between_cv_pct=round(between, 2))
     if (cal.get("noise_pct") or 0) <= target:
@@ -208,6 +216,10 @@ def noise_plan(runs, cal, duration, max_duration=None, target=NOISE_TARGET):
     capped = new > cap
     sec = min(new, cap)
     exp_cv = (between ** 2 + within ** 2 * duration / sec) ** 0.5
+    if sec <= duration or max(RESOLUTION_NOISE, NOISE_K * exp_cv) >= (cal.get("noise_pct") or 0):
+        return dict(out, action="between-runs", repeats=2,
+                    text=f"Longer runs would not lower the ±{cal.get('noise_pct')}% threshold (expected ±{max(RESOLUTION_NOISE, NOISE_K * exp_cv):.1f}%): "
+                         "keep the run length; repeats per configuration lower it.")
     return dict(out, action="longer-runs", seconds=sec, capped=capped, expected_noise_pct=round(max(RESOLUTION_NOISE, NOISE_K * exp_cv), 2),
                 text=f"Mostly within-run noise (within {within:.2f}% vs between {between:.2f}% CV): {sec // 60} min runs instead of "
                      f"{duration // 60} min should bring the threshold from ±{cal.get('noise_pct')}% to about ±{max(RESOLUTION_NOISE, NOISE_K * exp_cv):.1f}%"
@@ -247,6 +259,16 @@ def data_state_check(runs, data_state):
     return out
 
 
+def _goal_server_ratio(runs):
+    xs = []
+    for r in runs:
+        s = r.get("summary") or {}
+        srv = s.get("tps") or s.get("qps")
+        if srv and r.get("goal_value"):
+            xs.append(r["goal_value"] / srv)
+    return round(sorted(xs)[len(xs) // 2], 6) if xs else None
+
+
 def calibrate(runs):
     """Noise thresholds from repeated runs of one configuration."""
     runs = [r for r in runs if r.get("verdict") not in EXCLUDED] or runs
@@ -259,6 +281,7 @@ def calibrate(runs):
         "runs": [r["seq"] for r in runs], "goal_mean": round(m, 4), "goal_cv_pct": round(cv, 2),
         "goal_range_pct": round(100.0 * (max(goal_vals) - min(goal_vals)) / abs(m), 2),
         "noise_pct": round(max(MIN_GOAL_NOISE, NOISE_K * cv), 2), "k": NOISE_K, "efficiency": {},
+        "goal_server_ratio": _goal_server_ratio(runs),
         "_goal_values": goal_vals,
     }
     probe = {}
@@ -355,6 +378,18 @@ def verdict(run, history, goal, noise):
         return "unreliable", {"steal": st, "note": f"UNRELIABLE: hypervisor CPU steal averaged {max(st['avg_pct'], st['client_avg_pct'] or 0):.1f}% "
                                                    "during the run (noisy neighbours on a shared host). The result is kept for reference "
                                                    "but excluded from comparisons."}
+    if goal != "latency":
+        dev = goal_server_check(run, (noise or {}).get("goal_server_ratio"))
+        if dev is not None and abs(dev) > max(3.0, float((noise or {}).get("noise_pct") or 0)):
+            return "unreliable", {"goal_server_mismatch_pct": dev,
+                                  "note": f"UNRELIABLE: the benchmark's result and the server's own throughput in the measured window "
+                                          f"disagree by {dev:+.1f}% compared with calibration - the goal measured something else "
+                                          "(warm-up or tail, a client hiccup). Kept for reference, excluded from comparisons."}
+    cl = client_saturated(run.get("summary") or {})
+    if cl:
+        # the benchmark client, not the database, set the pace: no server change can show (C3 / C6: 16 runs each)
+        return "unreliable", {"client_saturated": cl, "note": f"UNRELIABLE: {cl}. The measured throughput is the client's limit, "
+                                                              "so the run is kept for reference but excluded from comparisons."}
     v, d = _verdict(run, history, goal, noise)
     if st:
         d = dict(d)
@@ -560,6 +595,18 @@ def query_impact(stmts_now, stmts_parent, top=12):
             "mixed": bool(winners and losers)}
 
 
+def client_saturated(s):
+    """The benchmark client limits the measurement: a remote client host at full CPU (its agent reports it), or a host
+    shared with the client running out of CPU while mysqld gets less than half of what is used."""
+    cb = s.get("client_cpu_busy")
+    if cb is not None and cb >= 90:
+        return f"the client host was {cb:.0f}% CPU busy"
+    busy, my = s.get("cpu_busy"), s.get("mysqld_cpu_pct")
+    if busy is not None and my is not None and busy >= 95 and my < 0.5 * busy:
+        return f"the host was {busy:.0f}% CPU busy and mysqld used only {my:.0f}% of it: the co-located client competes for the CPUs"
+    return None
+
+
 def disturbances(runs):
     """Measured sources of run-to-run shifts in a set of runs of one configuration (evidence, not guesses):
     mysqld memory swapped back in during the window, hypervisor CPU steal, the goal drifting run after run, an
@@ -582,6 +629,10 @@ def disturbances(runs):
     dips = [(s.get("tput_dip_samples") or 0, s.get("tput_dip_longest_samples") or 0) for s in ss if s.get("tput_dip_samples")]
     if dips:
         out.append(f"throughput fell below half its median inside {len(dips)} of {len(ss)} runs (longest stall {max(x[1] for x in dips)} samples)")
+    cs = [client_saturated(s) for s in ss]
+    cs = [x for x in cs if x]
+    if cs:
+        out.append(f"client saturated in {len(cs)} of {len(ss)} runs ({cs[0]}) - use a bigger client host or a lighter client")
     st = [s.get("cpu_steal") or 0 for s in ss]
     if st and max(st) >= 3:
         out.append(f"hypervisor CPU steal up to {max(st):.1f}%")
@@ -594,3 +645,33 @@ def disturbances(runs):
     if ns:
         out.append(f"{len(ns)} of {len(runs)} runs not at steady state")
     return out
+
+
+def calibration_slide(runs):
+    """Every calibration run moved the same way, and by more than the runs' own precision explains (None = no slide)."""
+    goals = [r.get("goal_value") for r in runs if r.get("goal_value") is not None]
+    if len(goals) < 3:
+        return None
+    d = [b - a for a, b in zip(goals, goals[1:])]
+    if not (all(x > 0 for x in d) or all(x < 0 for x in d)):
+        return None
+    m = sum(goals) / len(goals)
+    total = 100.0 * abs(goals[-1] - goals[0]) / abs(m) if m else 0
+    ses = [(r.get("summary") or {}).get("within_se_pct") for r in runs]
+    ses = [x for x in ses if x]
+    prec = 2 * (sum(x * x for x in ses) / len(ses)) ** 0.5 if ses else 1.0
+    if total <= prec:
+        return None
+    return f"{', '.join(f'{g:.4g}' for g in goals)} ({total:.1f}% total, the runs' own precision explains {prec:.1f}%)"
+
+
+def goal_server_check(run, ref_ratio):
+    """Does the benchmark's goal agree with the server's own throughput in the measured window? A different ratio than
+    in calibration means the goal measured something else (warm-up or tail included, client hiccup): C2 run 15 scored
+    3,135 while the server measured 3,750 and set the session's threshold to 12%."""
+    s = run.get("summary") or {}
+    srv = s.get("tps") or s.get("qps")
+    g = run.get("goal_value")
+    if not (ref_ratio and srv and g):
+        return None
+    return round(100.0 * ((g / srv) / ref_ratio - 1), 2)

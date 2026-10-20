@@ -106,6 +106,7 @@ MIGRATIONS = [
     ("llm_calls", "purpose", "TEXT"),
     ("llm_calls", "signature", "TEXT"),
     ("users", "is_admin", "INTEGER DEFAULT 0"),
+    ("tsessions", "agent_version", "TEXT"),
 ]
 
 

