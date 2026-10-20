@@ -99,12 +99,31 @@ thresholds ("> 5 new connections/s") are proxies with no basis and do not count 
 - **Done:** name resolution. `probes.py` (bpftrace uprobes on libc `getnameinfo` / `getaddrinfo`) measures time over the
   measured window and feeds the "Connection setup: name resolution (DNS)" component. `skip_name_resolve` is tried only
   when that time exists, whatever the source (rule, LLM or sweep). The old `> 5 connections/s` gate is gone.
-- **Next:** review the ~94 rules in `engine.recommend()` and replace counter thresholds with measured-time evidence
-  where a measurement exists. Add probes where it does not:
-  - thread creation and authentication on connect;
-  - fsync latency per file (redo / data / binlog);
-  - off-CPU time by kernel stack (I/O, futex, page faults);
-  - page-fault and swap-in stalls in mysqld;
-  - temporary-file I/O.
-- **Ranking:** relevance already ranks by the share of measured database time a change acts on. The remaining
-  thresholds then only set how small a share is worth a run.
+- **Done 2026-10-20 (build b410768):**
+  - **Off-CPU profile** (`probes.OffCpu`, eBPF on `finish_task_switch`): every time a connection thread blocks, the time
+    until it runs again, keyed by kernel and user stack. It is classified by the nearest meaningful frame into: client,
+    group-commit queue, redo flush, binlog fsync, free-page wait, redo capacity, data page read, data file write, row lock,
+    MDL, latch, page fault / swap-in, DNS, auth / TLS and temp-file I/O. It covers waits performance_schema does not
+    instrument.
+    - It runs once per configuration, as a 10 s slice before the CPU profile and outside the measured window.
+    - Its own symbolizer resolves stripped mysqld frames through the debug-symbol package, which is installed when the
+      disk has room.
+  - **CPU profile** once per configuration (the "CPU >= 60 %" gate is gone).
+  - **File I/O by operation** (performance_schema `file_summary_by_event_name`): data reads (read path), data and
+    doublewrite writes plus fsync (flushing), redo and binlog writes plus fsync (commit).
+  - **Evidence gate** (`engine.no_evidence`): a change is an experiment only if any combination of sources shows what
+    it acts on. Without that it runs as validation at the end.
+    - Sources: measured time (CPU / off-CPU profiles, P_S waits and file I/O, probes), or a diagnosis from status
+      counters, P_S or system statistics (PSI, iowait, swap-in, free-page waits, checkpoint age).
+    - Matching: a specific kind outranks a generic one once the run measures that kind.
+    - Counter preconditions such as change-buffer pages in use are presence checks, not thresholds.
+  - **LLM bottleneck analysis** (`/llm/analyze`): for the largest measured components no candidate acts on, the LLM
+    states a hypothesis, changes with their mechanism and precondition, and the measurement that confirms it.
+    - Answers are cached by a signature of the conditions (version, component, top frames, workload, goal, hardware
+      class, commit / flush settings), so similar situations reuse the analysis.
+    - Changes are still validated and measured like any experiment, and their outcomes feed the hypothesis track record.
+- **Next:**
+  - Measure what is still a proxy: thread creation cost on connect, and per-statement temp-table spills from P_S stages.
+  - Replace the remaining candidate-generator thresholds where a measurement now exists (they only create candidates;
+    evidence decides).
+  - Judge "the targeted time shrank" against that component's own run-to-run noise instead of a fixed -10 %.
