@@ -55,3 +55,24 @@ buffers at once are covered by the margin of the per-entry estimates and the OS 
   `connection_memory_limit`
   ([memory accounting](https://www.alibabacloud.com/blog/mysql-memory-allocation-and-management-part-iii_600994)),
   as a production guardrail the tuner could propose.
+
+## Validation (tools/memprobe, tuner-vbm, Percona Server 9.7, 2026-10-20)
+
+Measured mysqld memory (PSS + swap PSS) under controlled load; raw data in
+`docs/research/data/memprobe-tuner-vbm-2026-10-20.json`.
+
+| Part | Measured | Model before | Model now |
+|---|---|---|---|
+| Buffer pool | mysqld = 0.57 GiB + 1.077 x pool (2G: 2.72 GiB, 6G: 7.03 GiB) | +3% | +8% |
+| Idle connection, performance_schema off | ~130 KiB | 768 KiB | 160 KiB |
+| performance_schema | +242 MiB idle; +250-280 KiB per connection | 192 MiB + 128 KiB | 240 MiB + 256 KiB |
+| Sort, 32 connections sorting | ~1.5 MiB per connection at 256K, 8M and 64M sort_buffer_size (allocated as needed) | full size | full size as an upper bound, + 4 MiB execution per active statement |
+| Join (hash), 16 connections | 7-9 MiB per connection at 256K and 64M join_buffer_size | full size | as above |
+| In-memory temporary table | 20 MiB at 16M, 66 MiB at 64M tmp_table_size (the full size + ~4 MiB) | full size | unchanged |
+| Opened table (definition + instance) | ~49 KiB | 8 + 6 KiB | 32 + 17 KiB |
+| Prepared statement | ~25 KiB | 16 KiB | 25 KiB |
+
+- **InnoDB makes the whole buffer pool resident at startup:** the idle mysqld at a 1 GiB pool measured 1.61 GiB,
+  against 0.57 + 1.077 x 1 GiB from the fitted line.
+- **Biggest corrections:** connections were overestimated about 6x (it mattered at 4096 connections), and table
+  caches were underestimated about 3.5x.

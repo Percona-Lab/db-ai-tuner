@@ -22,15 +22,16 @@ COST); measured mysqld memory from runs (PSS + swap) is reported next to the mod
 """
 KiB, MiB, GiB = 1024, 1024 ** 2, 1024 ** 3
 
-COST = {  # estimated memory per entry / per connection (bytes); sources in docs/design/memory-budget.md
-    "bp_control": 0.03,              # buffer pool control blocks, page hash, AHI: ~3% on top of innodb_buffer_pool_size
-    "table_open_cache": 8 * KiB,     # per open table instance (handler, InnoDB prebuilt)
-    "table_definition_cache": 6 * KiB,
-    "prepared_stmt": 16 * KiB,       # per prepared statement (parse tree, metadata); grows with statement size
-    "connection_base": 768 * KiB,    # thread stack resident part, THD, network buffers (net_buffer_length x 2), session caches
-    "pfs_base": 192 * MiB,           # performance_schema fixed part (instruments, digests, history), when ON
-    "pfs_per_connection": 128 * KiB,
-    "mysqld_fixed": 400 * MiB,       # code, data dictionary, background threads
+COST = {  # memory per entry / per connection (bytes), measured with tools/memprobe on tuner-vbm (PS 9.7, 2026-10-20)
+    "bp_control": 0.08,              # mysqld = 0.57 GiB + 1.077 x pool (2G -> 2.72, 6G -> 7.03 GiB): control blocks, page hash, AHI
+    "table_open_cache": 32 * KiB,    # opened table: ~49 KiB definition + instance together
+    "table_definition_cache": 17 * KiB,
+    "prepared_stmt": 25 * KiB,       # measured 25 KiB per (short) statement
+    "connection_base": 160 * KiB,    # measured ~130 KiB per idle connection with performance_schema off
+    "pfs_base": 240 * MiB,           # measured 1611 vs 1369 MiB idle, performance_schema on vs off
+    "pfs_per_connection": 256 * KiB,  # measured 380-410 KiB per connection with it on vs ~130 off
+    "active_exec": 4 * MiB,          # execution memory per running statement beyond the configured buffers: 1.5 MiB (sorts) - 9 MiB (joins)
+    "mysqld_fixed": 350 * MiB,       # 0.57 GiB fixed at 1 GiB pool minus performance_schema
 }
 PER_QUERY = ("sort_buffer_size", "join_buffer_size", "read_buffer_size", "read_rnd_buffer_size", "binlog_cache_size")
 
@@ -61,7 +62,7 @@ def budget(variables, hw, reserve_bytes=0, active_per_cpu=2, measured=None):
 
     bp = _n(v.get("innodb_buffer_pool_size"))
     add("InnoDB buffer pool", bp, "innodb_buffer_pool_size")
-    add("Buffer pool control blocks / page hash / AHI", bp * COST["bp_control"], "~3% of the buffer pool")
+    add("Buffer pool control blocks / page hash / AHI", bp * COST["bp_control"], "~8% of the buffer pool (measured)")
     add("Redo log buffer", _n(v.get("innodb_log_buffer_size")), "innodb_log_buffer_size")
     add("Key buffer (MyISAM)", _n(v.get("key_buffer_size")), "key_buffer_size")
     tmp_each = min(_n(v.get("tmp_table_size"), 16 * MiB), _n(v.get("max_heap_table_size"), 16 * MiB))
@@ -79,8 +80,11 @@ def budget(variables, hw, reserve_bytes=0, active_per_cpu=2, measured=None):
     add("Prepared statements", ps * COST["prepared_stmt"], f"min(max_prepared_stmt_count, {max_conn} connections x 20) x ~{COST['prepared_stmt'] // KiB} KiB")
     add("Connections (base)", max_conn * COST["connection_base"], f"max_connections {max_conn} x ~{COST['connection_base'] // KiB} KiB")
     per_q = sum(_n(v.get(k)) for k in PER_QUERY)
+    # sort and join buffers are allocated as needed (measured: the same ~1.5 MiB per sorting connection at 256K and
+    # 64M sort_buffer_size): their configured sizes are an upper bound, counted once per active connection
     add("Per-query buffers of active connections", active * per_q,
-        f"{active} active (2 x {cpus} CPUs, at most max_connections) x (" + " + ".join(PER_QUERY) + ")")
+        f"{active} active (2 x {cpus} CPUs, at most max_connections) x (" + " + ".join(PER_QUERY) + "), an upper bound")
+    add("Execution memory of active statements", active * COST["active_exec"], f"{active} active x ~{COST['active_exec'] // MiB} MiB")
     add("mysqld fixed overhead", COST["mysqld_fixed"], "code, data dictionary, background threads")
     os_res = max(GiB, int(ram * 0.10))
     total = sum(i["bytes"] for i in items)

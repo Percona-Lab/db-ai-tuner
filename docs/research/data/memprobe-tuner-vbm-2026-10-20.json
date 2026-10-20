@@ -1,0 +1,153 @@
+{
+ "model": {
+  "connection_base": 786432,
+  "pfs_per_connection": 131072,
+  "pfs_base": 201326592,
+  "table_open_cache": 8192,
+  "table_definition_cache": 6144,
+  "prepared_stmt": 16384,
+  "bp_control": 0.03,
+  "mysqld_fixed": 419430400
+ },
+ "host": "tuner-vbm",
+ "variables_at_start": {
+  "innodb_buffer_pool_size": "1073741824",
+  "join_buffer_size": "262144",
+  "max_connections": "5000",
+  "max_heap_table_size": "67108864",
+  "net_buffer_length": "16384",
+  "performance_schema": "ON",
+  "read_buffer_size": "131072",
+  "read_rnd_buffer_size": "262144",
+  "sort_buffer_size": "262144",
+  "table_definition_cache": "2000",
+  "table_open_cache": "2495",
+  "temptable_max_ram": "1073741824",
+  "thread_stack": "1048576",
+  "tmp_table_size": "67108864"
+ },
+ "results": {
+  "connections_pfs_off": {
+   "performance_schema": "OFF",
+   "idle_bytes": 1435926528,
+   "points": [
+    {
+     "connections": 500,
+     "delta_bytes": 67012608,
+     "per_connection": 134025.216
+    },
+    {
+     "connections": 1000,
+     "delta_bytes": 132612096,
+     "per_connection": 132612.096
+    },
+    {
+     "connections": 2000,
+     "delta_bytes": 261954560,
+     "per_connection": 130977.28
+    },
+    {
+     "connections": 4000,
+     "delta_bytes": 523725824,
+     "per_connection": 130931.456
+    }
+   ]
+  },
+  "connections_pfs_on": {
+   "performance_schema": "ON",
+   "idle_bytes": 1689422848,
+   "points": [
+    {
+     "connections": 500,
+     "delta_bytes": 210956288,
+     "per_connection": 421912.576
+    },
+    {
+     "connections": 1000,
+     "delta_bytes": 411972608,
+     "per_connection": 411972.608
+    },
+    {
+     "connections": 2000,
+     "delta_bytes": 745649152,
+     "per_connection": 372824.576
+    },
+    {
+     "connections": 4000,
+     "delta_bytes": 1554432000,
+     "per_connection": 388608.0
+    }
+   ]
+  },
+  "sort_buffer": [
+   {
+    "sort_buffer_size": "256K",
+    "threads": 32,
+    "peak_delta_bytes": 51139584,
+    "per_active_connection": 1598112.0
+   },
+   {
+    "sort_buffer_size": "8M",
+    "threads": 32,
+    "peak_delta_bytes": 51331072,
+    "per_active_connection": 1604096.0
+   },
+   {
+    "sort_buffer_size": "64M",
+    "threads": 32,
+    "peak_delta_bytes": 51326976,
+    "per_active_connection": 1603968.0
+   }
+  ],
+  "join_buffer": [
+   {
+    "join_buffer_size": "256K",
+    "threads": 16,
+    "peak_delta_bytes": 157775872,
+    "per_active_connection": 9860992.0
+   },
+   {
+    "join_buffer_size": "64M",
+    "threads": 16,
+    "peak_delta_bytes": 118982656,
+    "per_active_connection": 7436416.0
+   }
+  ],
+  "tmp_table": [
+   {
+    "tmp_table_size": "16M",
+    "threads": 16,
+    "peak_delta_bytes": 343314432,
+    "per_active_connection": 21457152.0
+   },
+   {
+    "tmp_table_size": "64M",
+    "threads": 16,
+    "peak_delta_bytes": 1103158272,
+    "per_active_connection": 68947392.0
+   }
+  ],
+  "tables": {
+   "tables": 5000,
+   "delta_bytes": 251532288,
+   "per_table": 50306.4576
+  },
+  "prepared": {
+   "statements": 20000,
+   "delta_bytes": 511263744,
+   "per_statement": 25563.1872
+  },
+  "buffer_pool": [
+   {
+    "buffer_pool": 2147483648,
+    "pages_data": 131055,
+    "mysqld_bytes": 2922448896
+   },
+   {
+    "buffer_pool": 6442450944,
+    "pages_data": 393167,
+    "mysqld_bytes": 7543270400
+   }
+  ]
+ }
+}
