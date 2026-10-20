@@ -34,6 +34,8 @@ def main():
     ap.add_argument("session", type=int)
     ap.add_argument("--log", help="session log (session-*.log) to scan for agent errors")
     ap.add_argument("--budget", type=int, help="max-runs the session was given")
+    ap.add_argument("--expect", help="JSON file of expected outcomes (docs/canary/expect-*.json): bare-metal deploy canary")
+    ap.add_argument("--noise", action="store_true", help="noise canary (cloud VM): check the noise handling itself")
     a = ap.parse_args()
     d = api(f"/api/sessions/{a.session}")
     s, runs = d["session"], [r for r in d["runs"] if r["status"] == "done"]
@@ -129,6 +131,59 @@ def main():
     capped = [r["seq"] for r in hist if evaluate.client_saturated(r.get("summary") or {}) and r["verdict"] not in evaluate.EXCLUDED]
     check(not capped, f"no client-saturated run judged ({capped})")
     check(bool(s.get("agent_version")), f"agent build recorded for the session ({s.get('agent_version')})")
+
+    # 4d) no configuration measured over and over (AMD #142: a sweep re-ran one point 11 times)
+    import collections
+    base = lambda l: re.sub(r" \((confirm|\d+/\d+|re-measure[^)]*)\)$", "", l)
+    counts = collections.Counter(base(r["label"]) for r in d["runs"] if not r["label"].startswith(SKIP))
+    loops = {k: n for k, n in counts.items() if n > 3}
+    check(not loops, f"no experiment measured more than 3 times ({loops})")
+
+    # 4e) the server is left on the best safe configuration: the final confirmation measured it, or the agent switched
+    # after the confirmation re-judged it (canary #141 stayed on a configuration its own confirmation demoted)
+    fin = next((r for r in reversed(hist) if r["label"].startswith("best safe config, confirmation")), None)
+    if fin and best:
+        hist2 = [dict(x) for x in hist]
+        evaluate.confirm_pass(hist2, s["goal"], {"noise_pct": float(noise.get("noise_pct") or 2.0)})
+        best2 = engine.best_config([r for r in hist2 if not tradeoffs_of_run(r)], s["goal"], float(noise.get("noise_pct") or 2.0))
+        same = best2 and evaluate.config_key(fin.get("managed")) == best2["key"]
+        switched = "the confirmation changed the best safe configuration" in log
+        check(bool(same or switched), f"server left on the best safe configuration (confirmation measured run {fin['seq']}'s config; "
+                                      f"best safe after it: runs {best2 and best2['seqs']}{'; switched' if switched else ''})")
+
+    # 6) expected outcomes on a quiet host (bare-metal deploy canary)
+    if a.expect:
+        ex = json.load(open(a.expect))
+        nz = float(noise.get("noise_pct") or 99)
+        if "noise_max_pct" in ex:
+            check(nz <= ex["noise_max_pct"], f"expected: noise threshold <= {ex['noise_max_pct']}% (measured {nz}%)")
+        bl = [x["goal_value"] for x in hist if x["label"].startswith("baseline") and x.get("goal_value") is not None]
+        if bl and "baseline_goal" in ex:
+            lo, hi = ex["baseline_goal"]
+            m = sum(bl) / len(bl)
+            check(lo <= m <= hi, f"expected: baseline goal in [{lo}, {hi}] (measured {m:.1f}) - the harness / host performs as in the reference")
+        bm = best["managed"] if best else {}
+        for k, v in (ex.get("best_safe_has") or {}).items():
+            check(str(bm.get(k, "")).upper() == str(v).upper(), f"expected: best safe config has {k}={v} (got {bm.get(k)})")
+        for k in ex.get("best_safe_lacks") or []:
+            check(k not in bm or bm.get(k) == (next((x for x in hist if x["label"].startswith("baseline")), {}).get("managed") or {}).get(k),
+                  f"expected: best safe config leaves {k} at its start value (got {bm.get(k)})")
+        for lab in ex.get("tried") or []:
+            check(any(r["label"].startswith(lab) for r in hist), f"expected: experiment {lab} was measured")
+        if ex.get("max_runs"):
+            check(len(d["runs"]) <= ex["max_runs"], f"expected: at most {ex['max_runs']} runs (got {len(d['runs'])})")
+
+    # 7) noise canary: the noise handling produced its results
+    if a.noise:
+        plan = noise.get("plan") or {}
+        check(plan.get("action") not in (None, "unknown"), f"noise plan separated within- and between-run noise (action {plan.get('action')}: {plan.get('text', '')[:120]})")
+        check(bool(noise.get("estimate")), f"noise estimate recorded ({(noise.get('estimate') or {}).get('basis')})")
+        se = [(r.get("summary") or {}).get("within_se_pct") for r in hist]
+        check(sum(1 for x in se if x) >= len(hist) * 0.8, f"within-run noise measured in most runs ({sum(1 for x in se if x)} of {len(hist)})")
+        flagged = collections.Counter(f for r in hist for f in ("not_steady", "unsteady_verdict", "client_saturated", "unstable_within_run",
+                                                                  "swap_hazard", "steal") if (r.get("evaluation") or {}).get(f))
+        notes.append(f"info noise_pct {noise.get('noise_pct')}%, plan {plan.get('action')}, disturbances {plan.get('disturbances') or []}, "
+                     f"run flags {dict(flagged)}, verdicts {dict(collections.Counter(r['verdict'] for r in hist))}")
 
     # 5) trade-off phase reached when the budget allowed it
     if s.get("policy") == "benchmark" and a.budget and len([r for r in hist if not r["label"].startswith(SKIP)]) >= a.budget:

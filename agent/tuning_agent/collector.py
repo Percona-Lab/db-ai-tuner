@@ -400,6 +400,9 @@ def analyze_window(a, b, samples):
         """Standard error of the window mean from the run's own samples (batch means of ~60 s blocks, robust to
         short-term autocorrelation): the run-to-run spread this run length would show from within-run noise alone."""
         vals = [s[group][key] for s in samples if s.get(group, {}).get(key) is not None]
+        # short windows (canaries: 30-60 s) get smaller blocks rather than no within-run estimate: at least 4 blocks
+        # when the samples allow, never fewer than 3
+        block = max(1, min(block, len(vals) // 4))
         k = len(vals) // block
         if k < 3:
             return None
