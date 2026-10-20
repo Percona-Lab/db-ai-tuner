@@ -377,6 +377,21 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
                 "rolled_back": True, "cnf_path": ap.cnf_path}
     if res.get("restart_deferred"):
         c.state.set("restart_pending", True)  # cleared by the next data reset; finish_pending_restart() otherwise
+    hp = next((ch for ch in changes if ch["variable"] == "os:hugepages"), None)
+    if hp and int(float(hp.get("value") or 0)) > 0 and not res.get("restart_deferred") and res.get("restarted"):
+        # InnoDB falls back to normal memory when it cannot use the reserved pages (memlock limit, too few pages): the
+        # pool then lives twice - pinned and unused, plus in normal memory - and the host runs out of memory
+        mi = {l.split(":")[0]: int(l.split()[1]) for l in open("/proc/meminfo") if l.startswith("HugePages_")}
+        tot, free = mi.get("HugePages_Total", 0), mi.get("HugePages_Free", 0)
+        if tot and free > 0.5 * tot:
+            log(f"   huge pages not used by mysqld ({free} of {tot} still free): rolling back")
+            undo = [{"variable": "os:hugepages", "value": "0", "source": source, "reason": "huge pages not used by mysqld"}]
+            if any(ch["variable"] == "large_pages" for ch in changes):
+                undo.append({"variable": "large_pages", "value": "OFF", "source": source, "reason": "huge pages not used by mysqld"})
+            Applier(c.cfg, c.state, c.db, log=log).apply(undo, allow_restart=True)
+            c.event("apply", f"{source}: huge pages reserved but not used by mysqld ({free}/{tot} free): rolled back")
+            return {"applied": [], "restarted": True, "needs_restart": [], "mismatches": [], "errors": ["huge pages not used by mysqld"],
+                    "rolled_back": True, "cnf_path": res.get("cnf_path")}
     if client_changes and not res.get("rolled_back"):
         _apply_clients(c, client_changes, res)
     if res["applied"]:
@@ -950,7 +965,7 @@ def _maybe_profile(c, sess, prof, warmup_s, in_window=False):
 OFFCPU_GAP = 30  # s between the end of the off-CPU slice and the CPU profile: bpftrace symbolises its maps at exit
 
 
-def _maybe_offcpu(c, sess, warmup_s, cpu_secs):
+def _maybe_offcpu(c, sess, warmup_s, cpu_secs, in_window=False):
     """Off-CPU profile (eBPF): what connection threads wait for, by stack, once per configuration. It runs before the CPU
     profile so the two never overlap (kprobe overhead would show up as CPU). agent.ini: offcpu_profiling = auto | off,
     offcpu_seconds (10)."""
@@ -961,16 +976,23 @@ def _maybe_offcpu(c, sess, warmup_s, cpu_secs):
     if key in (sess.get("offcpu_configs") or []):
         return None
     secs = int(c.cfg.get("offcpu_seconds", 10))
-    end_before = (cpu_secs + 5 if cpu_secs else 0) + OFFCPU_GAP
-    if warmup_s < secs + end_before + 10:
-        return None
     pid = hostinfo.mysqld_pid()
     if not pid:
         return None
-    o = probes.OffCpu(pid, secs, c.state.dir).start(delay=warmup_s - secs - end_before)
+    if in_window:
+        # no warm-up (a query set that runs to completion): a slice inside the window, after the CPU profile's slice
+        delay = 15 + (cpu_secs + OFFCPU_GAP if cpu_secs else 0)
+        o = probes.OffCpu(pid, secs, c.state.dir).start(delay=delay)
+        log(f"   off-CPU profile: {secs}s inside the measured window (the benchmark has no warm-up), {delay}s in")
+    else:
+        end_before = (cpu_secs + 5 if cpu_secs else 0) + OFFCPU_GAP
+        if warmup_s < secs + end_before + 10:
+            return None
+        o = probes.OffCpu(pid, secs, c.state.dir).start(delay=warmup_s - secs - end_before)
+        log(f"   off-CPU profile: {secs}s, {end_before}s before the measured window")
+    o.in_window = in_window
     sess.setdefault("offcpu_configs", []).append(key)
     c.state.set("session", sess)
-    log(f"   off-CPU profile: {secs}s, {end_before}s before the measured window")
     return o
 
 
@@ -983,7 +1005,7 @@ def _finish_offcpu(o):
     fg = res.get("foreground") or {}
     if fg:
         log("   off-CPU (connection threads): " + ", ".join(f"{k.replace('Waiting: ', '')} {v['threads']:.2f}" for k, v in list(fg.items())[:5]))
-    res["in_measured_window"] = False
+    res["in_measured_window"] = bool(getattr(o, "in_window", False))
     return res
 
 
@@ -1130,6 +1152,8 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         probes = _start_probes(c, prof.duration if prof.duration > 0 else prof.timeout)
         if profiler is None and not waited:
             profiler = _maybe_profile(c, c.session(), prof, 0, in_window=True)
+        if offcpu is None and not waited:
+            offcpu = _maybe_offcpu(c, c.session(), 0, profiler.seconds if profiler else 0, in_window=True)
         if prof.duration > 0:
             log(f"measuring run {m['seq']} for {prof.duration}s ...")
             c.activity("measuring", f"run #{m['seq']} {label or ''}", prof.duration)
@@ -2071,6 +2095,27 @@ def cmd_experiment(a):
         emit({"ok": True, "ran": done}, "\n".join(f"#{d['id']}: {d['result']}" for d in done) or "No queued experiments.")
 
 
+def _safe_wins_in_tradeoff_phase(sess, best_safe):
+    """Changes of safe experiments that improved while the configuration already carried trade-offs, and are not in the
+    best safe configuration: [{variable, new, source}]."""
+    safe_cfg = next((r.get("managed") or {} for r in sess["runs"] if r["seq"] == best_safe["seq"]), {})
+    out, seen = [], set()
+    for r in sess["runs"]:
+        if r.get("verdict") != "improved" or (r.get("evaluation") or {}).get("confirmed") is False or not tradeoffs_in(r.get("managed")):
+            continue
+        own = [x for x in r.get("changes") or [] if str(x.get("source", "")).startswith("rec:")
+               and not str(x["source"])[4:].startswith(("revert", "rollback"))]
+        if not own or tradeoffs_in({x["variable"]: x.get("new") for x in own}):
+            continue
+        for x in own:
+            cur = safe_cfg.get(x["variable"])
+            cur = cur.get("value") if isinstance(cur, dict) else cur
+            if normalize(x["variable"], cur) != normalize(x["variable"], x.get("new")) and x["variable"] not in seen:
+                seen.add(x["variable"])
+                out.append({"variable": x["variable"], "new": x.get("new"), "source": x["source"]})
+    return out
+
+
 def cmd_autotune(a):
     """Unattended loop: calibrate (if needed) -> recommend -> apply next -> measure (bench) ... -> best config confirmation."""
     c = Ctx()
@@ -2304,6 +2349,21 @@ def cmd_autotune(a):
     if a.confirm and best and best_safe and best["seq"] != best_safe["seq"] and best.get("tradeoffs"):
         goto(best, "best configuration with trade-offs")
         _bench_run(c, prof, "best with trade-offs, confirmation")
+    if best_safe and a.confirm:
+        # safe changes that improved during the trade-off phase were measured on top of trade-offs, so the safe set never
+        # saw them: measure them once on the best safe configuration (twice: a single run can be luck)
+        extra = _safe_wins_in_tradeoff_phase(c.session(), best_safe)
+        if extra:
+            goto(best_safe, "best production-safe configuration")
+            ids = sorted({x["source"][4:] for x in extra})
+            log(f"== safe changes that improved in the trade-off phase, on the best safe configuration: {', '.join(ids)}")
+            _apply_and_record(c, [{"variable": x["variable"], "value": x["new"], "reason": f"autotune: {x['source'][4:]} improved in the "
+                                   "trade-off phase; measured on the best safe configuration", "source": "autotune"} for x in extra], "autotune")
+            for i in (1, 2):
+                run, _ = _bench_run(c, prof, f"best safe + {', '.join(ids)} ({i}/2)")
+                log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
+            _confirm(c)
+            best_safe = c.session().get("best_safe")
     if best_safe:
         goto(best_safe, "best production-safe configuration")
         if a.confirm:

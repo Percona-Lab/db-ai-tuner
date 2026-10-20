@@ -94,10 +94,31 @@ class Profile:
                 "data_state": self.data_state,
                 "requires": self.requires}
 
+    def window(self):
+        """(start, end) seconds of the measured window from the benchmark's own start (warm-up, then duration)."""
+        try:
+            w = int(self.warmup)
+        except (TypeError, ValueError):
+            return None
+        return (w, w + self.duration) if self.duration > 0 else None
+
     def parse(self, text):
         out = {}
+        win = self.window()
         for name, spec in self.metrics.items():
-            mode, _, rx = spec.partition(":") if spec.split(":", 1)[0] in ("sum", "geomean", "count", "last", "max") else ("last", "", spec)
+            mode, _, rx = spec.partition(":") if spec.split(":", 1)[0] in ("sum", "geomean", "count", "last", "max", "window") else ("last", "", spec)
+            if mode == "window":
+                # (time, value) pairs, e.g. sysbench interval lines: the mean of the intervals inside the measured window
+                pairs = []
+                for m in re.finditer(rx.strip(), text, re.M):
+                    try:
+                        pairs.append((float(m.group(1)), float(m.group(2))))
+                    except (ValueError, IndexError):
+                        pass
+                inside = [v for t, v in pairs if win and win[0] < t <= win[1]]
+                if inside:
+                    out[name] = round(sum(inside) / len(inside), 4)
+                continue
             vals = []
             for m in re.finditer(rx.strip(), text):
                 try:
@@ -117,6 +138,14 @@ class Profile:
                 out[name] = round(math.exp(sum(math.log(v) for v in pos) / len(pos)), 4) if pos else None
             else:
                 out[name] = vals[-1]
+        # sysbench's own summary covers the whole run (warm-up included): with interval reports, the goal comes from
+        # the intervals inside the measured window (C2: a whole-run 3,135 vs 3,750 measured by the server)
+        if "sysbench_tps" in out and "sysbench_tps" not in [n for n, sp in self.metrics.items() if sp.startswith("window:")] and win:
+            iv = [(float(m.group(1)), float(m.group(2))) for m in re.finditer(r"^\[ *(\d+)s \].*?tps: ([\d.]+)", text, re.M)]
+            inside = [v for t, v in iv if win[0] < t <= win[1]]
+            if len(inside) >= 3:
+                out["sysbench_tps_whole_run"] = out["sysbench_tps"]
+                out["sysbench_tps"] = round(sum(inside) / len(inside), 4)
         return out
 
 

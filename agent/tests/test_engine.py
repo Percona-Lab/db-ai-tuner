@@ -585,6 +585,24 @@ def test_noise_model_fixes():
     assert abs(evaluate.goal_server_check({"goal_value": 3135, "summary": {"tps": 3750}}, ratio)) > 10
 
 
+def test_unsteady_and_window_goal():
+    import tempfile
+    from tuning_agent import bench
+    # a regression measured while deferred work piled up decides nothing
+    base = {"seq": 1, "label": "baseline", "managed": {"a": "1"}, "goal_value": 100.0, "verdict": "reference", "summary": {"tps": 100.0}}
+    exp = {"seq": 2, "label": "x", "managed": {"a": "2"}, "goal_value": 80.0,
+           "summary": {"tps": 80.0, "steady_state": {"steady": False, "growing": ["dirty pages % 40 -> 70"]}},
+           "changes": [{"variable": "a", "old": "1", "new": "2", "source": "rec:x"}]}
+    v, ev = evaluate.verdict(exp, [base], "tps", {"noise_pct": 2.0})
+    assert v == "neutral" and ev.get("unsteady_verdict") == "regressed"
+    # sysbench goal from the interval lines inside the measured window
+    d = tempfile.mkdtemp(); p = os.path.join(d, "x.ini")
+    open(p, "w").write("[bench]\nname=x\nrun=true\nwarmup=20\nduration=30\n[metrics]\nsysbench_tps = transactions:\\s+\\d+\\s+\\(([\\d.]+) per sec\n")
+    txt = "\n".join(f"[ {t}s ] thds: 8 tps: {100 if t <= 20 else 200}.00 qps: 1" for t in range(5, 55, 5)) + "\n    transactions:    7000 (140.00 per sec.)\n"
+    out = bench.Profile(p).parse(txt)
+    assert out["sysbench_tps"] == 200.0 and out["sysbench_tps_whole_run"] == 140.0
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
@@ -648,6 +666,7 @@ def test_noise_plan_picks_the_remedy():
 def test_profile_run_length_placeholders(tmp_path=None):
     import tempfile
     from tuning_agent import bench
+    from tuning_agent import bench
     d = tempfile.mkdtemp()
     p = os.path.join(d, "b.ini")
     open(p, "w").write("[bench]\nname=x\nrun = sysbench --time={total} run; hdb {warmup_min} {duration_min}\nwarmup = 120\nduration = 300\n")
@@ -667,6 +686,7 @@ def test_data_state():
     assert evaluate.data_state_check([dict(r, summary={"rows_changed_per_s": 0}) for r in runs], "unspecified")["status"] == "ok"
     assert abs(evaluate.trend_pct([100, 101, 102, 103], [0, 1, 2, 3]) - 0.985) < 0.01
     import tempfile
+    from tuning_agent import bench
     from tuning_agent import bench
     p = os.path.join(tempfile.mkdtemp(), "b.ini")
     open(p, "w").write("[bench]\nname=x\nrun=true\ndata_state = seasoned\n")
@@ -747,6 +767,7 @@ def test_llm_pseudo_variables_accepted():
 def test_profile_has_all_attributes():
     # a profile must carry every attribute _bench_run uses (a misplaced edit once dropped `probe`)
     import tempfile
+    from tuning_agent import bench
     from tuning_agent import bench
     p = os.path.join(tempfile.mkdtemp(), "b.ini")
     open(p, "w").write("[bench]\nname=x\nrun=sysbench --time={total} run\nwarmup=120\nduration=300\n\n[requires]\nmax_connections=1100\n")

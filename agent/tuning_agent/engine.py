@@ -722,8 +722,15 @@ def recommend(ctx):
                   f"CPU-bound ({busy_:.0f}%) with {s.get('threads_running_avg', 0):.0f} running threads: jemalloc has less allocator lock "
                   "contention and fragmentation than glibc malloc (Percona recommendation). Needs a mysqld restart. Experiment.",
                   {"cpu_busy": busy_, "threads_running_avg": s.get("threads_running_avg")}, impact=2, confidence=1)
-        if "large_pages" in v and not _on(v, "large_pages") and bp >= 8 * GiB and ram >= 16 * GiB and not swapping and mem_avail > GiB:
-            pages = int((bp + 192 * MiB) // (2 * MiB))
+        # headroom from what this host measured: huge pages are pinned, so mysqld's memory beyond the buffer pool and
+        # everything else on the host must still fit in what is left (#124: the reservation ran the host out of memory)
+        pages = int((bp + 192 * MiB) // (2 * MiB))
+        db_mb = s.get("dbproc_pss_mb") or 0
+        mysqld_other = max(0, db_mb * MiB - bp) if db_mb else 2 * GiB
+        others = max(0, ram - mem_avail - db_mb * MiB) if db_mb else 0
+        headroom = ram - pages * 2 * MiB - mysqld_other - others - GiB
+        if "large_pages" in v and not _on(v, "large_pages") and bp >= 8 * GiB and ram >= 16 * GiB and not swapping and mem_avail > GiB \
+                and headroom > 0:
             b.add("os-hugepages", "Back the buffer pool with huge pages", [("os:hugepages", str(pages)), ("large_pages", "ON")],
                   f"Reserves {pages} x 2 MiB pages for the {human_size(bp)} buffer pool: fewer TLB misses for memory-bound work "
                   "(MySQL docs / field reports: 5-30%). The memory is reserved even when unused; needs a restart. Experiment.",

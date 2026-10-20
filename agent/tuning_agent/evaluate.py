@@ -391,6 +391,13 @@ def verdict(run, history, goal, noise):
         return "unreliable", {"client_saturated": cl, "note": f"UNRELIABLE: {cl}. The measured throughput is the client's limit, "
                                                               "so the run is kept for reference but excluded from comparisons."}
     v, d = _verdict(run, history, goal, noise)
+    if (d or {}).get("not_steady") and v in ("improved", "regressed"):
+        # deferred work (flushing, purge, change-buffer merges) was still piling up or the window still warming at its
+        # end: the difference may come from what the window did not pay for, so it decides nothing either way
+        d = dict(d, unsteady_verdict=v,
+                 note=f"Inconclusive: {v} by {d.get('goal_delta_pct')}%, but the window was not at steady state "
+                      f"({'; '.join(d['not_steady'])}). Treated as no measurable effect.")
+        v = "neutral"
     if st:
         d = dict(d)
         d["steal"] = st
