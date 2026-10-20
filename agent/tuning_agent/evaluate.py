@@ -370,6 +370,22 @@ def steal_check(summary, noise_pct=None):
             "est_impact_pct": round(impact, 2), "flag_at_pct": round(flag_at, 2), "invalid_at_pct": round(invalid_at, 2)}
 
 
+def swap_cost(s, noise_pct=None):
+    """mysqld's pages come back from swap during the window AND that costs measurable time. With an off-CPU profile, the
+    measured share of connection-thread waiting on swap-in must be large enough to move the goal beyond noise (AMD #136:
+    754 MB in swap, ~20 pages/s back, 0.003 s of 217 s waiting - no cost); without a profile, the swap-in itself counts."""
+    if (s.get("dbproc_swap_mb") or 0) <= 0:
+        return False
+    if "dbproc_workingset_refault_anon_per_s" in s:
+        back = (s.get("dbproc_workingset_refault_anon_per_s") or 0) > 0
+    else:
+        back = (s.get("dbproc_pswpin_per_s") or 0) > 0 or (s.get("swap_in") or 0) > 0
+    if not back:
+        return False
+    share = s.get("offcpu_swapin_share_pct")
+    return share is None or share >= float(noise_pct or DEFAULT_GOAL_NOISE)
+
+
 def verdict(run, history, goal, noise):
     if run.get("superseded"):
         return "superseded", {"note": run["superseded"]}
@@ -423,8 +439,10 @@ def confirm_pass(runs, goal, noise):
     changed = []
     for r in runs:
         ev = r.get("evaluation") or {}
-        if r.get("verdict") not in ("improved",) and not (r.get("verdict") == "neutral" and ev.get("confirmed") is False):
+        if r.get("verdict") not in ("improved", "efficiency-gain") and not (r.get("verdict") == "neutral" and ev.get("confirmed") is False):
             continue
+        # an efficiency gain was kept with the goal within noise of the parent: its repeats must keep it there
+        eff = r.get("verdict") == "efficiency-gain" or (r.get("verdict") == "neutral" and ev.get("confirmed_kind") == "efficiency-gain")
         key = config_key(r.get("managed"))
         mine = [x for x in runs if config_key(x.get("managed")) == key and x.get("goal_value") is not None and x.get("verdict") not in EXCLUDED]
         par = [x for x in runs if x["seq"] in (ev.get("parent_runs") or []) and x.get("goal_value") is not None]
@@ -434,12 +452,18 @@ def confirm_pass(runs, goal, noise):
         pm = _mean([x["goal_value"] for x in par])
         d = improvement(goal, m, pm)
         thr = max(RESOLUTION_NOISE, mean_noise(noise_pct, len(mine), len(par)))
-        ok = d is not None and d > thr
-        new = "improved" if ok else "neutral"
+        ok = d is not None and (d >= -thr if eff else d > thr)
+        new = ("efficiency-gain" if eff else "improved") if ok else "neutral"
         ev = dict(ev, confirmed=ok, confirmed_runs=[x["seq"] for x in mine], confirmed_delta_pct=d, confirmed_threshold_pct=round(thr, 2))
+        if eff:
+            ev["confirmed_kind"] = "efficiency-gain"
         if not ok:
-            ev["note"] = (f"Not confirmed: the mean of runs {ev['confirmed_runs']} is {d:+.2f}% vs the parent, within the ±{thr:.2f}% "
+            ev["note"] = (f"Efficiency gain not confirmed: the mean of runs {ev['confirmed_runs']} is {d:+.2f}% vs the parent, worse than "
+                          f"the ±{thr:.2f}% threshold for these run counts." if eff else
+                          f"Not confirmed: the mean of runs {ev['confirmed_runs']} is {d:+.2f}% vs the parent, within the ±{thr:.2f}% "
                           "threshold for these run counts (the first run was lucky).")
+        elif ev.get("note", "").startswith(("Not confirmed", "Efficiency gain not confirmed")):
+            ev.pop("note")
         if new != r.get("verdict") or ev != r.get("evaluation"):
             changed.append((r["seq"], r.get("verdict"), new))
             r["verdict"], r["evaluation"] = new, ev
@@ -558,8 +582,9 @@ def _verdict(run, history, goal, noise):
         details["unstable_within_run"] = {k: s.get(k) for k in ("tput_dip_samples", "tput_dip_longest_samples", "tput_samples",
                                                                 "tput_min_vs_median_pct", "blk_write_max_ms", "blk_flush_max_ms",
                                                                 "disk_w_await_ms_max", "disk_r_await_ms_max")}
-    if (s.get("dbproc_swap_mb") or 0) > 0 and ((s.get("dbproc_pswpin_per_s") or 0) > 0 or (s.get("swap_in") or 0) > 0):
-        details["swap_hazard"] = {"dbproc_swap_mb": s.get("dbproc_swap_mb"), "swap_in": s.get("swap_in")}
+    if swap_cost(s, goal_noise):
+        details["swap_hazard"] = {"dbproc_swap_mb": s.get("dbproc_swap_mb"), "swap_in": s.get("swap_in"),
+                                  "offcpu_swapin_share_pct": s.get("offcpu_swapin_share_pct")}
     if d_goal is None:
         return "neutral", details
     if d_goal > goal_noise:

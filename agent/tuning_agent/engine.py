@@ -91,10 +91,12 @@ def _numval(var, x):
             return None
 
 
-def shaped_values(var, values, current):
+def shaped_values(var, values, current, direction=None):
     """Sweep points ordered (and completed) by how the setting's response is expected to look (catalog):
     saturating - upward from the current value, smallest step first (the sweep stops once a step stops helping);
-    optimum - both sides of the current value, nearest first (the sweep then extends towards the better side)."""
+    optimum - both sides of the current value, nearest first (the sweep then extends towards the better side).
+    direction ("up" / "down"): the run's evidence already points one way (e.g. prefetched pages evicted unused: read
+    ahead less) - that side first, nearest first, then the other side."""
     shape = knowledge.response_shape(var)
     cur = _numval(var, current)
     nums = [(x, _numval(var, x)) for x in values]
@@ -111,20 +113,20 @@ def shaped_values(var, values, current):
         below = [(fmt(cur / 2), cur / 2)]
     if not above and cur not in (float("inf"),):
         above = [(fmt(cur * 2), cur * 2)]
+    if direction in ("up", "down"):
+        first, second = (above, below) if direction == "up" else (below, above)
+        return [p[0] for p in first + second], shape
     out = []
     for i in range(max(len(below), len(above))):  # bracket first: the nearest value on each side, then farther ones
         out += [p[0] for p in (below[i:i + 1] + above[i:i + 1])]
     return out, shape
 
 
-def swap_hazard(s):
-    """mysqld's own memory was paged back in from swap during the window: its cgroup's anonymous refaults (evicted
-    anonymous pages faulted back = swap-ins), not host-wide swap-in, which also counts other processes' cold pages."""
-    if (s.get("dbproc_swap_mb") or 0) <= 0:
-        return False
-    if "dbproc_workingset_refault_anon_per_s" in s:
-        return (s.get("dbproc_workingset_refault_anon_per_s") or 0) > 0
-    return (s.get("swap_in") or 0) > 0  # no cgroup statistics: host swap-in while mysqld has swapped memory
+def swap_hazard(s, noise_pct=None):
+    """mysqld's own memory was paged back in from swap during the window (its cgroup's anonymous refaults, not host-wide
+    swap-in) and, when an off-CPU profile measured it, waiting for those pages cost time beyond noise."""
+    from .evaluate import swap_cost
+    return swap_cost(s, noise_pct)
 
 
 def bp_round(v, n, up=False):
@@ -922,9 +924,9 @@ def recommend(ctx):
                   impact=2, confidence=2)
 
     # ---------------- sweeps: measure several values where a single step is a guess ----
-    def sweep(id_, title, var, values, rationale, evidence, impact=2, lead=None):
+    def sweep(id_, title, var, values, rationale, evidence, impact=2, lead=None, direction=None):
         values = [x for x in dict.fromkeys(values) if x is not None and normalize(var, x) != normalize(var, v.get(var))]
-        values, shape = shaped_values(var, values, v.get(var))
+        values, shape = shaped_values(var, values, v.get(var), direction)
         if var in v and len(values) >= 2:
             b.add(id_, title, [(var, values[0])], rationale + f" Values: {', '.join(map(str, values))}.", evidence, impact=impact, confidence=2)
             if b.items and b.items[-1]["id"] == id_:
@@ -1014,7 +1016,8 @@ def recommend(ctx):
               f"{reads_now:.0f} page reads/s from disk; linear read-ahead prefetched {ra:.0f} pages/s"
               + (f", {100 * waste:.0f}% of them evicted unused" if ra else "")
               + ". A lower threshold prefetches sooner (larger sequential reads for range / index scans), 64 almost disables it.",
-              {"bp_disk_reads": reads_now, "read_ahead_per_s": ra, "read_ahead_evicted_per_s": ra_ev, "innodb_read_ahead_threshold": cur}, impact=2)
+              {"bp_disk_reads": reads_now, "read_ahead_per_s": ra, "read_ahead_evicted_per_s": ra_ev, "innodb_read_ahead_threshold": cur}, impact=2,
+              direction="up" if waste > 0.3 else None)
         if not _on(v, "innodb_random_read_ahead") and waste < 0.3:
             b.add("random-read-ahead", "Random read-ahead", [("innodb_random_read_ahead", "ON")],
                   f"{reads_now:.0f} page reads/s from disk: random read-ahead fetches the rest of an extent once enough of its pages "
@@ -1339,7 +1342,7 @@ def best_config(history, goal="tps", noise=2.0):
     # queued behind it): among configurations tied on the goal, the one without swap-ins wins. Only a tie-break - it
     # never promotes a configuration that measured worse (#125: the -35% run was the only one without cold swap)
     for c in tied:
-        c["swap_hazard"] = any(swap_hazard(r.get("summary") or {}) for r in history if config_key(r.get("managed")) == c["key"])
+        c["swap_hazard"] = any(swap_hazard(r.get("summary") or {}, noise) for r in history if config_key(r.get("managed")) == c["key"])
     tied.sort(key=lambda c: (c["key"] in beaten, not c["kept"], c["swap_hazard"], -c["practices"], c["resource_score"], -c["n"],
                              c["mean"] if goal == "latency" else -c["mean"]))
     return tied[0]

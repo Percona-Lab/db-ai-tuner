@@ -652,21 +652,6 @@ def test_response_shapes():
     assert shape == "optimum" and vals[0] == "2" and vals[1] == "8"
 
 
-if __name__ == "__main__":
-    fails = 0
-    for name, fn in list(globals().items()):
-        if name.startswith("test_"):
-            try:
-                fn()
-                print("ok  ", name)
-            except Exception as e:  # noqa
-                fails += 1
-                import traceback
-                print("FAIL", name, repr(e))
-                traceback.print_exc()
-    sys.exit(1 if fails else 0)
-
-
 def test_benchmark_requirements_not_lowered():
     req = {"max_connections": "1100", "max_prepared_stmt_count": "1048576"}
     assert engine._breaks_requirement({"changes": [{"variable": "max_connections", "proposed": "500"}]}, req)
@@ -964,10 +949,40 @@ def test_read_ahead_experiments():
                "inputs": OLAP[1], "history": [], "noise_pct": 2.0, "managed": {}}
         return {i["id"]: i for i in engine.run_engine(ctx)["items"]}
     it = items(read_ahead_per_s=300, read_ahead_evicted_per_s=10)
-    assert "sweep-read-ahead" in it and it["sweep-read-ahead"]["sweep"]["values"][:2] == ["8", "32"] and "random-read-ahead" in it
+    # optimum shape around the default 56: bracket first (32 below, 64 above), then farther (8)
+    assert "sweep-read-ahead" in it and it["sweep-read-ahead"]["sweep"]["values"] == ["32", "64", "8"] and "random-read-ahead" in it
     assert not it["sweep-read-ahead"].get("no_mechanism") and it["sweep-read-ahead"]["relevance"] >= 2
     wasted = items(read_ahead_per_s=300, read_ahead_evicted_per_s=200)
     assert "read-ahead-less" in wasted and "random-read-ahead" not in wasted and wasted["sweep-read-ahead"]["sweep"]["values"][0] == "64"
+
+
+def test_efficiency_gain_needs_its_repeat():
+    # canary #141: group-commit-delay kept as an efficiency gain at -5.1% (within ±6.8%), its confirmation measured -10%:
+    # the mean of both runs is worse than the parent beyond the threshold -> not kept, the best safe config goes back
+    base = {"innodb_log_writer_threads": "OFF"}
+    gcd = dict(base, binlog_group_commit_sync_delay="200")
+    runs = [{"seq": s, "label": "log-writer-threads-off", "managed": base, "goal_value": g, "verdict": v, "evaluation": {}}
+            for s, g, v in ((5, 801, "improved"), (6, 780, "repeat"), (10, 788, "repeat"), (14, 795, "repeat"))]
+    runs.append({"seq": 15, "label": "group-commit-delay", "managed": gcd, "goal_value": 749, "verdict": "efficiency-gain",
+                 "evaluation": {"parent_runs": [5, 6, 10, 14]}})
+    assert engine.best_config(runs, "tps", 6.76)["seqs"] == [15]
+    runs.append({"seq": 21, "label": "best safe config, confirmation", "managed": gcd, "goal_value": 711, "verdict": "repeat", "evaluation": {}})
+    ch = evaluate.confirm_pass(runs, "tps", {"noise_pct": 6.76})
+    assert (15, "efficiency-gain", "neutral") in ch
+    assert engine.best_config(runs, "tps", 6.76)["seqs"] == [5, 6, 10, 14]
+    # a repeat that holds keeps it
+    runs[-1]["goal_value"], runs[4]["verdict"], runs[4]["evaluation"] = 770, "efficiency-gain", {"parent_runs": [5, 6, 10, 14]}
+    evaluate.confirm_pass(runs, "tps", {"noise_pct": 6.76})
+    assert runs[4]["verdict"] == "efficiency-gain"
+
+
+def test_swap_hazard_needs_measured_cost():
+    # AMD #136: 754 MB of mysqld in swap, ~20 pages/s faulted back, 0.003 s of 217 s off-CPU waiting on swap-in
+    s = {"dbproc_swap_mb": 754, "dbproc_workingset_refault_anon_per_s": 20, "offcpu_swapin_share_pct": 0.001}
+    assert not evaluate.swap_cost(s, 3.6) and not engine.swap_hazard(s, 3.6)
+    assert evaluate.swap_cost(dict(s, offcpu_swapin_share_pct=12.0), 3.6)
+    assert evaluate.swap_cost({k: v for k, v in s.items() if k != "offcpu_swapin_share_pct"}, 3.6)  # no profile: swap-in counts
+    assert not evaluate.swap_cost(dict(s, dbproc_workingset_refault_anon_per_s=0), 3.6)
 
 
 def test_apply_failure_is_a_failed_experiment():
@@ -1012,3 +1027,18 @@ def test_steady_state_and_warmup_check():
     w = evaluate.warmup_check(runs, 120)
     assert w["adequate"] is False and "120 s" in w["text"]
     assert evaluate.warmup_check([{"summary": {"steady_state": {"steady": True, "growing": []}}}] * 3, 120)["adequate"]
+
+
+if __name__ == "__main__":
+    fails = 0
+    for name, fn in list(globals().items()):
+        if name.startswith("test_"):
+            try:
+                fn()
+                print("ok  ", name)
+            except Exception as e:  # noqa
+                fails += 1
+                import traceback
+                print("FAIL", name, repr(e))
+                traceback.print_exc()
+    sys.exit(1 if fails else 0)

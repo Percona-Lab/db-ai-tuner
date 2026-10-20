@@ -832,6 +832,11 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
         src = goal_source
     summary["goal_value"] = gv
     summary["goal_source"] = src
+    fg = ((inputs.get("offcpu") or {}).get("foreground") or {})
+    if fg:  # measured time connection threads waited for pages coming back from swap (share of their off-CPU time: an upper bound)
+        tot = sum((x.get("seconds") or 0) for x in fg.values())
+        sw = sum((x.get("seconds") or 0) for x in fg.values() if "swap" in (x.get("tags") or []))
+        summary["offcpu_swapin_share_pct"] = round(100.0 * sw / tot, 3) if tot else 0.0
     runs = sess["runs"]
     prev = runs[-1] if runs else None
     first = runs[0] if runs else None
@@ -2377,9 +2382,10 @@ def cmd_autotune(a):
             continue
         measured += 1
         log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
-        if run["verdict"] == "improved" and measured < a.max_runs:
-            # a single run above the threshold can be luck (winner's curse): measure it again before building on it
-            log("   improvement: measuring the same configuration again to confirm it")
+        if run["verdict"] in ("improved", "efficiency-gain") and measured < a.max_runs:
+            # a single run above the threshold can be luck (winner's curse): measure it again before building on it. An
+            # efficiency gain is kept with the goal within noise: one low run can hide a real loss (canary #141)
+            log(f"   {'improvement' if run['verdict'] == 'improved' else 'efficiency gain'}: measuring the same configuration again to confirm it")
             run, _ = _bench_run(c, prof, f"{nxt} (confirm)")
             measured += 1
             log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
@@ -2433,6 +2439,13 @@ def cmd_autotune(a):
         goto(best_safe, "best production-safe configuration")
         if a.confirm:
             _bench_run(c, prof, "best safe config, confirmation")
+            # the confirmation is one more run of that configuration: re-judge with it, and leave the server on the
+            # configuration that is best after it (canary #141 confirmed an efficiency gain 5% low and stayed on it)
+            _confirm(c)
+            after = c.session().get("best_safe")
+            if after and after["seq"] != best_safe["seq"]:
+                log(f"   the confirmation changed the best safe configuration: run {best_safe['seq']} -> runs {after['runs']}")
+                goto(after, "best production-safe configuration after the confirmation")
     _finish_pending_restart(c)
     sess = c.session()
     out = {"ok": True, "best": sess.get("best"), "best_safe": sess.get("best_safe"),
