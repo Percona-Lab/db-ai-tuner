@@ -29,6 +29,10 @@ class Fail(Exception):
     pass
 
 
+class ServerDown(Fail):
+    """mysqld does not come back after the reset (e.g. OOM-killed on start with an oversized buffer pool)."""
+
+
 class TooSlow(Fail):
     pass
 
@@ -918,7 +922,7 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         c.db.close()
         rc, out = bench.run_shell(prof.reset, timeout=3600, log=logfile + ".reset")
         if rc != 0:
-            raise Fail(f"reset command failed ({rc}): {out[-500:]}")
+            raise ServerDown(f"reset command failed ({rc}): {out[-500:]}")
         c.db.connect(retries=30, delay=2)
         c.state.set("restart_pending", False)
         try:  # a restart deferred to this reset: the configured values must be in effect now
@@ -1926,7 +1930,7 @@ def cmd_autotune(a):
             continue
         try:
             run, _ = _bench_run(c, prof, f"{nxt}")
-        except TooSlow as e:
+        except (TooSlow, ServerDown) as e:
             log(f"   {e}; reverting {nxt}")
             cur = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
             undo = [{"variable": k, "value": before_exp.get(k), "reason": f"autotune: {nxt} made the benchmark too slow", "source": "rollback"}
