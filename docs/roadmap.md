@@ -84,3 +84,27 @@ and no redo: the knob only paces flushing, so it could not act. Done: `mechanism
 mechanism has nothing to act on (writes for flushing / redo / commit / purge / change buffer, disk reads for the read
 path) move to the end as one-point validation checks with a note why; the LLM context carries the same activity facts.
 Next: the run page shows "what limited this run" and "what each candidate acts on" side by side.
+
+## Principle: evidence over thresholds (user guidance, 2026-10-20)
+
+Applies to every setting, not to one rule. A change is tried because a measurement shows time spent in the part of the
+work it acts on: performance_schema wait events, CPU profiles, eBPF off-CPU probes, InnoDB internals. Rate or counter
+thresholds ("> 5 new connections/s") are proxies with no basis and do not count as evidence.
+
+- **Unmeasurable cost:** if a cost cannot be measured yet, the work item is a new measurement (a probe feeding a new
+  time-breakdown component), not a threshold. Until then, the change has no evidence and runs only as end-of-session
+  validation.
+- **Outside reports:** blogs and vendor defaults are leads that motivate a measurement or a test; they are never a
+  rationale.
+- **Done:** name resolution. `probes.py` (bpftrace uprobes on libc `getnameinfo` / `getaddrinfo`) measures time over the
+  measured window and feeds the "Connection setup: name resolution (DNS)" component. `skip_name_resolve` is tried only
+  when that time exists, whatever the source (rule, LLM or sweep). The old `> 5 connections/s` gate is gone.
+- **Next:** review the ~94 rules in `engine.recommend()` and replace counter thresholds with measured-time evidence
+  where a measurement exists. Add probes where it does not:
+  - thread creation and authentication on connect;
+  - fsync latency per file (redo / data / binlog);
+  - off-CPU time by kernel stack (I/O, futex, page faults);
+  - page-fault and swap-in stalls in mysqld;
+  - temporary-file I/O.
+- **Ranking:** relevance already ranks by the share of measured database time a change acts on. The remaining
+  thresholds then only set how small a share is worth a run.
