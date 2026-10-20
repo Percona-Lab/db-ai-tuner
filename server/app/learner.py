@@ -66,6 +66,14 @@ def db():
         for col, typ in (("hosts", "INTEGER"), ("caveats", "TEXT"), ("support_sessions", "INTEGER")):
             if col not in cols:
                 c.execute(f"ALTER TABLE insights ADD COLUMN {col} {typ}")
+        cols = {r[1] for r in c.execute("PRAGMA table_info(proposals)")}
+        for col in ("proposal", "expected_effect"):
+            if col not in cols:
+                c.execute(f"ALTER TABLE proposals ADD COLUMN {col} TEXT")
+        # earlier proposals kept problem and proposal in one text: split at "Proposal:"
+        for r in c.execute("SELECT id, body FROM proposals WHERE proposal IS NULL AND body LIKE '%Proposal:%'").fetchall():
+            prob, _, prop = r["body"].partition("Proposal:")
+            c.execute("UPDATE proposals SET body=?, proposal=? WHERE id=?", (prob.strip(), prop.strip(), r["id"]))
         # earlier status names (they read like verdicts): observed / repeated / contradicted
         c.execute("UPDATE insights SET status='observed' WHERE status='candidate'")
         c.execute("UPDATE insights SET status='repeated' WHERE status='validated'")
@@ -146,7 +154,9 @@ Return:
   what the runs do not show; neutral results within noise are "no-effect" only when the session could have seen the
   effect (low noise).
 - proposals: changes to the tuner itself that this session shows are needed (a missing measurement, a wrong decision,
-  a rule that fired without evidence, a harness problem), with the run numbers as evidence. Keep them specific.
+  a rule that fired without evidence, a harness problem). Keep the parts apart: problem = what the runs showed (with
+  run numbers); proposal = the concrete change to the tuner, one or two sentences, actionable; expected_effect = what
+  would be better and how one would see it.
 Runs flagged not_steady, client_saturated, goal_server_mismatch or unreliable are weak evidence: say so or skip them."""
 
 SCHEMA_OUT = {
@@ -169,9 +179,10 @@ SCHEMA_OUT = {
                 "runs": {"type": "array", "items": {"type": "integer"}},
                 "same_as": {"type": "integer"}}}},
         "proposals": {"type": "array", "maxItems": 5, "items": {
-            "type": "object", "additionalProperties": False, "required": ["title", "kind", "body", "runs"],
+            "type": "object", "additionalProperties": False, "required": ["title", "kind", "problem", "proposal", "expected_effect", "runs"],
             "properties": {"title": {"type": "string"}, "kind": {"type": "string", "enum": ["rule", "measurement", "decision", "harness", "bug"]},
-                           "body": {"type": "string"}, "runs": {"type": "array", "items": {"type": "integer"}}}}}},
+                           "problem": {"type": "string"}, "proposal": {"type": "string"}, "expected_effect": {"type": "string"},
+                           "runs": {"type": "array", "items": {"type": "integer"}}}}}},
 }
 
 
@@ -318,9 +329,10 @@ def run_pass(trigger="timer", max_sessions=None):
                     new = _store_insight(ins, dg, c)
                     stats["insights_new" if new else "insights_updated"] += 1
                 for p in res.get("proposals") or []:
-                    c.execute("INSERT INTO proposals(created, title, kind, body, sessions, status, source) VALUES (?,?,?,?,?,?,?)",
-                              (time.time(), p["title"][:300], p.get("kind"), p.get("body"), _j([{"session": sid, "runs": p.get("runs")}]),
-                               "open", llm.settings().get("model")))
+                    c.execute("INSERT INTO proposals(created, title, kind, body, proposal, expected_effect, sessions, status, source) "
+                              "VALUES (?,?,?,?,?,?,?,?,?)",
+                              (time.time(), p["title"][:300], p.get("kind"), p.get("problem"), p.get("proposal"), p.get("expected_effect"),
+                               _j([{"session": sid, "runs": p.get("runs")}]), "open", llm.settings().get("model")))
                     stats["proposals_new"] += 1
                 c.execute("INSERT OR REPLACE INTO processed VALUES (?,?,?)", (sid, time.time(), rid))
             revalidate(c)
