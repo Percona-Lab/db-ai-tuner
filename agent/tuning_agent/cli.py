@@ -318,6 +318,16 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
         ch.setdefault("reason", reason_default)
     client_changes = [ch for ch in changes if ch["variable"].startswith("client:")]
     changes = [ch for ch in changes if not ch["variable"].startswith("client:")]
+    # InnoDB silently caps innodb_io_capacity at innodb_io_capacity_max: raise the max together so the value is really measured
+    vs = {ch["variable"]: ch for ch in changes}
+    if "innodb_io_capacity" in vs and "innodb_io_capacity_max" not in vs:
+        try:
+            want = int(float(vs["innodb_io_capacity"]["value"]))
+            if want > int(c.db.variables().get("innodb_io_capacity_max") or 0):
+                changes.append({"variable": "innodb_io_capacity_max", "value": str(want * 2), "source": source,
+                                "reason": "companion: InnoDB caps innodb_io_capacity at innodb_io_capacity_max"})
+        except Exception:
+            pass
     ap = Applier(c.cfg, c.state, c.db, log=log)
     try:
         res = ap.apply(changes, allow_restart=allow, defer_restart=defer and _reset_restarts(c)) if changes else {
