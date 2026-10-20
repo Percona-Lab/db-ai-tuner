@@ -1436,6 +1436,30 @@ def cmd_reevaluate(a):
          "\n".join(f"  run {s}: {o} -> {n}" for s, o, n in changed) or "All verdicts unchanged.")
 
 
+def _fill_profiles(c, sess, last):
+    """Profiles run once per configuration, so a repeat or confirmation has none: take them from the latest profiled run
+    of the same configuration and rebuild the time breakdown, so the next decision keeps the detailed evidence."""
+    inp = last.setdefault("inputs", {})
+    need = [k for k in ("cpu_profile", "offcpu") if not (inp.get(k) or {}).get("categories" if k == "cpu_profile" else "foreground")]
+    if not need or not sess["runs"]:
+        return
+    key = evaluate.config_key(sess["runs"][-1].get("managed"))
+    for r in reversed(sess["runs"][:-1]):
+        if not need or evaluate.config_key(r.get("managed")) != key:
+            continue
+        try:
+            with open(os.path.join(c.state.dir, f"run{r['seq']}_inputs.json")) as f:
+                old = json.load(f).get("inputs") or {}
+        except (OSError, ValueError):
+            continue
+        for k in list(need):
+            if (old.get(k) or {}).get("categories" if k == "cpu_profile" else "foreground"):
+                inp[k] = dict(old[k], from_run=r["seq"])
+                need.remove(k)
+    if any(k in inp and (inp[k] or {}).get("from_run") for k in ("cpu_profile", "offcpu")):
+        inp["time_breakdown"] = bottleneck.breakdown(last.get("summary"), inp, (c.hw() or {}).get("cpus"))
+
+
 def _engine_ctx(c, sess):
     path = sess.get("last_inputs_path")
     basis = None
@@ -1454,6 +1478,7 @@ def _engine_ctx(c, sess):
     else:
         with open(path) as f:
             last = json.load(f)
+        _fill_profiles(c, sess, last)
     flavor, vt, ver, _ = mysqldb.flavor_of(c.variables)
     _ap = Applier(c.cfg, c.state, c.db)
     osf = ostune.facts(c.datadir(), hostinfo.device_for_path(c.datadir()), _ap.service, _ap.fs_device)

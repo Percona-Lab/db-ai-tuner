@@ -1411,7 +1411,7 @@ def _hypothesis(it, ctx):
         return {"text": f"{it.get('title')}: {first}.", "kind": "revert"}
     if it.get("no_mechanism"):
         return {"text": f"Validation only - {it['no_mechanism']}.", "kind": "validation"}
-    tags = list(MECHANISMS.get(it["id"], ((), ""))[0])
+    tags = list(MECHANISMS.get(it["id"], ((), ""))[0]) or list(it.get("acts_on_tags") or [])
     parts = [p for p in ctx.get("breakdown") or [] if set(tags) & set(p["tags"]) and "network" not in p["tags"]]
     mech = MECHANISMS.get(it["id"], ((), ""))[1]
     if parts:
@@ -1504,7 +1504,13 @@ def run_engine(ctx):
             in_time = {t for p in ctx["breakdown"] for t in p["tags"]}
             rd, md = relevance(it["id"], [d for d in ctx["diagnosis"] if d["type"] not in in_time or d["type"] in ALSO_FROM_DIAGNOSIS])
             rel, matched = max(rb or 0, rd or 0), mb + md
-        if rel is not None:
+        if it["id"] not in MECHANISMS and it.get("acts_on_tags") and ctx["breakdown"]:
+            # a bundle (or an analysed suggestion) acts on what its members act on
+            rel, matched = bottleneck.relevance(it["acts_on_tags"], ctx["breakdown"])
+            it["mechanism"] = "Acts on what its settings act on: " + ", ".join(it["acts_on_tags"])
+            it["addresses"] = matched
+            it["relevance"] = rel
+        elif rel is not None:
             it["mechanism"] = MECHANISMS[it["id"]][1]
             it["addresses"] = matched
             it["relevance"] = rel
@@ -1555,7 +1561,9 @@ def run_engine(ctx):
             if e.get("n", 0) >= 5 and e.get("losses", 0) >= 0.7 * e["n"] and not e.get("wins") and not e.get("scope"):
                 sc -= 4  # consistently harmful in comparable sessions (e.g. the thread pool at low concurrency): try it last
         # priority (best-practice bundle, reverts) only with evidence: a bundle nothing measured points at goes last
-        it["score"] = 100 if it.get("priority") and not it.get("no_mechanism") else sc
+        # priority only for returning to measured configurations; everything else - the best-practice bundle included -
+        # ranks by the evidence for what it acts on
+        it["score"] = 100 if it.get("priority") and not it.get("no_mechanism") and not it.get("practice") else sc
     items.sort(key=lambda i: (i["safety"] == "trade-off" and i["kind"] != "revert", -i["score"]))
     for n, it in enumerate(items, 1):
         it["rank"] = n
