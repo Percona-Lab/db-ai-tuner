@@ -366,7 +366,14 @@ async function parametersPage() {
   const rank = { high: 0, medium: 1, low: 2, unknown: 3, container: 4 };
   const rows = d.parameters.filter(p => (!q || (p.name + " " + p.description + " " + (p.when || "")).toLowerCase().includes(q))
     && (!fi || p.effective_impact === fi) && (!fs || p.scope === fs))
-    .sort((a, b) => ((rank[a.effective_impact] ?? 3) - (rank[b.effective_impact] ?? 3)) || a.name.localeCompare(b.name));
+    .sort((a, b) => {
+      const k = st.sort || "impact", dir = st.desc ? -1 : 1;
+      const key = p => ({ name: p.name, impact: rank[p.effective_impact] ?? 3, when: p.when || "~", safety: (p.safety === "safe" ? "0" : "1") + (p.safety || ""),
+        restart: p.restart ? 1 : 0, policy: p.mode + (p.user_mode ? "0" : "1"), def: p.default_mode })[k];
+      const x = key(a), y = key(b);
+      return (x < y ? -1 : x > y ? 1 : 0) * dir || ((rank[a.effective_impact] ?? 3) - (rank[b.effective_impact] ?? 3)) || a.name.localeCompare(b.name);
+    });
+  const th = (k, label) => `<th class="sortable" data-sort="${k}" style="cursor:pointer;white-space:nowrap">${label}${(st.sort || "impact") === k ? (st.desc ? " ▾" : " ▴") : ""}</th>`;
   const impBadge = p => { const l = p.learned && p.learned.impact !== "unknown" ? p.learned : null;
     const tip = `Shipped estimate: ${p.impact}` + (l ? `. Measured: ${l.impact} - ${l.runs} single-setting experiments in ${l.sessions} session(s): ${l.improved} improved, ${l.regressed} regressed, ${l.neutral} within noise; median change of the decisive ones ${l.median_abs_delta_pct}% (max ${l.max_abs_delta_pct}%). A summary of experiment data, not a law.` : ". Not measured often enough yet to replace the estimate.")
       + (p.learned_by_workload ? " By workload: " + Object.entries(p.learned_by_workload).map(([w, v]) => `${w} ${v.impact} (${v.runs} runs)`).join(", ") + "." : "");
@@ -379,13 +386,14 @@ async function parametersPage() {
    <select id="pimp" style="width:auto"><option value="">any impact</option>${["high", "medium", "low", "unknown", "container"].map(x => `<option ${x === fi ? "selected" : ""}>${x}</option>`).join("")}</select>
    <select id="pscope" style="width:auto"><option value="">MySQL and OS</option>${["mysql", "os", "pseudo"].map(x => `<option ${x === fs ? "selected" : ""}>${x}</option>`).join("")}</select>
    <span class="muted" style="font-size:12.5px">${rows.length} of ${d.parameters.length} · blocked for you: ${d.parameters.filter(p => p.mode === "block").length}</span></div>
-  <div class="card tablewrap"><table><thead><tr><th>Parameter</th><th>Impact</th><th>When it counts</th><th>Safety</th><th>Restart</th><th>Your policy</th>${d.admin ? "<th>Service default</th>" : ""}</tr></thead><tbody>
+  <div class="card tablewrap"><table><thead><tr>${th("name", "Parameter")}${th("impact", "Impact")}${th("when", "When it counts")}${th("safety", "Safety")}${th("restart", "Restart")}${th("policy", "Your policy")}${d.admin ? th("def", "Service default") : ""}</tr></thead><tbody>
   ${rows.map(p => `<tr><td class="mono" style="white-space:nowrap">${esc(p.name)}${info((p.description || "") + (p.precondition ? ` Precondition: ${p.precondition}.` : "") + (p.rules && p.rules.length ? ` Tuner rules: ${p.rules.join(", ")}.` : "") + (p.mechanism_tags && p.mechanism_tags.length ? ` Acts on: ${p.mechanism_tags.join(", ")}.` : ""))}</td>
     <td>${impBadge(p)}</td><td style="font-size:12.5px;max-width:360px">${esc(p.when || "")}</td>
     <td>${p.safety === "safe" ? '<span class="badge good">safe</span>' : `<span class="badge warn" ${p.safety_note ? `data-tip="${esc(p.safety_note)}"` : ""} tabindex="0">${esc(p.safety || "?")}</span>`}</td>
     <td>${p.restart ? "yes" : p.restart === false ? "no" : ""}</td><td>${polSel(p, false)}</td>${d.admin ? `<td>${polSel(p, true)}</td>` : ""}</tr>`).join("")}</tbody></table></div>`;
-  const save = () => { try { sessionStorage.setItem("paramFilter", JSON.stringify({ q: document.getElementById("pq").value, impact: document.getElementById("pimp").value, scope: document.getElementById("pscope").value })); } catch (x) { } parametersPage(); };
-  document.getElementById("pq").onchange = save; document.getElementById("pimp").onchange = save; document.getElementById("pscope").onchange = save;
+  const save = (extra) => { try { sessionStorage.setItem("paramFilter", JSON.stringify(Object.assign({ q: document.getElementById("pq").value, impact: document.getElementById("pimp").value, scope: document.getElementById("pscope").value, sort: st.sort, desc: st.desc }, extra || {}))); } catch (x) { } parametersPage(); };
+  $view.querySelectorAll("th[data-sort]").forEach(el => el.onclick = () => { const k = el.dataset.sort; save({ sort: k, desc: (st.sort || "impact") === k ? !st.desc : false }); });
+  document.getElementById("pq").onchange = () => save(); document.getElementById("pimp").onchange = () => save(); document.getElementById("pscope").onchange = () => save();
   $view.querySelectorAll("select[data-pol]").forEach(el => el.onchange = async () => { await api(`/api/parameters/${encodeURIComponent(el.dataset.pol)}/policy`, { method: "PUT", body: { mode: el.value } }); parametersPage(); });
   $view.querySelectorAll("select[data-def]").forEach(el => el.onchange = async () => { await api(`/api/admin/parameters/${encodeURIComponent(el.dataset.def)}/policy`, { method: "PUT", body: { mode: el.value } }); parametersPage(); });
 }
