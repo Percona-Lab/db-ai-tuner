@@ -75,3 +75,16 @@ There are two kinds of data:
   a guardrail.
 - **Provenance:** every decision records what influenced it (shipped vs learned entry id), so a bad learning can be
   found and retired.
+
+## Status
+
+- **Parameter catalog (2026-10-20): done.**
+  - Shipped file `agent/tuning_agent/knowledge_data/parameters.json`, built by `tools/build_parameter_catalog.py`:
+    161 settings with impact, when it counts, precondition, safety, restart, mechanisms and rules.
+  - Learned impact per setting from single-setting experiments (`learning.db` `param_evidence`, per session, flawed
+    runs excluded, pre-fix sessions at half weight).
+  - The effective impact (learned when measured, else shipped) shifts experiment ranking: high +1, low −1.
+  - Tune / block policy: admin service defaults, per-user lists (web and API), enforced by the agent and the LLM
+    sanitizer.
+  - Parameters page for every user.
+- **Next:** mechanism effects, value grids, profile classification, baseline memory (above).
