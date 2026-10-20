@@ -876,6 +876,10 @@ def recommend(ctx):
             size = 1 * GiB if ram <= 8 * GiB else 2 * GiB
             extra_swap = [("os:swapfile", fmt_size(size))]
             room = min(int(ram * 0.15), cold + (swap_free + size) // 2)
+        # the buffer pool must fit in RAM plus the swap it can use (half of it, 1 GiB for the rest of the server): beyond that
+        # mysqld is OOM-killed instead of slow
+        swap_after = swap_free + (size if extra_swap else 0)
+        room = min(room, max(0, ram + swap_after // 2 - 1 * GiB - bp))
         new = bp_round(v, bp + room)
         if new >= bp + max(128 * MiB, bp * 0.05):
             b.add("bp-overcommit", "Grow the buffer pool into memory freed by swapping out cold pages",
