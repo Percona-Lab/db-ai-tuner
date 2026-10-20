@@ -117,6 +117,48 @@ OPTIMIZER_FLAGS = [
 ]
 
 
+# how performance responds to the value (to be validated per workload; the learner records sweep curves):
+#   saturating: more is better up to a point, then flat (or slightly worse through its cost) - climb, stop at saturation
+#   optimum:    too little and too much both hurt - bracket both sides, refine towards the better one
+#   binary / choice: compare the alternatives
+#   tradeoff:   monotonic in speed, paid with durability or safety - each step is a decision, not a search
+RESPONSE = {
+    "innodb_buffer_pool_size": ("saturating", "up to the working set / data size; capped by the memory budget"),
+    "innodb_redo_log_capacity": ("saturating", "until checkpoint age stays well below capacity; recovery time grows"),
+    "innodb_log_file_size": ("saturating", "as innodb_redo_log_capacity"),
+    "innodb_log_buffer_size": ("saturating", "until no log buffer waits"),
+    "table_open_cache": ("saturating", "until no tables are opened during the run"),
+    "table_definition_cache": ("saturating", "until no definitions are loaded during the run"),
+    "tmp_table_size": ("saturating", "until temporary tables stop spilling to disk; capped by the memory budget"),
+    "max_heap_table_size": ("saturating", "as tmp_table_size"),
+    "sort_buffer_size": ("optimum", "large enough to avoid merge passes; larger allocations cost time per sort"),
+    "join_buffer_size": ("optimum", "large enough for the hash join build side; larger allocations cost time"),
+    "read_buffer_size": ("optimum", "scan buffering; larger allocations cost time per scan"),
+    "read_rnd_buffer_size": ("optimum", "as read_buffer_size"),
+    "thread_cache_size": ("saturating", "until no threads are created during the run"),
+    "innodb_thread_concurrency": ("optimum", "0 = unlimited; too low starves CPUs, too high lets contention through"),
+    "thread_pool_size": ("optimum", "around the number of CPUs; too few starves, too many brings contention back"),
+    "innodb_purge_threads": ("optimum", "enough to keep the history list bounded; more compete with user threads"),
+    "innodb_buffer_pool_instances": ("optimum", "enough to split mutex contention; more add overhead"),
+    "innodb_page_cleaners": ("optimum", "as innodb_buffer_pool_instances for flushing"),
+    "innodb_io_capacity": ("optimum", "matched to what the storage sustains: too low falls behind, too high steals I/O from reads"),
+    "innodb_io_capacity_max": ("optimum", "as innodb_io_capacity, for catch-up flushing"),
+    "innodb_lru_scan_depth": ("optimum", "enough free pages; deeper scans cost CPU"),
+    "innodb_max_dirty_pages_pct_lwm": ("optimum", "trade between write combining and flushing smoothness"),
+    "innodb_spin_wait_delay": ("optimum", "depends on the CPU: too short burns CPU, too long delays wake-ups"),
+    "innodb_sync_spin_loops": ("optimum", "as innodb_spin_wait_delay"),
+    "innodb_read_io_threads": ("optimum", "enough outstanding reads for the device; more add context switches"),
+    "innodb_write_io_threads": ("optimum", "as innodb_read_io_threads for writes"),
+    "innodb_read_ahead_threshold": ("optimum", "earlier read-ahead helps scans, wastes I/O on random access"),
+    "binlog_group_commit_sync_delay": ("optimum", "longer batches fewer fsyncs but adds commit latency"),
+    "max_connections": ("saturating", "a prerequisite: enough for the clients; more only cost memory"),
+    "innodb_flush_log_at_trx_commit": ("tradeoff", "1 (durable) / 2 / 0: faster, less durable"),
+    "sync_binlog": ("tradeoff", "1 (durable) / N / 0"),
+    "innodb_doublewrite": ("binary", ""), "innodb_adaptive_hash_index": ("binary", ""), "innodb_change_buffering": ("choice", ""),
+    "innodb_flush_method": ("choice", ""), "performance_schema": ("binary", ""), "thread_handling": ("choice", ""),
+    "innodb_log_writer_threads": ("binary", ""), "large_pages": ("binary", ""), "os:malloc": ("choice", ""),
+}
+
 # memory cost per setting (agent/tuning_agent/memory.py budgets with these): memory is one pool shared by all options
 MEMORY_COST = {
     "innodb_buffer_pool_size": "direct: its size, plus ~3% for control blocks / page hash / AHI",
@@ -174,6 +216,7 @@ def main():
             "safety_note": trade[2] if trade and len(trade) > 2 else None,
             "restart": (not kb.get("dynamic", True)) if kb else (bool(okb[1]) if okb else None),
             "mechanism_tags": tags, "rules": rules, "memory_cost": MEMORY_COST.get(name),
+            "response": {"shape": RESPONSE[name][0], "note": RESPONSE[name][1]} if name in RESPONSE else None,
         }
     if "optimizer_switch" in out:
         out["optimizer_switch"].update(impact="container", when="a list of independent optimizer flags: see the optimizer_switch:<flag> entries",

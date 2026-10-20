@@ -76,6 +76,47 @@ def harmful_swap(s):
             or (s.get("oom_kills") or 0) > 0)
 
 
+def _numval(var, x):
+    """Numeric value of a setting for ordering sweep points (sizes included; thread concurrency 0 = unlimited)."""
+    if x is None:
+        return None
+    if var == "innodb_thread_concurrency" and str(x).strip() == "0":
+        return float("inf")
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        try:
+            return float(parse_size(str(x)))
+        except Exception:
+            return None
+
+
+def shaped_values(var, values, current):
+    """Sweep points ordered (and completed) by how the setting's response is expected to look (catalog):
+    saturating - upward from the current value, smallest step first (the sweep stops once a step stops helping);
+    optimum - both sides of the current value, nearest first (the sweep then extends towards the better side)."""
+    shape = knowledge.response_shape(var)
+    cur = _numval(var, current)
+    nums = [(x, _numval(var, x)) for x in values]
+    if cur is None or any(n is None for _, n in nums) or shape not in ("saturating", "optimum"):
+        return values, shape
+    if shape == "saturating":
+        up = sorted([(x, n) for x, n in nums if n > cur], key=lambda p: p[1])
+        return ([x for x, _ in up] or values), shape
+    below = sorted([(x, n) for x, n in nums if n < cur], key=lambda p: -p[1])
+    above = sorted([(x, n) for x, n in nums if n > cur], key=lambda p: p[1])
+    size = (knowledge.KB.get(var) or {}).get("kind") == "size"
+    fmt = (lambda n: fmt_size(int(n))) if size else (lambda n: str(int(n)))
+    if not below and cur not in (float("inf"),) and cur >= 2:
+        below = [(fmt(cur / 2), cur / 2)]
+    if not above and cur not in (float("inf"),):
+        above = [(fmt(cur * 2), cur * 2)]
+    out = []
+    for i in range(max(len(below), len(above))):  # bracket first: the nearest value on each side, then farther ones
+        out += [p[0] for p in (below[i:i + 1] + above[i:i + 1])]
+    return out, shape
+
+
 def swap_hazard(s):
     """mysqld's own memory was paged back in from swap during the window: its cgroup's anonymous refaults (evicted
     anonymous pages faulted back = swap-ins), not host-wide swap-in, which also counts other processes' cold pages."""
@@ -883,10 +924,11 @@ def recommend(ctx):
     # ---------------- sweeps: measure several values where a single step is a guess ----
     def sweep(id_, title, var, values, rationale, evidence, impact=2, lead=None):
         values = [x for x in dict.fromkeys(values) if x is not None and normalize(var, x) != normalize(var, v.get(var))]
+        values, shape = shaped_values(var, values, v.get(var))
         if var in v and len(values) >= 2:
             b.add(id_, title, [(var, values[0])], rationale + f" Values: {', '.join(map(str, values))}.", evidence, impact=impact, confidence=2)
             if b.items and b.items[-1]["id"] == id_:
-                b.items[-1]["sweep"] = {"variable": var, "values": [str(x) for x in values]}
+                b.items[-1]["sweep"] = {"variable": var, "values": [str(x) for x in values], "shape": shape}
                 if lead:
                     b.items[-1]["lead"] = lead
     diag_types = {d["type"] for d in ctx.get("diagnosis") or [] if d.get("severity") in ("high", "medium")}

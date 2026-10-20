@@ -641,6 +641,17 @@ def test_memory_budget():
     assert not run_tradeoffs({"managed": {}, "summary": {"memory_budget": {"over_budget": False}}})
 
 
+def test_response_shapes():
+    from tuning_agent import knowledge
+    assert knowledge.response_shape("innodb_buffer_pool_size") == "saturating"
+    assert knowledge.response_shape("innodb_thread_concurrency") == "optimum"
+    assert knowledge.response_shape("optimizer_switch:mrr") == "binary"
+    # saturating: upward only, smallest step first; optimum: both sides, nearest first
+    assert engine.shaped_values("innodb_buffer_pool_size", ["8G", "16G", "12G"], "10G") == (["12G", "16G"], "saturating")
+    vals, shape = engine.shaped_values("innodb_purge_threads", ["8", "16"], "4")
+    assert shape == "optimum" and vals[0] == "2" and vals[1] == "8"
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

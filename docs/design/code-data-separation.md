@@ -88,3 +88,10 @@ There are two kinds of data:
     sanitizer.
   - Parameters page for every user.
 - **Next:** mechanism effects, value grids, profile classification, baseline memory (above).
+- **Response shapes (2026-10-20): done.** The catalog says how each setting's performance responds: saturating,
+  optimum, binary / choice, or trade-off. Sweeps follow the shape:
+  - saturating settings step upward and stop when a step no longer gains beyond noise;
+  - optimum settings try both sides first, then extend one step towards the winning side (at most twice);
+  - agent sweeps also stop going further in a direction that was already worse.
+
+  Next: the learner records sweep curves and checks each shape per workload.

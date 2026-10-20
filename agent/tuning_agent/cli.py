@@ -1941,7 +1941,18 @@ def _run_experiment(c, prof, exp):
     auto = str(exp.get("created_by") or "").startswith(("agent:", "llm:")) and exp["kind"] == "sweep"
     pv = _num(parent.get(spec.get("variable"))) if auto else None
     worse_at = {}
-    for arm in arms:
+    from .knowledge import response_shape
+    shape = response_shape(spec.get("variable")) if exp["kind"] == "sweep" else None
+    best_gain, saturated, extended = 0.0, False, 0
+    arms = list(arms)
+    i = -1
+    while i + 1 < len(arms):
+        i += 1
+        arm = arms[i]
+        if auto and saturated:
+            results.append({"arm": label(arm), "status": "skipped", "reason": "saturated: the previous step did not gain beyond noise"})
+            log(f"   {label(arm)}: skipped (saturated: a smaller step no longer helped beyond noise)")
+            continue
         if auto and pv is not None:
             x = _num(arm[0]["value"])
             if x is not None and x != pv:
@@ -1978,6 +1989,30 @@ def _run_experiment(c, prof, exp):
             if x is not None and x != pv:
                 side = 1 if x > pv else -1
                 worse_at[side] = min(worse_at.get(side, float("inf")), abs(x - pv))
+        if auto and shape == "saturating" and d is not None:
+            # more is better up to a point: once a bigger value adds nothing beyond noise, bigger ones will not either
+            if d - best_gain < noise:
+                saturated = True
+            best_gain = max(best_gain, d)
+        if auto and shape == "optimum" and i + 1 == len(arms) and extended < 2 and pv is not None:
+            # an inner optimum: when the best value so far is the farthest one tried on its side and beat the parent,
+            # the optimum may lie beyond it - one more step that way
+            meas = [(r, _num(r["arm"].split("=", 1)[1])) for r in results if r["status"] == "measured" and r.get("delta_pct") is not None]
+            meas = [(r, x) for r, x in meas if x is not None]
+            if meas:
+                br, bx = max(meas, key=lambda p: p[0]["delta_pct"])
+                side = 1 if bx > pv else -1
+                farthest = all(abs(x - pv) <= abs(bx - pv) for r, x in meas if (x > pv) == (side > 0))
+                if br["delta_pct"] > noise and farthest and side not in worse_at:
+                    nx = bx * 2 if side > 0 else bx / 2
+                    if side < 0 and nx < 1:
+                        nx = None
+                    if nx is not None:
+                        size = isinstance(arm[0]["value"], str) and arm[0]["value"][-1:].upper() in "KMG"
+                        val = engine.fmt_size(int(nx)) if size else str(int(nx))
+                        arms.append([{"variable": spec["variable"], "value": val}])
+                        extended += 1
+                        log(f"   optimum may lie beyond {br['arm']}: one more step, {spec['variable']}={val}")
         log(f"   {label(arm)}: {mean} ({'' if d is None else f'{d:+.1f}%'})")
     measured = [r for r in results if r["status"] == "measured" and r.get("delta_pct") is not None]
     best = max(measured, key=lambda r: r["delta_pct"], default=None)

@@ -405,3 +405,10 @@ def run_tradeoffs(run):
         out.append({"variable": "memory", "value": mb.get("text", ""), "category": "memory",
                     "lost": "Production safety: memory budget exceeded - swapping / OOM under load."})
     return out
+
+
+def response_shape(variable):
+    """saturating | optimum | binary | choice | tradeoff | None (unknown) - from the parameter catalog."""
+    if str(variable).startswith("optimizer_switch:"):
+        return "binary"
+    return ((catalog().get(variable) or {}).get("response") or {}).get("shape")

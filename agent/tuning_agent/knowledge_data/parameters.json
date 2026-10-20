@@ -8,6 +8,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": "accept queue overflows during the run (listen_drops > 0)",
+   "response": null,
    "restart": true,
    "rules": [],
    "safety": "safe",
@@ -22,6 +23,7 @@
    "mechanism_tags": [],
    "memory_cost": "per active connection with a transaction (binary log on)",
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -38,6 +40,10 @@
    ],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": {
+    "note": "longer batches fewer fsyncs but adds commit latency",
+    "shape": "optimum"
+   },
    "restart": false,
    "rules": [
     "group-commit-delay"
@@ -56,6 +62,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "group-commit-delay"
@@ -72,6 +79,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -88,6 +96,7 @@
    ],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": null,
    "restart": false,
    "rules": [
     "binlog-minimal"
@@ -107,6 +116,7 @@
    ],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": null,
    "restart": false,
    "rules": [
     "writeset-history"
@@ -123,6 +133,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -137,6 +148,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -151,6 +163,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -165,6 +178,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -179,6 +193,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -193,6 +208,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -207,6 +223,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -221,6 +238,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -235,6 +253,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -249,6 +268,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -266,6 +286,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "client-bbr"
@@ -282,6 +303,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -296,6 +318,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -310,6 +333,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -324,6 +348,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -338,6 +363,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -352,6 +378,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -366,6 +393,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -380,6 +408,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -397,6 +426,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "client-bbr"
@@ -413,6 +443,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -427,6 +458,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -441,6 +473,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -455,6 +488,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -469,6 +503,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -485,6 +520,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "client-no-slow-start-idle"
@@ -501,6 +537,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -515,6 +552,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -529,6 +567,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -543,6 +582,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -557,6 +597,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -574,6 +615,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "client-rps"
@@ -590,6 +632,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -604,6 +647,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -618,6 +662,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -632,6 +677,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -646,6 +692,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -660,6 +707,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -674,6 +722,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -688,6 +737,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -702,6 +752,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -716,6 +767,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -730,6 +782,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -744,6 +797,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -762,6 +816,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": true,
    "rules": [
     "binlog-off"
@@ -778,6 +833,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -797,6 +853,10 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": {
+    "note": "",
+    "shape": "binary"
+   },
    "restart": false,
    "rules": [
     "ahi-off",
@@ -814,6 +874,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": true,
    "rules": [],
    "safety": "safe",
@@ -828,6 +889,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": true,
    "rules": [],
    "safety": "safe",
@@ -848,6 +910,10 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": {
+    "note": "enough to split mutex contention; more add overhead",
+    "shape": "optimum"
+   },
    "restart": true,
    "rules": [
     "bp-instances",
@@ -872,6 +938,10 @@
    ],
    "memory_cost": "direct: its size, plus ~3% for control blocks / page hash / AHI",
    "precondition": null,
+   "response": {
+    "note": "up to the working set / data size; capped by the memory budget",
+    "shape": "saturating"
+   },
    "restart": false,
    "rules": [
     "bp-grow",
@@ -897,6 +967,10 @@
    ],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": {
+    "note": "",
+    "shape": "choice"
+   },
    "restart": false,
    "rules": [
     "change-buffer",
@@ -914,6 +988,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": null,
    "rules": [],
    "safety": "durability",
@@ -928,6 +1003,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -946,6 +1022,10 @@
    ],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": {
+    "note": "",
+    "shape": "binary"
+   },
    "restart": true,
    "rules": [
     "doublewrite-off",
@@ -966,6 +1046,10 @@
    ],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": {
+    "note": "1 (durable) / 2 / 0: faster, less durable",
+    "shape": "tradeoff"
+   },
    "restart": false,
    "rules": [
     "trx-commit-2"
@@ -987,6 +1071,10 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": {
+    "note": "",
+    "shape": "choice"
+   },
    "restart": true,
    "rules": [
     "o-direct",
@@ -1007,6 +1095,7 @@
    ],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": null,
    "restart": false,
    "rules": [
     "flush-neighbors"
@@ -1028,6 +1117,7 @@
    ],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": null,
    "restart": false,
    "rules": [
     "flush-sync-off"
@@ -1049,6 +1139,10 @@
    ],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": {
+    "note": "matched to what the storage sustains: too low falls behind, too high steals I/O from reads",
+    "shape": "optimum"
+   },
    "restart": false,
    "rules": [
     "io-capacity-down",
@@ -1067,6 +1161,10 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": {
+    "note": "as innodb_io_capacity, for catch-up flushing",
+    "shape": "optimum"
+   },
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -1084,6 +1182,10 @@
    ],
    "memory_cost": "direct: its size",
    "precondition": "the workload writes (redo / flushing active)",
+   "response": {
+    "note": "until no log buffer waits",
+    "shape": "saturating"
+   },
    "restart": false,
    "rules": [
     "log-buffer"
@@ -1100,6 +1202,10 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": {
+    "note": "as innodb_redo_log_capacity",
+    "shape": "saturating"
+   },
    "restart": true,
    "rules": [],
    "safety": "safe",
@@ -1114,6 +1220,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": null,
    "restart": true,
    "rules": [],
    "safety": "safe",
@@ -1133,6 +1240,10 @@
    ],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": {
+    "note": "",
+    "shape": "binary"
+   },
    "restart": false,
    "rules": [
     "log-writer-threads-off"
@@ -1152,6 +1263,10 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": {
+    "note": "enough free pages; deeper scans cost CPU",
+    "shape": "optimum"
+   },
    "restart": false,
    "rules": [
     "lru-depth",
@@ -1169,6 +1284,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -1187,6 +1303,10 @@
    ],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": {
+    "note": "trade between write combining and flushing smoothness",
+    "shape": "optimum"
+   },
    "restart": false,
    "rules": [
     "sweep-dirty-lwm"
@@ -1207,6 +1327,7 @@
    ],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": null,
    "restart": false,
    "rules": [
     "purge-lag"
@@ -1223,6 +1344,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -1237,6 +1359,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -1251,6 +1374,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": true,
    "rules": [],
    "safety": "safe",
@@ -1265,6 +1389,10 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": {
+    "note": "as innodb_buffer_pool_instances for flushing",
+    "shape": "optimum"
+   },
    "restart": true,
    "rules": [],
    "safety": "safe",
@@ -1279,6 +1407,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -1296,6 +1425,10 @@
    ],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": {
+    "note": "enough to keep the history list bounded; more compete with user threads",
+    "shape": "optimum"
+   },
    "restart": true,
    "rules": [
     "sweep-purge-threads"
@@ -1315,6 +1448,7 @@
    ],
    "memory_cost": null,
    "precondition": "pages are read from disk",
+   "response": null,
    "restart": false,
    "rules": [
     "random-read-ahead"
@@ -1335,6 +1469,10 @@
    ],
    "memory_cost": null,
    "precondition": "pages are read from disk",
+   "response": {
+    "note": "earlier read-ahead helps scans, wastes I/O on random access",
+    "shape": "optimum"
+   },
    "restart": false,
    "rules": [
     "read-ahead-less",
@@ -1356,6 +1494,10 @@
    ],
    "memory_cost": null,
    "precondition": "pages are read from disk",
+   "response": {
+    "note": "enough outstanding reads for the device; more add context switches",
+    "shape": "optimum"
+   },
    "restart": true,
    "rules": [
     "sweep-read-io-threads"
@@ -1376,6 +1518,10 @@
    ],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": {
+    "note": "until checkpoint age stays well below capacity; recovery time grows",
+    "shape": "saturating"
+   },
    "restart": false,
    "rules": [
     "sweep-redo"
@@ -1395,6 +1541,10 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": {
+    "note": "depends on the CPU: too short burns CPU, too long delays wake-ups",
+    "shape": "optimum"
+   },
    "restart": false,
    "rules": [
     "sweep-spin-wait-delay"
@@ -1411,6 +1561,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -1425,6 +1576,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -1444,6 +1596,10 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": {
+    "note": "as innodb_spin_wait_delay",
+    "shape": "optimum"
+   },
    "restart": false,
    "rules": [
     "spin-loops"
@@ -1463,6 +1619,10 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": {
+    "note": "0 = unlimited; too low starves CPUs, too high lets contention through",
+    "shape": "optimum"
+   },
    "restart": false,
    "rules": [
     "sweep-thread-concurrency"
@@ -1479,6 +1639,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -1493,6 +1654,10 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": {
+    "note": "as innodb_read_io_threads for writes",
+    "shape": "optimum"
+   },
    "restart": true,
    "rules": [],
    "safety": "safe",
@@ -1510,6 +1675,10 @@
    ],
    "memory_cost": "per active connection, per join - possibly more than once per query",
    "precondition": null,
+   "response": {
+    "note": "large enough for the hash join build side; larger allocations cost time",
+    "shape": "optimum"
+   },
    "restart": false,
    "rules": [
     "join-buffer"
@@ -1526,6 +1695,10 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": {
+    "note": "",
+    "shape": "binary"
+   },
    "restart": true,
    "rules": [],
    "safety": "safe",
@@ -1540,6 +1713,10 @@
    "mechanism_tags": [],
    "memory_cost": "~768 KiB base per allowed connection (+ performance_schema ~128 KiB); 2 x CPUs of them assumed active with all per-query buffers",
    "precondition": null,
+   "response": {
+    "note": "a prerequisite: enough for the clients; more only cost memory",
+    "shape": "saturating"
+   },
    "restart": false,
    "rules": [
     "max-connections"
@@ -1559,6 +1736,10 @@
    ],
    "memory_cost": "per active connection (with tmp_table_size, the lower applies)",
    "precondition": "on-disk temporary tables during the run (Created_tmp_disk_tables > 0)",
+   "response": {
+    "note": "as tmp_table_size",
+    "shape": "saturating"
+   },
    "restart": false,
    "rules": [
     "tmp-tables"
@@ -1575,6 +1756,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": true,
    "rules": [],
    "safety": "safe",
@@ -1593,6 +1775,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "subquery-to-derived"
@@ -2119,6 +2302,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "os-irq-split"
@@ -2137,6 +2321,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "os-governor"
@@ -2153,6 +2338,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": true,
    "rules": [],
    "safety": "durability",
@@ -2169,6 +2355,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "os-aio"
@@ -2188,6 +2375,7 @@
    ],
    "memory_cost": "pins 2 MiB per page: unusable by anything else, even when the buffer pool does not use it",
    "precondition": null,
+   "response": null,
    "restart": true,
    "rules": [
     "os-hugepages"
@@ -2204,6 +2392,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2221,6 +2410,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "os-autogroup"
@@ -2241,6 +2431,10 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": {
+    "note": "",
+    "shape": "choice"
+   },
    "restart": true,
    "rules": [
     "os-jemalloc"
@@ -2260,6 +2454,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "os-nobarrier"
@@ -2278,6 +2473,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "os-noatime"
@@ -2297,6 +2493,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "net-bbr"
@@ -2315,6 +2512,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "net-netdev-budget"
@@ -2333,6 +2531,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "net-netdev-budget"
@@ -2352,6 +2551,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "net-netdev-backlog"
@@ -2368,6 +2568,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2382,6 +2583,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2396,6 +2598,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": "accept queue overflows during the run (listen_drops > 0)",
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2410,6 +2613,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2424,6 +2628,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2441,6 +2646,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "net-bbr"
@@ -2457,6 +2663,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2471,6 +2678,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2485,6 +2693,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2501,6 +2710,7 @@
    ],
    "memory_cost": null,
    "precondition": "SYN queue drops during the run (syn_drops > 0)",
+   "response": null,
    "restart": false,
    "rules": [
     "net-syn-backlog"
@@ -2517,6 +2727,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2533,6 +2744,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "net-no-slow-start-idle"
@@ -2549,6 +2761,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2563,6 +2776,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2580,6 +2794,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "net-conntrack"
@@ -2600,6 +2815,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "os-irq-split"
@@ -2616,6 +2832,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2633,6 +2850,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "net-rps"
@@ -2651,6 +2869,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "os-scheduler"
@@ -2667,6 +2886,7 @@
    "mechanism_tags": [],
    "memory_cost": "disk, not memory: lets cold memory be swapped instead of OOM",
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2684,6 +2904,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "os-thp-off"
@@ -2700,6 +2921,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": null,
    "rules": [],
    "safety": "safe",
@@ -2717,6 +2939,7 @@
    ],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": null,
    "restart": false,
    "rules": [
     "os-dirty-writeback"
@@ -2733,6 +2956,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2747,6 +2971,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2761,6 +2986,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2775,6 +3001,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2789,6 +3016,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2803,6 +3031,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2820,6 +3049,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "os-swappiness"
@@ -2836,6 +3066,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2853,6 +3084,10 @@
    ],
    "memory_cost": "~192 MiB fixed + ~128 KiB per allowed connection",
    "precondition": null,
+   "response": {
+    "note": "",
+    "shape": "binary"
+   },
    "restart": true,
    "rules": [
     "ps-off"
@@ -2872,6 +3107,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "ps-lite"
@@ -2888,6 +3124,10 @@
    "mechanism_tags": [],
    "memory_cost": "per active connection, per sorted read",
    "precondition": null,
+   "response": {
+    "note": "as read_buffer_size",
+    "shape": "optimum"
+   },
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -2904,6 +3144,7 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [
     "rg-innodb-bg"
@@ -2920,6 +3161,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": true,
    "rules": [],
    "safety": "replication",
@@ -2936,6 +3178,7 @@
    ],
    "memory_cost": null,
    "precondition": "measured time in host name resolution",
+   "response": null,
    "restart": true,
    "rules": [
     "skip-name-resolve"
@@ -2955,6 +3198,10 @@
    ],
    "memory_cost": "per active connection, per sort - possibly more than once per query",
    "precondition": "sort merge passes during the run (Sort_merge_passes > 0)",
+   "response": {
+    "note": "large enough to avoid merge passes; larger allocations cost time per sort",
+    "shape": "optimum"
+   },
    "restart": false,
    "rules": [
     "sort-buffer",
@@ -2975,6 +3222,10 @@
    ],
    "memory_cost": null,
    "precondition": "the workload writes (redo / flushing active)",
+   "response": {
+    "note": "1 (durable) / N / 0",
+    "shape": "tradeoff"
+   },
    "restart": false,
    "rules": [
     "sync-binlog"
@@ -2993,6 +3244,10 @@
    ],
    "memory_cost": "~6 KiB per cached table definition",
    "precondition": "table definition loading during the run (Opened_table_definitions > 0)",
+   "response": {
+    "note": "until no definitions are loaded during the run",
+    "shape": "saturating"
+   },
    "restart": false,
    "rules": [
     "table-def-cache"
@@ -3012,6 +3267,10 @@
    ],
    "memory_cost": "~8 KiB per cached table instance",
    "precondition": "table opening during the run (Opened_tables > 0)",
+   "response": {
+    "note": "until no tables are opened during the run",
+    "shape": "saturating"
+   },
    "restart": false,
    "rules": [
     "table-open-cache"
@@ -3028,6 +3287,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": "table opening during the run (Opened_tables > 0)",
+   "response": null,
    "restart": true,
    "rules": [],
    "safety": "safe",
@@ -3042,6 +3302,7 @@
    "mechanism_tags": [],
    "memory_cost": "global cap on in-memory temporary tables",
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -3059,6 +3320,10 @@
    ],
    "memory_cost": "~256 KiB per cached idle thread",
    "precondition": "thread creation during the run (Threads_created > 0)",
+   "response": {
+    "note": "until no threads are created during the run",
+    "shape": "saturating"
+   },
    "restart": false,
    "rules": [
     "thread-cache"
@@ -3081,6 +3346,10 @@
    ],
    "memory_cost": null,
    "precondition": null,
+   "response": {
+    "note": "",
+    "shape": "choice"
+   },
    "restart": true,
    "rules": [
     "thread-pool"
@@ -3097,6 +3366,10 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": {
+    "note": "around the number of CPUs; too few starves, too many brings contention back",
+    "shape": "optimum"
+   },
    "restart": false,
    "rules": [],
    "safety": "safe",
@@ -3114,6 +3387,10 @@
    ],
    "memory_cost": "per active connection (one in-memory temporary table), capped by temptable_max_ram",
    "precondition": "on-disk temporary tables during the run (Created_tmp_disk_tables > 0)",
+   "response": {
+    "note": "until temporary tables stop spilling to disk; capped by the memory budget",
+    "shape": "saturating"
+   },
    "restart": false,
    "rules": [
     "tmp-tables"
@@ -3130,6 +3407,7 @@
    "mechanism_tags": [],
    "memory_cost": null,
    "precondition": null,
+   "response": null,
    "restart": false,
    "rules": [],
    "safety": "semantics",
