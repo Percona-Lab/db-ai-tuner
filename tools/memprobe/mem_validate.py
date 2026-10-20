@@ -122,16 +122,17 @@ def ensure_data():
     c = conn()
     cur = c.cursor()
     cur.execute("CREATE DATABASE IF NOT EXISTS memtest")
-    cur.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='memtest' AND table_name='big'")
-    if not cur.fetchone()[0]:
-        log("creating memtest.big (2M rows)")
-        cur.execute("CREATE TABLE memtest.big (id INT PRIMARY KEY AUTO_INCREMENT, k INT, c CHAR(120), pad CHAR(60))")
-        cur.execute("INSERT INTO memtest.big (k, c, pad) VALUES " + ",".join(f"({i % 1000}, REPEAT(MD5({i}), 3), MD5({i + 7}))" for i in range(1000)))
+    c.select_db("memtest")
+    cur.execute("CREATE TABLE IF NOT EXISTS big (id INT PRIMARY KEY AUTO_INCREMENT, k INT, c CHAR(120), pad CHAR(60))")
+    cur.execute("SELECT COUNT(*) FROM big")
+    if cur.fetchone()[0] < 2_000_000:
+        log("filling memtest.big (2M rows)")
+        cur.execute("INSERT INTO big (k, c, pad) VALUES " + ",".join(f"({i % 1000}, REPEAT(MD5({i}), 3), MD5({i + 7}))" for i in range(1000)))
         while True:
-            cur.execute("SELECT COUNT(*) FROM memtest.big")
+            cur.execute("SELECT COUNT(*) FROM big")
             if cur.fetchone()[0] >= 2_000_000:
                 break
-            cur.execute("INSERT INTO memtest.big (k, c, pad) SELECT FLOOR(RAND() * 100000), REPEAT(MD5(RAND()), 3), MD5(RAND()) FROM memtest.big LIMIT 500000")
+            cur.execute("INSERT INTO big (k, c, pad) SELECT FLOOR(RAND() * 100000), REPEAT(MD5(RAND()), 3), MD5(RAND()) FROM big LIMIT 500000")
     c.close()
 
 
