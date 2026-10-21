@@ -525,9 +525,11 @@ def analyze_window(a, b, samples):
                 wd.append({"event": name, "class": wait_class(name), "count": cnt - c0, "time_s": round((tm - t0) / 1e12, 3),
                            "avg_us": round((tm - t0) / 1e6 / max(cnt - c0, 1), 2)})
         wd.sort(key=lambda r: -r["time_s"])
-        total = sum(r["time_s"] for r in wd) or 1
+        # table I/O events contain the file / sync / lock waits nested in them (NESTING_EVENT_ID) plus the row call's CPU:
+        # shares are of the real waits only, table I/O gets none (it would count the same time twice)
+        total = sum(r["time_s"] for r in wd if r["class"] != "table_io") or 1
         for r in wd:
-            r["pct"] = round(100 * r["time_s"] / total, 1)
+            r["pct"] = None if r["class"] == "table_io" else round(100 * r["time_s"] / total, 1)
         inputs["top_waits"] = wd[:25]
         by = {}
         for r in wd:

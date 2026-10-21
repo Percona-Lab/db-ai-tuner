@@ -957,14 +957,19 @@ const WAIT_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "#8a6fd
 function waitsTable(inp, r) {
   const dur = (r && r.summary && r.summary.duration_s) || null;
   const cov = inp.wait_instruments;
-  const classes = Object.entries(inp.wait_classes || {});
+  // table I/O (wait/io/table) times whole storage-engine row calls: CPU work plus the file I/O, mutex and lock waits nested
+  // inside them (performance_schema NESTING_EVENT_ID) - adding it to those waits counts the same time twice
+  const NESTING = new Set(["table_io"]);
+  const classes = Object.entries(inp.wait_classes || {}).filter(([k]) => !NESTING.has(k));
+  const rowCalls = (inp.wait_classes || {}).table_io;
   const tot = classes.reduce((a, [, v]) => a + v, 0) || 1;
   const bar = classes.length ? `<div class="waitbar">${classes.map(([k, v], i) => `<span style="width:${(100 * v / tot).toFixed(2)}%;background:${WAIT_COLORS[i % WAIT_COLORS.length]}" data-tip="${esc(WAIT_CLASS_NAMES[k] || k)}: ${num(v)} s (${(100 * v / tot).toFixed(1)}%)"></span>`).join("")}</div>
     <div class="row" style="gap:4px 14px;font-size:12px;margin:4px 0 8px">${classes.map(([k, v], i) => `<span><i class="dot" style="background:${WAIT_COLORS[i % WAIT_COLORS.length]}"></i>${esc(WAIT_CLASS_NAMES[k] || k)} ${(100 * v / tot).toFixed(0)}%</span>`).join("")}</div>` : "";
-  return `<h3>Where threads waited${info("performance_schema wait events during the run window. Threads waiting = total wait time / run duration. Table I/O is time spent in storage-engine row calls (including buffer pool hits), not only disk." +
+  const rowNote = rowCalls ? `<p class="muted" style="font-size:12px;margin:0 0 8px">Row access through the storage engine (table I/O): ${num(rowCalls)} s${dur ? ` (${num(rowCalls / dur)} threads busy)` : ""} - CPU work plus the waits above, so not added to them.</p>` : "";
+  return `<h3>Where threads waited${info("performance_schema wait events during the run window. Threads waiting = total wait time / run duration; it includes background threads (redo writes are mostly the log writer, data file writes the page cleaners), so it is not all time connections waited. Table I/O (row calls into the storage engine) contains the file I/O, mutex and lock waits that happen inside it and its own CPU work: it is shown separately and not counted in the percentages." +
     (cov ? ` Instrumentation: ${cov.enabled} of ${cov.instruments} wait instruments timed${cov.sync_enabled ? "" : "; mutex/rwlock waits are not timed (enable with tuning-agent diag waits on)"}.` : ""))}</h3>
-    <div class="card">${bar}<div class="tablewrap"><table><thead><tr><th>Event</th><th>Class</th><th class="num">% of wait time</th><th class="num">threads waiting</th><th class="num">count</th><th class="num">avg µs</th></tr></thead><tbody>` +
-    inp.top_waits.slice(0, 15).map(w => `<tr><td class="mono" style="word-break:break-all">${esc(w.event.replace(/^wait\//, ""))}</td><td>${esc(WAIT_CLASS_NAMES[w.class] || w.class || "")}</td><td class="num">${w.pct != null ? w.pct : "–"}</td><td class="num">${dur ? num(w.time_s / dur) : "–"}</td><td class="num">${num(w.count)}</td><td class="num">${w.avg_us != null ? num(w.avg_us) : num(w.time_s * 1e6 / Math.max(w.count, 1))}</td></tr>`).join("") + "</tbody></table></div></div>";
+    <div class="card">${bar}${rowNote}<div class="tablewrap"><table><thead><tr><th>Event</th><th>Class</th><th class="num">% of wait time</th><th class="num">threads waiting</th><th class="num">count</th><th class="num">avg µs</th></tr></thead><tbody>` +
+    inp.top_waits.slice(0, 15).map(w => `<tr><td class="mono" style="word-break:break-all">${esc(w.event.replace(/^wait\//, ""))}</td><td>${esc(NESTING.has(w.class) ? "row access (contains the waits)" : (WAIT_CLASS_NAMES[w.class] || w.class || ""))}</td><td class="num">${NESTING.has(w.class) ? "–" : (w.time_s != null ? (100 * w.time_s / tot).toFixed(1) : (w.pct != null ? w.pct : "–"))}</td><td class="num">${dur ? num(w.time_s / dur) : "–"}</td><td class="num">${num(w.count)}</td><td class="num">${w.avg_us != null ? num(w.avg_us) : num(w.time_s * 1e6 / Math.max(w.count, 1))}</td></tr>`).join("") + "</tbody></table></div></div>";
 }
 function cnfBlock(managed) {
   // MySQL option file only: can be copied into my.cnf as is
