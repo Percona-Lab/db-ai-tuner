@@ -38,7 +38,7 @@ curl -fsSL https://50-116-44-237.sslip.io/install.sh | bash -s -- --api-key $KEY
 set -x
 
 # swap of about 1x RAM, as on production hosts (Linode's default 512 MB turned memory pressure into an OOM kill in r1)
-RAMG=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo) / 1048576 ))
+RAMG=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo) / 1048576 )); [ $RAMG -gt 64 ] && RAMG=64  # swap target: at most 64 GB
 if [ "$SWAP" = none ]; then
   # the other production philosophy: a database host without swap (memory pressure ends in an OOM kill, never in
   # swapping); the agent is told so and never adds swap

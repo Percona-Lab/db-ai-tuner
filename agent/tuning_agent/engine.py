@@ -22,6 +22,13 @@ from .knowledge import KB, OPTIONS, flags_subset, fmt_size, human_size, normaliz
 
 GiB = 1024 ** 3
 MiB = 1024 ** 2
+SWAP_CAP = 64 * GiB  # safety swap: enough room for cold pages and a margin before an OOM kill; beyond it, swap only
+                     # postpones the kill on large hosts (a 256 GB host would get a 251 GB file)
+
+
+def swap_target(ram):
+    """Total swap the agent aims for: about 1x RAM, at most SWAP_CAP."""
+    return min(ram, SWAP_CAP)
 
 
 def _v(vars_, name, default=None):
@@ -1016,11 +1023,11 @@ def recommend(ctx):
         room = min(int(ram * 0.15), cold + swap_free // 2)
         swap_after = swap_free
         swap_total = (s.get("swap_total_mb") or 0) * MiB
-        if ctx.get("os_tuning") and swap_total < ram * 0.9 and ram >= 2 * GiB:
-            # extra OS tuning, part of this experiment: swap up to about 1x RAM (the agent's swap file replaces an earlier one),
-            # so a buffer pool that outgrows memory shows as swapping in the metrics instead of an OOM kill
+        if ctx.get("os_tuning") and swap_total < swap_target(ram) * 0.9 and ram >= 2 * GiB:
+            # extra OS tuning, part of this experiment: swap up to about 1x RAM, at most 64 GiB (the agent's swap file
+            # replaces an earlier one), so a buffer pool that outgrows memory shows as swapping instead of an OOM kill
             own = _swapfile_bytes(v.get("os:swapfile"))
-            size = max(1 * GiB, (ram - (swap_total - own)) // GiB * GiB)
+            size = max(1 * GiB, (swap_target(ram) - (swap_total - own)) // GiB * GiB)
             if size > own:
                 extra_swap = [("os:swapfile", fmt_size(size))]
                 swap_after = swap_free + size - own
@@ -1044,13 +1051,14 @@ def recommend(ctx):
     # Memory settings measured before the swap state changed are measured again after it (apply_history).
     swap_total = (s.get("swap_total_mb") or 0) * MiB
     own_swap = _swapfile_bytes(v.get("os:swapfile"))
-    if have_run and ctx.get("os_tuning") and not ctx.get("no_swap") and ram >= 2 * GiB and swap_total < ram * 0.9 and "os:swapfile" in v:
+    if have_run and ctx.get("os_tuning") and not ctx.get("no_swap") and ram >= 2 * GiB and swap_total < swap_target(ram) * 0.9 \
+            and "os:swapfile" in v:
         free = int((ctx.get("hw") or {}).get("disk_free_bytes") or 0)
-        size = (ram - (swap_total - own_swap)) // GiB * GiB
+        size = (swap_target(ram) - (swap_total - own_swap)) // GiB * GiB
         if free:
             size = min(size, max(0, int((free - 2 * GiB) * 0.5)) // GiB * GiB)  # at most half of the free disk
         if size >= GiB and size > own_swap:
-            b.add("best-practices-swap", "Add swap (about 1x RAM): memory pressure slows instead of OOM-killing mysqld",
+            b.add("best-practices-swap", "Add swap (about 1x RAM, at most 64 GiB): memory pressure slows instead of OOM-killing mysqld",
                   [("os:swapfile", fmt_size(size))],
                   f"{'No swap' if not swap_total else human_size(swap_total) + ' of swap'} on a host with {human_size(ram)} RAM: when memory "
                   "runs out the kernel kills mysqld instead of moving cold pages out, so memory settings are sized against a hard "
@@ -1907,16 +1915,16 @@ def run_engine(ctx):
             it.setdefault("evidence", {})["memory_budget"] = _mem.text(nb)
             if nb["over_budget"] and nb["needed"] > cur_b["needed"]:
                 # beyond RAM + free swap the kernel OOM-kills mysqld (suite RO-4: a 12 GB pool on 16 GB with 0.5 GB swap):
-                # that is a crash, not a trade-off. With OS tuning the experiment brings a swap file of about 1x RAM
+                # that is a crash, not a trade-off. With OS tuning the experiment brings a swap file of about 1x RAM (64 GiB at most)
                 # (pressure then shows as swapping in the run); without it the change is not run.
                 sm = ctx.get("summary") or {}
                 swap_free = max(0, ((sm.get("swap_total_mb") or 0) - (sm.get("swap_used_mb") or 0))) * MiB
                 if any(c["variable"] == "os:swapfile" for c in it.get("changes") or []):
                     swap_free += _swapfile_bytes(next(c["proposed"] for c in it["changes"] if c["variable"] == "os:swapfile"))
                 if nb["needed"] > nb["ram"] + swap_free:
-                    if ctx.get("os_tuning") and not ctx.get("no_swap") and "os:swapfile" in ctx["variables"] and not any(
+                    size = max(nb["needed"] - nb["ram"] - swap_free + GiB, swap_target(nb["ram"]) // GiB * GiB)
+                    if size <= SWAP_CAP and ctx.get("os_tuning") and not ctx.get("no_swap") and "os:swapfile" in ctx["variables"] and not any(
                             c["variable"] == "os:swapfile" for c in it.get("changes") or []):
-                        size = max(nb["needed"] - nb["ram"] - swap_free + GiB, int(nb["ram"]) // GiB * GiB)
                         it["changes"].append({"variable": "os:swapfile", "current": ctx["variables"].get("os:swapfile"), "proposed": fmt_size(size)})
                         it["rationale"] = (it.get("rationale") or "") + (f" Needs {human_size(nb['needed'])} with {human_size(nb['ram'])} RAM and "
                                            f"{human_size(swap_free)} free swap: a {fmt_size(size)} swap file comes with it, so memory pressure "
@@ -1925,7 +1933,9 @@ def run_engine(ctx):
                         it["confidence"] = 0
                         it["note"] = (f"Not run: needs {human_size(nb['needed'])}, more than {human_size(nb['ram'])} RAM plus "
                                       f"{human_size(swap_free)} free swap - mysqld would be OOM-killed"
-                                      + (" (no swap by design on this host)." if ctx.get("no_swap") else " (swap needs OS tuning)."))
+                                      + (" (no swap by design on this host)." if ctx.get("no_swap") else
+                                         f" (it would need a {fmt_size(size)} swap file, more than the {fmt_size(SWAP_CAP)} cap)." if size > SWAP_CAP
+                                         else " (swap needs OS tuning)."))
                         continue
                 it["safety"] = "trade-off"
                 it["tradeoffs"] = list(it.get("tradeoffs") or []) + [{

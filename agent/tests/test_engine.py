@@ -1071,9 +1071,9 @@ def test_flat_sweep_retested_after_bottleneck_shift():
 def test_swap_protection_and_memory_retest():
     # Scaleway hosts come with 0 swap: with OS tuning the agent tests a swap file (~1x RAM, capped by free disk) as a
     # protective change, and memory settings tried before the swap state changed are tried again
-    def items(swap_mb, free=200 * GiB, os_tuning=True):
+    def items(swap_mb, free=200 * GiB, os_tuning=True, ram=16 * GiB):
         ctx = {"goal": "tps", "policy": "safe", "os_tuning": os_tuning, "os_facts": {"os:filesystem": "ext4"},
-               "hw": dict(HW, ram_bytes=16 * GiB, disk_free_bytes=free), "flavor": "percona", "version": (8, 4, 11),
+               "hw": dict(HW, ram_bytes=ram, disk_free_bytes=free), "flavor": "percona", "version": (8, 4, 11),
                "variables": dict(VARS, **{"os:swapfile": "0"}), "summary": dict(OLTP[0], swap_total_mb=swap_mb),
                "inputs": OLTP[1], "history": [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}],
                "noise_pct": 2.0, "managed": {}}
@@ -1083,6 +1083,9 @@ def test_swap_protection_and_memory_retest():
     assert items(0, free=12 * GiB)["best-practices-swap"]["changes"][0]["proposed"] == "5G"  # half of the free disk
     assert "best-practices-swap" not in items(16 * 1024) and "best-practices-swap" not in items(0, os_tuning=False)
     assert engine.is_practice_run({"label": "best-practices-swap"})  # kept unless it regresses
+    # large hosts: 64 GiB is enough safety (a 251 GB host was offered a 251 GB file), and 64 GiB of swap already is enough
+    assert items(0, free=2000 * GiB, ram=251 * GiB)["best-practices-swap"]["changes"][0]["proposed"] == "64G"
+    assert "best-practices-swap" not in items(64 * 1024, free=2000 * GiB, ram=251 * GiB)
     from tuning_agent.memory import MEMORY_VARS
     ranked = items(0)
     mem = [i for i in ranked.values() if i["kind"] == "config" and any(c["variable"] in MEMORY_VARS for c in i["changes"])]
