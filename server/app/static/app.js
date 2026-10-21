@@ -500,7 +500,7 @@ function chartsGrid(container, m, defs, window_, markers, opts) {
     }
     const cell = document.createElement("div"); cell.className = "card";
     container.appendChild(cell);
-    C.lineChart(cell, { title: def.title, unit, ts: m.ts, window: window_, max100: def.max100, min0: def.min0, markers, series });
+    C.lineChart(cell, { title: def.title, unit, ts: m.ts, window: window_, warmup: m.warmup, max100: def.max100, min0: def.min0, markers, series });
     const t = cell.querySelector(".title");
     if (def.tip && t) t.insertAdjacentHTML("beforeend", info(def.tip));
   });
@@ -1118,7 +1118,7 @@ async function runPage(id, tab) {
     clearTimers();
     if (name === "changes") { renderDiff(tabEl, r); const ks = document.createElement("div"); tabEl.appendChild(ks); renderKeySettings(ks, id); }
     else if (name === "graphs") {
-      tabEl.innerHTML = `<p class="muted">Shaded = measurement window${info("Charts show the measurement window plus 60 s before and after it.")}</p><div class="grid g3" id="rc"></div>`;
+      tabEl.innerHTML = `<p class="muted"><span class="swatch warm"></span>warm-up <span class="swatch win"></span>measurement window${info("Charts show the warm-up, the measurement window and 60 s around them. The benchmark runs throughout: throughput should be at its steady level for the whole measurement window - a drop inside it means the window measured something other than the workload.")}</p><div class="grid g3" id="rc"></div>`;
       const m = await api(`/api/runs/${id}/metrics?points=300`);
       chartsGrid(document.getElementById("rc"), m, RUN_CHARTS, m.window);
       (m.clients || []).forEach(cl => {

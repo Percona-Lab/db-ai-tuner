@@ -1293,6 +1293,7 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         prof.timeout += int(sess["run_seconds"]) - prof.duration
         prof.duration = int(sess["run_seconds"])
     r = bench.Running(prof.command(), logfile)
+    t_launch = time.time()  # the benchmark's own clock starts here: its measured phase is launch + warm-up .. + duration
     profiler = offcpu = None
     try:
         warm = warmup_override if warmup_override is not None else prof.warmup
@@ -1321,9 +1322,18 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         if offcpu is None and not waited:
             offcpu = _maybe_offcpu(c, c.session(), 0, profiler.seconds if profiler else 0, in_window=True)
         if prof.duration > 0:
-            log(f"measuring run {m['seq']} for {prof.duration}s ...")
+            # the window ends when the benchmark's measured phase ends, not duration seconds after the agent's own setup
+            # (snapshot, eBPF probes): on a 32-CPU host the setup took ~140 s and the window ran past the end of HammerDB's
+            # timed phase, measuring the virtual users shutting down (client NUMA host, session #194)
+            planned_end = t_launch + (waited or 0) + prof.duration
+            delay = time.time() - (t_launch + (waited or 0))
+            deadline = min(time.time() + prof.duration, planned_end) if waited else time.time() + prof.duration
+            m["window_start_delay_s"] = round(delay, 1)
+            if waited and delay > 0.05 * prof.duration:
+                log(f"WARNING: the measured window starts {delay:.0f}s after the warm-up ended (agent setup): it is shortened to end with "
+                    "the benchmark's measured phase")
+            log(f"measuring run {m['seq']} for {max(0, deadline - time.time()):.0f}s ...")
             c.activity("measuring", f"run #{m['seq']} {label or ''}", prof.duration)
-            deadline = time.time() + prof.duration
             while time.time() < deadline and r.alive():
                 time.sleep(1)
         else:
@@ -1367,7 +1377,8 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         else:
             goal_value = metrics[prof.goal_metric] * prof.goal_scale
             goal_src = f"benchmark:{prof.goal_metric}" + (f" x{prof.goal_scale:g}" if prof.goal_scale != 1 else "")
-    extra = {"bench": {**prof.describe(), "requirements": requirements, "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:]}, "probe": env_probe}
+    extra = {"bench": {**prof.describe(), "requirements": requirements, "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:],
+                       "window_start_delay_s": m.get("window_start_delay_s"), "warmup_s": waited}, "probe": env_probe}
     if cow is not None:
         extra["cow"] = cow
     if mismatch:

@@ -805,10 +805,22 @@ def run_metrics(run_id: int, request: Request, pad: float = 60, points: int = 40
     u = auth.current_user(request)
     r = own_run(run_id, u["id"])
     s = own_session(r["session_id"], u["id"])
-    t0 = (r["started"] or now()) - pad
+    # the warm-up before the measured window: the agent records what it waited (and any delay before the window); older
+    # runs fall back to the profile's warm-up setting
+    w = store.q1("SELECT json_extract(inputs, '$.bench.warmup_s') ws, json_extract(inputs, '$.bench.warmup') wp, "
+                 "json_extract(inputs, '$.bench.window_start_delay_s') wd FROM runs WHERE id=?", (run_id,))
+    warm = None
+    try:
+        secs = float(w["ws"]) if w and w["ws"] is not None else float(w["wp"]) if w and w["wp"] not in (None, "", "auto") else 0
+        if secs > 0 and r["started"]:
+            warm = [r["started"] - secs - max(0.0, float(w["wd"] or 0)), r["started"]]
+    except (TypeError, ValueError):
+        warm = None
+    t0 = (warm[0] if warm else (r["started"] or now())) - pad
     t1 = (r["ended"] or now()) + (pad if r["ended"] else 0)
     m = metrics_window(s["env_id"], t0, t1, points)
     m["window"] = [r["started"], r["ended"]]
+    m["warmup"] = warm
     for h in store.q("SELECT id, name FROM hosts WHERE env_id=? ORDER BY name", (s["env_id"],)):
         hm = metrics_window(None, t0, t1, points, host_id=h["id"])
         if hm["ts"]:

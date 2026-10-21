@@ -91,6 +91,10 @@
       const lab = el("text", { x: x + (mk.end ? -3 : 3), y: m.t + 9, "text-anchor": mk.end ? "end" : "start", "font-size": 10, fill: "var(--ink-2)" }, svg);
       lab.textContent = mk.label;
     });
+    if (opts.warmup && opts.warmup[0]) {  // warm-up before the measured window: its own (amber) band
+      const a = X(Math.max(opts.warmup[0], x0)), b = X(Math.min(opts.warmup[1] || x1, x1));
+      if (b > a) el("rect", { x: a, y: m.t, width: b - a, height: H - m.t - m.b, fill: "var(--warmup)" }, svg);
+    }
     if (opts.window && opts.window[0]) {
       const a = X(Math.max(opts.window[0], x0)), b = X(Math.min(opts.window[1] || x1, x1));
       if (b > a) el("rect", { x: a, y: m.t, width: b - a, height: H - m.t - m.b, fill: "var(--window)" }, svg);
