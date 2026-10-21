@@ -387,7 +387,8 @@ def main():
         }
         if doc and not kb and out[name]["versions"]:
             dyn = out[name]["versions"].get("dynamic")
-            out[name]["restart"] = (not dyn) if isinstance(dyn, bool) else None
+            vals = set(dyn.values()) if isinstance(dyn, dict) else {dyn} if isinstance(dyn, bool) else set()
+            out[name]["restart"] = (not vals.pop()) if len(vals) == 1 else None
     if "optimizer_switch" in out:
         out["optimizer_switch"].update(impact="container", when="a list of independent optimizer flags: see the optimizer_switch:<flag> entries",
                                        description="Optimizer flags (on / off each); the tuner changes them one flag at a time.")
