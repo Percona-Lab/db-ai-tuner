@@ -275,12 +275,14 @@ def diagnose(ctx):
     # far below 1 (session 194: 0.04, 23 commits per fsync) while every commit still waits for a slow flush
     commit_share = sum(p.get("share_pct") or 0 for p in ctx.get("breakdown") or [] if "commit" in (p.get("tags") or ()))
     noise = float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0)
+    # redo fsyncs (the group commit batches); older agents only report all data-file fsyncs
+    lf = s.get("log_fsyncs_per_s") or ((inp.get("db_rates") or {}).get("log_fsyncs")) or fsyncs
     if commit_share > noise and not any(d["type"] == "commit" for d in out):
         w_ms = max(s.get("disk_w_await_ms") or 0, s.get("disk_flush_await_ms") or 0)
         add("commit", "high" if commit_share >= 50 else "medium",
             f"Commit-bound: {commit_share:.0f}% of the threads' time waits for commits (redo / binary log flush)"
-            + (f"; each write takes {w_ms:.1f} ms" if w_ms else "") + (f"; {tps / fsyncs:.0f} commits share one fsync" if fsyncs and tps else "") + ".",
-            {"commit_wait_share_pct": round(commit_share, 1), "disk_w_await_ms": s.get("disk_w_await_ms"), "data_fsyncs": fsyncs, "tps": tps})
+            + (f"; each write takes {w_ms:.1f} ms" if w_ms else "") + (f"; {tps / lf:.0f} commits share one redo fsync ({lf:.1f}/s)" if lf and tps else "") + ".",
+            {"commit_wait_share_pct": round(commit_share, 1), "disk_w_await_ms": s.get("disk_w_await_ms"), "log_fsyncs_per_s": lf, "tps": tps})
     # CPU profile (perf sampling of a slice of the run): which kind of work burns the database's CPU
     cp = (inp.get("cpu_profile") or {}).get("categories") or {}
     if cp and busy >= 50:
@@ -781,7 +783,7 @@ def recommend(ctx):
         b.add("commit-storage-latency", "Commits wait for slow storage writes",
               [], f"Each write to the data device takes {w_ms:.1f} ms (fast SSD: well under 1 ms) and commits wait for it"
               + (f"; {why}" if why else "") + ". Group commit already shares flushes "
-              f"({(s.get('tps') or 0) / max(s.get('data_fsyncs') or 1, 1):.0f} commits per fsync); what remains is the storage: a drive with "
+              f"({(s.get('tps') or 0) / max(s.get('log_fsyncs_per_s') or (inp.get('db_rates') or {}).get('log_fsyncs') or s.get('data_fsyncs') or 1, 1):.0f} commits per redo fsync); what remains is the storage: a drive with "
               "power-loss protection, the drive write cache (a durability trade-off without it), a separate fast device for the "
               "redo log, or relaxing durability (innodb_flush_log_at_trx_commit = 2). Server settings cannot make the device faster.",
               {"disk_w_await_ms": s.get("disk_w_await_ms"), "disk_flush_await_ms": s.get("disk_flush_await_ms"),
