@@ -1693,7 +1693,12 @@ def _numa_rules(b, v, s, osf, ctx, have_run, bp, ram):
     db_mem = (s.get("db_mem_mb") or 0) * MiB
     if ctx.get("os_tuning") and lists and lists[0] and ncpus and ev["node_mem"] and "os:mysqld_numa_policy" in v \
             and 0 < cpus_used < 0.7 * ncpus[0] and db_mem and db_mem < 0.7 * ev["node_mem"][0] and v.get("os:mysqld_numa_policy", "default") == "default":
-        b.add("numa-single-node", "Keep mysqld on one NUMA node", [("os:cpu_affinity", lists[0]), ("os:mysqld_numa_policy", "bind:0")],
+        # InnoDB's own interleave overrides the process policy for the buffer pool (verified on a 2-node VM: bind:0 left the
+        # pool interleaved over both nodes) - it goes off with the bind
+        ch = [("os:cpu_affinity", lists[0]), ("os:mysqld_numa_policy", "bind:0")]
+        if _on(v, "innodb_numa_interleave"):
+            ch.append(("innodb_numa_interleave", "OFF"))
+        b.add("numa-single-node", "Keep mysqld on one NUMA node", ch,
               f"mysqld uses {cpus_used:.1f} CPUs and {human_size(db_mem)} - both fit node 0 ({ncpus[0]} CPUs, {human_size(ev['node_mem'][0])}): "
               "bound there, every memory access is local. Kept only if the goal improves; memory growth beyond the node would fail "
               "instead of spilling over, so it is proposed only while mysqld uses under 70% of the node's memory. Experiment.",
