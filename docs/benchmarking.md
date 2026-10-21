@@ -59,6 +59,15 @@ device (`tuning-agent init --fs-device ... --allow-fs-experiments`).
   it on a separate host.
 * Keep other work off the host (backups, package updates, other benchmarks).
 
+## Session hygiene
+
+* **Close the session when the study is done:** `tuning-agent session stop`, or `autotune --close` when nothing follows
+  the autotune loop. Autotune keeps the session open on purpose (follow-up experiments on the best configuration) and
+  sets the agent's status to idle when it ends; an open session still shows as in progress on the dashboard.
+* **Keep the clock synchronised** (`timedatectl set-ntp true`; chrony or systemd-timesyncd): run windows, metric
+  samples and event times come from the host's clock. The server compares it at every session start: a warning at
+  more than 2 seconds of skew, a refused start at more than a minute.
+
 ## What the agent checks
 
 | Check | When | Effect |
@@ -68,3 +77,4 @@ device (`tuning-agent init --fs-device ... --allow-fs-experiments`).
 | Throughput rising or deferred work growing in the window | every run | run marked not steady; warm-up lengthened in calibration |
 | Swap with measured cost, CPU steal, storage latency drift, in-run stalls, client saturation | every run / calibration | flags; calibration stops in an unfit environment |
 | Scheduled timers (fstrim, apt, logrotate) | session start | warning |
+| Host clock vs the server's (and NTP synchronisation) | session start | warning over 2 s, refused over 60 s |

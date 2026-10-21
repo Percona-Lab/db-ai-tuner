@@ -611,6 +611,15 @@ def cmd_baseline(a):
         raise Fail("baseline apply failed and was rolled back")
 
 
+def _ntp_synchronized():
+    """systemd's view of clock synchronisation: True / False, None when unknown."""
+    try:
+        out = subprocess.run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"], capture_output=True, text=True, timeout=5).stdout.strip()
+        return {"yes": True, "no": False}.get(out)
+    except Exception:
+        return None
+
+
 def cmd_session(a):
     c = Ctx()
     if a.action == "start":
@@ -622,6 +631,7 @@ def cmd_session(a):
         os_tuning = c.os_tuning_allowed() and not a.no_os_tuning
         r = c.client.post("/sessions", {"environment_id": c.env_id(), "name": a.name, "goal": a.goal, "policy": a.policy,
                                         "agent_version": __version__, "allow_stale_agent": bool(getattr(a, "allow_stale_agent", False)),
+                                        "agent_time": time.time(), "ntp_synchronized": _ntp_synchronized(),
                                         "noise_pct": a.noise_pct, "notes": a.notes, "workload": a.workload, "os_tuning": os_tuning,
                                         "study": a.study})
         if r.get("warning"):
@@ -2413,6 +2423,25 @@ def _safe_wins_in_tradeoff_phase(sess, best_safe):
 
 
 def cmd_autotune(a):
+    """Run the loop; whatever happens, leave a truthful status behind (a finished autotune left 'measuring' on the
+    dashboard until a person reset it) and close the session when asked to."""
+    try:
+        _autotune(a)
+    finally:
+        try:
+            c = Ctx()
+            sess = c.session() or {}
+            if getattr(a, "close", False) and sess.get("id"):
+                cmd_session(argparse.Namespace(action="stop"))
+            elif sess.get("id"):
+                c.activity("idle", f"autotune finished ({len(sess.get('runs') or [])} runs); session #{sess['id']} still open - "
+                                   "tuning-agent session stop when done")
+                log(f"Session #{sess['id']} is still open: `tuning-agent session stop` when done (or run autotune with --close).")
+        except Exception:  # noqa - never mask the loop's own outcome
+            pass
+
+
+def _autotune(a):
     """Unattended loop: calibrate (if needed) -> recommend -> apply next -> measure (bench) ... -> best config confirmation."""
     c = Ctx()
     sess = c.session()
@@ -2860,6 +2889,10 @@ Rules of thumb
   * policy=safe never applies durability trade-offs (they are shown as advice); policy=benchmark may.
   * Pass --external key=value on measure stop to record benchmark-reported numbers (e.g. tps=, nopm=, latency=);
     a key equal to the goal (tps / latency) becomes the goal value.
+  * Close the session when done (tuning-agent session stop, or autotune --close): an open session shows as in progress
+    on the dashboard. Autotune leaves it open on purpose for follow-up experiments.
+  * Keep the host's clock synchronised (NTP): run windows and metric times come from it. The server warns at a few
+    seconds of skew and refuses a session start at more than a minute.
   * Add --json to any command for machine-readable output.
 """
 
@@ -2997,6 +3030,7 @@ def main(argv=None):
     s.add_argument("--max-runs", type=int, default=10, help="maximum experiment runs (calibration not counted)")
     s.add_argument("--tradeoffs", action="store_true", help="after safe experiments, continue with trade-offs (policy=benchmark)")
     s.add_argument("--no-confirm", dest="confirm", action="store_false", help="skip the confirmation run of the best config")
+    s.add_argument("--close", action="store_true", help="close the session when autotune ends (otherwise it stays open for follow-up experiments)")
     s.add_argument("--recheck-every", type=int, default=3,
                    help="re-measure the current configuration before an experiment when it was last measured this many runs ago (0 = off)")
     s.set_defaults(fn=cmd_autotune)

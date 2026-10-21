@@ -952,8 +952,19 @@ def agent_session_start(body: dict = Body(...), key=Depends(auth.agent_key)):
     have = str(body.get("agent_version") or "").partition("+")[2]
     want = _agent_build()
     stale = want not in ("", "unknown") and have != want
-    warning = (f"agent build {have or 'unknown'} differs from the server's {want}: update the agent at the earliest "
-               f"opportunity (curl -fsSL {PUBLIC_URL}/install.sh | bash); this session is recorded as run on an outdated agent") if stale else None
+    warnings = [f"agent build {have or 'unknown'} differs from the server's {want}: update the agent at the earliest "
+                f"opportunity (curl -fsSL {PUBLIC_URL}/install.sh | bash); this session is recorded as run on an outdated agent"] if stale else []
+    # the host's clock: run windows, metric samples and event times come from it; a wrong clock misplaces all of them
+    # (a user found a box hours off). A few seconds: a warning; over a minute: refused until the clock is fixed.
+    if body.get("agent_time") is not None:
+        skew = float(body["agent_time"]) - now()
+        fix = "enable time synchronisation (timedatectl set-ntp true; chrony / systemd-timesyncd) and check the time zone settings"
+        ntp = "" if body.get("ntp_synchronized") is not False else " The host reports its clock as not synchronised."
+        if abs(skew) > 60:
+            raise HTTPException(400, f"the host's clock is {skew:+.0f} s off the server's: {fix}, then start the session again.{ntp}")
+        if abs(skew) > 2:
+            warnings.append(f"the host's clock is {skew:+.1f} s off the server's: {fix}.{ntp}")
+    warning = " | ".join(warnings) or None
     goal = body.get("goal") if body.get("goal") in ("tps", "latency") else "tps"
     store.ex("UPDATE tsessions SET status='abandoned', ended=? WHERE env_id=? AND status='active'", (now(), e["id"]))
     n = store.q1("SELECT COUNT(*) n FROM tsessions WHERE env_id=?", (e["id"],))["n"] + 1
@@ -977,7 +988,17 @@ def agent_session_close(sid: int, body: dict = Body(default={}), key=Depends(aut
     s = agent_session(sid, key)
     store.ex("UPDATE tsessions SET status='closed', ended=?, summary=? WHERE id=?", (now(), store.j(body.get("summary")), sid))
     store.ex("INSERT INTO events(env_id, session_id, ts, type, message) VALUES (?,?,?,?,?)", (s["env_id"], sid, now(), "session", "session closed"))
+    _clear_activity(s["env_id"], sid)
     return {"ok": True}
+
+
+def _clear_activity(env_id, sid):
+    """A closed session leaves nothing running on the dashboard (a finished autotune once left 'measuring' behind)."""
+    e = store.q1("SELECT activity FROM environments WHERE id=?", (env_id,))
+    act = json.loads(e["activity"]) if e and e["activity"] else {}
+    if not act or act.get("session_id") in (None, sid):
+        store.ex("UPDATE environments SET activity=?, activity_at=? WHERE id=?",
+                 (store.j({"phase": "idle", "detail": f"session #{sid} closed", "session_id": None}), now(), env_id))
 
 
 @app.post("/api/v1/agent/sessions/{sid}/update")
