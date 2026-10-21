@@ -1096,6 +1096,24 @@ def test_swap_protection_and_memory_retest():
     assert again["confidence"] == 2 and again["retest"]["swap_now_mb"] == 16384           # swap added: try again
 
 
+def test_over_budget_beyond_swap_is_a_crash_not_a_tradeoff():
+    # suite r1 RO-4: bp-grow to 12 GB on a 16 GB VM with 0.5 GB swap was run as a "memory trade-off" and the kernel
+    # OOM-killed mysqld. Beyond RAM + free swap the experiment brings a swap file (OS tuning) or is not run.
+    import json
+    d = json.load(open(os.path.join(os.path.dirname(__file__), "suite_ro4_ctx.json")))
+    v = dict(d["variables"], innodb_buffer_pool_size=str(10 * GiB))
+    def grow(os_tuning):
+        ctx = {"goal": "tps", "policy": "benchmark", "hw": d["hw"], "variables": v, "summary": d["summary"], "inputs": d["inputs"],
+               "history": [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}], "noise_pct": 2.0,
+               "managed": {}, "os_tuning": os_tuning, "os_facts": {}, "flavor": "percona", "version": (8, 4, 11)}
+        return next(i for i in engine.run_engine(ctx)["items"] if i["id"] == "bp-grow")
+    with_os = grow(True)
+    ch = {c["variable"]: c["proposed"] for c in with_os["changes"]}
+    assert ch["innodb_buffer_pool_size"] == "12G" and engine._swapfile_bytes(ch.get("os:swapfile")) >= 15 * GiB
+    without = grow(False)
+    assert without["confidence"] == 0 and "OOM-killed" in without["note"]
+
+
 def test_round_values():
     from tuning_agent.knowledge import nice_number, roundness
     assert nice_number("innodb_io_capacity", 1072) == 1000 and nice_number("innodb_io_capacity", 1500) == 1500

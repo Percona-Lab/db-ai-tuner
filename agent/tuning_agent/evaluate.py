@@ -647,10 +647,18 @@ def disturbances(runs):
     unsteady window."""
     out = []
     ss = [(r.get("summary") or {}) for r in runs]
-    sw = [s for s in ss if (s.get("swap_in") or 0) > 0 and (s.get("dbproc_swap_mb") or 0) > 0]
+    # swap only when mysqld's pages coming back cost measurable time (swap_cost: the off-CPU swap-in share when profiled).
+    # Suite RW-2: 0.4 GB of idle mysqld pages swapped out while a 46 GB restore streamed through the page cache, ~2 pages/s
+    # read back - blamed for the noise without evidence and the session stopped
+    # profiles run once per configuration: runs without one take the measured share of the profiled run of the set
+    known = [s.get("offcpu_swapin_share_pct") for s in ss if s.get("offcpu_swapin_share_pct") is not None]
+    ss = [s if s.get("offcpu_swapin_share_pct") is not None or not known else dict(s, offcpu_swapin_share_pct=max(known)) for s in ss]
+    sw = [s for s in ss if swap_cost(s)]
     if sw:
+        share = [s.get("offcpu_swapin_share_pct") for s in sw if s.get("offcpu_swapin_share_pct") is not None]
         out.append(f"mysqld has {max(s['dbproc_swap_mb'] for s in sw):.0f} MB in swap and pages are read back during the window "
-                   f"(up to {max(s['swap_in'] for s in sw):.0f} pages/s in {len(sw)} of {len(ss)} runs)")
+                   f"(up to {max(s.get('swap_in') or 0 for s in sw):.0f} pages/s in {len(sw)} of {len(ss)} runs"
+                   + (f", connection threads waited on swap-in {max(share):.1f}% of their off-CPU time" if share else "") + ")")
     # storage latency moving run after run at a similar load (SSD garbage collection, cloud volume throttling / burst
     # credits): reads and writes apart, as either path alone can drift
     for k, what in (("disk_r_await_ms", "data reads"), ("disk_w_await_ms", "writes"), ("blk_flush_p99_ms", "device flushes (p99)")):

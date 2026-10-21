@@ -392,8 +392,12 @@ def ensure_debug_symbols(log=print, min_free_gb=20):
 # log writes, SSD garbage collection, cloud volume throttling) makes commit latency and throughput unstable.
 BLOCK_SCRIPT = (
     "tracepoint:block:block_rq_issue {{ @s[args->dev, args->sector] = nsecs; }}\n"
+    # keyed by device + sector: a completion never seen (merged / requeued requests, flushes at sector 0) leaves a stale
+    # start time that a later request to the same sector would pick up (RW-2: a "17181 s" write) - nothing in the window
+    # can be older than the window itself
     "tracepoint:block:block_rq_complete /@s[args->dev, args->sector]/ {{ $us = (nsecs - @s[args->dev, args->sector]) / 1000; "
-    "$op = args->rwbs; @h[args->dev, $op] = hist($us); @mx[args->dev, $op] = max($us); delete(@s[args->dev, args->sector]); }}\n"
+    "if ($us < {secs} * 1000000) {{ $op = args->rwbs; @h[args->dev, $op] = hist($us); @mx[args->dev, $op] = max($us); }} "
+    "delete(@s[args->dev, args->sector]); }}\n"
     "interval:s:{secs} {{ exit(); }}\n"
     "END {{ clear(@s); }}\n")
 _UNIT = {"": 1, "K": 1024, "M": 1024 ** 2, "G": 1024 ** 3}

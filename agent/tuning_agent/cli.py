@@ -38,6 +38,22 @@ class TooSlow(Fail):
     pass
 
 
+class BenchFailed(Fail):
+    """The benchmark itself failed under this configuration (exited during warm-up: e.g. mysqld OOM-killed, connections
+    not accepted in time). Under an experiment: a failed experiment (reverted), not the end of the session."""
+
+
+def _oom_killed_since(t0):
+    """mysqld OOM-killed by the kernel since t0 (epoch seconds)? The kernel log line, or None."""
+    try:
+        out = subprocess.run(["journalctl", "-k", "--no-pager", "--since", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t0))],
+                             capture_output=True, text=True, timeout=30).stdout
+        hits = [l for l in out.splitlines() if re.search(r"Out of memory: Killed process \d+ \(mysqld\)", l)]
+        return hits[-1] if hits else None
+    except Exception:
+        return None
+
+
 def emit(obj, text=None):
     if JSON:
         print(json.dumps(obj, indent=1, default=str))
@@ -838,6 +854,12 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     summary["goal_value"] = gv
     summary["goal_source"] = src
     fg = ((inputs.get("offcpu") or {}).get("foreground") or {})
+    if not fg:  # profiled once per configuration: a repeat takes the share measured in the profiled run of this configuration
+        key = evaluate.config_key(m["managed"])
+        prev = [r for r in sess["runs"] if evaluate.config_key(r.get("managed")) == key
+                and (r.get("summary") or {}).get("offcpu_swapin_share_pct") is not None]
+        if prev:
+            summary["offcpu_swapin_share_pct"] = prev[-1]["summary"]["offcpu_swapin_share_pct"]
     if fg:  # measured time connection threads waited for pages coming back from swap (share of their off-CPU time: an upper bound)
         tot = sum((x.get("seconds") or 0) for x in fg.values())
         sw = sum((x.get("seconds") or 0) for x in fg.values() if "swap" in (x.get("tags") or []))
@@ -1099,6 +1121,7 @@ def _ensure_requirements(c, prof):
 
 def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     """reset -> start benchmark -> warm-up -> measure -> wait for exit -> parse metrics -> finish run."""
+    t_run0 = time.time()
     sess = c.session()
     logdir = os.path.join(c.state.dir, "bench")
     os.makedirs(logdir, exist_ok=True)
@@ -1174,7 +1197,9 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
                 while time.time() < deadline and r.alive():
                     time.sleep(1)
         if not r.alive():
-            raise Fail(f"benchmark exited during warm-up (code {r.p.returncode}); tail:\n{r.output()[-1500:]}")
+            oom = _oom_killed_since(t_run0)
+            raise BenchFailed(("mysqld was OOM-killed during the warm-up (" + oom.split("kernel:")[-1].strip()[:160] + "); " if oom else "")
+                              + f"benchmark exited during warm-up (code {r.p.returncode}); tail:\n{r.output()[-1500:]}")
         m, warn, url = _measure_start(c, label, notes, warmed=True)
         t_meas0 = time.time()
         probes = _start_probes(c, prof.duration if prof.duration > 0 else prof.timeout)
@@ -1467,13 +1492,15 @@ def _noise_plan(c, prof, runs, n):
         plan["disturbances"] = dist
         plan["text"] += " Measured in the calibration runs: " + "; ".join(dist) + "."
     cal["plan"] = plan
-    if plan["action"] == "between-runs" and dist and plan.get("repeats", 2) > 2 \
+    # an unsteady window is the benchmark's run length (the warm-up check above lengthens it), not the environment
+    env_dist = [d for d in dist if "steady state" not in d]
+    if plan["action"] == "between-runs" and env_dist and plan.get("repeats", 2) > 2 \
             and str(c.cfg.get("allow_noisy_environment", "false")).lower() != "true":
         # tuning on top of a measured disturbance only finds noise (session 88: mysqld swapping 2.3 GB back and forth,
         # noise growing from 10% to 40%, 50 runs that could not separate any setting): fix the environment first
         _set_calibration(c, sess, cal)
         msg = ("environment unfit for tuning: run-to-run noise ±" + str(cal.get("noise_pct")) + "% hides changes smaller than that, "
-               "and the calibration runs show why - " + "; ".join(dist) + ". Fix it (or set allow_noisy_environment = true in agent.ini).")
+               "and the calibration runs show why - " + "; ".join(env_dist) + ". Fix it (or set allow_noisy_environment = true in agent.ini).")
         c.event("environment", msg, plan)
         raise Fail(msg)
     if plan["action"] == "longer-runs" and not (prof.adaptive and prof.can_resize()):
@@ -2477,10 +2504,13 @@ def cmd_autotune(a):
             continue
         try:
             run, _ = _bench_run(c, prof, f"{nxt}")
-        except (TooSlow, ServerDown) as e:
-            log(f"   {e}; reverting {nxt}")
+        except (TooSlow, ServerDown, BenchFailed) as e:
+            why = ("OOM-killed mysqld" if "OOM-killed" in str(e) else "made the benchmark too slow" if isinstance(e, TooSlow)
+                   else "broke the benchmark" if isinstance(e, BenchFailed) else "took mysqld down")
+            log(f"   {str(e)[:600]}; reverting {nxt}")
+            c.event("experiment", f"{nxt} {why}: reverted, the session continues", {"error": str(e)[:1000]})
             cur = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
-            undo = [{"variable": k, "value": before_exp.get(k), "reason": f"autotune: {nxt} made the benchmark too slow", "source": "rollback"}
+            undo = [{"variable": k, "value": before_exp.get(k), "reason": f"autotune: {nxt} {why}", "source": "rollback"}
                     for k in set(cur) | set(before_exp) if normalize(k, cur.get(k)) != normalize(k, before_exp.get(k))]
             _apply_and_record(c, undo, "rollback")
             sess = c.session()

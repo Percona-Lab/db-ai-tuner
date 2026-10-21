@@ -1700,6 +1700,26 @@ def run_engine(ctx):
             nb = _mem.budget(dict(ctx["variables"], **ch), hw_, ctx.get("client_reserve") or 0)
             it.setdefault("evidence", {})["memory_budget"] = _mem.text(nb)
             if nb["over_budget"] and nb["needed"] > cur_b["needed"]:
+                # beyond RAM + free swap the kernel OOM-kills mysqld (suite RO-4: a 12 GB pool on 16 GB with 0.5 GB swap):
+                # that is a crash, not a trade-off. With OS tuning the experiment brings a swap file of about 1x RAM
+                # (pressure then shows as swapping in the run); without it the change is not run.
+                sm = ctx.get("summary") or {}
+                swap_free = max(0, ((sm.get("swap_total_mb") or 0) - (sm.get("swap_used_mb") or 0))) * MiB
+                if any(c["variable"] == "os:swapfile" for c in it.get("changes") or []):
+                    swap_free += _swapfile_bytes(next(c["proposed"] for c in it["changes"] if c["variable"] == "os:swapfile"))
+                if nb["needed"] > nb["ram"] + swap_free:
+                    if ctx.get("os_tuning") and "os:swapfile" in ctx["variables"] and not any(
+                            c["variable"] == "os:swapfile" for c in it.get("changes") or []):
+                        size = max(nb["needed"] - nb["ram"] - swap_free + GiB, int(nb["ram"]) // GiB * GiB)
+                        it["changes"].append({"variable": "os:swapfile", "current": ctx["variables"].get("os:swapfile"), "proposed": fmt_size(size)})
+                        it["rationale"] = (it.get("rationale") or "") + (f" Needs {human_size(nb['needed'])} with {human_size(nb['ram'])} RAM and "
+                                           f"{human_size(swap_free)} free swap: a {fmt_size(size)} swap file comes with it, so memory pressure "
+                                           "shows as swapping instead of an OOM kill.")
+                    else:
+                        it["confidence"] = 0
+                        it["note"] = (f"Not run: needs {human_size(nb['needed'])}, more than {human_size(nb['ram'])} RAM plus "
+                                      f"{human_size(swap_free)} free swap - mysqld would be OOM-killed (swap needs OS tuning).")
+                        continue
                 it["safety"] = "trade-off"
                 it["tradeoffs"] = list(it.get("tradeoffs") or []) + [{
                     "variable": ", ".join(sorted(ch)), "value": ", ".join(f"{k}={v}" for k, v in ch.items()), "category": "memory",
