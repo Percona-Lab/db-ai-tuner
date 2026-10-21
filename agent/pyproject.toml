@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "tuning-agent"
 version = "0.1.0"
 description = "AI database tuning agent for MySQL-family servers"
+license = {text = "Apache-2.0"}
 requires-python = ">=3.8"
 dependencies = ["PyMySQL>=1.0"]
 

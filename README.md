@@ -90,3 +90,8 @@ Environment: `/etc/aituner.env` with `TUNER_PUBLIC_URL` and `TUNER_DB`.
 v0.1 – MySQL family only; goals TPS and average query response time. Planned: more goals (p95/p99,
 throughput at latency SLO), PostgreSQL, web-issued commands to the agent, Bayesian search over the
 experiment space, workload-replay safety checks for production.
+
+## License
+
+Apache License 2.0 - see [LICENSE](LICENSE) and [NOTICE](NOTICE). Issues and contributions:
+https://github.com/Percona-Lab/db-ai-tuner/issues
