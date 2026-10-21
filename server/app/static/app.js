@@ -157,7 +157,7 @@ function activityLine(a) {
   return `<div style="font-size:12px;margin-top:3px"><span class="badge ${cls}" data-tip="${esc(tip)}" tabindex="0">${esc(a.phase)}</span> <span class="muted">${esc(a.detail || "")}${t}</span></div>`;
 }
 function envStatus(e) {
-  if (e.destroyed_at) return `<span class="badge plain" data-tip="The machine was deleted ${ago(e.destroyed_at)} (e.g. at the end of a study). Its sessions and results are kept.">decommissioned</span>`;
+  if (e.destroyed_at) return `<span class="badge plain" data-tip="Archived ${ago(e.destroyed_at)}: listed under All only. Its sessions and results are kept.">archived</span>`;
   const stopped = e.agent_state === "stopped" && (e.agent_state_at || 0) >= (e.last_seen || 0);
   if (e.online && !stopped) return '<span class="badge good">online</span>';
   if (stopped) return `<span class="badge plain" data-tip="The tuning-agent service was stopped on the host ${ago(e.agent_state_at)} (systemctl stop), not a loss of contact.">agent stopped</span>`;
@@ -557,7 +557,7 @@ async function envPage(id) {
   const kv = db.key_variables || {};
   $view.innerHTML = `<div class="crumbs"><a href="#/">Environments</a> /</div>
   <div class="row"><h1>${esc(e.name)}</h1>${envStatus(e)}<span class="spacer"></span>
-  <button class="ghost owner" id="share">Share</button><button class="ghost" id="rename">Rename</button><button class="ghost danger" id="del">Delete</button></div>
+  <button class="ghost owner" id="share">Share</button><button class="ghost" id="rename">Rename</button><button class="ghost" id="archive" data-tip="${e.destroyed_at ? "Back to the active list." : "Hide from the active list (for example when the machine is gone); sessions, runs and metrics are kept."}">${e.destroyed_at ? "Unarchive" : "Archive"}</button><button class="ghost danger" id="del">Delete</button></div>
   <p class="sub">${esc(e.db_short || e.db)} · ${esc(hw.hostname || "")} · agent ${esc(e.agent_version || "")}</p>
   ${d.activity ? `<div class="card" style="margin-bottom:10px;padding:10px 14px"><span class="muted" style="font-size:12px">Now${d.activity.session_id ? `: session <a href="#/session/${d.activity.session_id}">#${d.activity.session_id} ${esc(d.activity.session_name || "")}</a>` : ""}</span>${activityLine(d.activity)}</div>` : ""}
   <div class="card"><div class="row" style="gap:6px 18px">
@@ -607,6 +607,7 @@ async function envPage(id) {
   document.getElementById("rename").onclick = async () => { const n = prompt("Environment name", e.name); if (n) { await api("/api/environments/" + id, { method: "PATCH", body: { name: n } }); envPage(id); } };
   const cj = document.getElementById("clientsJump"); if (cj) cj.onclick = ev => { ev.preventDefault(); document.getElementById("clientHosts").scrollIntoView({ behavior: "smooth" }); };
   document.getElementById("detailsToggle").onclick = ev => { ev.preventDefault(); const d = document.getElementById("envDetails"); d.hidden = !d.hidden; ev.target.textContent = d.hidden ? "Details ▸" : "Details ▾"; };
+  document.getElementById("archive").onclick = async () => { await api("/api/environments/" + id, { method: "PATCH", body: { destroyed_at: e.destroyed_at ? null : Date.now() / 1000 } }); envPage(id); };
   document.getElementById("del").onclick = async () => { if (confirm("Delete this environment with all sessions, runs and metrics? The agent will re-register it on its next report.")) { await api("/api/environments/" + id, { method: "DELETE" }); location.hash = "#/"; } };
   const sessionMarkers = [];
   d.sessions.forEach(x => { sessionMarkers.push({ t: x.created, label: `#${x.id} start` }); if (x.ended) sessionMarkers.push({ t: x.ended, label: `#${x.id} end`, end: true }); });
