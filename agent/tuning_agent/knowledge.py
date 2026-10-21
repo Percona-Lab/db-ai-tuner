@@ -350,10 +350,16 @@ TRADEOFFS["innodb_flush_method"] = (lambda v: str(v).upper() == "O_DIRECT_NO_FSY
 # operating-system pseudo-variables (see ostune.py)
 from .ostune import OS_KB  # noqa: E402
 for _k, (_desc, _restart, _cat) in OS_KB.items():
-    KB[_k] = dict(kind="str", dynamic=not _restart, risk="durability" if _k == "os:mount_barrier" else "low", cat="os/" + _cat, desc=_desc)
+    KB[_k] = dict(kind="str", dynamic=not _restart, risk="durability" if _k in ("os:mount_barrier", "os:disk_write_cache") else "low",
+                  cat="os/" + _cat, desc=_desc)
 TRADEOFFS["os:mount_barrier"] = (lambda v: str(v).upper() == "OFF", "durability",
                                  "Without write barriers a power loss can lose or reorder writes the database already considered durable.",
                                  "OFF (ext4 nobarrier / barrier=0)")
+TRADEOFFS["os:disk_write_cache"] = (lambda v: str(v).upper() == "ON", "durability",
+                                    "Writes are acknowledged from the drive's volatile cache. Without power-loss protection a power cut loses "
+                                    "what is still in it - committed transactions too when the drive acknowledges cache flushes early. "
+                                    "Acceptable on a benchmark box, not in production unless the drive has power-loss protection.",
+                                    "ON (volatile drive write cache)")
 
 
 TRADEOFFS["skip_name_resolve"] = (lambda v: str(v).upper() in ("ON", "1"), "semantics",

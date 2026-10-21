@@ -90,6 +90,8 @@ OS_KB = {
     "os:vm.dirty_bytes": ("Dirty page cache at which writers are throttled.", False, "io"),
     "os:mount_noatime": ("Mount the data directory filesystem with noatime.", False, "io"),
     "os:mount_barrier": ("ext4 write barriers (OFF = nobarrier: DURABILITY TRADE-OFF).", False, "durability"),
+    "os:disk_write_cache": ("Volatile write cache of the data drive (hdparm -W / SCSI WCE / NVMe feature 6; none: the drive has "
+                            "none). ON without power-loss protection: DURABILITY TRADE-OFF.", False, "durability"),
     "os:malloc": ("Memory allocator for mysqld: glibc[:arena_max=N], jemalloc[:MALLOC_CONF], tcmalloc, mimalloc (LD_PRELOAD).", True, "memory"),
     "os:datadir_fs": ("Filesystem of the data directory on the experiment device (scope 'filesystem' only).", True, "io"),
     "os:hugepages": ("Number of 2 MiB huge pages reserved (used by the buffer pool when large_pages=ON).", True, "memory"),
@@ -226,6 +228,11 @@ def current(datadir, device, service, fs_device=None):
     if device:
         out["os:scheduler"] = _bracket(_read(f"/sys/block/{device}/queue/scheduler"))
         out["os:read_ahead_kb"] = _read(f"/sys/block/{device}/queue/read_ahead_kb")
+        wc = _read(f"/sys/block/{device}/queue/write_cache")  # the drive's cache as the kernel knows it
+        if wc in ("write back", "write through"):
+            # NVMe: the driver reports "write through" when the drive has no volatile write cache at all (typical of
+            # datacenter drives with power-loss protection): nothing to turn on. SCSI / SATA: it is the drive's WCE bit.
+            out["os:disk_write_cache"] = "ON" if wc == "write back" else "none" if device.startswith("nvme") else "OFF"
     m = _mount_of(datadir)
     if m:
         opts = m[3].split(",")
@@ -295,6 +302,35 @@ class OSApplier:
     def ensure_mysqld(self):
         subprocess.run(["systemctl", "start", self.service], capture_output=True)
 
+    def _disk_write_cache(self, on):
+        """Turn the drive's own volatile write cache on or off. Never by writing /sys/block/<dev>/queue/write_cache:
+        that only changes what the kernel believes and makes it stop sending cache flushes - fsync would then return
+        before data is on stable media even with the drive cache off (worse than nobarrier, and invisible)."""
+        dev = self.device or ""
+        if not dev:
+            raise RuntimeError("no data device known")
+        if dev.startswith("nvme"):
+            r = subprocess.run(["nvme", "set-feature", f"/dev/{dev}", "--feature-id=6", f"--value={1 if on else 0}"],
+                               capture_output=True, text=True) if shutil.which("nvme") else None
+        else:
+            # SCSI / SATA (through libata): cache_type sends a MODE SELECT that sets the drive's WCE bit; hdparm for plain ATA
+            ct = glob.glob(f"/sys/block/{dev}/device/scsi_disk/*/cache_type")
+            r = None
+            if ct:
+                try:
+                    _write(ct[0], "write back" if on else "write through")
+                except OSError as e:
+                    r = subprocess.CompletedProcess([], 1, "", str(e))
+            if (r is not None or not ct) and shutil.which("hdparm"):
+                r = subprocess.run(["hdparm", f"-W{1 if on else 0}", f"/dev/{dev}"], capture_output=True, text=True)
+        if r is not None and r.returncode != 0:
+            raise RuntimeError(f"cannot change the write cache of /dev/{dev}: {(r.stderr or r.stdout).strip()[:200]}")
+        got = _read(f"/sys/block/{dev}/queue/write_cache")
+        if got != ("write back" if on else "write through"):
+            raise RuntimeError(f"/dev/{dev} reports '{got}' after the change: the device (or the hypervisor behind a virtual disk) "
+                               "does not let the guest change its write cache")
+        # not persisted: drives come back with their own setting after a power cycle; current() reads the real state
+
     # -- live changes ------------------------------------------------------------
     def apply_live(self, name, value):
         """Apply one setting now. Returns True when mysqld must be restarted for it to take effect."""
@@ -327,6 +363,9 @@ class OSApplier:
             return False
         if name == "os:read_ahead_kb":
             _write(f"/sys/block/{self.device}/queue/read_ahead_kb", value)
+            return False
+        if name == "os:disk_write_cache":
+            self._disk_write_cache(str(value).upper() == "ON")
             return False
         if name in ("os:mount_noatime", "os:mount_barrier"):
             m = _mount_of(self.datadir)

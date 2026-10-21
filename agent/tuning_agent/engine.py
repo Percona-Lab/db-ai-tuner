@@ -894,6 +894,21 @@ def recommend(ctx):
                   "writes the database already acknowledged.", {"fsyncs_per_trx": s.get("fsyncs_per_trx"), "disk_await_ms": s.get("disk_await_ms")},
                   impact=2, confidence=1, kind="config" if policy == "benchmark" else "advice")
 
+    # Drive write cache off (common on SATA SSDs / HDDs behind RAID or set by a provider): every write waits for the media.
+    # On measured slow writes / cache flushes, a durability trade-off like nobarrier: run under the benchmark policy only.
+    if ctx.get("os_tuning") and v.get("os:disk_write_cache") == "OFF":
+        w_ms = max(s.get("disk_w_await_ms") or 0, s.get("disk_flush_await_ms") or 0)
+        io_diag = {d["type"] for d in ctx.get("diagnosis") or [] if d.get("severity") in ("high", "medium")} & {"io", "redo", "commit"}
+        if have_run and w_ms >= 1.0 and (commit_bound or io_diag):
+            b.add("os-disk-write-cache", "Turn the drive's write cache on (DURABILITY TRADE-OFF)", [("os:disk_write_cache", "ON")],
+                  f"The data drive's volatile write cache is off and writes take {w_ms:.1f} ms on average: each one waits for the media. "
+                  "With the cache on, writes complete in the drive's cache (typically well under 1 ms). Without power-loss "
+                  "protection a power cut loses what is still in the cache: acceptable for a benchmark box, not for production "
+                  "(datacenter drives with power-loss protection usually report no volatile cache at all).",
+                  {"disk_w_await_ms": s.get("disk_w_await_ms"), "disk_flush_await_ms": s.get("disk_flush_await_ms"),
+                   "fsyncs_per_trx": s.get("fsyncs_per_trx"), "disk_write_cache": "OFF"},
+                  impact=2, confidence=1, kind="config" if policy == "benchmark" else "advice")
+
     # ---------------- network (decision table in docs/research/os-network-tuning.md) ----
     if have_run:
         ovf = (s.get("net_listen_overflows") or 0) + (s.get("net_listen_drops") or 0)

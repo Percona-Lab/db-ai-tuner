@@ -71,6 +71,7 @@ PRIORS = {
     "os:read_ahead_kb": ("low", "sequential scans read from disk"),
     "os:mount_noatime": ("low", "metadata writes on file access"),
     "os:mount_barrier": ("medium", "commit-bound on disks with a volatile write cache; durability trade-off"),
+    "os:disk_write_cache": ("high", "write / commit-bound with the drive cache off (slow writes, ms per write); durability trade-off without power-loss protection"),
     "os:vm.dirty_bytes": ("low", "fsync stalls from large page-cache writeback"),
     "os:vm.dirty_background_bytes": ("low", "as vm.dirty_bytes"),
     "os:cpu_governor": ("medium", "CPU-bound on hosts that scale the clock down"),

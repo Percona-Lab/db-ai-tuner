@@ -44,7 +44,7 @@ def execute(c, cmd, log=print):
     applied, errors = [], []
     for ch in payload.get("changes") or []:
         var, val = ch["variable"], ch.get("value")
-        if not var.startswith("os:") or var in ("os:malloc", "os:hugepages", "os:datadir_fs", "os:mount_barrier", "os:cpu_affinity"):
+        if not var.startswith("os:") or var in ("os:malloc", "os:hugepages", "os:datadir_fs", "os:mount_barrier", "os:disk_write_cache", "os:cpu_affinity"):
             errors.append(f"{var}: not applicable on a client host")
             continue
         if var not in before:

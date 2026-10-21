@@ -687,6 +687,23 @@
    "versions": null,
    "when": ""
   },
+  "client:os:disk_write_cache": {
+   "category": "client/durability",
+   "description": "Client host: Volatile write cache of the data drive (hdparm -W / SCSI WCE / NVMe feature 6; none: the drive has none). ON without power-loss protection: DURABILITY TRADE-OFF.",
+   "impact": "unknown",
+   "mechanism_tags": [],
+   "memory_cost": null,
+   "precondition": null,
+   "prior_source": null,
+   "response": null,
+   "restart": false,
+   "rules": [],
+   "safety": "safe",
+   "safety_note": null,
+   "scope": "pseudo",
+   "versions": null,
+   "when": ""
+  },
   "client:os:fs.aio-max-nr": {
    "category": "client/io",
    "description": "Client host: System-wide limit of in-flight asynchronous I/O requests (InnoDB native AIO).",
@@ -6999,6 +7016,25 @@
    "scope": "os",
    "versions": null,
    "when": "I/O or commit-bound: file system choice changes allocation and journaling"
+  },
+  "os:disk_write_cache": {
+   "category": "os/durability",
+   "description": "Volatile write cache of the data drive (hdparm -W / SCSI WCE / NVMe feature 6; none: the drive has none). ON without power-loss protection: DURABILITY TRADE-OFF.",
+   "impact": "high",
+   "mechanism_tags": [],
+   "memory_cost": null,
+   "precondition": null,
+   "prior_source": "curated",
+   "response": null,
+   "restart": false,
+   "rules": [
+    "os-disk-write-cache"
+   ],
+   "safety": "durability",
+   "safety_note": "Writes are acknowledged from the drive's volatile cache. Without power-loss protection a power cut loses what is still in it - committed transactions too when the drive acknowledges cache flushes early. Acceptable on a benchmark box, not in production unless the drive has power-loss protection.",
+   "scope": "os",
+   "versions": null,
+   "when": "write / commit-bound with the drive cache off (slow writes, ms per write); durability trade-off without power-loss protection"
   },
   "os:fs.aio-max-nr": {
    "category": "os/io",

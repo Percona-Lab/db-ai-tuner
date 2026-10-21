@@ -1425,6 +1425,25 @@ def test_warmup_signals_catch_state_settling_inside_the_window():
     wu = evaluate.warmup_check(runs, 900)
     assert wu["adequate"] and wu["settling_runs"] == 3 and wu["suggest_warmup_s"] == w["suggest_warmup_s"], wu
 
+
+def test_drive_write_cache_is_a_durability_tradeoff():
+    # client report: turn the drive's write cache on (hdparm -W1) - a trade-off, measured only under the benchmark policy
+    def items(policy, wc="OFF", w_ms=4.2):
+        ctx = {"goal": "tps", "policy": policy, "os_tuning": True, "os_facts": {"os:filesystem": "ext4"}, "hw": HW,
+               "flavor": "percona", "version": (8, 4, 11), "variables": dict(VARS, **{"os:disk_write_cache": wc}),
+               "summary": dict(OLTP[0], disk_w_await_ms=w_ms, disk_flush_await_ms=w_ms), "inputs": OLTP[1],
+               "history": [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}], "noise_pct": 2.0, "managed": {}}
+        return {i["id"]: i for i in engine.run_engine(ctx)["items"]}
+    adv = items("safe").get("os-disk-write-cache")
+    assert adv and adv["kind"] == "advice", adv
+    cfg = items("benchmark")["os-disk-write-cache"]
+    assert cfg["kind"] == "config" and cfg["safety"] == "trade-off" and cfg["changes"][0]["proposed"] == "ON", cfg
+    assert any(t.get("category") == "durability" for t in cfg.get("tradeoffs") or []), cfg.get("tradeoffs")
+    assert "os-disk-write-cache" not in items("benchmark", wc="ON")        # already on
+    assert "os-disk-write-cache" not in items("benchmark", w_ms=0.3)       # writes already fast: no evidence
+    from tuning_agent.knowledge import TRADEOFFS
+    assert TRADEOFFS["os:disk_write_cache"][0]("ON") and not TRADEOFFS["os:disk_write_cache"][0]("OFF")
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

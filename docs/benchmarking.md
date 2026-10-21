@@ -51,6 +51,17 @@ device (`tuning-agent init --fs-device ... --allow-fs-experiments`).
 * **SSD maintenance:** `fstrim` and similar timers running during a measurement show up as storage stalls; the agent
   lists active timers at session start. Disable them for the study.
 
+## Drive write cache
+
+A drive with its volatile write cache off (`cat /sys/block/<dev>/queue/write_cache` shows `write through` on a SATA / SAS
+device) makes every write wait for the media: several milliseconds per write and commit. Turning it on (`hdparm -W1`, or
+the agent's `os:disk_write_cache = ON` under the benchmark policy) is a durability trade-off: without power-loss
+protection a power cut loses what is still in the cache. Fine for a benchmark box, not for production; datacenter
+drives with power-loss protection usually have no volatile cache to turn on (NVMe drives then report `write through`,
+shown by the agent as `none`). Never change `/sys/block/<dev>/queue/write_cache` itself: it only stops the kernel from
+sending cache flushes. Compare results with the cache in the same state on both sides, and start a new session after
+changing it by hand (the calibration no longer applies).
+
 ## Same conditions for every run
 
 * Same run length, same warm-up, same client threads; a warm-up long enough to reach a steady state. The last 10-20% of
