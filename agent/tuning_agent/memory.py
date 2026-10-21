@@ -104,6 +104,8 @@ MEMORY_VARS = {"innodb_buffer_pool_size", "innodb_log_buffer_size", "key_buffer_
 
 def text(b):
     """One line: what the configuration needs vs the host."""
-    return (f"{b['needed'] / GiB:.1f} GiB needed ({b['mysqld_bytes'] / GiB:.1f} GiB mysqld at {b['active_connections']} active of "
+    return (f"{b['needed'] / GiB:.1f} GiB needed ({b['mysqld_bytes'] / GiB:.1f} GiB mysqld"
+            + (f" incl. {b['measured_offset'] / GiB:.1f} GiB measured above the model" if b.get("measured_offset") else "")
+            + f" at {b['active_connections']} active of "
             f"{b['max_connections']} connections + {b['os_reserve'] / GiB:.1f} GiB OS"
             + (f" + {b['client_reserve'] / GiB:.1f} GiB client" if b["client_reserve"] else "") + f") of {b['ram'] / GiB:.1f} GiB RAM")

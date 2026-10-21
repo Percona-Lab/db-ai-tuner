@@ -238,8 +238,35 @@ def full_snapshot(db, device):
         snap["waits"] = db.waits()
         snap["file_io"] = db.file_io()
         snap["wait_coverage"] = db.wait_coverage()
+        snap["mem"] = db.memory()
     snap["data_bytes"], snap["tables"] = db.table_sizes()
     return snap
+
+
+MEM_CATEGORIES = (("memory/innodb/buf_buf_pool", "InnoDB buffer pool"), ("memory/innodb/", "InnoDB other"),
+                  ("memory/performance_schema/", "performance_schema"), ("memory/temptable/", "TempTable (in-memory temp tables)"),
+                  ("memory/sql/", "server (connections, statements, caches)"), ("memory/mysys/", "server (connections, statements, caches)"))
+
+
+def memory_window(a, b):
+    """MySQL's own memory accounting at the end of the window: total, by category, connection vs background threads,
+    the top allocations with their high-water marks, and what grew during the window."""
+    ev_b = (b or {}).get("events") or {}
+    ev_a = (a or {}).get("events") or {}
+    MB = 2 ** 20
+    cur = {k: max(0, v[0]) for k, v in ev_b.items()}  # alloc in one thread, free in another: per-event currents can go negative
+    cats = {}
+    for k, v in cur.items():
+        name = next((n for p, n in MEM_CATEGORIES if k.startswith(p)), "other")
+        cats[name] = cats.get(name, 0) + v
+    total = sum(cur.values())
+    growth = {k: cur[k] - max(0, (ev_a.get(k) or [0])[0]) for k in cur} if ev_a else {}
+    top = sorted(ev_b.items(), key=lambda x: -max(0, x[1][0]))[:12]
+    return {"total_mb": round(total / MB, 1), "categories_mb": {k: round(v / MB, 1) for k, v in sorted(cats.items(), key=lambda x: -x[1])},
+            "connections_mb": round((b or {}).get("fg", 0) / MB, 1), "background_mb": round((b or {}).get("bg", 0) / MB, 1),
+            "growth_mb": round((total - sum(max(0, v[0]) for v in ev_a.values())) / MB, 1) if ev_a else None,
+            "growing": [{"event": k, "mb": round(g / MB, 1)} for k, g in sorted(growth.items(), key=lambda x: -x[1])[:5] if g > MB],
+            "top": [{"event": k, "current_mb": round(max(0, v[0]) / MB, 1), "high_mb": round(v[1] / MB, 1)} for k, v in top]}
 
 
 # file I/O by what it is for: data pages (read path vs flushing), doublewrite, redo, binlog, temporary files
@@ -538,6 +565,8 @@ def analyze_window(a, b, samples):
         inputs["wait_instruments"] = db_wait_coverage(b)
     if a.get("file_io") and b.get("file_io"):
         inputs["file_io"] = file_io_delta(a["file_io"], b["file_io"])
+    if b.get("mem"):
+        inputs["memory_pfs"] = memory_window(a.get("mem"), b["mem"])
     # top statements in window
     if a.get("digests") is not None and b.get("digests"):
         prev = {(d["SCHEMA_NAME"], d["DIGEST"]): d for d in a["digests"]}

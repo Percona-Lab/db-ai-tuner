@@ -343,6 +343,14 @@ def diagnose(ctx):
         add("client-bound", "high", f"The benchmark/application client is saturated ({s['client_cpu_busy']:.0f}% CPU): measured throughput "
             "reflects the client, not the database. Use a bigger client host or fewer client-side cycles before tuning the server.",
             {"client_cpu_busy": s.get("client_cpu_busy")})
+    # memory MySQL keeps allocating during the window (its own accounting): a leak or an unbounded cache is a memory risk
+    # before it is an OOM kill; the buffer pool is allocated in full at start-up and does not count here
+    mp = (inp.get("memory_pfs") or {})
+    gr = mp.get("growth_mb")
+    if gr and mp.get("total_mb") and gr > 0.01 * mp["total_mb"] and mp.get("growing"):
+        add("memory-growth", "low", f"MySQL's own memory grew by {gr:.0f} MB during the window ({mp['total_mb']:.0f} MB in total); most: "
+            + ", ".join(f"{g['event'].replace('memory/', '')} +{g['mb']:.0f} MB" for g in mp["growing"][:3]) + ".",
+            {"pfs_mem_growth_mb": gr, "pfs_mem_total_mb": mp["total_mb"]})
     # NUMA placement measured in the run (multi-node hosts): a node out of memory while others are free, mysqld's memory
     # concentrated on one node, a pool larger than a node, remote allocations
     nev = numa_evidence(s, ctx.get("os_facts") or {}, _int(ctx.get("variables") or {}, "innodb_buffer_pool_size"))
@@ -1839,11 +1847,22 @@ def run_engine(ctx):
     hw_ = ctx.get("hw") or {}
     if hw_.get("ram_bytes"):
         cur_b = _mem.budget(ctx["variables"], hw_, ctx.get("client_reserve") or 0)
+        # the model checked against the run: mysqld's measured memory (resident + swapped) above what the model says for the
+        # current configuration is an error of the model on this host and workload - carried into every projection
+        sm_ = ctx.get("summary") or {}
+        seen = ((sm_.get("dbproc_pss_mb") or 0) + (sm_.get("dbproc_swap_pss_mb") or 0)) * MiB
+        offset = max(0, seen - cur_b["mysqld_bytes"]) if sm_.get("dbproc_pss_mb") else 0
         for it in items:
             ch = {c["variable"]: c.get("proposed") for c in it.get("changes") or [] if c["variable"] in _mem.MEMORY_VARS and not c.get("unset")}
             if not ch or it["kind"] not in ("config",):
                 continue
             nb = _mem.budget(dict(ctx["variables"], **ch), hw_, ctx.get("client_reserve") or 0)
+            if offset:
+                nb["needed"] += offset
+                nb["mysqld_bytes"] += offset
+                nb["headroom"] -= offset
+                nb["over_budget"] = bool(nb["ram"]) and nb["needed"] > nb["ram"]
+                nb["measured_offset"] = offset
             it.setdefault("evidence", {})["memory_budget"] = _mem.text(nb)
             if nb["over_budget"] and nb["needed"] > cur_b["needed"]:
                 # beyond RAM + free swap the kernel OOM-kills mysqld (suite RO-4: a 12 GB pool on 16 GB with 0.5 GB swap):

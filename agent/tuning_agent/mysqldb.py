@@ -152,6 +152,21 @@ class DB:
         except pymysql.MySQLError:
             return {}
 
+    def memory(self):
+        """MySQL's own memory accounting (performance_schema memory instruments, on by default in 8.0+):
+        {"events": {event: [current, high]}, "fg": bytes of connection (account) threads, "bg": bytes of background threads}.
+        Per account, not per thread: thousands of connections x 500 instruments would make the per-thread table heavy."""
+        try:
+            ev = {r[0]: [int(r[1]), int(r[2])] for r in self.rows(
+                "SELECT EVENT_NAME, CURRENT_NUMBER_OF_BYTES_USED, HIGH_NUMBER_OF_BYTES_USED "
+                "FROM performance_schema.memory_summary_global_by_event_name WHERE HIGH_NUMBER_OF_BYTES_USED > 0")}
+            acc = {int(r[0]): int(r[1] or 0) for r in self.rows(
+                "SELECT USER IS NULL, SUM(CURRENT_NUMBER_OF_BYTES_USED) FROM performance_schema.memory_summary_by_account_by_event_name "
+                "GROUP BY USER IS NULL")}
+        except pymysql.MySQLError:
+            return {}
+        return {"events": ev, "fg": max(0, acc.get(0, 0)), "bg": max(0, acc.get(1, 0))}
+
     def file_io(self):
         """{event: [reads, read_ps, writes, write_ps, misc, misc_ps]} - file I/O time split by operation (misc = fsync, open...)."""
         try:

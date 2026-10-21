@@ -1262,6 +1262,16 @@ function renderInputs(el, r) {
       <table class="kvt"><tbody>${mb.items.slice().sort((a, b) => b.bytes - a.bytes).map(i => `<tr><td>${esc(i.name)}${info(i.basis)}</td><td class="num">${gb(i.bytes)} GiB</td></tr>`).join("")}
       <tr><td class="muted">OS reserve${mb.client_reserve ? " + client" : ""}</td><td class="num muted">${gb(mb.os_reserve + mb.client_reserve)} GiB</td></tr></tbody></table></div>`;
   }
+  const mp = inp.memory_pfs;
+  if (mp && mp.total_mb) {
+    const rs = r.summary || {};
+    const g = x => x == null ? "–" : (x / 1024).toFixed(2);
+    const seen = rs.dbproc_pss_mb != null ? (rs.dbproc_pss_mb || 0) + (rs.dbproc_swap_pss_mb || 0) : null;
+    h += `<h3>Memory measured by MySQL${info("MySQL's own accounting (performance_schema memory instruments, on by default) at the end of the window, next to what the OS sees for mysqld (PSS + swap). The difference is memory MySQL does not account for: thread stacks, the binary, allocator overhead and fragmentation, uninstrumented libraries. High-water marks show the peak of each allocation since mysqld started.")}</h3>
+      <div class="card tablewrap"><p style="margin:0 0 6px">${g(mp.total_mb)} GiB accounted by MySQL${seen != null ? ` · ${g(seen)} GiB seen by the OS · ${g(seen - mp.total_mb)} GiB not accounted` : ""} · connections ${g(mp.connections_mb)} GiB${rs.pfs_mem_per_connection_kb ? ` (${num(rs.pfs_mem_per_connection_kb)} KiB each)` : ""} · background threads ${g(mp.background_mb)} GiB${mp.growth_mb != null ? ` · ${mp.growth_mb >= 0 ? "+" : ""}${num(mp.growth_mb)} MB during the window` : ""}</p>
+      <table class="kvt"><tbody>${Object.entries(mp.categories_mb || {}).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${g(v)} GiB</td></tr>`).join("")}</tbody></table>
+      <table style="margin-top:8px"><thead><tr><th>Largest allocations</th><th class="num">now MiB</th><th class="num">peak MiB</th></tr></thead><tbody>${(mp.top || []).slice(0, 8).map(t => `<tr><td class="mono" style="word-break:break-all">${esc(t.event.replace(/^memory\//, ""))}</td><td class="num">${num(t.current_mb)}</td><td class="num">${num(t.high_mb)}</td></tr>`).join("")}</tbody></table></div>`;
+  }
   h += "<h3>Diagnosis</h3>" + ((r.diagnosis || []).map(dg => `<div class="diag">${sevBadge(dg.severity)} <b>${esc(dg.type)}</b> — ${esc(dg.text)}<div class="mono muted" style="font-size:11.5px;margin-top:3px">${esc(JSON.stringify(dg.evidence))}</div></div>`).join("") || '<p class="muted">none</p>');
   if (inp.top_statements && inp.top_statements.length) {
     h += `<h3>Top statements in the window${info("From performance_schema digests and server-side prepared statements (marked prepared). The agent's own monitoring queries are excluded.")}</h3><div class="card tablewrap"><table><thead><tr><th>Statement</th><th class="num">% time</th><th class="num">per s</th><th class="num">avg ms</th><th class="num">rows exam.</th><th class="num">rows sent</th><th class="num">no index</th><th class="num">tmp disk</th></tr></thead><tbody>` +

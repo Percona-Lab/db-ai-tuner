@@ -882,6 +882,18 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
         inputs["memory_budget"] = mb
     except Exception:
         pass
+    mp = inputs.get("memory_pfs") or {}
+    if mp.get("total_mb"):
+        # MySQL's own accounting next to what the OS sees: the difference is memory MySQL does not account for (thread
+        # stacks, the binary, allocator overhead and fragmentation, uninstrumented libraries)
+        summary["pfs_mem_total_mb"] = mp["total_mb"]
+        summary["pfs_mem_growth_mb"] = mp.get("growth_mb")
+        conns = summary.get("threads_connected_avg") or 0
+        if mp.get("connections_mb") is not None and conns:
+            summary["pfs_mem_per_connection_kb"] = round(mp["connections_mb"] * 1024 / conns, 1)
+        if summary.get("dbproc_pss_mb") is not None:
+            seen = (summary.get("dbproc_pss_mb") or 0) + (summary.get("dbproc_swap_pss_mb") or 0)
+            summary["pfs_mem_unaccounted_mb"] = round(seen - mp["total_mb"], 1)
     try:  # NUMA: the topology and where mysqld's memory lives (only on multi-node hosts)
         from . import numa as _numa
         from .hostinfo import mysqld_pid as _mpid
