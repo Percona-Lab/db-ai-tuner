@@ -7,7 +7,7 @@ import time
 import pymysql
 
 from . import ostune, psprofile, resgroups
-from .knowledge import KB, OPTIONS, flags_subset, normalize, parse_size
+from .knowledge import KB, OPTIONS, dynamic_in, flags_subset, normalize, parse_size, series_of
 
 HEADER = """# Managed by tuning-agent. Do not edit by hand: changes are overwritten.
 # Use `tuning-agent apply --set var=value` / `tuning-agent rollback` instead.
@@ -269,13 +269,18 @@ class Applier:
                 resgroups.apply(self.db, originals.get(var) or "off" if val is None else val)
             except pymysql.MySQLError as e:
                 result["errors"].append(f"{var}: {e.args[-1] if e.args else e}")
+        from .mysqldb import flavor_of
+        series = series_of(flavor_of(before_vars)[0], before_vars.get("version")) if before_vars.get("version") else None
         for c in [c for c in changes if not c["variable"].startswith(("os:", "rg:", "ps:"))]:
             var, val = c["variable"], c.get("value")
             if val is not None and (flags_subset(val, before_vars.get(var)) if KB.get(var, {}).get("kind") == "flags"
                                     else normalize(var, before_vars.get(var)) == normalize(var, val)):
                 continue
             meta = KB.get(var)
-            if var in OPTIONS or (meta is not None and not meta.get("dynamic")):
+            # runtime changeability differs between releases (MariaDB resizes innodb_log_file_size and the I/O threads
+            # online; MySQL / Percona need a restart): the measured inventory for this server's series decides first
+            dyn = dynamic_in(var, series)
+            if var in OPTIONS or dyn is False or (dyn is None and meta is not None and not meta.get("dynamic")):
                 need_restart.append(var)
                 continue
             try:

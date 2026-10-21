@@ -359,14 +359,35 @@ tuning-agent session stop</code></pre>
 }
 
 // ------------------------------------------------------------------ parameters
+const FAMILY = { mysql: "MySQL", percona: "Percona", mariadb: "MariaDB", pxc: "PXC" };
+function releasesCell(p) {
+  const v = p.versions;
+  if (!v) return "";
+  const all = (v.series === "all" ? [] : v.series).concat(v.missing || []);
+  const fams = {};
+  all.forEach(s => { const [f, n] = s.split(" "); (fams[f] = fams[f] || { all: [], have: [] }).all.push(n); });
+  if (v.series !== "all") v.series.forEach(s => { const [f, n] = s.split(" "); fams[f].have.push(n); });
+  const label = v.series === "all" ? "all" : Object.entries(fams).filter(([, x]) => x.have.length)
+    .map(([f, x]) => FAMILY[f] + (x.have.length < x.all.length ? " " + x.have.join("/") : "")).join(", ") || "none";
+  const per = (k, fmt) => { if (typeof v[k] !== "object" || v[k] === null || Array.isArray(v[k])) return null;
+    const g = {}; Object.entries(v[k]).forEach(([s, x]) => (g[fmt(x)] = g[fmt(x)] || []).push(s));
+    return Object.entries(g).map(([x, ss]) => `${x} in ${ss.join(", ")}`).join("; "); };
+  const defs = per("default", x => x), dyn = per("dynamic", x => x ? "online" : "restart");
+  const tip = [v.series === "all" ? "In every supported LTS series." : `In: ${v.series.join(", ")}. Not in: ${(v.missing || []).join(", ")}.`,
+    defs ? `Defaults differ: ${defs}.` : v.default != null ? `Default: ${v.default}.` : "",
+    dyn ? `Change needs: ${dyn}.` : ""].filter(Boolean).join(" ");
+  return `<span data-tip="${esc(tip)}" tabindex="0">${esc(label)}</span>${defs ? ' <span class="badge plain" data-tip="' + esc("Default differs between releases: " + defs) + '" tabindex="0">defaults</span>' : ""}`;
+}
 async function parametersPage() {
   setNav("parameters");
   const d = await api("/api/parameters");
   const st = (() => { try { return JSON.parse(sessionStorage.getItem("paramFilter") || "{}"); } catch (x) { return {}; } })();
-  const q = (st.q || "").toLowerCase(), fi = st.impact || "", fs = st.scope || "";
-  const rank = { high: 0, medium: 1, low: 2, unknown: 3, container: 4 };
+  const q = (st.q || "").toLowerCase(), fi = st.impact || "", fs = st.scope || "", fr = st.release || "";
+  const rank = { high: 0, medium: 1, low: 2, none: 3, unknown: 4, container: 5 };
+  const allSeries = d.series || [];
+  const inSeries = (p, s) => !p.versions || p.versions.series === "all" || (p.versions.series || []).includes(s);
   const rows = d.parameters.filter(p => (!q || (p.name + " " + p.description + " " + (p.when || "")).toLowerCase().includes(q))
-    && (!fi || p.effective_impact === fi) && (!fs || p.scope === fs))
+    && (!fi || p.effective_impact === fi) && (!fs || p.scope === fs) && (!fr || (p.scope === "mysql" && inSeries(p, fr))))
     .sort((a, b) => {
       const k = st.sort || "impact", dir = st.desc ? -1 : 1;
       const key = p => ({ name: p.name, impact: rank[p.effective_impact] ?? 3, when: p.when || "~", safety: (p.safety === "safe" ? "0" : "1") + (p.safety || ""),
@@ -376,7 +397,7 @@ async function parametersPage() {
     });
   const th = (k, label) => `<th class="sortable" data-sort="${k}" style="cursor:pointer;white-space:nowrap">${label}${(st.sort || "impact") === k ? (st.desc ? " ▾" : " ▴") : ""}</th>`;
   const impBadge = p => { const l = p.learned && p.learned.impact !== "unknown" ? p.learned : null;
-    const tip = `Shipped estimate: ${p.impact}` + (l ? `. Measured: ${l.impact} - ${l.runs} single-setting experiments in ${l.sessions} session(s): ${l.improved} improved, ${l.regressed} regressed, ${l.neutral} within noise; median change of the decisive ones ${l.median_abs_delta_pct}% (max ${l.max_abs_delta_pct}%). A summary of experiment data, not a law.` : ". Not measured often enough yet to replace the estimate.")
+    const tip = `Shipped estimate: ${p.impact}${p.prior_source === "documentation" ? " (from the server documentation, not measured yet)" : ""}` + (l ? `. Measured: ${l.impact} - ${l.runs} single-setting experiments in ${l.sessions} session(s): ${l.improved} improved, ${l.regressed} regressed, ${l.neutral} within noise; median change of the decisive ones ${l.median_abs_delta_pct}% (max ${l.max_abs_delta_pct}%). A summary of experiment data, not a law.` : ". Not measured often enough yet to replace the estimate.")
       + (p.learned_by_workload ? " By workload: " + Object.entries(p.learned_by_workload).map(([w, v]) => `${w} ${v.impact} (${v.runs} runs)`).join(", ") + "." : "");
     return `<span class="badge ${{ high: "good", medium: "info", low: "plain", unknown: "plain" }[p.effective_impact] || "plain"}" data-tip="${esc(tip)}" tabindex="0">${esc(p.effective_impact)}${l ? " · measured" : ""}</span>`; };
   const polSel = (p, admin) => { const cur = admin ? p.default_mode : (p.user_mode || "default");
@@ -384,17 +405,18 @@ async function parametersPage() {
     return `<select data-${admin ? "def" : "pol"}="${esc(p.name)}" style="font-size:12px;width:auto">${opts.map(o => `<option value="${o}" ${o === cur ? "selected" : ""}>${o === "default" ? `default (${p.default_mode})` : o}</option>`).join("")}</select>`; };
   $view.innerHTML = `<h1>Parameters${info("The MySQL and operating-system settings the tuner works with. Impact: how much a setting can move results when it counts (shipped estimate; replaced by the measured impact once enough single-setting experiments exist - a summary of experiment data, not a law). When it counts: the conditions or measured bottleneck in which it matters. Precondition: what must happen in the workload for it to act at all (otherwise the tuner does not try it). Safety: safe, or what a value gives up (durability, observability, replication, semantics). Your policy: the tuner never changes a blocked setting in your sessions; 'default' follows the service default.")}</h1>
   <div class="row" style="margin-bottom:8px;gap:8px;flex-wrap:wrap"><input id="pq" placeholder="search" value="${esc(st.q || "")}" style="max-width:260px">
-   <select id="pimp" style="width:auto"><option value="">any impact</option>${["high", "medium", "low", "unknown", "container"].map(x => `<option ${x === fi ? "selected" : ""}>${x}</option>`).join("")}</select>
+   <select id="pimp" style="width:auto"><option value="">any impact</option>${["high", "medium", "low", "none", "unknown", "container"].map(x => `<option ${x === fi ? "selected" : ""}>${x}</option>`).join("")}</select>
+   <select id="prel" style="width:auto"><option value="">any release</option>${allSeries.map(x => `<option ${x === fr ? "selected" : ""}>${x}</option>`).join("")}</select>
    <select id="pscope" style="width:auto"><option value="">MySQL and OS</option>${["mysql", "os", "pseudo"].map(x => `<option ${x === fs ? "selected" : ""}>${x}</option>`).join("")}</select>
    <span class="muted" style="font-size:12.5px">${rows.length} of ${d.parameters.length} · blocked for you: ${d.parameters.filter(p => p.mode === "block").length}</span></div>
-  <div class="card tablewrap"><table><thead><tr>${th("name", "Parameter")}${th("impact", "Impact")}${th("when", "When it counts")}${th("safety", "Safety")}${th("restart", "Restart")}${th("policy", "Your policy")}${d.admin ? th("def", "Service default") : ""}</tr></thead><tbody>
+  <div class="card tablewrap"><table><thead><tr>${th("name", "Parameter")}${th("impact", "Impact")}<th>Releases${info("Where the variable exists, measured on the official images of every supported LTS series (" + allSeries.join(", ") + "). Hover for defaults and restart needs that differ between releases.")}</th>${th("when", "When it counts")}${th("safety", "Safety")}${th("restart", "Restart")}${th("policy", "Your policy")}${d.admin ? th("def", "Service default") : ""}</tr></thead><tbody>
   ${rows.map(p => `<tr><td class="mono" style="white-space:nowrap">${esc(p.name)}${info((p.description || "") + (p.precondition ? ` Precondition: ${p.precondition}.` : "") + (p.rules && p.rules.length ? ` Tuner rules: ${p.rules.join(", ")}.` : "") + (p.mechanism_tags && p.mechanism_tags.length ? ` Acts on: ${p.mechanism_tags.join(", ")}.` : "") + (p.memory_cost ? ` Memory: ${p.memory_cost}.` : "") + (p.response ? ` Response: ${p.response.shape}${p.response.note ? " - " + p.response.note : ""} (expected; validated per workload by sweeps).` : ""))}${p.response && ["saturating", "optimum"].includes(p.response.shape) ? ` <span class="badge plain" data-tip="${esc(p.response.shape === "saturating" ? "More is better up to a point: the tuner steps upward and stops once a step no longer helps beyond noise (or at the memory budget / data size)." : "Too little and too much both hurt: the tuner tries both sides of the current value, then one more step towards the better side.")}" tabindex="0">${p.response.shape}</span>` : ""}${p.memory_cost ? ' <span class="badge plain" data-tip="' + esc("Memory cost: " + p.memory_cost + ". The tuner keeps every configuration within the host's memory budget; one that would exceed it is a memory trade-off, never production-safe.") + '" tabindex="0">memory</span>' : ""}</td>
-    <td>${impBadge(p)}</td><td style="font-size:12.5px;max-width:360px">${esc(p.when || "")}</td>
+    <td>${impBadge(p)}</td><td style="font-size:12.5px;white-space:nowrap">${releasesCell(p)}</td><td style="font-size:12.5px;max-width:360px">${esc(p.when || "")}</td>
     <td>${p.safety === "safe" ? '<span class="badge good">safe</span>' : `<span class="badge warn" ${p.safety_note ? `data-tip="${esc(p.safety_note)}"` : ""} tabindex="0">${esc(p.safety || "?")}</span>`}</td>
     <td>${p.restart ? "yes" : p.restart === false ? "no" : ""}</td><td>${polSel(p, false)}</td>${d.admin ? `<td>${polSel(p, true)}</td>` : ""}</tr>`).join("")}</tbody></table></div>`;
-  const save = (extra) => { try { sessionStorage.setItem("paramFilter", JSON.stringify(Object.assign({ q: document.getElementById("pq").value, impact: document.getElementById("pimp").value, scope: document.getElementById("pscope").value, sort: st.sort, desc: st.desc }, extra || {}))); } catch (x) { } parametersPage(); };
+  const save = (extra) => { try { sessionStorage.setItem("paramFilter", JSON.stringify(Object.assign({ q: document.getElementById("pq").value, impact: document.getElementById("pimp").value, scope: document.getElementById("pscope").value, release: document.getElementById("prel").value, sort: st.sort, desc: st.desc }, extra || {}))); } catch (x) { } parametersPage(); };
   $view.querySelectorAll("th[data-sort]").forEach(el => el.onclick = () => { const k = el.dataset.sort; save({ sort: k, desc: (st.sort || "impact") === k ? !st.desc : false }); });
-  document.getElementById("pq").onchange = () => save(); document.getElementById("pimp").onchange = () => save(); document.getElementById("pscope").onchange = () => save();
+  document.getElementById("pq").onchange = () => save(); document.getElementById("pimp").onchange = () => save(); document.getElementById("pscope").onchange = () => save(); document.getElementById("prel").onchange = () => save();
   $view.querySelectorAll("select[data-pol]").forEach(el => el.onchange = async () => { await api(`/api/parameters/${encodeURIComponent(el.dataset.pol)}/policy`, { method: "PUT", body: { mode: el.value } }); parametersPage(); });
   $view.querySelectorAll("select[data-def]").forEach(el => el.onchange = async () => { await api(`/api/admin/parameters/${encodeURIComponent(el.dataset.def)}/policy`, { method: "PUT", body: { mode: el.value } }); parametersPage(); });
 }

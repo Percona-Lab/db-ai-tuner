@@ -1188,7 +1188,12 @@ def parameters_catalog(request: Request, workload: str = None):
         lv = learned_all.get(name)
         out.append(dict(p, name=name, learned=lv, learned_by_workload=learned_wl.get(name),
                         effective_impact=lv["impact"] if lv and lv["impact"] != "unknown" else p.get("impact"), **pol.get(name, _POL0)))
-    return {"parameters": out, "admin": bool(u.get("is_admin"))}
+    try:
+        with open(os.path.join(AGENT_DIR, "tuning_agent", "knowledge_data", "server_variables.json")) as f:
+            series = sorted(json.load(f).get("series") or {}, key=lambda s: (s.split()[0], [int(x) for x in s.split()[1].split(".")]))
+    except (OSError, ValueError):
+        series = []
+    return {"parameters": out, "admin": bool(u.get("is_admin")), "series": series}
 
 
 SERVICE = 0  # param_policy.user_id of the service defaults set by the admin

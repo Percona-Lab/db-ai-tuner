@@ -1,0 +1,7978 @@
+{
+ "version": "10.11.19-MariaDB-ubu2204",
+ "version_comment": "mariadb.org binary distribution",
+ "variables": {
+  "allow_suspicious_udfs": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "alter_algorithm": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "DEFAULT",
+   "scope": "SESSION",
+   "values": [
+    "DEFAULT",
+    "COPY",
+    "INPLACE",
+    "NOCOPY",
+    "INSTANT"
+   ],
+   "value": "DEFAULT"
+  },
+  "analyze_max_length": {
+   "type": "INT UNSIGNED",
+   "min": "32",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "4294967295",
+   "scope": "SESSION",
+   "values": null,
+   "value": "4294967295"
+  },
+  "analyze_sample_percentage": {
+   "type": "DOUBLE",
+   "min": "0",
+   "max": "100",
+   "dynamic": true,
+   "default": "100.000000",
+   "scope": "SESSION",
+   "values": null,
+   "value": "100.000000"
+  },
+  "aria_block_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "4096",
+   "max": "32768",
+   "dynamic": false,
+   "default": "8192",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "8192"
+  },
+  "aria_checkpoint_interval": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "30",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "30"
+  },
+  "aria_checkpoint_log_activity": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "1048576",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1048576"
+  },
+  "aria_encrypt_tables": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "aria_force_start_after_recovery_failures": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "255",
+   "dynamic": false,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "aria_group_commit": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "none",
+   "scope": "GLOBAL",
+   "values": [
+    "none",
+    "hard",
+    "soft"
+   ],
+   "value": "none"
+  },
+  "aria_group_commit_interval": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "aria_log_dir_path": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "/var/lib/mysql/",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "/var/lib/mysql/"
+  },
+  "aria_log_file_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "8388608",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "1073741824",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1073741824"
+  },
+  "aria_log_purge_type": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "immediate",
+   "scope": "GLOBAL",
+   "values": [
+    "immediate",
+    "external",
+    "at_flush"
+   ],
+   "value": "immediate"
+  },
+  "aria_max_sort_file_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "9223372036854775807",
+   "dynamic": true,
+   "default": "9223372036853727232",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "9223372036853727232"
+  },
+  "aria_page_checksum": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "aria_pagecache_age_threshold": {
+   "type": "BIGINT UNSIGNED",
+   "min": "100",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "300",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "300"
+  },
+  "aria_pagecache_buffer_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "131072",
+   "max": "18446744073709551615",
+   "dynamic": false,
+   "default": "134217728",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "134217728"
+  },
+  "aria_pagecache_division_limit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "100",
+   "dynamic": true,
+   "default": "100",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "100"
+  },
+  "aria_pagecache_file_hash_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "128",
+   "max": "16384",
+   "dynamic": false,
+   "default": "512",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "512"
+  },
+  "aria_recover_options": {
+   "type": "SET",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "BACKUP,QUICK",
+   "scope": "GLOBAL",
+   "values": [
+    "NORMAL",
+    "BACKUP",
+    "FORCE",
+    "QUICK",
+    "OFF"
+   ],
+   "value": "BACKUP,QUICK"
+  },
+  "aria_repair_threads": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "128",
+   "dynamic": true,
+   "default": "1",
+   "scope": "SESSION",
+   "values": null,
+   "value": "1"
+  },
+  "aria_sort_buffer_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "16352",
+   "max": "1152921504606846975",
+   "dynamic": true,
+   "default": "268434432",
+   "scope": "SESSION",
+   "values": null,
+   "value": "268434432"
+  },
+  "aria_stats_method": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "nulls_unequal",
+   "scope": "SESSION",
+   "values": [
+    "nulls_unequal",
+    "nulls_equal",
+    "nulls_ignored"
+   ],
+   "value": "nulls_unequal"
+  },
+  "aria_sync_log_dir": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "NEWFILE",
+   "scope": "GLOBAL",
+   "values": [
+    "NEVER",
+    "NEWFILE",
+    "ALWAYS"
+   ],
+   "value": "NEWFILE"
+  },
+  "aria_used_for_temp_tables": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "auto_increment_increment": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "65535",
+   "dynamic": true,
+   "default": "1",
+   "scope": "SESSION",
+   "values": null,
+   "value": "1"
+  },
+  "auto_increment_offset": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "65535",
+   "dynamic": true,
+   "default": "1",
+   "scope": "SESSION",
+   "values": null,
+   "value": "1"
+  },
+  "autocommit": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "automatic_sp_privileges": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "back_log": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "65535",
+   "dynamic": false,
+   "default": "150",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "80"
+  },
+  "basedir": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "/usr"
+  },
+  "big_tables": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "bind_address": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "binlog_alter_two_phase": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "binlog_annotate_row_events": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "binlog_cache_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "4096",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "32768",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "32768"
+  },
+  "binlog_checksum": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "CRC32",
+   "scope": "GLOBAL",
+   "values": [
+    "NONE",
+    "CRC32"
+   ],
+   "value": "CRC32"
+  },
+  "binlog_commit_wait_count": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "binlog_commit_wait_usec": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "100000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "100000"
+  },
+  "binlog_direct_non_transactional_updates": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "binlog_expire_logs_seconds": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "8553600",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "864000"
+  },
+  "binlog_file_cache_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "8192",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "16384",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "16384"
+  },
+  "binlog_format": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "MIXED",
+   "scope": "SESSION",
+   "values": [
+    "MIXED",
+    "STATEMENT",
+    "ROW"
+   ],
+   "value": "MIXED"
+  },
+  "binlog_optimize_thread_scheduling": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "binlog_row_image": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "FULL",
+   "scope": "SESSION",
+   "values": [
+    "MINIMAL",
+    "NOBLOB",
+    "FULL"
+   ],
+   "value": "FULL"
+  },
+  "binlog_row_metadata": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "NO_LOG",
+   "scope": "GLOBAL",
+   "values": [
+    "NO_LOG",
+    "MINIMAL",
+    "FULL"
+   ],
+   "value": "NO_LOG"
+  },
+  "binlog_stmt_cache_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "4096",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "32768",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "32768"
+  },
+  "bulk_insert_buffer_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "8388608",
+   "scope": "SESSION",
+   "values": null,
+   "value": "8388608"
+  },
+  "character_set_client": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "utf8mb4",
+   "scope": "SESSION",
+   "values": null,
+   "value": "utf8mb4"
+  },
+  "character_set_connection": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "utf8mb4",
+   "scope": "SESSION",
+   "values": null,
+   "value": "utf8mb4"
+  },
+  "character_set_database": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "utf8mb4",
+   "scope": "SESSION",
+   "values": null,
+   "value": "utf8mb4"
+  },
+  "character_set_filesystem": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "binary",
+   "scope": "SESSION",
+   "values": null,
+   "value": "binary"
+  },
+  "character_set_results": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "utf8mb4",
+   "scope": "SESSION",
+   "values": null,
+   "value": "utf8mb4"
+  },
+  "character_set_server": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "utf8mb4",
+   "scope": "SESSION",
+   "values": null,
+   "value": "utf8mb4"
+  },
+  "character_set_system": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "utf8mb3"
+  },
+  "character_sets_dir": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "/usr/share/mysql/charsets/"
+  },
+  "check_constraint_checks": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "collation_connection": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "utf8mb4_general_ci",
+   "scope": "SESSION",
+   "values": null,
+   "value": "utf8mb4_general_ci"
+  },
+  "collation_database": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "utf8mb4_general_ci",
+   "scope": "SESSION",
+   "values": null,
+   "value": "utf8mb4_general_ci"
+  },
+  "collation_server": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "utf8mb4_general_ci",
+   "scope": "SESSION",
+   "values": null,
+   "value": "utf8mb4_general_ci"
+  },
+  "column_compression_threshold": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "100",
+   "scope": "SESSION",
+   "values": null,
+   "value": "100"
+  },
+  "column_compression_zlib_level": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "9",
+   "dynamic": true,
+   "default": "6",
+   "scope": "SESSION",
+   "values": null,
+   "value": "6"
+  },
+  "column_compression_zlib_strategy": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "DEFAULT_STRATEGY",
+   "scope": "SESSION",
+   "values": [
+    "DEFAULT_STRATEGY",
+    "FILTERED",
+    "HUFFMAN_ONLY",
+    "RLE",
+    "FIXED"
+   ],
+   "value": "DEFAULT_STRATEGY"
+  },
+  "column_compression_zlib_wrap": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "completion_type": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "NO_CHAIN",
+   "scope": "SESSION",
+   "values": [
+    "NO_CHAIN",
+    "CHAIN",
+    "RELEASE"
+   ],
+   "value": "NO_CHAIN"
+  },
+  "concurrent_insert": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "AUTO",
+   "scope": "GLOBAL",
+   "values": [
+    "NEVER",
+    "AUTO",
+    "ALWAYS"
+   ],
+   "value": "AUTO"
+  },
+  "connect_timeout": {
+   "type": "BIGINT UNSIGNED",
+   "min": "2",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "10",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "10"
+  },
+  "core_file": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "datadir": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "/var/lib/mysql/",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "/var/lib/mysql/"
+  },
+  "date_format": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "%Y-%m-%d",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "%Y-%m-%d"
+  },
+  "datetime_format": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "%Y-%m-%d %H:%i:%s",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "%Y-%m-%d %H:%i:%s"
+  },
+  "deadlock_search_depth_long": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "33",
+   "dynamic": true,
+   "default": "15",
+   "scope": "SESSION",
+   "values": null,
+   "value": "15"
+  },
+  "deadlock_search_depth_short": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "32",
+   "dynamic": true,
+   "default": "4",
+   "scope": "SESSION",
+   "values": null,
+   "value": "4"
+  },
+  "deadlock_timeout_long": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "50000000",
+   "scope": "SESSION",
+   "values": null,
+   "value": "50000000"
+  },
+  "deadlock_timeout_short": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "10000",
+   "scope": "SESSION",
+   "values": null,
+   "value": "10000"
+  },
+  "debug_no_thread_alarm": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "default_password_lifetime": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "default_regex_flags": {
+   "type": "SET",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "SESSION",
+   "values": [
+    "DOTALL",
+    "DUPNAMES",
+    "EXTENDED",
+    "EXTENDED_MORE",
+    "EXTRA",
+    "MULTILINE",
+    "UNGREEDY"
+   ],
+   "value": ""
+  },
+  "default_storage_engine": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "InnoDB",
+   "scope": "SESSION",
+   "values": null,
+   "value": "InnoDB"
+  },
+  "default_tmp_storage_engine": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": null,
+   "scope": "SESSION",
+   "values": null,
+   "value": ""
+  },
+  "default_week_format": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "7",
+   "dynamic": true,
+   "default": "0",
+   "scope": "SESSION",
+   "values": null,
+   "value": "0"
+  },
+  "delay_key_write": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON",
+    "ALL"
+   ],
+   "value": "ON"
+  },
+  "delayed_insert_limit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "100",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "100"
+  },
+  "delayed_insert_timeout": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "300",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "300"
+  },
+  "delayed_queue_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "1000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1000"
+  },
+  "disconnect_on_expired_password": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "div_precision_increment": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "38",
+   "dynamic": true,
+   "default": "4",
+   "scope": "SESSION",
+   "values": null,
+   "value": "4"
+  },
+  "encrypt_binlog": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "encrypt_tmp_disk_tables": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "encrypt_tmp_files": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "enforce_storage_engine": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": null,
+   "scope": "SESSION",
+   "values": null,
+   "value": ""
+  },
+  "eq_range_index_dive_limit": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "200",
+   "scope": "SESSION",
+   "values": null,
+   "value": "200"
+  },
+  "event_scheduler": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON",
+    "DISABLED",
+    "ORIGINAL"
+   ],
+   "value": "OFF"
+  },
+  "expensive_subquery_limit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "100",
+   "scope": "SESSION",
+   "values": null,
+   "value": "100"
+  },
+  "expire_logs_days": {
+   "type": "DOUBLE",
+   "min": "0",
+   "max": "99",
+   "dynamic": true,
+   "default": "0.000000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "10.000000"
+  },
+  "explicit_defaults_for_timestamp": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "extra_max_connections": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "100000",
+   "dynamic": true,
+   "default": "1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1"
+  },
+  "extra_port": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "65535",
+   "dynamic": false,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "flush": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "flush_time": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "foreign_key_checks": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "ft_boolean_syntax": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "+ -><()~*:\"\"&|",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "+ -><()~*:\"\"&|"
+  },
+  "ft_max_word_len": {
+   "type": "BIGINT UNSIGNED",
+   "min": "10",
+   "max": "84",
+   "dynamic": false,
+   "default": "84",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "84"
+  },
+  "ft_min_word_len": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "84",
+   "dynamic": false,
+   "default": "4",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "4"
+  },
+  "ft_query_expansion_limit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "1000",
+   "dynamic": false,
+   "default": "20",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "20"
+  },
+  "ft_stopword_file": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "(built-in)"
+  },
+  "general_log": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "general_log_file": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "3ac989c5b831.log"
+  },
+  "group_concat_max_len": {
+   "type": "INT UNSIGNED",
+   "min": "4",
+   "max": "1073741824",
+   "dynamic": true,
+   "default": "1048576",
+   "scope": "SESSION",
+   "values": null,
+   "value": "1048576"
+  },
+  "gtid_binlog_pos": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "gtid_binlog_state": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "gtid_cleanup_batch_size": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "2147483647",
+   "dynamic": true,
+   "default": "64",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "64"
+  },
+  "gtid_current_pos": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "gtid_domain_id": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "0",
+   "scope": "SESSION",
+   "values": null,
+   "value": "0"
+  },
+  "gtid_ignore_duplicates": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "gtid_pos_auto_engines": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "gtid_slave_pos": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "gtid_strict_mode": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "have_compress": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "YES"
+  },
+  "have_crypt": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "YES"
+  },
+  "have_dynamic_loading": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "YES"
+  },
+  "have_geometry": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "YES"
+  },
+  "have_openssl": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "YES"
+  },
+  "have_profiling": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "YES"
+  },
+  "have_query_cache": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "YES"
+  },
+  "have_rtree_keys": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "YES"
+  },
+  "have_ssl": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "DISABLED"
+  },
+  "have_symlink": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "YES"
+  },
+  "histogram_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "255",
+   "dynamic": true,
+   "default": "254",
+   "scope": "SESSION",
+   "values": null,
+   "value": "254"
+  },
+  "histogram_type": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "DOUBLE_PREC_HB",
+   "scope": "SESSION",
+   "values": [
+    "SINGLE_PREC_HB",
+    "DOUBLE_PREC_HB",
+    "JSON_HB"
+   ],
+   "value": "DOUBLE_PREC_HB"
+  },
+  "host_cache_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "65536",
+   "dynamic": true,
+   "default": "128",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "hostname": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "3ac989c5b831"
+  },
+  "idle_readonly_transaction_timeout": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "0",
+   "scope": "SESSION",
+   "values": null,
+   "value": "0"
+  },
+  "idle_transaction_timeout": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "0",
+   "scope": "SESSION",
+   "values": null,
+   "value": "0"
+  },
+  "idle_write_transaction_timeout": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "0",
+   "scope": "SESSION",
+   "values": null,
+   "value": "0"
+  },
+  "ignore_builtin_innodb": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "ignore_db_dirs": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "in_predicate_conversion_threshold": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "1000",
+   "scope": "SESSION",
+   "values": null,
+   "value": "1000"
+  },
+  "init_connect": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "init_file": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "init_slave": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "innodb_adaptive_flushing": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_adaptive_flushing_lwm": {
+   "type": "DOUBLE",
+   "min": "0",
+   "max": "70",
+   "dynamic": true,
+   "default": "10.000000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "10.000000"
+  },
+  "innodb_adaptive_hash_index": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_adaptive_hash_index_parts": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "512",
+   "dynamic": false,
+   "default": "8",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "8"
+  },
+  "innodb_alter_copy_bulk": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_autoextend_increment": {
+   "type": "INT UNSIGNED",
+   "min": "1",
+   "max": "1000",
+   "dynamic": true,
+   "default": "64",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "64"
+  },
+  "innodb_autoinc_lock_mode": {
+   "type": "BIGINT",
+   "min": "0",
+   "max": "2",
+   "dynamic": false,
+   "default": "1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1"
+  },
+  "innodb_buf_dump_status_frequency": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "100",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "innodb_buffer_pool_chunk_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": false,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "innodb_buffer_pool_dump_at_shutdown": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_buffer_pool_dump_now": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_buffer_pool_dump_pct": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "100",
+   "dynamic": true,
+   "default": "25",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "25"
+  },
+  "innodb_buffer_pool_filename": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "ib_buffer_pool",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "ib_buffer_pool"
+  },
+  "innodb_buffer_pool_in_core_dump": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_buffer_pool_load_abort": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_buffer_pool_load_at_startup": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_buffer_pool_load_now": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_buffer_pool_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "2097152",
+   "max": "18446744073701163008",
+   "dynamic": true,
+   "default": "134217728",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "134217728"
+  },
+  "innodb_buffer_pool_size_auto_min": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073701163008",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "8796093022208"
+  },
+  "innodb_buffer_pool_size_max": {
+   "type": "BIGINT UNSIGNED",
+   "min": "8388608",
+   "max": "18446744073701163008",
+   "dynamic": false,
+   "default": "8796093022208",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "8796093022208"
+  },
+  "innodb_change_buffer_max_size": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "50",
+   "dynamic": true,
+   "default": "25",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "25"
+  },
+  "innodb_change_buffering": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "none",
+   "scope": "GLOBAL",
+   "values": [
+    "none",
+    "inserts",
+    "deletes",
+    "changes",
+    "purges",
+    "all"
+   ],
+   "value": "none"
+  },
+  "innodb_checksum_algorithm": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "full_crc32",
+   "scope": "GLOBAL",
+   "values": [
+    "crc32",
+    "strict_crc32",
+    "full_crc32",
+    "strict_full_crc32"
+   ],
+   "value": "full_crc32"
+  },
+  "innodb_cmp_per_index_enabled": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_compression_algorithm": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "zlib",
+   "scope": "GLOBAL",
+   "values": [
+    "none",
+    "zlib",
+    "lz4",
+    "lzo",
+    "lzma",
+    "bzip2",
+    "snappy"
+   ],
+   "value": "zlib"
+  },
+  "innodb_compression_default": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_compression_failure_threshold_pct": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "100",
+   "dynamic": true,
+   "default": "5",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "5"
+  },
+  "innodb_compression_level": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "9",
+   "dynamic": true,
+   "default": "6",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "6"
+  },
+  "innodb_compression_pad_pct_max": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "75",
+   "dynamic": true,
+   "default": "50",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "50"
+  },
+  "innodb_data_file_path": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "ibdata1:12M:autoextend",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "ibdata1:12M:autoextend"
+  },
+  "innodb_data_home_dir": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "innodb_deadlock_detect": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_deadlock_report": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "full",
+   "scope": "GLOBAL",
+   "values": [
+    "off",
+    "basic",
+    "full"
+   ],
+   "value": "full"
+  },
+  "innodb_default_encryption_key_id": {
+   "type": "INT UNSIGNED",
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "1",
+   "scope": "SESSION",
+   "values": null,
+   "value": "1"
+  },
+  "innodb_default_row_format": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "dynamic",
+   "scope": "GLOBAL",
+   "values": [
+    "redundant",
+    "compact",
+    "dynamic"
+   ],
+   "value": "dynamic"
+  },
+  "innodb_defragment": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_defragment_fill_factor": {
+   "type": "DOUBLE",
+   "min": "0.7",
+   "max": "1",
+   "dynamic": true,
+   "default": "0.900000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0.900000"
+  },
+  "innodb_defragment_fill_factor_n_recs": {
+   "type": "INT UNSIGNED",
+   "min": "1",
+   "max": "100",
+   "dynamic": true,
+   "default": "20",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "20"
+  },
+  "innodb_defragment_frequency": {
+   "type": "INT UNSIGNED",
+   "min": "1",
+   "max": "1000",
+   "dynamic": true,
+   "default": "40",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "40"
+  },
+  "innodb_defragment_n_pages": {
+   "type": "INT UNSIGNED",
+   "min": "2",
+   "max": "32",
+   "dynamic": true,
+   "default": "7",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "7"
+  },
+  "innodb_defragment_stats_accuracy": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "innodb_disable_sort_file_cache": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_doublewrite": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_encrypt_log": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_encrypt_tables": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON",
+    "FORCE"
+   ],
+   "value": "OFF"
+  },
+  "innodb_encrypt_temporary_tables": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_encryption_rotate_key_age": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1"
+  },
+  "innodb_encryption_rotation_iops": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "100",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "100"
+  },
+  "innodb_encryption_threads": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "255",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "innodb_fast_shutdown": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "3",
+   "dynamic": true,
+   "default": "1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1"
+  },
+  "innodb_fatal_semaphore_wait_threshold": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": false,
+   "default": "600",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "600"
+  },
+  "innodb_file_per_table": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_fill_factor": {
+   "type": "INT UNSIGNED",
+   "min": "10",
+   "max": "100",
+   "dynamic": true,
+   "default": "100",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "100"
+  },
+  "innodb_flush_log_at_timeout": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "2700",
+   "dynamic": true,
+   "default": "1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1"
+  },
+  "innodb_flush_log_at_trx_commit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "3",
+   "dynamic": true,
+   "default": "1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1"
+  },
+  "innodb_flush_method": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "O_DIRECT",
+   "scope": "GLOBAL",
+   "values": [
+    "fsync",
+    "O_DSYNC",
+    "littlesync",
+    "nosync",
+    "O_DIRECT",
+    "O_DIRECT_NO_FSYNC"
+   ],
+   "value": "O_DIRECT"
+  },
+  "innodb_flush_neighbors": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "2",
+   "dynamic": true,
+   "default": "1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1"
+  },
+  "innodb_flush_sync": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_flushing_avg_loops": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "1000",
+   "dynamic": true,
+   "default": "30",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "30"
+  },
+  "innodb_force_primary_key": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_force_recovery": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "6",
+   "dynamic": false,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "innodb_ft_aux_table": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "innodb_ft_cache_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1600000",
+   "max": "1099511627776",
+   "dynamic": true,
+   "default": "8000000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "8000000"
+  },
+  "innodb_ft_enable_diag_print": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_ft_enable_stopword": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_ft_max_token_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "10",
+   "max": "84",
+   "dynamic": false,
+   "default": "84",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "84"
+  },
+  "innodb_ft_min_token_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "16",
+   "dynamic": false,
+   "default": "3",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "3"
+  },
+  "innodb_ft_num_word_optimize": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1000",
+   "max": "10000",
+   "dynamic": true,
+   "default": "2000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "2000"
+  },
+  "innodb_ft_result_cache_limit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1000000",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "2000000000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "2000000000"
+  },
+  "innodb_ft_server_stopword_table": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "innodb_ft_sort_pll_degree": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "16",
+   "dynamic": false,
+   "default": "2",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "2"
+  },
+  "innodb_ft_total_cache_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "32000000",
+   "max": "1099511627776",
+   "dynamic": true,
+   "default": "640000000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "640000000"
+  },
+  "innodb_ft_user_stopword_table": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "SESSION",
+   "values": null,
+   "value": ""
+  },
+  "innodb_immediate_scrub_data_uncompressed": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_instant_alter_column_allowed": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "add_drop_reorder",
+   "scope": "GLOBAL",
+   "values": [
+    "never",
+    "add_last",
+    "add_drop_reorder"
+   ],
+   "value": "add_drop_reorder"
+  },
+  "innodb_io_capacity": {
+   "type": "BIGINT UNSIGNED",
+   "min": "100",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "200",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "200"
+  },
+  "innodb_io_capacity_max": {
+   "type": "BIGINT UNSIGNED",
+   "min": "100",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "4294967295",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "2000"
+  },
+  "innodb_linux_aio": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "auto",
+   "scope": "GLOBAL",
+   "values": [
+    "auto",
+    "io_uring",
+    "aio"
+   ],
+   "value": "auto"
+  },
+  "innodb_lock_wait_timeout": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "100000000",
+   "dynamic": true,
+   "default": "50",
+   "scope": "SESSION",
+   "values": null,
+   "value": "50"
+  },
+  "innodb_log_buffer_size": {
+   "type": "INT UNSIGNED",
+   "min": "2097152",
+   "max": "2147479552",
+   "dynamic": false,
+   "default": "16777216",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "16777216"
+  },
+  "innodb_log_checkpoint_now": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_log_file_buffering": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_log_file_mmap": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_log_file_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "4194304",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "100663296",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "100663296"
+  },
+  "innodb_log_group_home_dir": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "./"
+  },
+  "innodb_log_spin_wait_delay": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "6000",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "innodb_log_write_ahead_size": {
+   "type": "INT UNSIGNED",
+   "min": "512",
+   "max": "4096",
+   "dynamic": false,
+   "default": "512",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "4096"
+  },
+  "innodb_lru_flush_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "32",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "innodb_lru_scan_depth": {
+   "type": "BIGINT UNSIGNED",
+   "min": "100",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "1536",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1536"
+  },
+  "innodb_max_dirty_pages_pct": {
+   "type": "DOUBLE",
+   "min": "0",
+   "max": "99.999",
+   "dynamic": true,
+   "default": "90.000000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "90.000000"
+  },
+  "innodb_max_dirty_pages_pct_lwm": {
+   "type": "DOUBLE",
+   "min": "0",
+   "max": "99.999",
+   "dynamic": true,
+   "default": "0.000000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0.000000"
+  },
+  "innodb_max_purge_lag": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "innodb_max_purge_lag_delay": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "10000000",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "innodb_max_purge_lag_wait": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "4294967295",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "4294967295"
+  },
+  "innodb_max_undo_log_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "10485760",
+   "max": "281474976710656",
+   "dynamic": true,
+   "default": "10485760",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "10485760"
+  },
+  "innodb_monitor_disable": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "innodb_monitor_enable": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "innodb_monitor_reset": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "innodb_monitor_reset_all": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "innodb_old_blocks_pct": {
+   "type": "INT UNSIGNED",
+   "min": "5",
+   "max": "95",
+   "dynamic": true,
+   "default": "37",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "37"
+  },
+  "innodb_old_blocks_time": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "1000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1000"
+  },
+  "innodb_online_alter_log_max_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "65536",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "134217728",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "134217728"
+  },
+  "innodb_open_files": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "9223372036854775807",
+   "dynamic": false,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "2000"
+  },
+  "innodb_optimize_fulltext_only": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_page_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "4096",
+   "max": "65536",
+   "dynamic": false,
+   "default": "16384",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "16384"
+  },
+  "innodb_prefix_index_cluster_optimization": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_print_all_deadlocks": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_purge_batch_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "5000",
+   "dynamic": true,
+   "default": "127",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "127"
+  },
+  "innodb_purge_rseg_truncate_frequency": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "128",
+   "dynamic": true,
+   "default": "128",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "128"
+  },
+  "innodb_purge_threads": {
+   "type": "INT UNSIGNED",
+   "min": "1",
+   "max": "32",
+   "dynamic": true,
+   "default": "4",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "4"
+  },
+  "innodb_random_read_ahead": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_read_ahead_threshold": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "64",
+   "dynamic": true,
+   "default": "56",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "56"
+  },
+  "innodb_read_io_threads": {
+   "type": "INT UNSIGNED",
+   "min": "1",
+   "max": "64",
+   "dynamic": true,
+   "default": "4",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "4"
+  },
+  "innodb_read_only": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_read_only_compressed": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_rollback_on_timeout": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_snapshot_isolation": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_sort_buffer_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "65536",
+   "max": "67108864",
+   "dynamic": false,
+   "default": "1048576",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1048576"
+  },
+  "innodb_spin_wait_delay": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "6000",
+   "dynamic": true,
+   "default": "4",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "4"
+  },
+  "innodb_stats_auto_recalc": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_stats_include_delete_marked": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_stats_method": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "nulls_equal",
+   "scope": "GLOBAL",
+   "values": [
+    "nulls_equal",
+    "nulls_unequal",
+    "nulls_ignored"
+   ],
+   "value": "nulls_equal"
+  },
+  "innodb_stats_modified_counter": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "innodb_stats_on_metadata": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_stats_persistent": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_stats_persistent_sample_pages": {
+   "type": "INT UNSIGNED",
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "20",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "20"
+  },
+  "innodb_stats_traditional": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_stats_transient_sample_pages": {
+   "type": "INT UNSIGNED",
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "8",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "8"
+  },
+  "innodb_status_output": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_status_output_locks": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_strict_mode": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_sync_spin_loops": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "30",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "30"
+  },
+  "innodb_table_locks": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_temp_data_file_path": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "ibtmp1:12M:autoextend",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "ibtmp1:12M:autoextend"
+  },
+  "innodb_tmpdir": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "SESSION",
+   "values": null,
+   "value": ""
+  },
+  "innodb_undo_directory": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "./"
+  },
+  "innodb_undo_log_truncate": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "innodb_undo_tablespaces": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "127",
+   "dynamic": false,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "innodb_use_atomic_writes": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_use_native_aio": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "innodb_write_io_threads": {
+   "type": "INT UNSIGNED",
+   "min": "2",
+   "max": "64",
+   "dynamic": true,
+   "default": "4",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "4"
+  },
+  "interactive_timeout": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "28800",
+   "scope": "SESSION",
+   "values": null,
+   "value": "28800"
+  },
+  "join_buffer_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "128",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "262144",
+   "scope": "SESSION",
+   "values": null,
+   "value": "262144"
+  },
+  "join_buffer_space_limit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "2048",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "2097152",
+   "scope": "SESSION",
+   "values": null,
+   "value": "2097152"
+  },
+  "join_cache_level": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "8",
+   "dynamic": true,
+   "default": "2",
+   "scope": "SESSION",
+   "values": null,
+   "value": "2"
+  },
+  "keep_files_on_create": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "key_buffer_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "134217728",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "134217728"
+  },
+  "key_cache_age_threshold": {
+   "type": "BIGINT UNSIGNED",
+   "min": "100",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "300",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "300"
+  },
+  "key_cache_block_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "512",
+   "max": "16384",
+   "dynamic": true,
+   "default": "1024",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1024"
+  },
+  "key_cache_division_limit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "100",
+   "dynamic": true,
+   "default": "100",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "100"
+  },
+  "key_cache_file_hash_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "128",
+   "max": "16384",
+   "dynamic": true,
+   "default": "512",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "512"
+  },
+  "key_cache_segments": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "64",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "large_files_support": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "large_page_size": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "large_pages": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "lc_messages": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "en_US",
+   "scope": "SESSION",
+   "values": null,
+   "value": "en_US"
+  },
+  "lc_messages_dir": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "lc_time_names": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "en_US",
+   "scope": "SESSION",
+   "values": null,
+   "value": "en_US"
+  },
+  "license": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "GPL"
+  },
+  "local_infile": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "lock_wait_timeout": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "86400",
+   "scope": "SESSION",
+   "values": null,
+   "value": "86400"
+  },
+  "locked_in_memory": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "log_bin": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "log_bin_basename": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "log_bin_compress": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "log_bin_compress_min_len": {
+   "type": "INT UNSIGNED",
+   "min": "10",
+   "max": "1024",
+   "dynamic": true,
+   "default": "256",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "256"
+  },
+  "log_bin_index": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "log_bin_trust_function_creators": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "log_disabled_statements": {
+   "type": "SET",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "sp",
+   "scope": "SESSION",
+   "values": [
+    "slave",
+    "sp"
+   ],
+   "value": "sp"
+  },
+  "log_error": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "log_output": {
+   "type": "SET",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "FILE",
+   "scope": "GLOBAL",
+   "values": [
+    "NONE",
+    "FILE",
+    "TABLE"
+   ],
+   "value": "FILE"
+  },
+  "log_queries_not_using_indexes": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "log_slave_updates": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "log_slow_admin_statements": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "log_slow_disabled_statements": {
+   "type": "SET",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "sp",
+   "scope": "SESSION",
+   "values": [
+    "admin",
+    "call",
+    "slave",
+    "sp"
+   ],
+   "value": "sp"
+  },
+  "log_slow_filter": {
+   "type": "SET",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "admin,filesort,filesort_on_disk,filesort_priority_queue,full_join,full_scan,query_cache,query_cache_miss,tmp_table,tmp_table_on_disk",
+   "scope": "SESSION",
+   "values": [
+    "admin",
+    "filesort",
+    "filesort_on_disk",
+    "filesort_priority_queue",
+    "full_join",
+    "full_scan",
+    "not_using_index",
+    "query_cache",
+    "query_cache_miss",
+    "tmp_table",
+    "tmp_table_on_disk"
+   ],
+   "value": "admin,filesort,filesort_on_disk,filesort_priority_queue,full_join,full_scan,query_cache,query_cache_miss,tmp_table,tmp_table_on_disk"
+  },
+  "log_slow_max_warnings": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "1000",
+   "dynamic": true,
+   "default": "10",
+   "scope": "SESSION",
+   "values": null,
+   "value": "10"
+  },
+  "log_slow_min_examined_row_limit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "0",
+   "scope": "SESSION",
+   "values": null,
+   "value": "0"
+  },
+  "log_slow_query": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "log_slow_query_file": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "3ac989c5b831-slow.log"
+  },
+  "log_slow_query_time": {
+   "type": "DOUBLE",
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "10.000000",
+   "scope": "SESSION",
+   "values": null,
+   "value": "10.000000"
+  },
+  "log_slow_rate_limit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "1",
+   "scope": "SESSION",
+   "values": null,
+   "value": "1"
+  },
+  "log_slow_slave_statements": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "log_slow_verbosity": {
+   "type": "SET",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "SESSION",
+   "values": [
+    "innodb",
+    "query_plan",
+    "explain",
+    "engine",
+    "warnings",
+    "full"
+   ],
+   "value": ""
+  },
+  "log_tc_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "12288",
+   "max": "18446744073709551615",
+   "dynamic": false,
+   "default": "24576",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "24576"
+  },
+  "log_warnings": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "2",
+   "scope": "SESSION",
+   "values": null,
+   "value": "2"
+  },
+  "long_query_time": {
+   "type": "DOUBLE",
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "10.000000",
+   "scope": "SESSION",
+   "values": null,
+   "value": "10.000000"
+  },
+  "low_priority_updates": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "lower_case_file_system": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "lower_case_table_names": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "2",
+   "dynamic": false,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "master_verify_checksum": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "max_allowed_packet": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1024",
+   "max": "1073741824",
+   "dynamic": true,
+   "default": "16777216",
+   "scope": "SESSION",
+   "values": null,
+   "value": "16777216"
+  },
+  "max_binlog_cache_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "4096",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "18446744073709547520",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "18446744073709547520"
+  },
+  "max_binlog_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "4096",
+   "max": "1073741824",
+   "dynamic": true,
+   "default": "1073741824",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1073741824"
+  },
+  "max_binlog_stmt_cache_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "4096",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "18446744073709547520",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "18446744073709547520"
+  },
+  "max_connect_errors": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "100",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "100"
+  },
+  "max_connections": {
+   "type": "BIGINT UNSIGNED",
+   "min": "10",
+   "max": "100000",
+   "dynamic": true,
+   "default": "151",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "151"
+  },
+  "max_delayed_threads": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "16384",
+   "dynamic": true,
+   "default": "20",
+   "scope": "SESSION",
+   "values": null,
+   "value": "20"
+  },
+  "max_digest_length": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "1024",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1024"
+  },
+  "max_error_count": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "65535",
+   "dynamic": true,
+   "default": "64",
+   "scope": "SESSION",
+   "values": null,
+   "value": "64"
+  },
+  "max_heap_table_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "16384",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "16777216",
+   "scope": "SESSION",
+   "values": null,
+   "value": "16777216"
+  },
+  "max_insert_delayed_threads": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "16384",
+   "dynamic": true,
+   "default": "20",
+   "scope": "SESSION",
+   "values": null,
+   "value": "20"
+  },
+  "max_join_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "18446744073709551615",
+   "scope": "SESSION",
+   "values": null,
+   "value": "18446744073709551615"
+  },
+  "max_length_for_sort_data": {
+   "type": "BIGINT UNSIGNED",
+   "min": "4",
+   "max": "8388608",
+   "dynamic": true,
+   "default": "1024",
+   "scope": "SESSION",
+   "values": null,
+   "value": "1024"
+  },
+  "max_password_errors": {
+   "type": "INT UNSIGNED",
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "4294967295",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "4294967295"
+  },
+  "max_prepared_stmt_count": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "16382",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "16382"
+  },
+  "max_recursive_iterations": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "1000",
+   "scope": "SESSION",
+   "values": null,
+   "value": "1000"
+  },
+  "max_relay_log_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "4096",
+   "max": "1073741824",
+   "dynamic": true,
+   "default": "1073741824",
+   "scope": "SESSION",
+   "values": null,
+   "value": "1073741824"
+  },
+  "max_rowid_filter_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1024",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "131072",
+   "scope": "SESSION",
+   "values": null,
+   "value": "131072"
+  },
+  "max_seeks_for_key": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "4294967295",
+   "scope": "SESSION",
+   "values": null,
+   "value": "4294967295"
+  },
+  "max_session_mem_used": {
+   "type": "BIGINT UNSIGNED",
+   "min": "8192",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "9223372036854775807",
+   "scope": "SESSION",
+   "values": null,
+   "value": "9223372036854775807"
+  },
+  "max_sort_length": {
+   "type": "BIGINT UNSIGNED",
+   "min": "64",
+   "max": "8388608",
+   "dynamic": true,
+   "default": "1024",
+   "scope": "SESSION",
+   "values": null,
+   "value": "1024"
+  },
+  "max_sp_recursion_depth": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "255",
+   "dynamic": true,
+   "default": "0",
+   "scope": "SESSION",
+   "values": null,
+   "value": "0"
+  },
+  "max_statement_time": {
+   "type": "DOUBLE",
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "0.000000",
+   "scope": "SESSION",
+   "values": null,
+   "value": "0.000000"
+  },
+  "max_tmp_tables": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "32",
+   "scope": "SESSION",
+   "values": null,
+   "value": "32"
+  },
+  "max_user_connections": {
+   "type": "INT",
+   "min": "-1",
+   "max": "2147483647",
+   "dynamic": true,
+   "default": "0",
+   "scope": "SESSION",
+   "values": null,
+   "value": "0"
+  },
+  "max_write_lock_count": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "4294967295",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "4294967295"
+  },
+  "metadata_locks_cache_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "1024",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1024"
+  },
+  "metadata_locks_hash_instances": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "1024",
+   "dynamic": false,
+   "default": "8",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "8"
+  },
+  "min_examined_row_limit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "0",
+   "scope": "SESSION",
+   "values": null,
+   "value": "0"
+  },
+  "mrr_buffer_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "8192",
+   "max": "2147483647",
+   "dynamic": true,
+   "default": "262144",
+   "scope": "SESSION",
+   "values": null,
+   "value": "262144"
+  },
+  "myisam_block_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1024",
+   "max": "16384",
+   "dynamic": false,
+   "default": "1024",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1024"
+  },
+  "myisam_data_pointer_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "2",
+   "max": "7",
+   "dynamic": true,
+   "default": "6",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "6"
+  },
+  "myisam_max_sort_file_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "9223372036854775807",
+   "dynamic": true,
+   "default": "9223372036853727232",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "9223372036853727232"
+  },
+  "myisam_mmap_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "7",
+   "max": "18446744073709551615",
+   "dynamic": false,
+   "default": "18446744073709551615",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "18446744073709551615"
+  },
+  "myisam_recover_options": {
+   "type": "SET",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "BACKUP,QUICK",
+   "scope": "GLOBAL",
+   "values": [
+    "DEFAULT",
+    "BACKUP",
+    "FORCE",
+    "QUICK",
+    "BACKUP_ALL",
+    "OFF"
+   ],
+   "value": "BACKUP,QUICK"
+  },
+  "myisam_repair_threads": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "1",
+   "scope": "SESSION",
+   "values": null,
+   "value": "1"
+  },
+  "myisam_sort_buffer_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "4096",
+   "max": "1152921504606846975",
+   "dynamic": true,
+   "default": "134216704",
+   "scope": "SESSION",
+   "values": null,
+   "value": "134216704"
+  },
+  "myisam_stats_method": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "NULLS_UNEQUAL",
+   "scope": "SESSION",
+   "values": [
+    "NULLS_UNEQUAL",
+    "NULLS_EQUAL",
+    "NULLS_IGNORED"
+   ],
+   "value": "NULLS_UNEQUAL"
+  },
+  "myisam_use_mmap": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "mysql56_temporal_format": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "net_buffer_length": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1024",
+   "max": "1048576",
+   "dynamic": true,
+   "default": "16384",
+   "scope": "SESSION",
+   "values": null,
+   "value": "16384"
+  },
+  "net_read_timeout": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "30",
+   "scope": "SESSION",
+   "values": null,
+   "value": "30"
+  },
+  "net_retry_count": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "10",
+   "scope": "SESSION",
+   "values": null,
+   "value": "10"
+  },
+  "net_write_timeout": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "60",
+   "scope": "SESSION",
+   "values": null,
+   "value": "60"
+  },
+  "note_verbosity": {
+   "type": "SET",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "basic,explain",
+   "scope": "SESSION",
+   "values": [
+    "basic",
+    "unusable_keys",
+    "explain"
+   ],
+   "value": "basic,explain"
+  },
+  "old": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "old_alter_table": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "DEFAULT",
+   "scope": "SESSION",
+   "values": [
+    "DEFAULT",
+    "COPY",
+    "INPLACE",
+    "NOCOPY",
+    "INSTANT"
+   ],
+   "value": "DEFAULT"
+  },
+  "old_mode": {
+   "type": "SET",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "UTF8_IS_UTF8MB3",
+   "scope": "SESSION",
+   "values": [
+    "NO_DUP_KEY_WARNINGS_WITH_IGNORE",
+    "NO_PROGRESS_INFO",
+    "ZERO_DATE_TIME_CAST",
+    "UTF8_IS_UTF8MB3",
+    "IGNORE_INDEX_ONLY_FOR_JOIN",
+    "COMPAT_5_1_CHECKSUM",
+    "NO_NULL_COLLATION_IDS"
+   ],
+   "value": "UTF8_IS_UTF8MB3"
+  },
+  "old_passwords": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "open_files_limit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": false,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "32194"
+  },
+  "optimizer_adjust_secondary_key_costs": {
+   "type": "SET",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "fix_reuse_range_for_ref,fix_card_multiplier",
+   "scope": "SESSION",
+   "values": [
+    "adjust_secondary_key_cost",
+    "disable_max_seek",
+    "disable_forced_index_in_group_by",
+    "fix_innodb_cardinality",
+    "fix_reuse_range_for_ref",
+    "fix_card_multiplier",
+    "fix_derived_table_read_cost",
+    "fix_order_by_index_choice"
+   ],
+   "value": "fix_reuse_range_for_ref,fix_card_multiplier"
+  },
+  "optimizer_extra_pruning_depth": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "62",
+   "dynamic": true,
+   "default": "8",
+   "scope": "SESSION",
+   "values": null,
+   "value": "8"
+  },
+  "optimizer_join_limit_pref_ratio": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "0",
+   "scope": "SESSION",
+   "values": null,
+   "value": "0"
+  },
+  "optimizer_max_sel_arg_weight": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "32000",
+   "scope": "SESSION",
+   "values": null,
+   "value": "32000"
+  },
+  "optimizer_max_sel_args": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "16000",
+   "scope": "SESSION",
+   "values": null,
+   "value": "16000"
+  },
+  "optimizer_prune_level": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "2",
+   "dynamic": true,
+   "default": "2",
+   "scope": "SESSION",
+   "values": null,
+   "value": "2"
+  },
+  "optimizer_search_depth": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "62",
+   "dynamic": true,
+   "default": "62",
+   "scope": "SESSION",
+   "values": null,
+   "value": "62"
+  },
+  "optimizer_selectivity_sampling_limit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "10",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "100",
+   "scope": "SESSION",
+   "values": null,
+   "value": "100"
+  },
+  "optimizer_switch": {
+   "type": "FLAGSET",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,index_merge_sort_intersection=off,engine_condition_pushdown=off,index_condition_pushdown=on,derived_merge=on,derived_with_keys=on,firstmatch=on,loosescan=on,materialization=on,in_to_exists=on,semijoin=on,partial_match_rowid_merge=on,partial_match_table_scan=on,subquery_cache=on,mrr=off,mrr_cost_based=off,mrr_sort_keys=off,outer_join_with_cache=on,semijoin_with_cache=on,join_cache_incremental=on,join_cache_hashed=on,join_cache_bka=on,optimize_join_buffer_size=on,table_elimination=on,extended_keys=on,exists_to_in=on,orderby_uses_equalities=on,condition_pushdown_for_derived=on,split_materialized=on,condition_pushdown_for_subquery=on,rowid_filter=on,condition_pushdown_from_having=on,not_null_range_scan=off,hash_join_cardinality=off,cset_narrowing=off",
+   "scope": "SESSION",
+   "values": [
+    "index_merge",
+    "index_merge_union",
+    "index_merge_sort_union",
+    "index_merge_intersection",
+    "index_merge_sort_intersection",
+    "engine_condition_pushdown",
+    "index_condition_pushdown",
+    "derived_merge",
+    "derived_with_keys",
+    "firstmatch",
+    "loosescan",
+    "materialization",
+    "in_to_exists",
+    "semijoin",
+    "partial_match_rowid_merge",
+    "partial_match_table_scan",
+    "subquery_cache",
+    "mrr",
+    "mrr_cost_based",
+    "mrr_sort_keys",
+    "outer_join_with_cache",
+    "semijoin_with_cache",
+    "join_cache_incremental",
+    "join_cache_hashed",
+    "join_cache_bka",
+    "optimize_join_buffer_size",
+    "table_elimination",
+    "extended_keys",
+    "exists_to_in",
+    "orderby_uses_equalities",
+    "condition_pushdown_for_derived",
+    "split_materialized",
+    "condition_pushdown_for_subquery",
+    "rowid_filter",
+    "condition_pushdown_from_having",
+    "not_null_range_scan",
+    "hash_join_cardinality",
+    "cset_narrowing",
+    "default"
+   ],
+   "value": "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,index_merge_sort_intersection=off,engine_condition_pushdown=off,index_condition_pushdown=on,derived_merge=on,derived_with_keys=on,firstmatch=on,loosescan=on,materialization=on,in_to_exists=on,semijoin=on,partial_match_rowid_merge=on,partial_match_table_scan=on,subquery_cache=on,mrr=off,mrr_cost_based=off,mrr_sort_keys=off,outer_join_with_cache=on,semijoin_with_cache=on,join_cache_incremental=on,join_cache_hashed=on,join_cache_bka=on,optimize_join_buffer_size=on,table_elimination=on,extended_keys=on,exists_to_in=on,orderby_uses_equalities=on,condition_pushdown_for_derived=on,split_materialized=on,condition_pushdown_for_subquery=on,rowid_filter=on,condition_pushdown_from_having=on,not_null_range_scan=off,hash_join_cardinality=off,cset_narrowing=off"
+  },
+  "optimizer_trace": {
+   "type": "FLAGSET",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "enabled=off",
+   "scope": "SESSION",
+   "values": [
+    "enabled",
+    "default"
+   ],
+   "value": "enabled=off"
+  },
+  "optimizer_trace_max_mem_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "1048576",
+   "scope": "SESSION",
+   "values": null,
+   "value": "1048576"
+  },
+  "optimizer_use_condition_selectivity": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "5",
+   "dynamic": true,
+   "default": "4",
+   "scope": "SESSION",
+   "values": null,
+   "value": "4"
+  },
+  "performance_schema": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "performance_schema_accounts_size": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_digests_size": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_events_stages_history_long_size": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_events_stages_history_size": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1024",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_events_statements_history_long_size": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_events_statements_history_size": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1024",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_events_transactions_history_long_size": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_events_transactions_history_size": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1024",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_events_waits_history_long_size": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_events_waits_history_size": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1024",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_hosts_size": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_max_cond_classes": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "256",
+   "dynamic": false,
+   "default": "90",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "90"
+  },
+  "performance_schema_max_cond_instances": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_max_digest_length": {
+   "type": "BIGINT",
+   "min": "0",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "1024",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1024"
+  },
+  "performance_schema_max_file_classes": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "256",
+   "dynamic": false,
+   "default": "80",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "80"
+  },
+  "performance_schema_max_file_handles": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "32768",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "32768"
+  },
+  "performance_schema_max_file_instances": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_max_index_stat": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_max_memory_classes": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "1024",
+   "dynamic": false,
+   "default": "320",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "320"
+  },
+  "performance_schema_max_metadata_locks": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "104857600",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_max_mutex_classes": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "256",
+   "dynamic": false,
+   "default": "210",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "210"
+  },
+  "performance_schema_max_mutex_instances": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "104857600",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_max_prepared_statements_instances": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_max_program_instances": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_max_rwlock_classes": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "256",
+   "dynamic": false,
+   "default": "50",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "50"
+  },
+  "performance_schema_max_rwlock_instances": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "104857600",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_max_socket_classes": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "256",
+   "dynamic": false,
+   "default": "10",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "10"
+  },
+  "performance_schema_max_socket_instances": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_max_sql_text_length": {
+   "type": "BIGINT",
+   "min": "0",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "1024",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1024"
+  },
+  "performance_schema_max_stage_classes": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "256",
+   "dynamic": false,
+   "default": "160",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "160"
+  },
+  "performance_schema_max_statement_classes": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "256",
+   "dynamic": false,
+   "default": "222",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "222"
+  },
+  "performance_schema_max_statement_stack": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "256",
+   "dynamic": false,
+   "default": "10",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "10"
+  },
+  "performance_schema_max_table_handles": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_max_table_instances": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_max_table_lock_stat": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_max_thread_classes": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "256",
+   "dynamic": false,
+   "default": "50",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "50"
+  },
+  "performance_schema_max_thread_instances": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_session_connect_attrs_size": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_setup_actors_size": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1024",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_setup_objects_size": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "performance_schema_users_size": {
+   "type": "BIGINT",
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "default": "-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "-1"
+  },
+  "pid_file": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "/run/mysqld/mysqld.pid"
+  },
+  "plugin_dir": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "/usr/lib/mysql/plugin/"
+  },
+  "plugin_maturity": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "gamma",
+   "scope": "GLOBAL",
+   "values": [
+    "unknown",
+    "experimental",
+    "alpha",
+    "beta",
+    "gamma",
+    "stable"
+   ],
+   "value": "gamma"
+  },
+  "port": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "65535",
+   "dynamic": false,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "3306"
+  },
+  "preload_buffer_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1024",
+   "max": "1073741824",
+   "dynamic": true,
+   "default": "32768",
+   "scope": "SESSION",
+   "values": null,
+   "value": "32768"
+  },
+  "profiling": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "profiling_history_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "100",
+   "dynamic": true,
+   "default": "15",
+   "scope": "SESSION",
+   "values": null,
+   "value": "15"
+  },
+  "progress_report_time": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "5",
+   "scope": "SESSION",
+   "values": null,
+   "value": "5"
+  },
+  "protocol_version": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "10"
+  },
+  "proxy_protocol_networks": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "query_alloc_block_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1024",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "32768",
+   "scope": "SESSION",
+   "values": null,
+   "value": "32768"
+  },
+  "query_cache_limit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "1048576",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1048576"
+  },
+  "query_cache_min_res_unit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "4096",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "4096"
+  },
+  "query_cache_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "1048576",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1048576"
+  },
+  "query_cache_strip_comments": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "query_cache_type": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON",
+    "DEMAND"
+   ],
+   "value": "OFF"
+  },
+  "query_cache_wlock_invalidate": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "query_prealloc_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1024",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "32768",
+   "scope": "SESSION",
+   "values": null,
+   "value": "32768"
+  },
+  "range_alloc_block_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "4096",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "4096",
+   "scope": "SESSION",
+   "values": null,
+   "value": "4096"
+  },
+  "read_binlog_speed_limit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "read_buffer_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "8192",
+   "max": "2147483647",
+   "dynamic": true,
+   "default": "131072",
+   "scope": "SESSION",
+   "values": null,
+   "value": "131072"
+  },
+  "read_only": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "read_rnd_buffer_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "2147483647",
+   "dynamic": true,
+   "default": "262144",
+   "scope": "SESSION",
+   "values": null,
+   "value": "262144"
+  },
+  "relay_log": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "relay_log_basename": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "relay_log_index": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "relay_log_info_file": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "relay-log.info"
+  },
+  "relay_log_purge": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "relay_log_recovery": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "relay_log_space_limit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": false,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "replicate_annotate_row_events": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "replicate_do_db": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "replicate_do_table": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "replicate_events_marked_for_skip": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "REPLICATE",
+   "scope": "GLOBAL",
+   "values": [
+    "REPLICATE",
+    "FILTER_ON_SLAVE",
+    "FILTER_ON_MASTER"
+   ],
+   "value": "REPLICATE"
+  },
+  "replicate_ignore_db": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "replicate_ignore_table": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "replicate_rewrite_db": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "replicate_wild_do_table": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "replicate_wild_ignore_table": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "report_host": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "report_password": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "report_port": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": false,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "3306"
+  },
+  "report_user": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "require_secure_transport": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "rowid_merge_buff_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "9223372036854775807",
+   "dynamic": true,
+   "default": "8388608",
+   "scope": "SESSION",
+   "values": null,
+   "value": "8388608"
+  },
+  "rpl_semi_sync_master_enabled": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "rpl_semi_sync_master_timeout": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "10000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "10000"
+  },
+  "rpl_semi_sync_master_trace_level": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "32",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "32"
+  },
+  "rpl_semi_sync_master_wait_no_slave": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "rpl_semi_sync_master_wait_point": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "AFTER_COMMIT",
+   "scope": "GLOBAL",
+   "values": [
+    "AFTER_SYNC",
+    "AFTER_COMMIT"
+   ],
+   "value": "AFTER_COMMIT"
+  },
+  "rpl_semi_sync_slave_delay_master": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "rpl_semi_sync_slave_enabled": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "rpl_semi_sync_slave_kill_conn_timeout": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "5",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "5"
+  },
+  "rpl_semi_sync_slave_trace_level": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "32",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "32"
+  },
+  "secure_auth": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "secure_file_priv": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "secure_timestamp": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "NO",
+   "scope": "GLOBAL",
+   "values": [
+    "NO",
+    "SUPER",
+    "REPLICATION",
+    "YES"
+   ],
+   "value": "NO"
+  },
+  "server_id": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "1",
+   "scope": "SESSION",
+   "values": null,
+   "value": "1"
+  },
+  "server_uid": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "o3wuMrCciZFs4ey63HUBXwNe3FE="
+  },
+  "session_track_schema": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "session_track_state_change": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "session_track_system_variables": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "autocommit,character_set_client,character_set_connection,character_set_results,time_zone",
+   "scope": "SESSION",
+   "values": null,
+   "value": "autocommit,character_set_client,character_set_connection,character_set_results,time_zone"
+  },
+  "session_track_transaction_info": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "STATE",
+    "CHARACTERISTICS"
+   ],
+   "value": "OFF"
+  },
+  "skip_external_locking": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "skip_grant_tables": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "skip_name_resolve": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "skip_networking": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "skip_show_database": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "slave_compressed_protocol": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "slave_ddl_exec_mode": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "IDEMPOTENT",
+   "scope": "GLOBAL",
+   "values": [
+    "STRICT",
+    "IDEMPOTENT"
+   ],
+   "value": "IDEMPOTENT"
+  },
+  "slave_domain_parallel_threads": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "16383",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "slave_exec_mode": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "STRICT",
+   "scope": "GLOBAL",
+   "values": [
+    "STRICT",
+    "IDEMPOTENT"
+   ],
+   "value": "STRICT"
+  },
+  "slave_load_tmpdir": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "/tmp"
+  },
+  "slave_max_allowed_packet": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1024",
+   "max": "1073741824",
+   "dynamic": true,
+   "default": "1073741824",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1073741824"
+  },
+  "slave_max_statement_time": {
+   "type": "DOUBLE",
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "0.000000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0.000000"
+  },
+  "slave_net_timeout": {
+   "type": "INT UNSIGNED",
+   "min": "1",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "60",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "60"
+  },
+  "slave_parallel_max_queued": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "2147483647",
+   "dynamic": true,
+   "default": "131072",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "131072"
+  },
+  "slave_parallel_mode": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "optimistic",
+   "scope": "GLOBAL",
+   "values": [
+    "none",
+    "minimal",
+    "conservative",
+    "optimistic",
+    "aggressive"
+   ],
+   "value": "optimistic"
+  },
+  "slave_parallel_threads": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "16383",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "slave_parallel_workers": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "16383",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "slave_run_triggers_for_rbr": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "NO",
+   "scope": "GLOBAL",
+   "values": [
+    "NO",
+    "YES",
+    "LOGGING",
+    "ENFORCE"
+   ],
+   "value": "NO"
+  },
+  "slave_skip_errors": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "OFF"
+  },
+  "slave_sql_verify_checksum": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "slave_transaction_retries": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "10",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "10"
+  },
+  "slave_transaction_retry_errors": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1158,1159,1160,1161,1205,1213,1020,1429,2013,12701"
+  },
+  "slave_transaction_retry_interval": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "3600",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "slave_type_conversions": {
+   "type": "SET",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": [
+    "ALL_LOSSY",
+    "ALL_NON_LOSSY"
+   ],
+   "value": ""
+  },
+  "slow_launch_time": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "2",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "2"
+  },
+  "slow_query_log": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "slow_query_log_file": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "3ac989c5b831-slow.log"
+  },
+  "socket": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "/run/mysqld/mysqld.sock"
+  },
+  "sort_buffer_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1024",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "2097152",
+   "scope": "SESSION",
+   "values": null,
+   "value": "2097152"
+  },
+  "sql_auto_is_null": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "sql_big_selects": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "sql_buffer_result": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "sql_if_exists": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "sql_log_bin": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "sql_log_off": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "sql_mode": {
+   "type": "SET",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION",
+   "scope": "SESSION",
+   "values": [
+    "REAL_AS_FLOAT",
+    "PIPES_AS_CONCAT",
+    "ANSI_QUOTES",
+    "IGNORE_SPACE",
+    "IGNORE_BAD_TABLE_OPTIONS",
+    "ONLY_FULL_GROUP_BY",
+    "NO_UNSIGNED_SUBTRACTION",
+    "NO_DIR_IN_CREATE",
+    "POSTGRESQL",
+    "ORACLE",
+    "MSSQL",
+    "DB2",
+    "MAXDB",
+    "NO_KEY_OPTIONS",
+    "NO_TABLE_OPTIONS",
+    "NO_FIELD_OPTIONS",
+    "MYSQL323",
+    "MYSQL40",
+    "ANSI",
+    "NO_AUTO_VALUE_ON_ZERO",
+    "NO_BACKSLASH_ESCAPES",
+    "STRICT_TRANS_TABLES",
+    "STRICT_ALL_TABLES",
+    "NO_ZERO_IN_DATE",
+    "NO_ZERO_DATE",
+    "ALLOW_INVALID_DATES",
+    "ERROR_FOR_DIVISION_BY_ZERO",
+    "TRADITIONAL",
+    "NO_AUTO_CREATE_USER",
+    "HIGH_NOT_PRECEDENCE",
+    "NO_ENGINE_SUBSTITUTION",
+    "PAD_CHAR_TO_FULL_LENGTH",
+    "EMPTY_STRING_IS_NULL",
+    "SIMULTANEOUS_ASSIGNMENT",
+    "TIME_ROUND_FRACTIONAL"
+   ],
+   "value": "STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION"
+  },
+  "sql_notes": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "sql_quote_show_create": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "sql_safe_updates": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "sql_select_limit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "18446744073709551615",
+   "scope": "SESSION",
+   "values": null,
+   "value": "18446744073709551615"
+  },
+  "sql_slave_skip_counter": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "0",
+   "scope": "SESSION",
+   "values": null,
+   "value": "0"
+  },
+  "sql_warnings": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "ssl_ca": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "ssl_capath": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "ssl_cert": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "ssl_cipher": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "ssl_crl": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "ssl_crlpath": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "ssl_key": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "standard_compliant_cte": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "storage_engine": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "InnoDB",
+   "scope": "SESSION",
+   "values": null,
+   "value": "InnoDB"
+  },
+  "stored_program_cache": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "524288",
+   "dynamic": true,
+   "default": "256",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "256"
+  },
+  "strict_password_validation": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "sync_binlog": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "sync_frm": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "sync_master_info": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "10000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "10000"
+  },
+  "sync_relay_log": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "10000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "10000"
+  },
+  "sync_relay_log_info": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "10000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "10000"
+  },
+  "system_time_zone": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "UTC"
+  },
+  "system_versioning_alter_history": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ERROR",
+   "scope": "SESSION",
+   "values": [
+    "ERROR",
+    "KEEP"
+   ],
+   "value": "ERROR"
+  },
+  "system_versioning_asof": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "SESSION",
+   "values": null,
+   "value": "DEFAULT"
+  },
+  "system_versioning_insert_history": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "table_definition_cache": {
+   "type": "BIGINT UNSIGNED",
+   "min": "400",
+   "max": "2097152",
+   "dynamic": true,
+   "default": "400",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "400"
+  },
+  "table_open_cache": {
+   "type": "BIGINT UNSIGNED",
+   "min": "10",
+   "max": "1048576",
+   "dynamic": true,
+   "default": "2000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "2000"
+  },
+  "table_open_cache_instances": {
+   "type": "INT UNSIGNED",
+   "min": "1",
+   "max": "64",
+   "dynamic": false,
+   "default": "8",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "8"
+  },
+  "tcp_keepalive_interval": {
+   "type": "INT",
+   "min": "0",
+   "max": "2147483",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "tcp_keepalive_probes": {
+   "type": "INT",
+   "min": "0",
+   "max": "2147483",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "tcp_keepalive_time": {
+   "type": "INT",
+   "min": "0",
+   "max": "2147483",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "tcp_nodelay": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "thread_cache_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "16384",
+   "dynamic": true,
+   "default": "256",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "151"
+  },
+  "thread_handling": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "one-thread-per-connection",
+   "scope": "GLOBAL",
+   "values": [
+    "one-thread-per-connection",
+    "no-threads",
+    "pool-of-threads"
+   ],
+   "value": "one-thread-per-connection"
+  },
+  "thread_pool_dedicated_listener": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "thread_pool_exact_stats": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "thread_pool_idle_timeout": {
+   "type": "INT UNSIGNED",
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "60",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "60"
+  },
+  "thread_pool_max_threads": {
+   "type": "INT UNSIGNED",
+   "min": "1",
+   "max": "65536",
+   "dynamic": true,
+   "default": "65536",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "65536"
+  },
+  "thread_pool_oversubscribe": {
+   "type": "INT UNSIGNED",
+   "min": "1",
+   "max": "1000",
+   "dynamic": true,
+   "default": "3",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "3"
+  },
+  "thread_pool_prio_kickup_timer": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "1000",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1000"
+  },
+  "thread_pool_priority": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "auto",
+   "scope": "SESSION",
+   "values": [
+    "high",
+    "low",
+    "auto"
+   ],
+   "value": "auto"
+  },
+  "thread_pool_size": {
+   "type": "INT UNSIGNED",
+   "min": "1",
+   "max": "100000",
+   "dynamic": true,
+   "default": "8",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "12"
+  },
+  "thread_pool_stall_limit": {
+   "type": "INT UNSIGNED",
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "500",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "500"
+  },
+  "thread_stack": {
+   "type": "BIGINT UNSIGNED",
+   "min": "131072",
+   "max": "18446744073709551615",
+   "dynamic": false,
+   "default": "299008",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "299008"
+  },
+  "time_format": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "%H:%i:%s",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "%H:%i:%s"
+  },
+  "time_zone": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "SYSTEM",
+   "scope": "SESSION",
+   "values": null,
+   "value": "SYSTEM"
+  },
+  "tls_version": {
+   "type": "SET",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "TLSv1.2,TLSv1.3",
+   "scope": "GLOBAL",
+   "values": [
+    "TLSv1.0",
+    "TLSv1.1",
+    "TLSv1.2",
+    "TLSv1.3"
+   ],
+   "value": "TLSv1.2,TLSv1.3"
+  },
+  "tmp_disk_table_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1024",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "18446744073709551615",
+   "scope": "SESSION",
+   "values": null,
+   "value": "18446744073709551615"
+  },
+  "tmp_memory_table_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "16777216",
+   "scope": "SESSION",
+   "values": null,
+   "value": "16777216"
+  },
+  "tmp_table_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "default": "16777216",
+   "scope": "SESSION",
+   "values": null,
+   "value": "16777216"
+  },
+  "tmpdir": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "/tmp"
+  },
+  "transaction_alloc_block_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1024",
+   "max": "134217728",
+   "dynamic": true,
+   "default": "8192",
+   "scope": "SESSION",
+   "values": null,
+   "value": "8192"
+  },
+  "transaction_prealloc_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1024",
+   "max": "134217728",
+   "dynamic": true,
+   "default": "4096",
+   "scope": "SESSION",
+   "values": null,
+   "value": "4096"
+  },
+  "tx_isolation": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "REPEATABLE-READ",
+   "scope": "SESSION",
+   "values": [
+    "READ-UNCOMMITTED",
+    "READ-COMMITTED",
+    "REPEATABLE-READ",
+    "SERIALIZABLE"
+   ],
+   "value": "REPEATABLE-READ"
+  },
+  "tx_read_only": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "unique_checks": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "updatable_views_with_limit": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "YES",
+   "scope": "SESSION",
+   "values": [
+    "NO",
+    "YES"
+   ],
+   "value": "YES"
+  },
+  "use_stat_tables": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "PREFERABLY_FOR_QUERIES",
+   "scope": "SESSION",
+   "values": [
+    "NEVER",
+    "COMPLEMENTARY",
+    "PREFERABLY",
+    "COMPLEMENTARY_FOR_QUERIES",
+    "PREFERABLY_FOR_QUERIES"
+   ],
+   "value": "PREFERABLY_FOR_QUERIES"
+  },
+  "userstat": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "version": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "10.11.19-MariaDB-ubu2204"
+  },
+  "version_comment": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "mariadb.org binary distribution"
+  },
+  "version_compile_machine": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "x86_64"
+  },
+  "version_compile_os": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "debian-linux-gnu"
+  },
+  "version_malloc_library": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "system"
+  },
+  "version_source_revision": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "93e051860a9c7e87ee8cee6ed38b640d491f7170"
+  },
+  "version_ssl_library": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "OpenSSL 3.0.2 15 Mar 2022"
+  },
+  "wait_timeout": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "31536000",
+   "dynamic": true,
+   "default": "28800",
+   "scope": "SESSION",
+   "values": null,
+   "value": "28800"
+  },
+  "wsrep_osu_method": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "TOI",
+   "scope": "SESSION",
+   "values": [
+    "TOI",
+    "RSU"
+   ],
+   "value": "TOI"
+  },
+  "wsrep_sr_store": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "table",
+   "scope": "GLOBAL",
+   "values": [
+    "none",
+    "table"
+   ],
+   "value": "table"
+  },
+  "wsrep_allowlist": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "wsrep_auto_increment_control": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "wsrep_causal_reads": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "wsrep_certification_rules": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "strict",
+   "scope": "GLOBAL",
+   "values": [
+    "strict",
+    "optimized"
+   ],
+   "value": "strict"
+  },
+  "wsrep_certify_nonpk": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "wsrep_cluster_address": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "wsrep_cluster_name": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "my_wsrep_cluster",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "my_wsrep_cluster"
+  },
+  "wsrep_convert_lock_to_trx": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "wsrep_data_home_dir": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "/var/lib/mysql/",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "/var/lib/mysql/"
+  },
+  "wsrep_dbug_option": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "wsrep_debug": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "NONE",
+   "scope": "GLOBAL",
+   "values": [
+    "NONE",
+    "SERVER",
+    "TRANSACTION",
+    "STREAMING",
+    "CLIENT"
+   ],
+   "value": "NONE"
+  },
+  "wsrep_desync": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "wsrep_dirty_reads": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "wsrep_drupal_282555_workaround": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "wsrep_forced_binlog_format": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "NONE",
+   "scope": "GLOBAL",
+   "values": [
+    "MIXED",
+    "STATEMENT",
+    "ROW",
+    "NONE"
+   ],
+   "value": "NONE"
+  },
+  "wsrep_gtid_domain_id": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "wsrep_gtid_mode": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "wsrep_ignore_apply_errors": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "7",
+   "dynamic": true,
+   "default": "7",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "7"
+  },
+  "wsrep_load_data_splitting": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "wsrep_log_conflicts": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "wsrep_max_ws_rows": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "1048576",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "wsrep_max_ws_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1024",
+   "max": "2147483647",
+   "dynamic": true,
+   "default": "2147483647",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "2147483647"
+  },
+  "wsrep_mode": {
+   "type": "SET",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": [
+    "STRICT_REPLICATION",
+    "BINLOG_ROW_FORMAT_ONLY",
+    "REQUIRED_PRIMARY_KEY",
+    "REPLICATE_MYISAM",
+    "REPLICATE_ARIA",
+    "DISALLOW_LOCAL_GTID",
+    "BF_ABORT_MARIABACKUP"
+   ],
+   "value": ""
+  },
+  "wsrep_mysql_replication_bundle": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "1000",
+   "dynamic": true,
+   "default": "0",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "0"
+  },
+  "wsrep_node_address": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "wsrep_node_incoming_address": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "AUTO",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "AUTO"
+  },
+  "wsrep_node_name": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "3ac989c5b831",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "3ac989c5b831"
+  },
+  "wsrep_notify_cmd": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "wsrep_on": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "SESSION",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "wsrep_patch_version": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": null,
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "wsrep_26.22"
+  },
+  "wsrep_provider": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "none",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "none"
+  },
+  "wsrep_provider_options": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "wsrep_recover": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "wsrep_reject_queries": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "NONE",
+   "scope": "GLOBAL",
+   "values": [
+    "NONE",
+    "ALL",
+    "ALL_KILL"
+   ],
+   "value": "NONE"
+  },
+  "wsrep_restart_slave": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "wsrep_retry_autocommit": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "10000",
+   "dynamic": true,
+   "default": "1",
+   "scope": "SESSION",
+   "values": null,
+   "value": "1"
+  },
+  "wsrep_slave_fk_checks": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "ON",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "ON"
+  },
+  "wsrep_slave_uk_checks": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "wsrep_slave_threads": {
+   "type": "BIGINT UNSIGNED",
+   "min": "1",
+   "max": "512",
+   "dynamic": true,
+   "default": "1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "1"
+  },
+  "wsrep_sst_auth": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "wsrep_sst_donor": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "wsrep_sst_donor_rejects_queries": {
+   "type": "BOOLEAN",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "OFF",
+   "scope": "GLOBAL",
+   "values": [
+    "OFF",
+    "ON"
+   ],
+   "value": "OFF"
+  },
+  "wsrep_sst_method": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "rsync",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "rsync"
+  },
+  "wsrep_sst_receive_address": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "AUTO",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "AUTO"
+  },
+  "wsrep_start_position": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "00000000-0000-0000-0000-000000000000:-1",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": "00000000-0000-0000-0000-000000000000:-1"
+  },
+  "wsrep_status_file": {
+   "type": "VARCHAR",
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "default": "",
+   "scope": "GLOBAL",
+   "values": null,
+   "value": ""
+  },
+  "wsrep_sync_wait": {
+   "type": "INT UNSIGNED",
+   "min": "0",
+   "max": "15",
+   "dynamic": true,
+   "default": "0",
+   "scope": "SESSION",
+   "values": null,
+   "value": "0"
+  },
+  "wsrep_trx_fragment_size": {
+   "type": "BIGINT UNSIGNED",
+   "min": "0",
+   "max": "2147483647",
+   "dynamic": true,
+   "default": "0",
+   "scope": "SESSION",
+   "values": null,
+   "value": "0"
+  },
+  "wsrep_trx_fragment_unit": {
+   "type": "ENUM",
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "default": "bytes",
+   "scope": "SESSION",
+   "values": [
+    "bytes",
+    "rows",
+    "statements"
+   ],
+   "value": "bytes"
+  }
+ },
+ "status": [
+  "aborted_clients",
+  "aborted_connects",
+  "aborted_connects_preauth",
+  "access_denied_errors",
+  "acl_column_grants",
+  "acl_database_grants",
+  "acl_function_grants",
+  "acl_package_body_grants",
+  "acl_package_spec_grants",
+  "acl_procedure_grants",
+  "acl_proxy_users",
+  "acl_role_grants",
+  "acl_roles",
+  "acl_table_grants",
+  "acl_users",
+  "aria_pagecache_blocks_not_flushed",
+  "aria_pagecache_blocks_unused",
+  "aria_pagecache_blocks_used",
+  "aria_pagecache_read_requests",
+  "aria_pagecache_reads",
+  "aria_pagecache_write_requests",
+  "aria_pagecache_writes",
+  "aria_transaction_log_syncs",
+  "binlog_bytes_written",
+  "binlog_cache_disk_use",
+  "binlog_cache_use",
+  "binlog_commits",
+  "binlog_group_commit_trigger_count",
+  "binlog_group_commit_trigger_lock_wait",
+  "binlog_group_commit_trigger_timeout",
+  "binlog_group_commits",
+  "binlog_snapshot_file",
+  "binlog_snapshot_position",
+  "binlog_stmt_cache_disk_use",
+  "binlog_stmt_cache_use",
+  "busy_time",
+  "bytes_received",
+  "bytes_sent",
+  "column_compressions",
+  "column_decompressions",
+  "com_admin_commands",
+  "com_alter_db",
+  "com_alter_db_upgrade",
+  "com_alter_event",
+  "com_alter_function",
+  "com_alter_procedure",
+  "com_alter_sequence",
+  "com_alter_server",
+  "com_alter_table",
+  "com_alter_user",
+  "com_analyze",
+  "com_assign_to_keycache",
+  "com_backup",
+  "com_backup_lock",
+  "com_begin",
+  "com_binlog",
+  "com_call_procedure",
+  "com_change_db",
+  "com_change_master",
+  "com_check",
+  "com_checksum",
+  "com_commit",
+  "com_compound_sql",
+  "com_create_db",
+  "com_create_event",
+  "com_create_function",
+  "com_create_index",
+  "com_create_package",
+  "com_create_package_body",
+  "com_create_procedure",
+  "com_create_role",
+  "com_create_sequence",
+  "com_create_server",
+  "com_create_table",
+  "com_create_temporary_table",
+  "com_create_trigger",
+  "com_create_udf",
+  "com_create_user",
+  "com_create_view",
+  "com_dealloc_sql",
+  "com_delete",
+  "com_delete_multi",
+  "com_do",
+  "com_drop_db",
+  "com_drop_event",
+  "com_drop_function",
+  "com_drop_index",
+  "com_drop_package",
+  "com_drop_package_body",
+  "com_drop_procedure",
+  "com_drop_role",
+  "com_drop_sequence",
+  "com_drop_server",
+  "com_drop_table",
+  "com_drop_temporary_table",
+  "com_drop_trigger",
+  "com_drop_user",
+  "com_drop_view",
+  "com_empty_query",
+  "com_execute_immediate",
+  "com_execute_sql",
+  "com_flush",
+  "com_get_diagnostics",
+  "com_grant",
+  "com_grant_role",
+  "com_ha_close",
+  "com_ha_open",
+  "com_ha_read",
+  "com_help",
+  "com_insert",
+  "com_insert_select",
+  "com_install_plugin",
+  "com_kill",
+  "com_load",
+  "com_lock_tables",
+  "com_optimize",
+  "com_preload_keys",
+  "com_prepare_sql",
+  "com_purge",
+  "com_purge_before_date",
+  "com_release_savepoint",
+  "com_rename_table",
+  "com_rename_user",
+  "com_repair",
+  "com_replace",
+  "com_replace_select",
+  "com_reset",
+  "com_resignal",
+  "com_revoke",
+  "com_revoke_all",
+  "com_revoke_role",
+  "com_rollback",
+  "com_rollback_to_savepoint",
+  "com_savepoint",
+  "com_select",
+  "com_set_option",
+  "com_show_analyze",
+  "com_show_authors",
+  "com_show_binlog_events",
+  "com_show_binlog_status",
+  "com_show_binlogs",
+  "com_show_charsets",
+  "com_show_collations",
+  "com_show_contributors",
+  "com_show_create_db",
+  "com_show_create_event",
+  "com_show_create_func",
+  "com_show_create_package",
+  "com_show_create_package_body",
+  "com_show_create_proc",
+  "com_show_create_table",
+  "com_show_create_trigger",
+  "com_show_create_user",
+  "com_show_databases",
+  "com_show_engine_logs",
+  "com_show_engine_mutex",
+  "com_show_engine_status",
+  "com_show_errors",
+  "com_show_events",
+  "com_show_explain",
+  "com_show_fields",
+  "com_show_function_status",
+  "com_show_generic",
+  "com_show_grants",
+  "com_show_keys",
+  "com_show_open_tables",
+  "com_show_package_body_status",
+  "com_show_package_status",
+  "com_show_plugins",
+  "com_show_privileges",
+  "com_show_procedure_status",
+  "com_show_processlist",
+  "com_show_profile",
+  "com_show_profiles",
+  "com_show_relaylog_events",
+  "com_show_slave_hosts",
+  "com_show_slave_status",
+  "com_show_status",
+  "com_show_storage_engines",
+  "com_show_table_status",
+  "com_show_tables",
+  "com_show_triggers",
+  "com_show_variables",
+  "com_show_warnings",
+  "com_shutdown",
+  "com_signal",
+  "com_start_all_slaves",
+  "com_start_slave",
+  "com_stmt_close",
+  "com_stmt_execute",
+  "com_stmt_fetch",
+  "com_stmt_prepare",
+  "com_stmt_reprepare",
+  "com_stmt_reset",
+  "com_stmt_send_long_data",
+  "com_stop_all_slaves",
+  "com_stop_slave",
+  "com_truncate",
+  "com_uninstall_plugin",
+  "com_unlock_tables",
+  "com_update",
+  "com_update_multi",
+  "com_xa_commit",
+  "com_xa_end",
+  "com_xa_prepare",
+  "com_xa_recover",
+  "com_xa_rollback",
+  "com_xa_start",
+  "compression",
+  "connection_errors_accept",
+  "connection_errors_internal",
+  "connection_errors_max_connections",
+  "connection_errors_peer_address",
+  "connection_errors_select",
+  "connection_errors_tcpwrap",
+  "connections",
+  "cpu_time",
+  "created_tmp_disk_tables",
+  "created_tmp_files",
+  "created_tmp_tables",
+  "delayed_errors",
+  "delayed_insert_threads",
+  "delayed_writes",
+  "delete_scan",
+  "empty_queries",
+  "executed_events",
+  "executed_triggers",
+  "feature_application_time_periods",
+  "feature_check_constraint",
+  "feature_custom_aggregate_functions",
+  "feature_delay_key_write",
+  "feature_dynamic_columns",
+  "feature_fulltext",
+  "feature_gis",
+  "feature_insert_returning",
+  "feature_invisible_columns",
+  "feature_json",
+  "feature_locale",
+  "feature_subquery",
+  "feature_system_versioning",
+  "feature_timezone",
+  "feature_trigger",
+  "feature_window_functions",
+  "feature_xml",
+  "handler_commit",
+  "handler_delete",
+  "handler_discover",
+  "handler_external_lock",
+  "handler_icp_attempts",
+  "handler_icp_match",
+  "handler_mrr_init",
+  "handler_mrr_key_refills",
+  "handler_mrr_rowid_refills",
+  "handler_prepare",
+  "handler_read_first",
+  "handler_read_key",
+  "handler_read_last",
+  "handler_read_next",
+  "handler_read_prev",
+  "handler_read_retry",
+  "handler_read_rnd",
+  "handler_read_rnd_deleted",
+  "handler_read_rnd_next",
+  "handler_rollback",
+  "handler_savepoint",
+  "handler_savepoint_rollback",
+  "handler_tmp_delete",
+  "handler_tmp_update",
+  "handler_tmp_write",
+  "handler_update",
+  "handler_write",
+  "innodb_adaptive_hash_hash_searches",
+  "innodb_adaptive_hash_non_hash_searches",
+  "innodb_available_undo_logs",
+  "innodb_background_log_sync",
+  "innodb_buffer_pool_bytes_data",
+  "innodb_buffer_pool_bytes_dirty",
+  "innodb_buffer_pool_dump_status",
+  "innodb_buffer_pool_load_incomplete",
+  "innodb_buffer_pool_load_status",
+  "innodb_buffer_pool_pages_data",
+  "innodb_buffer_pool_pages_dirty",
+  "innodb_buffer_pool_pages_flushed",
+  "innodb_buffer_pool_pages_free",
+  "innodb_buffer_pool_pages_lru_flushed",
+  "innodb_buffer_pool_pages_lru_freed",
+  "innodb_buffer_pool_pages_made_not_young",
+  "innodb_buffer_pool_pages_made_young",
+  "innodb_buffer_pool_pages_misc",
+  "innodb_buffer_pool_pages_old",
+  "innodb_buffer_pool_pages_split",
+  "innodb_buffer_pool_pages_total",
+  "innodb_buffer_pool_read_ahead",
+  "innodb_buffer_pool_read_ahead_evicted",
+  "innodb_buffer_pool_read_ahead_rnd",
+  "innodb_buffer_pool_read_requests",
+  "innodb_buffer_pool_reads",
+  "innodb_buffer_pool_resize_status",
+  "innodb_buffer_pool_wait_free",
+  "innodb_buffer_pool_write_requests",
+  "innodb_bulk_operations",
+  "innodb_checkpoint_age",
+  "innodb_checkpoint_max_age",
+  "innodb_data_fsyncs",
+  "innodb_data_pending_fsyncs",
+  "innodb_data_pending_reads",
+  "innodb_data_pending_writes",
+  "innodb_data_read",
+  "innodb_data_reads",
+  "innodb_data_writes",
+  "innodb_data_written",
+  "innodb_dblwr_pages_written",
+  "innodb_dblwr_writes",
+  "innodb_deadlocks",
+  "innodb_defragment_compression_failures",
+  "innodb_defragment_count",
+  "innodb_defragment_failures",
+  "innodb_encryption_n_merge_blocks_decrypted",
+  "innodb_encryption_n_merge_blocks_encrypted",
+  "innodb_encryption_n_rowlog_blocks_decrypted",
+  "innodb_encryption_n_rowlog_blocks_encrypted",
+  "innodb_encryption_n_temp_blocks_decrypted",
+  "innodb_encryption_n_temp_blocks_encrypted",
+  "innodb_encryption_num_key_requests",
+  "innodb_encryption_rotation_estimated_iops",
+  "innodb_encryption_rotation_pages_flushed",
+  "innodb_encryption_rotation_pages_modified",
+  "innodb_encryption_rotation_pages_read_from_cache",
+  "innodb_encryption_rotation_pages_read_from_disk",
+  "innodb_have_bzip2",
+  "innodb_have_lz4",
+  "innodb_have_lzma",
+  "innodb_have_lzo",
+  "innodb_have_punch_hole",
+  "innodb_have_snappy",
+  "innodb_history_list_length",
+  "innodb_ibuf_discarded_delete_marks",
+  "innodb_ibuf_discarded_deletes",
+  "innodb_ibuf_discarded_inserts",
+  "innodb_ibuf_free_list",
+  "innodb_ibuf_merged_delete_marks",
+  "innodb_ibuf_merged_deletes",
+  "innodb_ibuf_merged_inserts",
+  "innodb_ibuf_merges",
+  "innodb_ibuf_segment_size",
+  "innodb_ibuf_size",
+  "innodb_instant_alter_column",
+  "innodb_log_waits",
+  "innodb_log_write_requests",
+  "innodb_log_writes",
+  "innodb_lsn_current",
+  "innodb_lsn_flushed",
+  "innodb_lsn_last_checkpoint",
+  "innodb_master_thread_active_loops",
+  "innodb_master_thread_idle_loops",
+  "innodb_max_trx_id",
+  "innodb_mem_adaptive_hash",
+  "innodb_mem_dictionary",
+  "innodb_num_open_files",
+  "innodb_num_page_compressed_trim_op",
+  "innodb_num_pages_decrypted",
+  "innodb_num_pages_encrypted",
+  "innodb_num_pages_page_compressed",
+  "innodb_num_pages_page_compression_error",
+  "innodb_num_pages_page_decompressed",
+  "innodb_onlineddl_pct_progress",
+  "innodb_onlineddl_rowlog_pct_used",
+  "innodb_onlineddl_rowlog_rows",
+  "innodb_os_log_written",
+  "innodb_page_compression_saved",
+  "innodb_page_size",
+  "innodb_pages_created",
+  "innodb_pages_read",
+  "innodb_pages_written",
+  "innodb_row_lock_current_waits",
+  "innodb_row_lock_time",
+  "innodb_row_lock_time_avg",
+  "innodb_row_lock_time_max",
+  "innodb_row_lock_waits",
+  "innodb_truncated_status_writes",
+  "innodb_undo_truncations",
+  "key_blocks_not_flushed",
+  "key_blocks_unused",
+  "key_blocks_used",
+  "key_blocks_warm",
+  "key_read_requests",
+  "key_reads",
+  "key_write_requests",
+  "key_writes",
+  "last_query_cost",
+  "master_gtid_wait_count",
+  "master_gtid_wait_time",
+  "master_gtid_wait_timeouts",
+  "max_memory_used",
+  "max_statement_time_exceeded",
+  "max_used_connections",
+  "memory_used",
+  "memory_used_initial",
+  "not_flushed_delayed_rows",
+  "open_files",
+  "open_streams",
+  "open_table_definitions",
+  "open_tables",
+  "opened_files",
+  "opened_plugin_libraries",
+  "opened_table_definitions",
+  "opened_tables",
+  "opened_views",
+  "optimizer_join_prefixes_check_calls",
+  "performance_schema_accounts_lost",
+  "performance_schema_cond_classes_lost",
+  "performance_schema_cond_instances_lost",
+  "performance_schema_digest_lost",
+  "performance_schema_file_classes_lost",
+  "performance_schema_file_handles_lost",
+  "performance_schema_file_instances_lost",
+  "performance_schema_hosts_lost",
+  "performance_schema_index_stat_lost",
+  "performance_schema_locker_lost",
+  "performance_schema_memory_classes_lost",
+  "performance_schema_metadata_lock_lost",
+  "performance_schema_mutex_classes_lost",
+  "performance_schema_mutex_instances_lost",
+  "performance_schema_nested_statement_lost",
+  "performance_schema_prepared_statements_lost",
+  "performance_schema_program_lost",
+  "performance_schema_rwlock_classes_lost",
+  "performance_schema_rwlock_instances_lost",
+  "performance_schema_session_connect_attrs_lost",
+  "performance_schema_socket_classes_lost",
+  "performance_schema_socket_instances_lost",
+  "performance_schema_stage_classes_lost",
+  "performance_schema_statement_classes_lost",
+  "performance_schema_table_handles_lost",
+  "performance_schema_table_instances_lost",
+  "performance_schema_table_lock_stat_lost",
+  "performance_schema_thread_classes_lost",
+  "performance_schema_thread_instances_lost",
+  "performance_schema_users_lost",
+  "prepared_stmt_count",
+  "qcache_free_blocks",
+  "qcache_free_memory",
+  "qcache_hits",
+  "qcache_inserts",
+  "qcache_lowmem_prunes",
+  "qcache_not_cached",
+  "qcache_queries_in_cache",
+  "qcache_total_blocks",
+  "queries",
+  "query_time",
+  "questions",
+  "resultset_metadata_skipped",
+  "rows_read",
+  "rows_sent",
+  "rows_tmp_read",
+  "rpl_semi_sync_master_clients",
+  "rpl_semi_sync_master_get_ack",
+  "rpl_semi_sync_master_net_avg_wait_time",
+  "rpl_semi_sync_master_net_wait_time",
+  "rpl_semi_sync_master_net_waits",
+  "rpl_semi_sync_master_no_times",
+  "rpl_semi_sync_master_no_tx",
+  "rpl_semi_sync_master_request_ack",
+  "rpl_semi_sync_master_status",
+  "rpl_semi_sync_master_timefunc_failures",
+  "rpl_semi_sync_master_tx_avg_wait_time",
+  "rpl_semi_sync_master_tx_wait_time",
+  "rpl_semi_sync_master_tx_waits",
+  "rpl_semi_sync_master_wait_pos_backtraverse",
+  "rpl_semi_sync_master_wait_sessions",
+  "rpl_semi_sync_master_yes_tx",
+  "rpl_semi_sync_slave_send_ack",
+  "rpl_semi_sync_slave_status",
+  "rpl_status",
+  "rpl_transactions_multi_engine",
+  "select_full_join",
+  "select_full_range_join",
+  "select_range",
+  "select_range_check",
+  "select_scan",
+  "slave_connections",
+  "slave_heartbeat_period",
+  "slave_open_temp_tables",
+  "slave_received_heartbeats",
+  "slave_retried_transactions",
+  "slave_running",
+  "slave_skipped_errors",
+  "slaves_connected",
+  "slaves_running",
+  "slow_launch_threads",
+  "slow_queries",
+  "sort_merge_passes",
+  "sort_priority_queue_sorts",
+  "sort_range",
+  "sort_rows",
+  "sort_scan",
+  "ssl_accept_renegotiates",
+  "ssl_accepts",
+  "ssl_callback_cache_hits",
+  "ssl_cipher",
+  "ssl_cipher_list",
+  "ssl_client_connects",
+  "ssl_connect_renegotiates",
+  "ssl_ctx_verify_depth",
+  "ssl_ctx_verify_mode",
+  "ssl_default_timeout",
+  "ssl_finished_accepts",
+  "ssl_finished_connects",
+  "ssl_server_not_after",
+  "ssl_server_not_before",
+  "ssl_session_cache_hits",
+  "ssl_session_cache_misses",
+  "ssl_session_cache_mode",
+  "ssl_session_cache_overflows",
+  "ssl_session_cache_size",
+  "ssl_session_cache_timeouts",
+  "ssl_sessions_reused",
+  "ssl_used_session_cache_entries",
+  "ssl_verify_depth",
+  "ssl_verify_mode",
+  "ssl_version",
+  "stack_usage",
+  "subquery_cache_hit",
+  "subquery_cache_miss",
+  "syncs",
+  "table_locks_immediate",
+  "table_locks_waited",
+  "table_open_cache_active_instances",
+  "table_open_cache_hits",
+  "table_open_cache_misses",
+  "table_open_cache_overflows",
+  "tc_log_max_pages_used",
+  "tc_log_page_size",
+  "tc_log_page_waits",
+  "threadpool_idle_threads",
+  "threadpool_threads",
+  "threads_cached",
+  "threads_connected",
+  "threads_created",
+  "threads_running",
+  "transactions_gtid_foreign_engine",
+  "transactions_multi_engine",
+  "update_scan",
+  "uptime",
+  "uptime_since_flush_status",
+  "wsrep",
+  "wsrep_applier_thread_count",
+  "wsrep_cluster_capabilities",
+  "wsrep_cluster_conf_id",
+  "wsrep_cluster_size",
+  "wsrep_cluster_state_uuid",
+  "wsrep_cluster_status",
+  "wsrep_connected",
+  "wsrep_local_bf_aborts",
+  "wsrep_local_index",
+  "wsrep_provider_capabilities",
+  "wsrep_provider_name",
+  "wsrep_provider_vendor",
+  "wsrep_provider_version",
+  "wsrep_ready",
+  "wsrep_rollbacker_thread_count",
+  "wsrep_thread_count"
+ ],
+ "engines": {
+  "csv": "YES",
+  "mrg_myisam": "YES",
+  "memory": "YES",
+  "aria": "YES",
+  "myisam": "YES",
+  "sequence": "YES",
+  "innodb": "DEFAULT",
+  "performance_schema": "YES"
+ },
+ "image": "mariadb:10.11",
+ "series": "mariadb-10.11"
+}

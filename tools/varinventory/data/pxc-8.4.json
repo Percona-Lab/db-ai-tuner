@@ -1,0 +1,5098 @@
+{
+ "version": "8.4.11-11.1",
+ "version_comment": "Percona XtraDB Cluster (GPL), Release rel11, Revision 33f7510, WSREP version 26.1.4.3",
+ "variables": {
+  "activate_all_roles_on_login": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "admin_address": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "admin_port": {
+   "min": "0",
+   "max": "65535",
+   "dynamic": false,
+   "value": "33062"
+  },
+  "admin_ssl_ca": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "admin_ssl_capath": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "admin_ssl_cert": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "admin_ssl_cipher": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "admin_ssl_crl": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "admin_ssl_crlpath": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "admin_ssl_key": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "admin_tls_ciphersuites": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "admin_tls_version": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "TLSv1.2,TLSv1.3"
+  },
+  "authentication_policy": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "*,,"
+  },
+  "auto_generate_certs": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "auto_increment_increment": {
+   "min": "1",
+   "max": "65535",
+   "dynamic": true,
+   "value": "1"
+  },
+  "auto_increment_offset": {
+   "min": "1",
+   "max": "65535",
+   "dynamic": true,
+   "value": "1"
+  },
+  "autocommit": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "automatic_sp_privileges": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "back_log": {
+   "min": "0",
+   "max": "65535",
+   "dynamic": false,
+   "value": "151"
+  },
+  "basedir": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/usr/"
+  },
+  "big_tables": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "bind_address": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "0.0.0.0"
+  },
+  "binlog_cache_size": {
+   "min": "4096",
+   "max": "18446744073709547520",
+   "dynamic": true,
+   "value": "32768"
+  },
+  "binlog_checksum": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "CRC32"
+  },
+  "binlog_ddl_skip_rewrite": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "binlog_direct_non_transactional_updates": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "binlog_encryption": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "binlog_error_action": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ABORT_SERVER"
+  },
+  "binlog_expire_logs_auto_purge": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "binlog_expire_logs_seconds": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "2592000"
+  },
+  "binlog_format": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ROW"
+  },
+  "binlog_group_commit_sync_delay": {
+   "min": "0",
+   "max": "1000000",
+   "dynamic": true,
+   "value": "0"
+  },
+  "binlog_group_commit_sync_no_delay_count": {
+   "min": "0",
+   "max": "100000",
+   "dynamic": true,
+   "value": "0"
+  },
+  "binlog_gtid_simple_recovery": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "binlog_max_flush_queue_time": {
+   "min": "0",
+   "max": "100000",
+   "dynamic": true,
+   "value": "0"
+  },
+  "binlog_order_commits": {
+   "min": null,
+   "max": null,
+   "value": "ON"
+  },
+  "binlog_rotate_encryption_master_key_at_startup": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "binlog_row_event_max_size": {
+   "min": "256",
+   "max": "18446744073709551360",
+   "dynamic": false,
+   "value": "8192"
+  },
+  "binlog_row_image": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "FULL"
+  },
+  "binlog_row_metadata": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "MINIMAL"
+  },
+  "binlog_row_value_options": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "binlog_rows_query_log_events": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "binlog_skip_flush_commands": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "binlog_space_limit": {
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": false,
+   "value": "0"
+  },
+  "binlog_stmt_cache_size": {
+   "min": "4096",
+   "max": "18446744073709547520",
+   "dynamic": true,
+   "value": "32768"
+  },
+  "binlog_transaction_compression": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "binlog_transaction_compression_level_zstd": {
+   "min": "1",
+   "max": "22",
+   "dynamic": true,
+   "value": "3"
+  },
+  "binlog_transaction_dependency_history_size": {
+   "min": "1",
+   "max": "1000000",
+   "dynamic": true,
+   "value": "25000"
+  },
+  "block_encryption_mode": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "aes-128-ecb"
+  },
+  "buffered_error_log_filename": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "buffered_error_log_size": {
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "0"
+  },
+  "build_id": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "7bbc4b3d88bda6e86453e23e53ea41a1bbadf2f9"
+  },
+  "bulk_insert_buffer_size": {
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "8388608"
+  },
+  "caching_sha2_password_auto_generate_rsa_keys": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "caching_sha2_password_digest_rounds": {
+   "min": "5000",
+   "max": "4095000",
+   "dynamic": false,
+   "value": "5000"
+  },
+  "caching_sha2_password_private_key_path": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "private_key.pem"
+  },
+  "caching_sha2_password_public_key_path": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "public_key.pem"
+  },
+  "character_set_client": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "utf8mb4"
+  },
+  "character_set_connection": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "utf8mb4"
+  },
+  "character_set_database": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "utf8mb4"
+  },
+  "character_set_filesystem": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "binary"
+  },
+  "character_set_results": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "utf8mb4"
+  },
+  "character_set_server": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "utf8mb4"
+  },
+  "character_set_system": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "utf8mb3"
+  },
+  "character_sets_dir": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/usr/share/percona-xtradb-cluster/charsets/"
+  },
+  "check_proxy_users": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "collation_connection": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "utf8mb4_0900_ai_ci"
+  },
+  "collation_database": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "utf8mb4_0900_ai_ci"
+  },
+  "collation_server": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "utf8mb4_0900_ai_ci"
+  },
+  "completion_type": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "NO_CHAIN"
+  },
+  "concurrent_insert": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "AUTO"
+  },
+  "connect_timeout": {
+   "min": "2",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "10"
+  },
+  "connection_memory_chunk_size": {
+   "min": "1",
+   "max": "536870912",
+   "dynamic": true,
+   "value": "8192"
+  },
+  "connection_memory_limit": {
+   "min": "2097152",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "18446744073709551615"
+  },
+  "core_file": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "create_admin_listener_thread": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "cte_max_recursion_depth": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "1000"
+  },
+  "datadir": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/var/lib/mysql/"
+  },
+  "default_collation_for_utf8mb4": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "utf8mb4_0900_ai_ci"
+  },
+  "default_password_lifetime": {
+   "min": "0",
+   "max": "65535",
+   "dynamic": true,
+   "value": "0"
+  },
+  "default_storage_engine": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "InnoDB"
+  },
+  "default_table_encryption": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "default_tmp_storage_engine": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "InnoDB"
+  },
+  "default_week_format": {
+   "min": "0",
+   "max": "7",
+   "dynamic": true,
+   "value": "0"
+  },
+  "delay_key_write": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "delayed_insert_limit": {
+   "min": "1",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "100"
+  },
+  "delayed_insert_timeout": {
+   "min": "1",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "300"
+  },
+  "delayed_queue_size": {
+   "min": "1",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "1000"
+  },
+  "disabled_storage_engines": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "disconnect_on_expired_password": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "div_precision_increment": {
+   "min": "0",
+   "max": "30",
+   "dynamic": true,
+   "value": "4"
+  },
+  "encrypt_tmp_files": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "end_markers_in_json": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "enforce_gtid_consistency": {
+   "min": null,
+   "max": null,
+   "value": "OFF"
+  },
+  "enforce_storage_engine": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "eq_range_index_dive_limit": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "200"
+  },
+  "event_scheduler": {
+   "min": null,
+   "max": null,
+   "value": "ON"
+  },
+  "expand_fast_index_creation": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "explain_format": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "TRADITIONAL"
+  },
+  "explain_json_format_version": {
+   "min": "1",
+   "max": "2",
+   "dynamic": true,
+   "value": "1"
+  },
+  "explicit_defaults_for_timestamp": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "flush": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "flush_time": {
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "0"
+  },
+  "foreign_key_checks": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "ft_boolean_syntax": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "+ -><()~*:\"\"&|"
+  },
+  "ft_max_word_len": {
+   "min": "10",
+   "max": "84",
+   "dynamic": false,
+   "value": "84"
+  },
+  "ft_min_word_len": {
+   "min": "1",
+   "max": "84",
+   "dynamic": false,
+   "value": "4"
+  },
+  "ft_query_expansion_limit": {
+   "min": "0",
+   "max": "1000",
+   "dynamic": false,
+   "value": "20"
+  },
+  "ft_query_extra_word_chars": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "ft_stopword_file": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "(built-in)"
+  },
+  "general_log": {
+   "min": null,
+   "max": null,
+   "value": "OFF"
+  },
+  "general_log_file": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "/var/lib/mysql/12a54d9cdcdc.log"
+  },
+  "generated_random_password_length": {
+   "min": "5",
+   "max": "255",
+   "dynamic": true,
+   "value": "20"
+  },
+  "global_connection_memory_limit": {
+   "min": "16777216",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "18446744073709551615"
+  },
+  "global_connection_memory_tracking": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "group_concat_max_len": {
+   "min": "4",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "1024"
+  },
+  "group_replication_consistency": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "BEFORE_ON_PRIMARY_FAILOVER"
+  },
+  "gtid_executed": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "gtid_executed_compression_period": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "0"
+  },
+  "gtid_mode": {
+   "min": null,
+   "max": null,
+   "value": "OFF"
+  },
+  "gtid_owned": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "gtid_purged": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "have_backup_locks": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "YES"
+  },
+  "have_backup_safe_binlog_info": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "YES"
+  },
+  "have_compress": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "YES"
+  },
+  "have_dynamic_loading": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "YES"
+  },
+  "have_geometry": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "YES"
+  },
+  "have_profiling": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "YES"
+  },
+  "have_query_cache": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "NO"
+  },
+  "have_rtree_keys": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "YES"
+  },
+  "have_snapshot_cloning": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "YES"
+  },
+  "have_statement_timeout": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "YES"
+  },
+  "have_symlink": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "DISABLED"
+  },
+  "histogram_generation_max_mem_size": {
+   "min": "1000000",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "20000000"
+  },
+  "host_cache_size": {
+   "min": "0",
+   "max": "65536",
+   "dynamic": true,
+   "value": "279"
+  },
+  "hostname": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "12a54d9cdcdc"
+  },
+  "information_schema_stats_expiry": {
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "86400"
+  },
+  "init_connect": {
+   "min": null,
+   "max": null,
+   "value": ""
+  },
+  "init_file": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "init_replica": {
+   "min": null,
+   "max": null,
+   "value": ""
+  },
+  "init_slave": {
+   "min": null,
+   "max": null,
+   "value": ""
+  },
+  "innodb_adaptive_flushing": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_adaptive_flushing_lwm": {
+   "min": "0",
+   "max": "70",
+   "dynamic": true,
+   "value": "10"
+  },
+  "innodb_adaptive_hash_index": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_adaptive_hash_index_parts": {
+   "min": "1",
+   "max": "512",
+   "dynamic": false,
+   "value": "8"
+  },
+  "innodb_adaptive_max_sleep_delay": {
+   "min": "0",
+   "max": "1000000",
+   "dynamic": true,
+   "value": "150000"
+  },
+  "innodb_api_bk_commit_interval": {
+   "min": "1",
+   "max": "1073741824",
+   "dynamic": true,
+   "value": "5"
+  },
+  "innodb_api_disable_rowlock": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "innodb_api_enable_binlog": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "innodb_api_enable_mdl": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "innodb_api_trx_level": {
+   "min": "0",
+   "max": "3",
+   "dynamic": true,
+   "value": "0"
+  },
+  "innodb_autoextend_increment": {
+   "min": "1",
+   "max": "1000",
+   "dynamic": true,
+   "value": "64"
+  },
+  "innodb_autoinc_lock_mode": {
+   "min": "0",
+   "max": "2",
+   "dynamic": false,
+   "value": "2"
+  },
+  "innodb_buffer_pool_chunk_size": {
+   "min": "1048576",
+   "max": "144115188075855871",
+   "dynamic": false,
+   "value": "134217728"
+  },
+  "innodb_buffer_pool_dump_at_shutdown": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_buffer_pool_dump_now": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_buffer_pool_dump_pct": {
+   "min": "1",
+   "max": "100",
+   "dynamic": true,
+   "value": "25"
+  },
+  "innodb_buffer_pool_filename": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ib_buffer_pool"
+  },
+  "innodb_buffer_pool_in_core_file": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_buffer_pool_instances": {
+   "min": "0",
+   "max": "64",
+   "dynamic": false,
+   "value": "1"
+  },
+  "innodb_buffer_pool_lazy_latch_init": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "innodb_buffer_pool_load_abort": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_buffer_pool_load_at_startup": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "innodb_buffer_pool_load_now": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_buffer_pool_populate": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_buffer_pool_size": {
+   "min": "5242880",
+   "max": "9223372036854775807",
+   "value": "134217728"
+  },
+  "innodb_change_buffer_max_size": {
+   "min": "0",
+   "max": "50",
+   "dynamic": true,
+   "value": "25"
+  },
+  "innodb_change_buffering": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "none"
+  },
+  "innodb_checksum_algorithm": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "crc32"
+  },
+  "innodb_cleaner_lsn_age_factor": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "high_checkpoint"
+  },
+  "innodb_cmp_per_index_enabled": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_commit_concurrency": {
+   "min": "0",
+   "max": "1000",
+   "dynamic": true,
+   "value": "0"
+  },
+  "innodb_compressed_columns_threshold": {
+   "min": "1",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "96"
+  },
+  "innodb_compressed_columns_zip_level": {
+   "min": "0",
+   "max": "9",
+   "dynamic": true,
+   "value": "6"
+  },
+  "innodb_compression_failure_threshold_pct": {
+   "min": "0",
+   "max": "100",
+   "dynamic": true,
+   "value": "5"
+  },
+  "innodb_compression_level": {
+   "min": "0",
+   "max": "9",
+   "dynamic": true,
+   "value": "6"
+  },
+  "innodb_compression_pad_pct_max": {
+   "min": "0",
+   "max": "75",
+   "dynamic": true,
+   "value": "50"
+  },
+  "innodb_concurrency_tickets": {
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "5000"
+  },
+  "innodb_corrupt_table_action": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "assert"
+  },
+  "innodb_data_file_path": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ibdata1:12M:autoextend"
+  },
+  "innodb_data_home_dir": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "innodb_ddl_buffer_size": {
+   "min": "65536",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "1048576"
+  },
+  "innodb_ddl_threads": {
+   "min": "1",
+   "max": "64",
+   "dynamic": true,
+   "value": "4"
+  },
+  "innodb_deadlock_detect": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_dedicated_server": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "innodb_default_row_format": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "dynamic"
+  },
+  "innodb_directories": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "innodb_disable_sort_file_cache": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_disallow_writes": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_doublewrite": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_doublewrite_batch_size": {
+   "min": "0",
+   "max": "256",
+   "dynamic": false,
+   "value": "0"
+  },
+  "innodb_doublewrite_dir": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "innodb_doublewrite_files": {
+   "min": "1",
+   "max": "256",
+   "dynamic": false,
+   "value": "2"
+  },
+  "innodb_doublewrite_pages": {
+   "min": "1",
+   "max": "512",
+   "dynamic": false,
+   "value": "128"
+  },
+  "innodb_empty_free_list_algorithm": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "legacy"
+  },
+  "innodb_encrypt_online_alter_logs": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "innodb_extend_and_initialize": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_fast_shutdown": {
+   "min": "0",
+   "max": "2",
+   "dynamic": true,
+   "value": "1"
+  },
+  "innodb_file_per_table": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_fill_factor": {
+   "min": "10",
+   "max": "100",
+   "dynamic": true,
+   "value": "100"
+  },
+  "innodb_flush_log_at_timeout": {
+   "min": "0",
+   "max": "2700",
+   "dynamic": true,
+   "value": "1"
+  },
+  "innodb_flush_log_at_trx_commit": {
+   "min": "0",
+   "max": "2",
+   "dynamic": true,
+   "value": "2"
+  },
+  "innodb_flush_method": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "O_DIRECT"
+  },
+  "innodb_flush_neighbors": {
+   "min": "0",
+   "max": "2",
+   "dynamic": true,
+   "value": "0"
+  },
+  "innodb_flush_sync": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_flushing_avg_loops": {
+   "min": "1",
+   "max": "1000",
+   "dynamic": true,
+   "value": "30"
+  },
+  "innodb_force_index_records_in_range": {
+   "min": "0",
+   "max": "2147483647",
+   "dynamic": true,
+   "value": "0"
+  },
+  "innodb_force_load_corrupted": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "innodb_force_recovery": {
+   "min": "0",
+   "max": "6",
+   "dynamic": false,
+   "value": "0"
+  },
+  "innodb_fsync_threshold": {
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "0"
+  },
+  "innodb_ft_aux_table": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "innodb_ft_cache_size": {
+   "min": "1600000",
+   "max": "80000000",
+   "dynamic": false,
+   "value": "8000000"
+  },
+  "innodb_ft_enable_diag_print": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_ft_enable_stopword": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_ft_ignore_stopwords": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_ft_max_token_size": {
+   "min": "10",
+   "max": "84",
+   "dynamic": false,
+   "value": "84"
+  },
+  "innodb_ft_min_token_size": {
+   "min": "0",
+   "max": "16",
+   "dynamic": false,
+   "value": "3"
+  },
+  "innodb_ft_num_word_optimize": {
+   "min": "1000",
+   "max": "10000",
+   "dynamic": true,
+   "value": "2000"
+  },
+  "innodb_ft_result_cache_limit": {
+   "min": "1000000",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "2000000000"
+  },
+  "innodb_ft_server_stopword_table": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "innodb_ft_sort_pll_degree": {
+   "min": "1",
+   "max": "16",
+   "dynamic": false,
+   "value": "2"
+  },
+  "innodb_ft_total_cache_size": {
+   "min": "32000000",
+   "max": "1600000000",
+   "dynamic": false,
+   "value": "640000000"
+  },
+  "innodb_ft_user_stopword_table": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "innodb_idle_flush_pct": {
+   "min": "0",
+   "max": "100",
+   "dynamic": true,
+   "value": "100"
+  },
+  "innodb_io_capacity": {
+   "min": "100",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "10000"
+  },
+  "innodb_io_capacity_max": {
+   "min": "100",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "20000"
+  },
+  "innodb_lock_wait_timeout": {
+   "min": "1",
+   "max": "1073741824",
+   "dynamic": true,
+   "value": "50"
+  },
+  "innodb_log_buffer_size": {
+   "min": "262144",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "67108864"
+  },
+  "innodb_log_checksums": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_log_compressed_pages": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_log_file_size": {
+   "min": "4194304",
+   "max": "18446744073709551615",
+   "dynamic": false,
+   "value": "50331648"
+  },
+  "innodb_log_files_in_group": {
+   "min": "2",
+   "max": "100",
+   "dynamic": false,
+   "value": "2"
+  },
+  "innodb_log_group_home_dir": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "./"
+  },
+  "innodb_log_spin_cpu_abs_lwm": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "80"
+  },
+  "innodb_log_spin_cpu_pct_hwm": {
+   "min": "0",
+   "max": "100",
+   "dynamic": true,
+   "value": "50"
+  },
+  "innodb_log_wait_for_flush_spin_hwm": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "400"
+  },
+  "innodb_log_write_ahead_size": {
+   "min": "512",
+   "max": "16384",
+   "dynamic": true,
+   "value": "8192"
+  },
+  "innodb_log_writer_threads": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_lru_scan_depth": {
+   "min": "100",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "1024"
+  },
+  "innodb_lru_threads": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "innodb_max_dirty_pages_pct": {
+   "min": "0",
+   "max": "99",
+   "dynamic": true,
+   "value": "90.000000"
+  },
+  "innodb_max_dirty_pages_pct_lwm": {
+   "min": "0",
+   "max": "99",
+   "dynamic": true,
+   "value": "10.000000"
+  },
+  "innodb_max_purge_lag": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "0"
+  },
+  "innodb_max_purge_lag_delay": {
+   "min": "0",
+   "max": "10000000",
+   "dynamic": true,
+   "value": "0"
+  },
+  "innodb_max_undo_log_size": {
+   "min": "10485760",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "1073741824"
+  },
+  "innodb_monitor_disable": {
+   "min": null,
+   "max": null,
+   "value": ""
+  },
+  "innodb_monitor_enable": {
+   "min": null,
+   "max": null,
+   "value": ""
+  },
+  "innodb_monitor_reset": {
+   "min": null,
+   "max": null,
+   "value": ""
+  },
+  "innodb_monitor_reset_all": {
+   "min": null,
+   "max": null,
+   "value": ""
+  },
+  "innodb_numa_interleave": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "innodb_old_blocks_pct": {
+   "min": "5",
+   "max": "95",
+   "dynamic": true,
+   "value": "37"
+  },
+  "innodb_old_blocks_time": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "1000"
+  },
+  "innodb_online_alter_log_max_size": {
+   "min": "65536",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "134217728"
+  },
+  "innodb_open_files": {
+   "min": "0",
+   "max": "2147483647",
+   "dynamic": false,
+   "value": "4000"
+  },
+  "innodb_optimize_fulltext_only": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_page_cleaners": {
+   "min": "1",
+   "max": "64",
+   "dynamic": false,
+   "value": "1"
+  },
+  "innodb_page_size": {
+   "min": "4096",
+   "max": "65536",
+   "dynamic": false,
+   "value": "16384"
+  },
+  "innodb_parallel_read_threads": {
+   "min": "1",
+   "max": "256",
+   "dynamic": true,
+   "value": "4"
+  },
+  "innodb_print_all_deadlocks": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_print_ddl_logs": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_print_lock_wait_timeout_info": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_purge_batch_size": {
+   "min": "1",
+   "max": "5000",
+   "dynamic": true,
+   "value": "300"
+  },
+  "innodb_purge_rseg_truncate_frequency": {
+   "min": "1",
+   "max": "128",
+   "dynamic": true,
+   "value": "128"
+  },
+  "innodb_purge_threads": {
+   "min": "1",
+   "max": "32",
+   "dynamic": false,
+   "value": "1"
+  },
+  "innodb_random_read_ahead": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_read_ahead_threshold": {
+   "min": "0",
+   "max": "64",
+   "dynamic": true,
+   "value": "56"
+  },
+  "innodb_read_io_threads": {
+   "min": "1",
+   "max": "64",
+   "dynamic": false,
+   "value": "6"
+  },
+  "innodb_read_only": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "innodb_records_in_range": {
+   "min": "0",
+   "max": "2147483647",
+   "dynamic": true,
+   "value": "0"
+  },
+  "innodb_redo_log_archive_dirs": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "innodb_redo_log_capacity": {
+   "min": "8388608",
+   "max": "549755813888",
+   "dynamic": true,
+   "value": "104857600"
+  },
+  "innodb_redo_log_encrypt": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_replication_delay": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "0"
+  },
+  "innodb_rollback_on_timeout": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "innodb_rollback_segments": {
+   "min": "1",
+   "max": "128",
+   "dynamic": true,
+   "value": "128"
+  },
+  "innodb_segment_reserve_factor": {
+   "min": "0",
+   "max": "40",
+   "dynamic": true,
+   "value": "12.500000"
+  },
+  "innodb_show_locks_held": {
+   "min": "0",
+   "max": "1000",
+   "dynamic": true,
+   "value": "10"
+  },
+  "innodb_sort_buffer_size": {
+   "min": "65536",
+   "max": "67108864",
+   "dynamic": false,
+   "value": "1048576"
+  },
+  "innodb_spin_wait_delay": {
+   "min": "0",
+   "max": "1000",
+   "dynamic": true,
+   "value": "6"
+  },
+  "innodb_spin_wait_pause_multiplier": {
+   "min": "0",
+   "max": "100",
+   "dynamic": true,
+   "value": "50"
+  },
+  "innodb_stats_auto_recalc": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_stats_include_delete_marked": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_stats_method": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "nulls_equal"
+  },
+  "innodb_stats_on_metadata": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_stats_persistent": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_stats_persistent_sample_pages": {
+   "min": "1",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "20"
+  },
+  "innodb_stats_transient_sample_pages": {
+   "min": "1",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "8"
+  },
+  "innodb_status_output": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_status_output_locks": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_strict_mode": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_sync_array_size": {
+   "min": "1",
+   "max": "1024",
+   "dynamic": false,
+   "value": "1"
+  },
+  "innodb_sync_spin_loops": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "30"
+  },
+  "innodb_sys_tablespace_encrypt": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "innodb_table_locks": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_temp_data_file_path": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ibtmp1:12M:autoextend"
+  },
+  "innodb_temp_tablespace_encrypt": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_temp_tablespaces_dir": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "./#innodb_temp/"
+  },
+  "innodb_thread_concurrency": {
+   "min": "0",
+   "max": "1000",
+   "dynamic": true,
+   "value": "0"
+  },
+  "innodb_thread_sleep_delay": {
+   "min": "0",
+   "max": "1000000",
+   "dynamic": true,
+   "value": "10000"
+  },
+  "innodb_tmpdir": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "innodb_undo_directory": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "./"
+  },
+  "innodb_undo_log_encrypt": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "innodb_undo_log_truncate": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_undo_tablespaces": {
+   "min": "2",
+   "max": "127",
+   "dynamic": true,
+   "value": "2"
+  },
+  "innodb_use_fdatasync": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "innodb_use_native_aio": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "innodb_validate_tablespace_paths": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "innodb_version": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "8.4.11-11"
+  },
+  "innodb_write_io_threads": {
+   "min": "1",
+   "max": "64",
+   "dynamic": false,
+   "value": "4"
+  },
+  "interactive_timeout": {
+   "min": "1",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "28800"
+  },
+  "internal_tmp_mem_storage_engine": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "TempTable"
+  },
+  "jemalloc_detected": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "jemalloc_profiling": {
+   "min": null,
+   "max": null,
+   "value": "OFF"
+  },
+  "join_buffer_size": {
+   "min": "128",
+   "max": "18446744073709551488",
+   "dynamic": true,
+   "value": "262144"
+  },
+  "keep_files_on_create": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "key_buffer_size": {
+   "min": "0",
+   "max": "18446744073709547520",
+   "dynamic": true,
+   "value": "8388608"
+  },
+  "key_cache_age_threshold": {
+   "min": "100",
+   "max": "18446744073709551600",
+   "dynamic": true,
+   "value": "300"
+  },
+  "key_cache_block_size": {
+   "min": "512",
+   "max": "16384",
+   "dynamic": true,
+   "value": "1024"
+  },
+  "key_cache_division_limit": {
+   "min": "1",
+   "max": "100",
+   "dynamic": true,
+   "value": "100"
+  },
+  "keyring_operations": {
+   "min": null,
+   "max": null,
+   "value": "ON"
+  },
+  "kill_idle_transaction": {
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "0"
+  },
+  "large_files_support": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "large_page_size": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": false,
+   "value": "0"
+  },
+  "large_pages": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "lc_messages": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "en_US"
+  },
+  "lc_messages_dir": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/usr/share/percona-xtradb-cluster/"
+  },
+  "lc_time_names": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "en_US"
+  },
+  "license": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "GPL"
+  },
+  "local_infile": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "lock_wait_timeout": {
+   "min": "1",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "31536000"
+  },
+  "locked_in_memory": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "log_bin": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "log_bin_basename": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/var/lib/mysql/binlog"
+  },
+  "log_bin_index": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/var/lib/mysql/binlog.index"
+  },
+  "log_bin_trust_function_creators": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "log_error": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "stderr"
+  },
+  "log_error_services": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "log_filter_internal; log_sink_internal"
+  },
+  "log_error_suppression_list": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "log_error_verbosity": {
+   "min": "1",
+   "max": "3",
+   "dynamic": true,
+   "value": "2"
+  },
+  "log_output": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "FILE"
+  },
+  "log_queries_not_using_indexes": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "log_query_errors": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "log_raw": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "log_replica_updates": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "log_slave_updates": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "log_slow_admin_statements": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "log_slow_extra": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "log_slow_filter": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "log_slow_rate_limit": {
+   "min": "1",
+   "max": "1000",
+   "dynamic": true,
+   "value": "1"
+  },
+  "log_slow_rate_type": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "session"
+  },
+  "log_slow_replica_statements": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "log_slow_slave_statements": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "log_slow_sp_statements": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "log_slow_verbosity": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "log_statements_unsafe_for_binlog": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "log_throttle_queries_not_using_indexes": {
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "0"
+  },
+  "log_timestamps": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "UTC"
+  },
+  "long_query_time": {
+   "min": "0",
+   "max": "4719230590769954816",
+   "dynamic": true,
+   "value": "10.000000"
+  },
+  "low_priority_updates": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "lower_case_file_system": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "lower_case_table_names": {
+   "min": "0",
+   "max": "2",
+   "dynamic": false,
+   "value": "0"
+  },
+  "mandatory_roles": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "master_verify_checksum": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "max_allowed_packet": {
+   "min": "1024",
+   "max": "1073741824",
+   "dynamic": true,
+   "value": "67108864"
+  },
+  "max_binlog_cache_size": {
+   "min": "4096",
+   "max": "18446744073709547520",
+   "dynamic": true,
+   "value": "18446744073709547520"
+  },
+  "max_binlog_size": {
+   "min": "4096",
+   "max": "1073741824",
+   "dynamic": true,
+   "value": "1073741824"
+  },
+  "max_binlog_stmt_cache_size": {
+   "min": "4096",
+   "max": "18446744073709547520",
+   "dynamic": true,
+   "value": "18446744073709547520"
+  },
+  "max_connect_errors": {
+   "min": "1",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "100"
+  },
+  "max_connections": {
+   "min": "1",
+   "max": "100000",
+   "dynamic": true,
+   "value": "151"
+  },
+  "max_delayed_threads": {
+   "min": "0",
+   "max": "16384",
+   "dynamic": true,
+   "value": "20"
+  },
+  "max_digest_length": {
+   "min": "0",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "1024"
+  },
+  "max_error_count": {
+   "min": "0",
+   "max": "65535",
+   "dynamic": true,
+   "value": "1024"
+  },
+  "max_execution_time": {
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "0"
+  },
+  "max_heap_table_size": {
+   "min": "16384",
+   "max": "18446744073709550592",
+   "dynamic": true,
+   "value": "16777216"
+  },
+  "max_insert_delayed_threads": {
+   "min": "0",
+   "max": "16384",
+   "dynamic": true,
+   "value": "20"
+  },
+  "max_join_size": {
+   "min": "1",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "18446744073709551615"
+  },
+  "max_length_for_sort_data": {
+   "min": "4",
+   "max": "8388608",
+   "dynamic": true,
+   "value": "4096"
+  },
+  "max_points_in_geometry": {
+   "min": "3",
+   "max": "1048576",
+   "dynamic": true,
+   "value": "65536"
+  },
+  "max_prepared_stmt_count": {
+   "min": "0",
+   "max": "4194304",
+   "dynamic": true,
+   "value": "16382"
+  },
+  "max_relay_log_size": {
+   "min": "0",
+   "max": "1073741824",
+   "dynamic": true,
+   "value": "0"
+  },
+  "max_seeks_for_key": {
+   "min": "1",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "18446744073709551615"
+  },
+  "max_slowlog_files": {
+   "min": "0",
+   "max": "102400",
+   "dynamic": true,
+   "value": "0"
+  },
+  "max_slowlog_size": {
+   "min": "0",
+   "max": "1073741824",
+   "dynamic": true,
+   "value": "0"
+  },
+  "max_sort_length": {
+   "min": "4",
+   "max": "8388608",
+   "dynamic": true,
+   "value": "1024"
+  },
+  "max_sp_recursion_depth": {
+   "min": "0",
+   "max": "255",
+   "dynamic": true,
+   "value": "0"
+  },
+  "max_user_connections": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "0"
+  },
+  "max_write_lock_count": {
+   "min": "1",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "18446744073709551615"
+  },
+  "min_examined_row_limit": {
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "0"
+  },
+  "myisam_data_pointer_size": {
+   "min": "2",
+   "max": "7",
+   "dynamic": true,
+   "value": "6"
+  },
+  "myisam_max_sort_file_size": {
+   "min": "0",
+   "max": "9223372036854775807",
+   "dynamic": true,
+   "value": "9223372036853727232"
+  },
+  "myisam_mmap_size": {
+   "min": "7",
+   "max": "18446744073709551615",
+   "dynamic": false,
+   "value": "18446744073709551615"
+  },
+  "myisam_recover_options": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "myisam_sort_buffer_size": {
+   "min": "4096",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "8388608"
+  },
+  "myisam_stats_method": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "nulls_unequal"
+  },
+  "myisam_use_mmap": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "mysql_native_password_proxy_users": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "mysqlx_bind_address": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "*"
+  },
+  "mysqlx_compression_algorithms": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "DEFLATE_STREAM,LZ4_MESSAGE,ZSTD_STREAM"
+  },
+  "mysqlx_connect_timeout": {
+   "min": "1",
+   "max": "1000000000",
+   "dynamic": true,
+   "value": "30"
+  },
+  "mysqlx_deflate_default_compression_level": {
+   "min": "1",
+   "max": "9",
+   "dynamic": true,
+   "value": "3"
+  },
+  "mysqlx_deflate_max_client_compression_level": {
+   "min": "1",
+   "max": "9",
+   "dynamic": true,
+   "value": "5"
+  },
+  "mysqlx_document_id_unique_prefix": {
+   "min": "0",
+   "max": "65535",
+   "dynamic": true,
+   "value": "0"
+  },
+  "mysqlx_enable_hello_notice": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "mysqlx_idle_worker_thread_timeout": {
+   "min": "0",
+   "max": "3600",
+   "dynamic": true,
+   "value": "60"
+  },
+  "mysqlx_interactive_timeout": {
+   "min": "1",
+   "max": "2147483",
+   "dynamic": true,
+   "value": "28800"
+  },
+  "mysqlx_lz4_default_compression_level": {
+   "min": "0",
+   "max": "16",
+   "dynamic": true,
+   "value": "2"
+  },
+  "mysqlx_lz4_max_client_compression_level": {
+   "min": "0",
+   "max": "16",
+   "dynamic": true,
+   "value": "8"
+  },
+  "mysqlx_max_allowed_packet": {
+   "min": "512",
+   "max": "1073741824",
+   "dynamic": true,
+   "value": "67108864"
+  },
+  "mysqlx_max_connections": {
+   "min": "1",
+   "max": "65535",
+   "dynamic": true,
+   "value": "100"
+  },
+  "mysqlx_min_worker_threads": {
+   "min": "1",
+   "max": "100",
+   "dynamic": true,
+   "value": "2"
+  },
+  "mysqlx_port": {
+   "min": "1",
+   "max": "65535",
+   "dynamic": false,
+   "value": "33060"
+  },
+  "mysqlx_port_open_timeout": {
+   "min": "0",
+   "max": "120",
+   "dynamic": false,
+   "value": "0"
+  },
+  "mysqlx_read_timeout": {
+   "min": "1",
+   "max": "2147483",
+   "dynamic": true,
+   "value": "30"
+  },
+  "mysqlx_socket": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/var/lib/mysql/mysqlx.sock"
+  },
+  "mysqlx_ssl_ca": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "mysqlx_ssl_capath": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "mysqlx_ssl_cert": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "mysqlx_ssl_cipher": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "mysqlx_ssl_crl": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "mysqlx_ssl_crlpath": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "mysqlx_ssl_key": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "mysqlx_wait_timeout": {
+   "min": "1",
+   "max": "2147483",
+   "dynamic": true,
+   "value": "28800"
+  },
+  "mysqlx_write_timeout": {
+   "min": "1",
+   "max": "2147483",
+   "dynamic": true,
+   "value": "60"
+  },
+  "mysqlx_zstd_default_compression_level": {
+   "min": "4294836224",
+   "max": "22",
+   "dynamic": true,
+   "value": "3"
+  },
+  "mysqlx_zstd_max_client_compression_level": {
+   "min": "4294836224",
+   "max": "22",
+   "dynamic": true,
+   "value": "11"
+  },
+  "net_buffer_length": {
+   "min": "1024",
+   "max": "1048576",
+   "dynamic": true,
+   "value": "16384"
+  },
+  "net_buffer_shrink_interval": {
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "0"
+  },
+  "net_read_timeout": {
+   "min": "1",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "30"
+  },
+  "net_retry_count": {
+   "min": "1",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "10"
+  },
+  "net_write_timeout": {
+   "min": "1",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "60"
+  },
+  "ngram_token_size": {
+   "min": "1",
+   "max": "10",
+   "dynamic": false,
+   "value": "2"
+  },
+  "offline_mode": {
+   "min": null,
+   "max": null,
+   "value": "OFF"
+  },
+  "old_alter_table": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "open_files_limit": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": false,
+   "value": "8161"
+  },
+  "optimizer_max_subgraph_pairs": {
+   "min": "1",
+   "max": "2147483647",
+   "dynamic": true,
+   "value": "100000"
+  },
+  "optimizer_prune_level": {
+   "min": "0",
+   "max": "1",
+   "dynamic": true,
+   "value": "1"
+  },
+  "optimizer_search_depth": {
+   "min": "0",
+   "max": "62",
+   "dynamic": true,
+   "value": "62"
+  },
+  "optimizer_switch": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,duplicateweedout=on,subquery_materialization_cost_based=on,use_index_extensions=on,condition_fanout_filter=on,derived_merge=on,use_invisible_indexes=off,skip_scan=on,hash_join=on,subquery_to_derived=off,prefer_ordering_index=on,hypergraph_optimizer=off,derived_condition_pushdown=on,hash_set_operations=on,favor_range_scan=off"
+  },
+  "optimizer_trace": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "enabled=off,one_line=off"
+  },
+  "optimizer_trace_features": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "greedy_search=on,range_optimizer=on,dynamic_range=on,repeated_subselect=on"
+  },
+  "optimizer_trace_limit": {
+   "min": "0",
+   "max": "9223372036854775807",
+   "dynamic": true,
+   "value": "1"
+  },
+  "optimizer_trace_max_mem_size": {
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "1048576"
+  },
+  "optimizer_trace_offset": {
+   "min": "-9223372036854775808",
+   "max": "9223372036854775807",
+   "dynamic": true,
+   "value": "-1"
+  },
+  "parser_max_mem_size": {
+   "min": "10000000",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "18446744073709551615"
+  },
+  "partial_revokes": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "password_history": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "0"
+  },
+  "password_require_current": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "password_reuse_interval": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "0"
+  },
+  "percona_telemetry.grace_interval": {
+   "min": "20",
+   "max": "172800",
+   "dynamic": false,
+   "value": "86400"
+  },
+  "percona_telemetry.history_keep_interval": {
+   "min": "60",
+   "max": "604800",
+   "dynamic": false,
+   "value": "604800"
+  },
+  "percona_telemetry.scrape_interval": {
+   "min": "10",
+   "max": "604800",
+   "dynamic": false,
+   "value": "86400"
+  },
+  "percona_telemetry.telemetry_root_dir": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/usr/local/percona/telemetry/pxc"
+  },
+  "percona_telemetry_disable": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "performance_schema": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "performance_schema_accounts_size": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_digests_size": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "10000"
+  },
+  "performance_schema_error_size": {
+   "min": "0",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "5800"
+  },
+  "performance_schema_events_stages_history_long_size": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "10000"
+  },
+  "performance_schema_events_stages_history_size": {
+   "min": "-1",
+   "max": "1024",
+   "dynamic": false,
+   "value": "10"
+  },
+  "performance_schema_events_statements_history_long_size": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "10000"
+  },
+  "performance_schema_events_statements_history_size": {
+   "min": "-1",
+   "max": "1024",
+   "dynamic": false,
+   "value": "10"
+  },
+  "performance_schema_events_transactions_history_long_size": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "10000"
+  },
+  "performance_schema_events_transactions_history_size": {
+   "min": "-1",
+   "max": "1024",
+   "dynamic": false,
+   "value": "10"
+  },
+  "performance_schema_events_waits_history_long_size": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "10000"
+  },
+  "performance_schema_events_waits_history_size": {
+   "min": "-1",
+   "max": "1024",
+   "dynamic": false,
+   "value": "10"
+  },
+  "performance_schema_hosts_size": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_max_cond_classes": {
+   "min": "0",
+   "max": "1024",
+   "dynamic": false,
+   "value": "177"
+  },
+  "performance_schema_max_cond_instances": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_max_digest_length": {
+   "min": "0",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "1024"
+  },
+  "performance_schema_max_digest_sample_age": {
+   "min": "0",
+   "max": "1048576",
+   "dynamic": true,
+   "value": "60"
+  },
+  "performance_schema_max_file_classes": {
+   "min": "0",
+   "max": "1024",
+   "dynamic": false,
+   "value": "80"
+  },
+  "performance_schema_max_file_handles": {
+   "min": "0",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "32768"
+  },
+  "performance_schema_max_file_instances": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_max_index_stat": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_max_logger_classes": {
+   "min": "0",
+   "max": "200",
+   "dynamic": false,
+   "value": "80"
+  },
+  "performance_schema_max_memory_classes": {
+   "min": "0",
+   "max": "1024",
+   "dynamic": false,
+   "value": "530"
+  },
+  "performance_schema_max_metadata_locks": {
+   "min": "-1",
+   "max": "104857600",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_max_meter_classes": {
+   "min": "0",
+   "max": "64",
+   "dynamic": false,
+   "value": "30"
+  },
+  "performance_schema_max_metric_classes": {
+   "min": "0",
+   "max": "11000",
+   "dynamic": false,
+   "value": "600"
+  },
+  "performance_schema_max_mutex_classes": {
+   "min": "0",
+   "max": "1024",
+   "dynamic": false,
+   "value": "389"
+  },
+  "performance_schema_max_mutex_instances": {
+   "min": "-1",
+   "max": "104857600",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_max_prepared_statements_instances": {
+   "min": "-1",
+   "max": "4194304",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_max_program_instances": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_max_rwlock_classes": {
+   "min": "0",
+   "max": "1024",
+   "dynamic": false,
+   "value": "100"
+  },
+  "performance_schema_max_rwlock_instances": {
+   "min": "-1",
+   "max": "104857600",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_max_socket_classes": {
+   "min": "0",
+   "max": "1024",
+   "dynamic": false,
+   "value": "10"
+  },
+  "performance_schema_max_socket_instances": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_max_sql_text_length": {
+   "min": "0",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "1024"
+  },
+  "performance_schema_max_stage_classes": {
+   "min": "0",
+   "max": "1024",
+   "dynamic": false,
+   "value": "199"
+  },
+  "performance_schema_max_statement_classes": {
+   "min": "0",
+   "max": "256",
+   "dynamic": false,
+   "value": "228"
+  },
+  "performance_schema_max_statement_stack": {
+   "min": "1",
+   "max": "256",
+   "dynamic": false,
+   "value": "10"
+  },
+  "performance_schema_max_table_handles": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_max_table_instances": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_max_table_lock_stat": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_max_thread_classes": {
+   "min": "0",
+   "max": "1024",
+   "dynamic": false,
+   "value": "100"
+  },
+  "performance_schema_max_thread_instances": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_session_connect_attrs_size": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "512"
+  },
+  "performance_schema_setup_actors_size": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_setup_objects_size": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "performance_schema_show_processlist": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "performance_schema_users_size": {
+   "min": "-1",
+   "max": "1048576",
+   "dynamic": false,
+   "value": "-1"
+  },
+  "persist_only_admin_x509_subject": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "persist_sensitive_variables_in_plaintext": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "persisted_globals_load": {
+   "min": null,
+   "max": null,
+   "value": "ON"
+  },
+  "pid_file": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/var/lib/mysql/12a54d9cdcdc.pid"
+  },
+  "plugin_dir": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/usr/lib64/mysql/plugin/"
+  },
+  "port": {
+   "min": "0",
+   "max": "65535",
+   "dynamic": false,
+   "value": "3306"
+  },
+  "preload_buffer_size": {
+   "min": "1024",
+   "max": "1073741824",
+   "dynamic": true,
+   "value": "32768"
+  },
+  "print_identified_with_as_hex": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "profiling": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "profiling_history_size": {
+   "min": "0",
+   "max": "100",
+   "dynamic": true,
+   "value": "15"
+  },
+  "protocol_compression_algorithms": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "zlib,zstd,uncompressed"
+  },
+  "protocol_version": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": false,
+   "value": "10"
+  },
+  "proxy_protocol_networks": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "pxc_encrypt_cluster_traffic": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "pxc_maint_mode": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "DISABLED"
+  },
+  "pxc_maint_transition_period": {
+   "min": "0",
+   "max": "3600",
+   "dynamic": true,
+   "value": "10"
+  },
+  "pxc_strict_mode": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ENFORCING"
+  },
+  "query_alloc_block_size": {
+   "min": "1024",
+   "max": "4294966272",
+   "dynamic": true,
+   "value": "8192"
+  },
+  "query_prealloc_size": {
+   "min": "8192",
+   "max": "18446744073709550592",
+   "dynamic": true,
+   "value": "8192"
+  },
+  "range_alloc_block_size": {
+   "min": "4096",
+   "max": "4294966272",
+   "dynamic": true,
+   "value": "4096"
+  },
+  "range_optimizer_max_mem_size": {
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "8388608"
+  },
+  "rbr_exec_mode": {
+   "min": null,
+   "max": null,
+   "scope": "SESSION",
+   "value": "STRICT"
+  },
+  "read_buffer_size": {
+   "min": "8192",
+   "max": "2147479552",
+   "dynamic": true,
+   "value": "131072"
+  },
+  "read_only": {
+   "min": null,
+   "max": null,
+   "value": "OFF"
+  },
+  "read_rnd_buffer_size": {
+   "min": "1",
+   "max": "2147483647",
+   "dynamic": true,
+   "value": "262144"
+  },
+  "regexp_stack_limit": {
+   "min": "0",
+   "max": "2147483647",
+   "dynamic": true,
+   "value": "8000000"
+  },
+  "regexp_time_limit": {
+   "min": "0",
+   "max": "2147483647",
+   "dynamic": true,
+   "value": "32"
+  },
+  "relay_log": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "12a54d9cdcdc-relay-bin"
+  },
+  "relay_log_basename": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/var/lib/mysql/12a54d9cdcdc-relay-bin"
+  },
+  "relay_log_index": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/var/lib/mysql/12a54d9cdcdc-relay-bin.index"
+  },
+  "relay_log_purge": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "relay_log_recovery": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "relay_log_space_limit": {
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": false,
+   "value": "0"
+  },
+  "replica_allow_batching": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "replica_checkpoint_group": {
+   "min": "32",
+   "max": "524280",
+   "dynamic": true,
+   "value": "512"
+  },
+  "replica_checkpoint_period": {
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "300"
+  },
+  "replica_compressed_protocol": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "replica_enable_event": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "replica_exec_mode": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "STRICT"
+  },
+  "replica_load_tmpdir": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/tmp"
+  },
+  "replica_max_allowed_packet": {
+   "min": "1024",
+   "max": "1073741824",
+   "dynamic": true,
+   "value": "1073741824"
+  },
+  "replica_net_timeout": {
+   "min": "1",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "60"
+  },
+  "replica_parallel_type": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "LOGICAL_CLOCK"
+  },
+  "replica_parallel_workers": {
+   "min": "0",
+   "max": "1024",
+   "dynamic": true,
+   "value": "4"
+  },
+  "replica_pending_jobs_size_max": {
+   "min": "1024",
+   "max": "18446744073709550592",
+   "dynamic": true,
+   "value": "134217728"
+  },
+  "replica_preserve_commit_order": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "replica_skip_errors": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "replica_sql_verify_checksum": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "replica_transaction_retries": {
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "10"
+  },
+  "replica_translate_deprecated_priv": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "replica_type_conversions": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "replication_optimize_for_static_plugin_config": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "replication_sender_observe_commit_only": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "report_host": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "report_password": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "report_port": {
+   "min": "0",
+   "max": "65535",
+   "dynamic": false,
+   "value": "3306"
+  },
+  "report_user": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "require_secure_transport": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "restrict_fk_on_non_standard_key": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "rpl_read_size": {
+   "min": "8192",
+   "max": "18446744073709547520",
+   "dynamic": true,
+   "value": "8192"
+  },
+  "rpl_stop_replica_timeout": {
+   "min": "2",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "31536000"
+  },
+  "rpl_stop_slave_timeout": {
+   "min": "2",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "31536000"
+  },
+  "schema_definition_cache": {
+   "min": "256",
+   "max": "524288",
+   "dynamic": true,
+   "value": "256"
+  },
+  "secondary_engine_cost_threshold": {
+   "min": "0",
+   "max": "9218868437227405311",
+   "dynamic": true,
+   "value": "100000.000000"
+  },
+  "secure_file_priv": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/var/lib/mysql-files/"
+  },
+  "secure_log_path": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "select_into_buffer_size": {
+   "min": "8192",
+   "max": "2147479552",
+   "dynamic": true,
+   "value": "131072"
+  },
+  "select_into_disk_sync": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "select_into_disk_sync_delay": {
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "0"
+  },
+  "server_id": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "1"
+  },
+  "server_id_bits": {
+   "min": "0",
+   "max": "32",
+   "dynamic": true,
+   "value": "32"
+  },
+  "server_uuid": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "e0809f5a-cd7d-11f1-b74d-1edd4bb4ddba"
+  },
+  "session_track_gtids": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "session_track_schema": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "session_track_state_change": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "session_track_system_variables": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "time_zone,autocommit,character_set_client,character_set_results,character_set_connection"
+  },
+  "session_track_transaction_info": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "set_operations_buffer_size": {
+   "min": "16384",
+   "max": "18446744073709551488",
+   "dynamic": true,
+   "value": "262144"
+  },
+  "sha256_password_auto_generate_rsa_keys": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "sha256_password_private_key_path": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "private_key.pem"
+  },
+  "sha256_password_proxy_users": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "sha256_password_public_key_path": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "public_key.pem"
+  },
+  "show_create_table_verbosity": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "show_gipk_in_create_table_and_information_schema": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "skip_external_locking": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "skip_name_resolve": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "skip_networking": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "skip_replica_start": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "skip_show_database": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "skip_slave_start": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "slave_allow_batching": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "slave_checkpoint_group": {
+   "min": "32",
+   "max": "524280",
+   "dynamic": true,
+   "value": "512"
+  },
+  "slave_checkpoint_period": {
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "300"
+  },
+  "slave_compressed_protocol": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "slave_exec_mode": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "STRICT"
+  },
+  "slave_load_tmpdir": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/tmp"
+  },
+  "slave_max_allowed_packet": {
+   "min": "1024",
+   "max": "1073741824",
+   "dynamic": true,
+   "value": "1073741824"
+  },
+  "slave_net_timeout": {
+   "min": "1",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "60"
+  },
+  "slave_parallel_type": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "LOGICAL_CLOCK"
+  },
+  "slave_parallel_workers": {
+   "min": "0",
+   "max": "1024",
+   "dynamic": true,
+   "value": "4"
+  },
+  "slave_pending_jobs_size_max": {
+   "min": "1024",
+   "max": "18446744073709550592",
+   "dynamic": true,
+   "value": "134217728"
+  },
+  "slave_preserve_commit_order": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "slave_skip_errors": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "slave_sql_verify_checksum": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "slave_transaction_retries": {
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "10"
+  },
+  "slave_type_conversions": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "slow_launch_time": {
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "2"
+  },
+  "slow_query_log": {
+   "min": null,
+   "max": null,
+   "value": "OFF"
+  },
+  "slow_query_log_always_write_time": {
+   "min": "0",
+   "max": "4719230590769954816",
+   "dynamic": true,
+   "value": "10.000000"
+  },
+  "slow_query_log_file": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "/var/lib/mysql/12a54d9cdcdc-slow.log"
+  },
+  "slow_query_log_use_global_control": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "socket": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/tmp/mysql.sock"
+  },
+  "sort_buffer_size": {
+   "min": "32768",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "262144"
+  },
+  "source_verify_checksum": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "sql_auto_is_null": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "sql_big_selects": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "sql_buffer_result": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "sql_generate_invisible_primary_key": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "sql_log_off": {
+   "min": null,
+   "max": null,
+   "value": "OFF"
+  },
+  "sql_mode": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
+  },
+  "sql_notes": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "sql_quote_show_create": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "sql_replica_skip_counter": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "0"
+  },
+  "sql_require_primary_key": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "sql_safe_updates": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "sql_select_limit": {
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "18446744073709551615"
+  },
+  "sql_slave_skip_counter": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "0"
+  },
+  "sql_warnings": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "ssl_ca": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ca.pem"
+  },
+  "ssl_capath": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "ssl_cert": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "server-cert.pem"
+  },
+  "ssl_cipher": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "ssl_crl": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "ssl_crlpath": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "ssl_fips_mode": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "ssl_key": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "server-key.pem"
+  },
+  "ssl_session_cache_mode": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "ssl_session_cache_timeout": {
+   "min": "0",
+   "max": "84600",
+   "dynamic": true,
+   "value": "300"
+  },
+  "stored_program_cache": {
+   "min": "16",
+   "max": "524288",
+   "dynamic": true,
+   "value": "256"
+  },
+  "stored_program_definition_cache": {
+   "min": "256",
+   "max": "524288",
+   "dynamic": true,
+   "value": "256"
+  },
+  "super_read_only": {
+   "min": null,
+   "max": null,
+   "value": "OFF"
+  },
+  "sync_binlog": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "1"
+  },
+  "sync_master_info": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "10000"
+  },
+  "sync_relay_log": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "10000"
+  },
+  "sync_relay_log_info": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "10000"
+  },
+  "sync_source_info": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "10000"
+  },
+  "system_time_zone": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "UTC"
+  },
+  "table_definition_cache": {
+   "min": "400",
+   "max": "524288",
+   "dynamic": true,
+   "value": "2000"
+  },
+  "table_encryption_privilege_check": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "table_open_cache": {
+   "min": "1",
+   "max": "524288",
+   "dynamic": true,
+   "value": "4000"
+  },
+  "table_open_cache_instances": {
+   "min": "1",
+   "max": "64",
+   "dynamic": false,
+   "value": "16"
+  },
+  "table_open_cache_triggers": {
+   "min": "1",
+   "max": "524288",
+   "dynamic": true,
+   "value": "524288"
+  },
+  "tablespace_definition_cache": {
+   "min": "256",
+   "max": "524288",
+   "dynamic": true,
+   "value": "256"
+  },
+  "temptable_max_mmap": {
+   "min": "0",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "0"
+  },
+  "temptable_max_ram": {
+   "min": "2097152",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "1073741824"
+  },
+  "temptable_use_mmap": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "terminology_use_previous": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "NONE"
+  },
+  "tf_sequence_table_max_upper_bound": {
+   "min": "1024",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "1048576"
+  },
+  "thread_cache_size": {
+   "min": "0",
+   "max": "16384",
+   "dynamic": true,
+   "value": "9"
+  },
+  "thread_handling": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "one-thread-per-connection"
+  },
+  "thread_pool_high_prio_mode": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "transactions"
+  },
+  "thread_pool_high_prio_tickets": {
+   "min": "0",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "4294967295"
+  },
+  "thread_pool_idle_timeout": {
+   "min": "1",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "60"
+  },
+  "thread_pool_max_threads": {
+   "min": "1",
+   "max": "100000",
+   "dynamic": true,
+   "value": "100000"
+  },
+  "thread_pool_oversubscribe": {
+   "min": "1",
+   "max": "1000",
+   "dynamic": true,
+   "value": "3"
+  },
+  "thread_pool_size": {
+   "min": "1",
+   "max": "1024",
+   "dynamic": true,
+   "value": "12"
+  },
+  "thread_pool_stall_limit": {
+   "min": "10",
+   "max": "4294967295",
+   "dynamic": true,
+   "value": "500"
+  },
+  "thread_stack": {
+   "min": "131072",
+   "max": "18446744073709550592",
+   "dynamic": false,
+   "value": "1048576"
+  },
+  "thread_statistics": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "time_zone": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "SYSTEM"
+  },
+  "tls_certificates_enforced_validation": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "tls_ciphersuites": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "tls_version": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "TLSv1.2,TLSv1.3"
+  },
+  "tmp_table_size": {
+   "min": "1024",
+   "max": "18446744073709551615",
+   "dynamic": true,
+   "value": "16777216"
+  },
+  "tmpdir": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/tmp"
+  },
+  "transaction_alloc_block_size": {
+   "min": "1024",
+   "max": "131072",
+   "dynamic": true,
+   "value": "8192"
+  },
+  "transaction_isolation": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "REPEATABLE-READ"
+  },
+  "transaction_prealloc_size": {
+   "min": "1024",
+   "max": "131072",
+   "dynamic": true,
+   "value": "4096"
+  },
+  "transaction_read_only": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "unique_checks": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "updatable_views_with_limit": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "YES"
+  },
+  "userstat": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "version": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "8.4.11-11.1"
+  },
+  "version_comment": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "Percona XtraDB Cluster (GPL), Release rel11, Revision 33f7510, WSREP version 26.1.4.3"
+  },
+  "version_compile_machine": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "x86_64"
+  },
+  "version_compile_os": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "Linux"
+  },
+  "version_compile_zlib": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "1.3.2"
+  },
+  "version_suffix": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ".1"
+  },
+  "wait_timeout": {
+   "min": "1",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "28800"
+  },
+  "windowing_use_high_precision": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "wsrep_applier_fk_checks": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "wsrep_applier_threads": {
+   "min": "1",
+   "max": "512",
+   "dynamic": true,
+   "value": "2"
+  },
+  "wsrep_applier_uk_checks": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "wsrep_auto_increment_control": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "wsrep_causal_reads": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "wsrep_certification_rules": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "strict"
+  },
+  "wsrep_certify_nonpk": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "wsrep_cluster_address": {
+   "min": null,
+   "max": null,
+   "value": "gcomm://"
+  },
+  "wsrep_cluster_name": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "inventory"
+  },
+  "wsrep_data_home_dir": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "/var/lib/mysql/"
+  },
+  "wsrep_dbug_option": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "wsrep_debug": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "NONE"
+  },
+  "wsrep_desync": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "wsrep_desync_pause_retry_timeout": {
+   "min": "0",
+   "max": "31536000",
+   "dynamic": true,
+   "value": "30"
+  },
+  "wsrep_dirty_reads": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "wsrep_disk_pages_encrypt": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "NONE"
+  },
+  "wsrep_gcache_encrypt": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "NONE"
+  },
+  "wsrep_ignore_apply_errors": {
+   "min": "0",
+   "max": "7",
+   "dynamic": true,
+   "value": "0"
+  },
+  "wsrep_load_data_splitting": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "wsrep_log_conflicts": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "wsrep_max_ws_rows": {
+   "min": "0",
+   "max": "1048576",
+   "dynamic": true,
+   "value": "0"
+  },
+  "wsrep_max_ws_size": {
+   "min": "1024",
+   "max": "2147483647",
+   "dynamic": true,
+   "value": "2147483647"
+  },
+  "wsrep_min_log_verbosity": {
+   "min": "1",
+   "max": "3",
+   "dynamic": true,
+   "value": "3"
+  },
+  "wsrep_mode": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "wsrep_node_address": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "172.17.0.2"
+  },
+  "wsrep_node_incoming_address": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "12a54d9cdcdc:3306"
+  },
+  "wsrep_node_name": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "12a54d9cdcdc"
+  },
+  "wsrep_notify_cmd": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": ""
+  },
+  "wsrep_osu_method": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "TOI"
+  },
+  "wsrep_provider": {
+   "min": null,
+   "max": null,
+   "value": "/usr/lib64/galera4/libgalera_smm.so"
+  },
+  "wsrep_provider_options": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "allocator.disk_pages_encryption = no; allocator.encryption_cache_page_size = 32K; allocator.encryption_cache_size = 16777216; base_dir = /var/lib/mysql/; base_host = 172.17.0.2; base_port = 4567; cert.log_conflicts = no; cert.optimistic_pa = no; debug = no; evs.auto_evict = 0; evs.causal_keepalive_period = PT1S; evs.debug_log_mask = 0x1; evs.delay_margin = PT1S; evs.delayed_keep_period = PT30S; evs.inactive_check_period = PT0.5S; evs.inactive_timeout = PT15S; evs.info_log_mask = 0; evs.install_timeout = PT7.5S; evs.join_retrans_period = PT1S; evs.keepalive_period = PT1S; evs.max_install_timeouts = 3; evs.send_window = 10; evs.stats_report_period = PT1M; evs.suspect_timeout = PT5S; evs.use_aggregate = true; evs.user_send_window = 4; evs.version = 1; evs.view_forget_timeout = P1D; gcache.dir = /var/lib/mysql/; gcache.encryption = no; gcache.encryption_cache_page_size = 32K; gcache.encryption_cache_size = 16777216; gcache.freeze_purge_at_seqno = -1; gcache.keep_pages_count = 0; gcache.keep_pages_size = 0; gcache.mem_size = 0; gcache.name = galera.cache; gcache.page_size = 128M; gcache.recover = yes; gcache.size = 128M; gcomm.thread_prio = ; gcs.check_appl_proto = 1; gcs.fc_auto_evict_threshold = 0.75; gcs.fc_auto_evict_window = 0; gcs.fc_debug = 0; gcs.fc_factor = 1.0; gcs.fc_limit = 100; gcs.fc_master_slave = no; gcs.fc_single_primary = no; gcs.max_packet_size = 64500; gcs.max_throttle = 0.25; gcs.recv_q_hard_limit = 9223372036854775807; gcs.recv_q_soft_limit = 0.25; gcs.sync_donor = no; gmcast.listen_addr = ssl://0.0.0.0:4567; gmcast.mcast_addr = ; gmcast.mcast_ttl = 1; gmcast.peer_timeout = PT3S; gmcast.segment = 0; gmcast.time_wait = PT5S; gmcast.version = 0; ist.recv_addr = 172.17.0.2; pc.announce_timeout = PT3S; pc.checksum = false; pc.ignore_quorum = false; pc.ignore_sb = false; pc.linger = PT20S; pc.npvo = false; pc.recovery = true; pc.version = 0; pc.wait_prim = true; pc.wait_prim_timeout = PT30S; pc.wait_restored_prim_timeout = PT0S; pc.weight = 1; protonet.backend = asio; protonet.version = 0; repl.causal_read_timeout = PT30S; repl.commit_order = 3; repl.force_sst_after_inconsistency = no; repl.key_format = FLAT8; repl.max_ws_size = 2147483647; repl.proto_max = 11; socket.checksum = 2; socket.recv_buf_size = auto; socket.send_buf_size = auto; socket.ssl = YES; socket.ssl_ca = ca.pem; socket.ssl_cert = server-cert.pem; socket.ssl_cipher = ; socket.ssl_key = server-key.pem; socket.ssl_reload = 1; "
+  },
+  "wsrep_recover": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "OFF"
+  },
+  "wsrep_reject_queries": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "NONE"
+  },
+  "wsrep_replicate_myisam": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "wsrep_restart_replica": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "wsrep_restart_slave": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "wsrep_retry_autocommit": {
+   "min": "0",
+   "max": "10000",
+   "dynamic": true,
+   "value": "1"
+  },
+  "wsrep_rsu_commit_timeout": {
+   "min": "5000",
+   "max": "31536000000000",
+   "dynamic": true,
+   "value": "5000"
+  },
+  "wsrep_slave_fk_checks": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  },
+  "wsrep_slave_threads": {
+   "min": "1",
+   "max": "512",
+   "dynamic": true,
+   "value": "2"
+  },
+  "wsrep_slave_uk_checks": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "wsrep_sr_store": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "table"
+  },
+  "wsrep_sst_allowed_methods": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "xtrabackup-v2,clone"
+  },
+  "wsrep_sst_donor": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": ""
+  },
+  "wsrep_sst_donor_rejects_queries": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "OFF"
+  },
+  "wsrep_sst_method": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "xtrabackup-v2"
+  },
+  "wsrep_sst_receive_address": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "AUTO"
+  },
+  "wsrep_start_position": {
+   "min": null,
+   "max": null,
+   "value": "e28e442d-cd7d-11f1-99c5-133650c0763c:20"
+  },
+  "wsrep_sync_wait": {
+   "min": "0",
+   "max": "15",
+   "dynamic": true,
+   "value": "0"
+  },
+  "wsrep_trx_fragment_size": {
+   "min": "0",
+   "max": "2147483647",
+   "dynamic": true,
+   "value": "0"
+  },
+  "wsrep_trx_fragment_unit": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "bytes"
+  },
+  "wsrep_use_async_monitor": {
+   "min": null,
+   "max": null,
+   "dynamic": false,
+   "value": "ON"
+  },
+  "xa_detach_on_prepare": {
+   "min": null,
+   "max": null,
+   "dynamic": true,
+   "value": "ON"
+  }
+ },
+ "status": [
+  "aborted_clients",
+  "aborted_connects",
+  "acl_cache_items_count",
+  "binlog_cache_disk_use",
+  "binlog_cache_use",
+  "binlog_snapshot_file",
+  "binlog_snapshot_gtid_executed",
+  "binlog_snapshot_position",
+  "binlog_stmt_cache_disk_use",
+  "binlog_stmt_cache_use",
+  "bytes_received",
+  "bytes_sent",
+  "caching_sha2_password_rsa_public_key",
+  "com_admin_commands",
+  "com_alter_db",
+  "com_alter_event",
+  "com_alter_function",
+  "com_alter_instance",
+  "com_alter_procedure",
+  "com_alter_resource_group",
+  "com_alter_server",
+  "com_alter_table",
+  "com_alter_tablespace",
+  "com_alter_user",
+  "com_alter_user_default_role",
+  "com_analyze",
+  "com_assign_to_keycache",
+  "com_begin",
+  "com_binlog",
+  "com_call_procedure",
+  "com_change_db",
+  "com_change_repl_filter",
+  "com_change_replication_source",
+  "com_check",
+  "com_checksum",
+  "com_clone",
+  "com_commit",
+  "com_create_compression_dictionary",
+  "com_create_db",
+  "com_create_event",
+  "com_create_function",
+  "com_create_index",
+  "com_create_procedure",
+  "com_create_resource_group",
+  "com_create_role",
+  "com_create_server",
+  "com_create_spatial_reference_system",
+  "com_create_table",
+  "com_create_trigger",
+  "com_create_udf",
+  "com_create_user",
+  "com_create_view",
+  "com_dealloc_sql",
+  "com_delete",
+  "com_delete_multi",
+  "com_do",
+  "com_drop_compression_dictionary",
+  "com_drop_db",
+  "com_drop_event",
+  "com_drop_function",
+  "com_drop_index",
+  "com_drop_procedure",
+  "com_drop_resource_group",
+  "com_drop_role",
+  "com_drop_server",
+  "com_drop_spatial_reference_system",
+  "com_drop_table",
+  "com_drop_trigger",
+  "com_drop_user",
+  "com_drop_view",
+  "com_empty_query",
+  "com_execute_sql",
+  "com_explain_other",
+  "com_flush",
+  "com_get_diagnostics",
+  "com_grant",
+  "com_grant_roles",
+  "com_group_replication_start",
+  "com_group_replication_stop",
+  "com_ha_close",
+  "com_ha_open",
+  "com_ha_read",
+  "com_help",
+  "com_import",
+  "com_insert",
+  "com_insert_select",
+  "com_install_component",
+  "com_install_plugin",
+  "com_kill",
+  "com_load",
+  "com_lock_instance",
+  "com_lock_tables",
+  "com_lock_tables_for_backup",
+  "com_optimize",
+  "com_preload_keys",
+  "com_prepare_sql",
+  "com_purge",
+  "com_purge_before_date",
+  "com_release_savepoint",
+  "com_rename_table",
+  "com_rename_user",
+  "com_repair",
+  "com_replace",
+  "com_replace_select",
+  "com_replica_start",
+  "com_replica_stop",
+  "com_reset",
+  "com_resignal",
+  "com_restart",
+  "com_revoke",
+  "com_revoke_all",
+  "com_revoke_roles",
+  "com_rollback",
+  "com_rollback_to_savepoint",
+  "com_savepoint",
+  "com_select",
+  "com_set_option",
+  "com_set_password",
+  "com_set_resource_group",
+  "com_set_role",
+  "com_show_binary_log_status",
+  "com_show_binlog_events",
+  "com_show_binlogs",
+  "com_show_charsets",
+  "com_show_client_statistics",
+  "com_show_collations",
+  "com_show_create_db",
+  "com_show_create_event",
+  "com_show_create_func",
+  "com_show_create_proc",
+  "com_show_create_table",
+  "com_show_create_trigger",
+  "com_show_create_user",
+  "com_show_databases",
+  "com_show_engine_logs",
+  "com_show_engine_mutex",
+  "com_show_engine_status",
+  "com_show_errors",
+  "com_show_events",
+  "com_show_fields",
+  "com_show_function_code",
+  "com_show_function_status",
+  "com_show_grants",
+  "com_show_index_statistics",
+  "com_show_keys",
+  "com_show_open_tables",
+  "com_show_parse_tree",
+  "com_show_plugins",
+  "com_show_privileges",
+  "com_show_procedure_code",
+  "com_show_procedure_status",
+  "com_show_processlist",
+  "com_show_profile",
+  "com_show_profiles",
+  "com_show_relaylog_events",
+  "com_show_replica_status",
+  "com_show_replicas",
+  "com_show_status",
+  "com_show_storage_engines",
+  "com_show_table_statistics",
+  "com_show_table_status",
+  "com_show_tables",
+  "com_show_thread_statistics",
+  "com_show_triggers",
+  "com_show_user_statistics",
+  "com_show_variables",
+  "com_show_warnings",
+  "com_shutdown",
+  "com_signal",
+  "com_stmt_close",
+  "com_stmt_execute",
+  "com_stmt_fetch",
+  "com_stmt_prepare",
+  "com_stmt_reprepare",
+  "com_stmt_reset",
+  "com_stmt_send_long_data",
+  "com_truncate",
+  "com_uninstall_component",
+  "com_uninstall_plugin",
+  "com_unlock_instance",
+  "com_unlock_tables",
+  "com_update",
+  "com_update_multi",
+  "com_xa_commit",
+  "com_xa_end",
+  "com_xa_prepare",
+  "com_xa_recover",
+  "com_xa_rollback",
+  "com_xa_start",
+  "connection_errors_accept",
+  "connection_errors_internal",
+  "connection_errors_max_connections",
+  "connection_errors_peer_address",
+  "connection_errors_select",
+  "connection_errors_tcpwrap",
+  "connections",
+  "created_tmp_disk_tables",
+  "created_tmp_files",
+  "created_tmp_tables",
+  "current_tls_ca",
+  "current_tls_capath",
+  "current_tls_cert",
+  "current_tls_cipher",
+  "current_tls_ciphersuites",
+  "current_tls_crl",
+  "current_tls_crlpath",
+  "current_tls_key",
+  "current_tls_version",
+  "delayed_errors",
+  "delayed_insert_threads",
+  "delayed_writes",
+  "deprecated_use_fk_on_non_standard_key_count",
+  "deprecated_use_fk_on_non_standard_key_last_timestamp",
+  "deprecated_use_i_s_processlist_count",
+  "deprecated_use_i_s_processlist_last_timestamp",
+  "error_log_buffered_bytes",
+  "error_log_buffered_events",
+  "error_log_expired_events",
+  "error_log_latest_write",
+  "flush_commands",
+  "global_connection_memory",
+  "handler_commit",
+  "handler_delete",
+  "handler_discover",
+  "handler_external_lock",
+  "handler_mrr_init",
+  "handler_prepare",
+  "handler_read_first",
+  "handler_read_key",
+  "handler_read_last",
+  "handler_read_next",
+  "handler_read_prev",
+  "handler_read_rnd",
+  "handler_read_rnd_next",
+  "handler_rollback",
+  "handler_savepoint",
+  "handler_savepoint_rollback",
+  "handler_update",
+  "handler_write",
+  "innodb_background_log_sync",
+  "innodb_buffer_pool_bytes_data",
+  "innodb_buffer_pool_bytes_dirty",
+  "innodb_buffer_pool_dump_status",
+  "innodb_buffer_pool_load_status",
+  "innodb_buffer_pool_pages_data",
+  "innodb_buffer_pool_pages_dirty",
+  "innodb_buffer_pool_pages_flushed",
+  "innodb_buffer_pool_pages_free",
+  "innodb_buffer_pool_pages_lru_flushed",
+  "innodb_buffer_pool_pages_made_not_young",
+  "innodb_buffer_pool_pages_made_young",
+  "innodb_buffer_pool_pages_misc",
+  "innodb_buffer_pool_pages_old",
+  "innodb_buffer_pool_pages_total",
+  "innodb_buffer_pool_read_ahead",
+  "innodb_buffer_pool_read_ahead_evicted",
+  "innodb_buffer_pool_read_ahead_rnd",
+  "innodb_buffer_pool_read_requests",
+  "innodb_buffer_pool_reads",
+  "innodb_buffer_pool_resize_status",
+  "innodb_buffer_pool_resize_status_code",
+  "innodb_buffer_pool_resize_status_progress",
+  "innodb_buffer_pool_wait_free",
+  "innodb_buffer_pool_write_requests",
+  "innodb_buffered_aio_submitted",
+  "innodb_checkpoint_age",
+  "innodb_checkpoint_max_age",
+  "innodb_data_fsyncs",
+  "innodb_data_pending_fsyncs",
+  "innodb_data_pending_reads",
+  "innodb_data_pending_writes",
+  "innodb_data_read",
+  "innodb_data_reads",
+  "innodb_data_writes",
+  "innodb_data_written",
+  "innodb_dblwr_pages_written",
+  "innodb_dblwr_writes",
+  "innodb_encryption_n_merge_blocks_decrypted",
+  "innodb_encryption_n_merge_blocks_encrypted",
+  "innodb_encryption_n_rowlog_blocks_decrypted",
+  "innodb_encryption_n_rowlog_blocks_encrypted",
+  "innodb_ibuf_free_list",
+  "innodb_ibuf_segment_size",
+  "innodb_log_waits",
+  "innodb_log_write_requests",
+  "innodb_log_writes",
+  "innodb_lsn_current",
+  "innodb_lsn_flushed",
+  "innodb_lsn_last_checkpoint",
+  "innodb_master_thread_active_loops",
+  "innodb_master_thread_idle_loops",
+  "innodb_max_trx_id",
+  "innodb_num_open_files",
+  "innodb_oldest_view_low_limit_trx_id",
+  "innodb_os_log_fsyncs",
+  "innodb_os_log_pending_fsyncs",
+  "innodb_os_log_pending_writes",
+  "innodb_os_log_written",
+  "innodb_page_size",
+  "innodb_pages0_read",
+  "innodb_pages_created",
+  "innodb_pages_read",
+  "innodb_pages_written",
+  "innodb_purge_trx_id",
+  "innodb_purge_undo_no",
+  "innodb_redo_log_capacity_resized",
+  "innodb_redo_log_checkpoint_lsn",
+  "innodb_redo_log_current_lsn",
+  "innodb_redo_log_enabled",
+  "innodb_redo_log_flushed_to_disk_lsn",
+  "innodb_redo_log_logical_size",
+  "innodb_redo_log_physical_size",
+  "innodb_redo_log_read_only",
+  "innodb_redo_log_resize_status",
+  "innodb_redo_log_uuid",
+  "innodb_row_lock_current_waits",
+  "innodb_row_lock_time",
+  "innodb_row_lock_time_avg",
+  "innodb_row_lock_time_max",
+  "innodb_row_lock_waits",
+  "innodb_rows_deleted",
+  "innodb_rows_inserted",
+  "innodb_rows_read",
+  "innodb_rows_updated",
+  "innodb_sampled_pages_read",
+  "innodb_sampled_pages_skipped",
+  "innodb_scan_data_size",
+  "innodb_scan_deleted_recs_size",
+  "innodb_scan_pages_contiguous",
+  "innodb_scan_pages_disjointed",
+  "innodb_scan_pages_total_seek_distance",
+  "innodb_secondary_index_triggered_cluster_reads",
+  "innodb_secondary_index_triggered_cluster_reads_avoided",
+  "innodb_system_rows_deleted",
+  "innodb_system_rows_inserted",
+  "innodb_system_rows_read",
+  "innodb_system_rows_updated",
+  "innodb_truncated_status_writes",
+  "innodb_undo_tablespaces_active",
+  "innodb_undo_tablespaces_explicit",
+  "innodb_undo_tablespaces_implicit",
+  "innodb_undo_tablespaces_total",
+  "key_blocks_not_flushed",
+  "key_blocks_unused",
+  "key_blocks_used",
+  "key_read_requests",
+  "key_reads",
+  "key_write_requests",
+  "key_writes",
+  "libcoredumper_enabled",
+  "locked_connects",
+  "max_execution_time_exceeded",
+  "max_execution_time_set",
+  "max_execution_time_set_failed",
+  "max_used_connections",
+  "max_used_connections_time",
+  "mysqlx_aborted_clients",
+  "mysqlx_address",
+  "mysqlx_bytes_received",
+  "mysqlx_bytes_received_compressed_payload",
+  "mysqlx_bytes_received_uncompressed_frame",
+  "mysqlx_bytes_sent",
+  "mysqlx_bytes_sent_compressed_payload",
+  "mysqlx_bytes_sent_uncompressed_frame",
+  "mysqlx_compression_algorithm",
+  "mysqlx_compression_level",
+  "mysqlx_connection_accept_errors",
+  "mysqlx_connection_errors",
+  "mysqlx_connections_accepted",
+  "mysqlx_connections_closed",
+  "mysqlx_connections_rejected",
+  "mysqlx_crud_create_view",
+  "mysqlx_crud_delete",
+  "mysqlx_crud_drop_view",
+  "mysqlx_crud_find",
+  "mysqlx_crud_insert",
+  "mysqlx_crud_modify_view",
+  "mysqlx_crud_update",
+  "mysqlx_cursor_close",
+  "mysqlx_cursor_fetch",
+  "mysqlx_cursor_open",
+  "mysqlx_errors_sent",
+  "mysqlx_errors_unknown_message_type",
+  "mysqlx_expect_close",
+  "mysqlx_expect_open",
+  "mysqlx_init_error",
+  "mysqlx_messages_sent",
+  "mysqlx_notice_global_sent",
+  "mysqlx_notice_other_sent",
+  "mysqlx_notice_warning_sent",
+  "mysqlx_notified_by_group_replication",
+  "mysqlx_port",
+  "mysqlx_prep_deallocate",
+  "mysqlx_prep_execute",
+  "mysqlx_prep_prepare",
+  "mysqlx_rows_sent",
+  "mysqlx_sessions",
+  "mysqlx_sessions_accepted",
+  "mysqlx_sessions_closed",
+  "mysqlx_sessions_fatal_error",
+  "mysqlx_sessions_killed",
+  "mysqlx_sessions_rejected",
+  "mysqlx_socket",
+  "mysqlx_ssl_accepts",
+  "mysqlx_ssl_active",
+  "mysqlx_ssl_cipher",
+  "mysqlx_ssl_cipher_list",
+  "mysqlx_ssl_ctx_verify_depth",
+  "mysqlx_ssl_ctx_verify_mode",
+  "mysqlx_ssl_finished_accepts",
+  "mysqlx_ssl_server_not_after",
+  "mysqlx_ssl_server_not_before",
+  "mysqlx_ssl_verify_depth",
+  "mysqlx_ssl_verify_mode",
+  "mysqlx_ssl_version",
+  "mysqlx_stmt_create_collection",
+  "mysqlx_stmt_create_collection_index",
+  "mysqlx_stmt_disable_notices",
+  "mysqlx_stmt_drop_collection",
+  "mysqlx_stmt_drop_collection_index",
+  "mysqlx_stmt_enable_notices",
+  "mysqlx_stmt_ensure_collection",
+  "mysqlx_stmt_execute_mysqlx",
+  "mysqlx_stmt_execute_sql",
+  "mysqlx_stmt_execute_xplugin",
+  "mysqlx_stmt_get_collection_options",
+  "mysqlx_stmt_kill_client",
+  "mysqlx_stmt_list_clients",
+  "mysqlx_stmt_list_notices",
+  "mysqlx_stmt_list_objects",
+  "mysqlx_stmt_modify_collection_options",
+  "mysqlx_stmt_ping",
+  "mysqlx_worker_threads",
+  "mysqlx_worker_threads_active",
+  "net_buffer_length",
+  "not_flushed_delayed_rows",
+  "ongoing_anonymous_transaction_count",
+  "open_files",
+  "open_streams",
+  "open_table_definitions",
+  "open_tables",
+  "open_tables_with_triggers",
+  "opened_files",
+  "opened_table_definitions",
+  "opened_tables",
+  "performance_schema_accounts_lost",
+  "performance_schema_cond_classes_lost",
+  "performance_schema_cond_instances_lost",
+  "performance_schema_digest_lost",
+  "performance_schema_file_classes_lost",
+  "performance_schema_file_handles_lost",
+  "performance_schema_file_instances_lost",
+  "performance_schema_hosts_lost",
+  "performance_schema_index_stat_lost",
+  "performance_schema_locker_lost",
+  "performance_schema_logger_lost",
+  "performance_schema_memory_classes_lost",
+  "performance_schema_metadata_lock_lost",
+  "performance_schema_meter_lost",
+  "performance_schema_metric_lost",
+  "performance_schema_mutex_classes_lost",
+  "performance_schema_mutex_instances_lost",
+  "performance_schema_nested_statement_lost",
+  "performance_schema_prepared_statements_lost",
+  "performance_schema_program_lost",
+  "performance_schema_rwlock_classes_lost",
+  "performance_schema_rwlock_instances_lost",
+  "performance_schema_session_connect_attrs_longest_seen",
+  "performance_schema_session_connect_attrs_lost",
+  "performance_schema_socket_classes_lost",
+  "performance_schema_socket_instances_lost",
+  "performance_schema_stage_classes_lost",
+  "performance_schema_statement_classes_lost",
+  "performance_schema_table_handles_lost",
+  "performance_schema_table_instances_lost",
+  "performance_schema_table_lock_stat_lost",
+  "performance_schema_thread_classes_lost",
+  "performance_schema_thread_instances_lost",
+  "performance_schema_users_lost",
+  "prepared_stmt_count",
+  "queries",
+  "questions",
+  "replica_open_temp_tables",
+  "resource_group_supported",
+  "rsa_public_key",
+  "secondary_engine_execution_count",
+  "select_full_join",
+  "select_full_range_join",
+  "select_range",
+  "select_range_check",
+  "select_scan",
+  "slave_open_temp_tables",
+  "slow_launch_threads",
+  "slow_queries",
+  "sort_merge_passes",
+  "sort_range",
+  "sort_rows",
+  "sort_scan",
+  "ssl_accept_renegotiates",
+  "ssl_accepts",
+  "ssl_callback_cache_hits",
+  "ssl_cipher",
+  "ssl_cipher_list",
+  "ssl_client_connects",
+  "ssl_connect_renegotiates",
+  "ssl_ctx_verify_depth",
+  "ssl_ctx_verify_mode",
+  "ssl_default_timeout",
+  "ssl_finished_accepts",
+  "ssl_finished_connects",
+  "ssl_server_not_after",
+  "ssl_server_not_before",
+  "ssl_session_cache_hits",
+  "ssl_session_cache_misses",
+  "ssl_session_cache_mode",
+  "ssl_session_cache_overflows",
+  "ssl_session_cache_size",
+  "ssl_session_cache_timeout",
+  "ssl_session_cache_timeouts",
+  "ssl_sessions_reused",
+  "ssl_used_session_cache_entries",
+  "ssl_verify_depth",
+  "ssl_verify_mode",
+  "ssl_version",
+  "table_locks_immediate",
+  "table_locks_waited",
+  "table_open_cache_hits",
+  "table_open_cache_misses",
+  "table_open_cache_overflows",
+  "table_open_cache_triggers_hits",
+  "table_open_cache_triggers_misses",
+  "table_open_cache_triggers_overflows",
+  "tc_log_max_pages_used",
+  "tc_log_page_size",
+  "tc_log_page_waits",
+  "telemetry_logs_supported",
+  "telemetry_metrics_supported",
+  "telemetry_traces_supported",
+  "threadpool_average_hp_queue_wait_us",
+  "threadpool_average_queue_wait_us",
+  "threadpool_idle_threads",
+  "threadpool_requests_starved_in_queue",
+  "threadpool_requests_waiting_in_hp_queue",
+  "threadpool_requests_waiting_in_queue",
+  "threadpool_threads",
+  "threads_cached",
+  "threads_connected",
+  "threads_created",
+  "threads_running",
+  "tls_library_version",
+  "uptime",
+  "uptime_since_flush_status",
+  "wsrep_apply_oooe",
+  "wsrep_apply_oool",
+  "wsrep_apply_waits",
+  "wsrep_apply_window",
+  "wsrep_causal_reads",
+  "wsrep_cert_bucket_count",
+  "wsrep_cert_deps_distance",
+  "wsrep_cert_index_size",
+  "wsrep_cert_interval",
+  "wsrep_cluster_capabilities",
+  "wsrep_cluster_conf_id",
+  "wsrep_cluster_size",
+  "wsrep_cluster_state_uuid",
+  "wsrep_cluster_status",
+  "wsrep_cluster_weight",
+  "wsrep_commit_oooe",
+  "wsrep_commit_oool",
+  "wsrep_commit_window",
+  "wsrep_connected",
+  "wsrep_desync_count",
+  "wsrep_evs_delayed",
+  "wsrep_evs_evict_list",
+  "wsrep_evs_repl_latency",
+  "wsrep_evs_state",
+  "wsrep_flow_control_active",
+  "wsrep_flow_control_interval",
+  "wsrep_flow_control_interval_high",
+  "wsrep_flow_control_interval_low",
+  "wsrep_flow_control_paused",
+  "wsrep_flow_control_paused_ns",
+  "wsrep_flow_control_recv",
+  "wsrep_flow_control_requested",
+  "wsrep_flow_control_sent",
+  "wsrep_flow_control_status",
+  "wsrep_gcache_pool_size",
+  "wsrep_gcomm_uuid",
+  "wsrep_gmcast_segment",
+  "wsrep_incoming_addresses",
+  "wsrep_ist_receive_seqno_current",
+  "wsrep_ist_receive_seqno_end",
+  "wsrep_ist_receive_seqno_start",
+  "wsrep_ist_receive_status",
+  "wsrep_last_applied",
+  "wsrep_last_committed",
+  "wsrep_local_bf_aborts",
+  "wsrep_local_cached_downto",
+  "wsrep_local_cert_failures",
+  "wsrep_local_commits",
+  "wsrep_local_index",
+  "wsrep_local_recv_queue",
+  "wsrep_local_recv_queue_avg",
+  "wsrep_local_recv_queue_max",
+  "wsrep_local_recv_queue_min",
+  "wsrep_local_replays",
+  "wsrep_local_send_queue",
+  "wsrep_local_send_queue_avg",
+  "wsrep_local_send_queue_max",
+  "wsrep_local_send_queue_min",
+  "wsrep_local_state",
+  "wsrep_local_state_comment",
+  "wsrep_local_state_uuid",
+  "wsrep_monitor_status (l/a/c)",
+  "wsrep_open_connections",
+  "wsrep_open_transactions",
+  "wsrep_protocol_application",
+  "wsrep_protocol_gcs",
+  "wsrep_protocol_replicator",
+  "wsrep_protocol_version",
+  "wsrep_provider_capabilities",
+  "wsrep_provider_name",
+  "wsrep_provider_vendor",
+  "wsrep_provider_version",
+  "wsrep_ready",
+  "wsrep_received",
+  "wsrep_received_bytes",
+  "wsrep_repl_data_bytes",
+  "wsrep_repl_keys",
+  "wsrep_repl_keys_bytes",
+  "wsrep_repl_other_bytes",
+  "wsrep_replicated",
+  "wsrep_replicated_bytes",
+  "wsrep_thread_count"
+ ],
+ "engines": {
+  "ndbcluster": "NO",
+  "federated": "NO",
+  "performance_schema": "YES",
+  "innodb": "DEFAULT",
+  "wsrep": "YES",
+  "memory": "YES",
+  "myisam": "YES",
+  "ndbinfo": "NO",
+  "mrg_myisam": "YES",
+  "blackhole": "YES",
+  "csv": "YES",
+  "archive": "YES"
+ },
+ "image": "percona/percona-xtradb-cluster:8.4",
+ "series": "pxc-8.4"
+}

@@ -1381,6 +1381,16 @@ def test_steady_state_and_warmup_check():
     assert evaluate.warmup_check([{"summary": {"steady_state": {"steady": True, "growing": []}}}] * 3, 120)["adequate"]
 
 
+
+def test_runtime_changeability_by_release_series():
+    from tuning_agent.knowledge import dynamic_in, series_of
+    assert series_of("percona", "8.4.11-11") == "percona 8.4" and series_of("mariadb", "11.4.13-MariaDB") == "mariadb 11.4"
+    assert dynamic_in("innodb_log_file_size", "mariadb 11.4") is True     # resized online on MariaDB
+    assert dynamic_in("innodb_log_file_size", "percona 8.4") is False     # restart on MySQL / Percona
+    assert dynamic_in("innodb_io_capacity", "percona 5.7") is None        # series not in the inventory: knowledge base decides
+    assert dynamic_in("innodb_doublewrite", "percona 8.4") is None        # partly dynamic: knowledge base decides
+    assert dynamic_in("no_such_variable", "percona 8.4") is None
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

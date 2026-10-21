@@ -444,7 +444,51 @@ def catalog():
     return _CATALOG
 
 
-IMPACT_SCORE = {"high": 1, "medium": 0, "low": -1, "unknown": 0}
+_SERVER_VARS = None
+
+
+def server_variables():
+    """The release inventory (knowledge_data/server_variables.json, tools/varinventory): per server variable the series
+    that have it, default, runtime changeability, range - measured on the official images."""
+    global _SERVER_VARS
+    if _SERVER_VARS is None:
+        import json
+        import os
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "knowledge_data", "server_variables.json")) as f:
+                _SERVER_VARS = json.load(f)
+        except (OSError, ValueError):
+            _SERVER_VARS = {"series": {}, "variables": {}}
+    return _SERVER_VARS
+
+
+def series_of(flavor, version):
+    """'percona 8.4' from a flavor and a version string (the inventory's and the server's evidence key)."""
+    import re
+    m = re.match(r"(\d+)\.(\d+)", str(version or ""))
+    return f"{flavor} {m.group(1)}.{m.group(2)}" if flavor and m else None
+
+
+# accepted by SET GLOBAL only for some transitions (innodb_doublewrite: ON <-> DETECT_ONLY online, OFF needs a restart):
+# the knowledge base's flag stays in charge
+PARTLY_DYNAMIC = {"innodb_doublewrite"}
+
+
+def dynamic_in(variable, series):
+    """Whether the variable can be changed at runtime in this release series, as measured (True / False), or None when
+    the inventory does not cover the series or the variable (fall back to the knowledge base)."""
+    inv = server_variables()
+    v = (inv.get("variables") or {}).get(variable)
+    if not v or series not in (inv.get("series") or {}) or "dynamic" not in v or variable in PARTLY_DYNAMIC:
+        return None
+    d = v["dynamic"]
+    if isinstance(d, dict):
+        return d.get(series)
+    have = v.get("series")
+    return d if have == "all" or series in (have or []) else None
+
+
+IMPACT_SCORE = {"high": 1, "medium": 0, "low": -1, "none": -2, "unknown": 0}  # none: a limit or safety cap, not a performance knob
 
 
 def effective_impact(variable, learned=None):
