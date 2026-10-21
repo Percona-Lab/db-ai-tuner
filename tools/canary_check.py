@@ -88,6 +88,12 @@ def main():
         m = re.match(r"exp#(\d+) ", r["label"])
         if m and any(x["label"].startswith(f"exp#{m.group(1)} ") and "(confirm)" in x["label"] for x in hist):
             continue  # a sweep point the sweep did not pick: the chosen point was confirmed
+        if m and any(x["label"].startswith(("best with trade-offs, confirmation", "best safe config, confirmation"))
+                     and evaluate.config_key(x.get("managed")) != evaluate.config_key(r.get("managed")) for x in hist[hist.index(r):]):
+            sweep_runs = [x for x in hist if x["label"].startswith(f"exp#{m.group(1)} ")]
+            if len(sweep_runs) > 1 and any(evaluate.config_key(x.get("managed")) == evaluate.config_key(y.get("managed"))
+                                           for x in sweep_runs for y in hist if y["label"].startswith(("best with", "best safe"))):
+                continue  # r1 WI-3: points the sweep did not keep; the kept point was measured again by a final confirmation
         k = evaluate.config_key(r.get("managed"))
         reps = [x for x in hist if evaluate.config_key(x.get("managed")) == k and x["seq"] > r["seq"]]
         if not reps and r["seq"] != hist[-1]["seq"]:

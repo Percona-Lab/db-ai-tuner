@@ -18,7 +18,7 @@ import re
 from .evaluate import mean_noise
 from . import bottleneck, knowledge
 from .mechanisms import MECHANISMS, missing_mechanism, name_resolution, relevance
-from .knowledge import KB, flags_subset, fmt_size, human_size, normalize, parse_size, tradeoff_of
+from .knowledge import KB, OPTIONS, flags_subset, fmt_size, human_size, normalize, parse_size, tradeoff_of
 
 GiB = 1024 ** 3
 MiB = 1024 ** 2
@@ -600,8 +600,11 @@ def recommend(ctx):
                   "Sorts spill to merge passes.", {"Sort_merge_passes_per_s": rates.get("Sort_merge_passes")}, impact=1, confidence=2)
 
     # ---------------- durability / observability trade-offs (benchmark policy) ----
+    commit_share = sum(p.get("share_pct") or 0 for p in ctx.get("breakdown") or [] if "commit" in (p.get("tags") or ()))
     commit_bound = any(d["type"] == "commit" for d in ctx.get("diagnosis", [])) or (
-        (s.get("tps") or 0) > 0 and (s.get("data_fsyncs") or 0) / max(s.get("tps") or 1, 1) > 0.3)
+        (s.get("tps") or 0) > 0 and (s.get("data_fsyncs") or 0) / max(s.get("tps") or 1, 1) > 0.3) or (
+        # measured time: commit / group-commit waiting beyond what noise could hide (the evidence gate's own rule)
+        commit_share > float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0))
     if goal in ("tps", "latency") and have_run and commit_bound:
         dur_kind = "config" if policy == "benchmark" else "advice"
         if _int(v, "innodb_flush_log_at_trx_commit", 1) == 1:
@@ -1052,7 +1055,9 @@ def recommend(ctx):
     # rest of an extent when many of its pages are already cached). Counters show whether prefetching was used or wasted.
     ra, ra_ev = s.get("read_ahead_per_s") or 0, s.get("read_ahead_evicted_per_s") or 0
     reads_now = s.get("bp_disk_reads") or 0
-    if have_run and reads_now >= 100 and "innodb_read_ahead_threshold" in v:
+    # only where read-ahead is at work: point lookups read single pages and give it nothing to act on (r1: 16 sweep runs
+    # in 5 cells, improvements only in the analytic scans of AN-2)
+    if have_run and reads_now >= 100 and ra > 0 and "innodb_read_ahead_threshold" in v:
         cur = _int(v, "innodb_read_ahead_threshold", 56)
         waste = ra_ev / ra if ra else 0
         vals = ["64", "32"] if waste > 0.3 else ["8", "32", "64"]  # wasted prefetch: read ahead less, not more
@@ -1454,7 +1459,12 @@ def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
     verdicts = {r.get("verdict") for r in cur_runs}
     just_measured = bool(history) and config_key(history[-1].get("managed")) == cur_key
     practice_kept = any(is_practice_run(r) for r in cur_runs) and "efficiency-loss" not in verdicts
-    if just_measured and first_eval and not practice_kept and not verdicts & {"improved", "efficiency-gain"} and verdicts & {"neutral", "efficiency-loss"}:
+    # the calibration's starting configuration is where the session starts, never an experiment to revert: judged against
+    # the server defaults it can come out "neutral" (not steady) and was reverted to the defaults, then rolled back, in a
+    # loop that ended RW-3 and WI-1 without a single experiment (suite r1)
+    calibration = any(str(r.get("label") or "").startswith("baseline") for r in cur_runs)
+    if just_measured and first_eval and not practice_kept and not calibration and not verdicts & {"improved", "efficiency-gain"} \
+            and verdicts & {"neutral", "efficiency-loss"}:
         parent_run = next((r for r in history if r["seq"] == first_eval["parent_runs"][-1]), None)
         if parent_run is not None:
             # priority: costs no run (merged into the next experiment) and keeps neutral changes from piling up
@@ -1464,13 +1474,51 @@ def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
                                       "CPU or I/O per transaction. Keeping changes without a measurable benefit only adds risk.",
                                       {"goal_delta_pct": first_eval.get("goal_delta_pct"), "parent_runs": first_eval.get("parent_runs")},
                                       priority=True))
+    if not [i for i in items if i]:
+        drop = _unearned(history, managed)
+        if drop:
+            start = next((r.get("managed") or {} for r in history if str(r.get("label") or "").startswith("baseline")), {})
+            target = {k: v for k, v in (managed or {}).items() if k not in drop}
+            target.update({k: start[k] for k in drop if k in start})
+            items.append(_revert_item(f"drop-unearned-{history[-1]['seq']}", "Remove changes that no longer have a win behind them",
+                                      managed, target, variables,
+                                      f"{', '.join(sorted(drop))} stayed in the configuration after the run that kept "
+                                      f"{'it' if len(drop) == 1 else 'them'} was re-judged as within noise (mean of its repeats, or a tighter "
+                                      "threshold): without a measured benefit a change only adds risk. Measured once without it.",
+                                      {"unearned": sorted(drop)}, priority=True))
     return [i for i in items if i]
+
+
+def _unearned(history, managed):
+    """Managed changes (vs the calibration's starting configuration) that no run still earns: the runs that set them
+    are neither kept (improved / efficiency gain, not unconfirmed) nor an accepted best-practice bundle. Suite r1:
+    MX-1 jemalloc and RW-1 log_writer_threads were downgraded after confirmation runs and stayed to the end."""
+    start = next((r.get("managed") or {} for r in history if str(r.get("label") or "").startswith("baseline")), None)
+    if start is None:
+        return set()
+    out = set()
+    for k, v in (managed or {}).items():
+        if normalize(k, start.get(k)) == normalize(k, v) or k.startswith("client:"):
+            continue
+        setters = [r for r in history if any(c.get("variable") == k and normalize(k, c.get("new")) == normalize(k, v)
+                                             and str(c.get("source") or "").startswith(("rec:", "exp:")) for c in r.get("changes") or [])]
+        if not setters:
+            continue  # applied outside the experiments (requirements, a person): not the tuner's to remove
+        # a later winner on top of it earns its own change, not this one (MX-1: ps-off improved on top of jemalloc)
+        earned = any((r.get("verdict") in ("improved", "efficiency-gain") and (r.get("evaluation") or {}).get("confirmed") is not False)
+                     or (is_practice_run(r) and r.get("verdict") in ("neutral", "efficiency-gain", "improved")) for r in setters)
+        if not earned:
+            out.add(k)
+    return out
 
 
 def _revert_item(id_, title, managed, target, variables, rationale, evidence, priority):
     ch = []
     for k in sorted(set(managed or {}) | set(target)):
-        if normalize(k, (managed or {}).get(k)) != normalize(k, target.get(k)) and k in variables:
+        # startup-only options (disable_log_bin) and pseudo settings are not server variables but are reverted all the same:
+        # MX-1's regressed binlog-off was never rolled back and the trade-offs stacked on it (suite r1)
+        known = k in variables or k in ("skip_log_bin", "disable_log_bin") or k in OPTIONS or k.startswith(("os:", "ps:", "rg:", "client:"))
+        if normalize(k, (managed or {}).get(k)) != normalize(k, target.get(k)) and known:
             ch.append({"variable": k, "current": variables.get(k), "proposed": target.get(k), "unset": k not in target})
     if not ch:
         return None

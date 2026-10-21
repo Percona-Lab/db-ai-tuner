@@ -1169,6 +1169,23 @@ def test_cpu_profile_categories():
     assert _build_id(sys.executable) is None or len(_build_id(sys.executable)) >= 16
 
 
+def test_within_noise_hint_repeat_resolves_small_gains():
+    # r1 KV-1: noise +-4.36% asked for ~2 runs per configuration; 1.4-3% gains measured once came out "neutral". A run
+    # between half the threshold and the threshold is measured again and the mean judged on the two-run threshold.
+    base = {"a": "1"}
+    runs = [{"seq": i, "managed": base, "goal_value": v, "verdict": "improved" if i == 2 else "repeat", "evaluation": {}}
+            for i, v in ((2, 1000), (3, 1004), (4, 996))]
+    runs.append({"seq": 5, "managed": dict(base, b="2"), "goal_value": 1030, "verdict": "neutral",
+                 "evaluation": {"parent_runs": [2, 3, 4], "goal_delta_pct": 3.0, "goal_noise_pct": 4.0, "hint_repeat": True}})
+    runs.append({"seq": 6, "managed": dict(base, b="2"), "goal_value": 1028, "verdict": "repeat", "evaluation": {}})
+    ch = evaluate.confirm_pass(runs, "tps", {"noise_pct": 4.0})
+    assert (5, "neutral", "improved") in ch and runs[3]["evaluation"]["confirmed"] is True, ch
+    runs[3].update(verdict="neutral", evaluation={"parent_runs": [2, 3, 4], "goal_delta_pct": 3.0, "hint_repeat": True})
+    runs[4]["goal_value"] = 1001  # the repeat did not hold
+    evaluate.confirm_pass(runs, "tps", {"noise_pct": 4.0})
+    assert runs[3]["verdict"] == "neutral"
+
+
 def test_round_values():
     from tuning_agent.knowledge import nice_number, roundness
     assert nice_number("innodb_io_capacity", 1072) == 1000 and nice_number("innodb_io_capacity", 1500) == 1500

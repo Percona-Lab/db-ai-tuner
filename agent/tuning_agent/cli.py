@@ -2127,6 +2127,20 @@ def _extend_optimum(results, pv, noise, worse_at, last_value, spec):
     return val
 
 
+def _durability_rank(var, value):
+    """0 = most durable. Among values within noise of the best, the safest wins (r1 WI-3: the sweep kept sync_binlog=0,
+    never syncing, although 100 was within 1%)."""
+    try:
+        n = int(float(value))
+    except (TypeError, ValueError):
+        return 0
+    if var == "sync_binlog":  # 1 = every commit group, N = every N groups, 0 = never
+        return float("inf") if n == 0 else n
+    if var == "innodb_flush_log_at_trx_commit":  # 1 > 2 (OS crash loses ~1 s) > 0 (mysqld crash loses ~1 s)
+        return {1: 0, 2: 1, 0: 2}.get(n, 3)
+    return 0
+
+
 def _good_enough(measured, best, noise, var, pv, shape):
     """The value to keep: among those within noise of the best (they cannot be told apart), the cheapest - the smaller
     value for memory-costing / more-is-better settings - then the roundest, then the smallest change from the parent.
@@ -2139,7 +2153,7 @@ def _good_enough(measured, best, noise, var, pv, shape):
     def key(r):
         v = r["arm"].split("=", 1)[1]
         x = _sv(var, v)
-        return (x if costly and x is not None else 0, roundness(var, v), abs((x if x is not None else 0) - (pv or 0)))
+        return (_durability_rank(var, v), x if costly and x is not None else 0, roundness(var, v), abs((x if x is not None else 0) - (pv or 0)))
     return min(tied, key=key)
 
 
@@ -2540,7 +2554,10 @@ def _autotune(a):
             nxt = alt["id"]
         item = next((i for i in res["items"] if i["id"] == nxt), None)
         # benchmark policy: keep the last 30% of the budget for trade-offs, otherwise safe experiments use it all up
-        if a.tradeoffs and measured >= int(a.max_runs * 0.7) and (not item or item.get("safety") == "safe" and item["kind"] != "revert"):
+        # ...unless the safe candidate targets the dominant measured bottleneck (r1 HC-3: thread pool for 3700 threads on
+        # 16 CPUs, 97% of runnable time waiting for a CPU, was displaced by ps-off and never ran)
+        targeted = bool(item) and (item.get("relevance") or 0) >= 3 and not item.get("no_evidence") and not item.get("no_mechanism")
+        if a.tradeoffs and measured >= int(a.max_runs * 0.7) and not targeted and (not item or item.get("safety") == "safe" and item["kind"] != "revert"):
             tried = {r["label"].split(" ")[0] for r in sess["runs"]}
             trade = next((i for i in res["items"] if i.get("safety") == "trade-off" and i["kind"] == "config" and i.get("confidence", 0) > 0
                           and i["id"] not in tried and i["id"] not in blocked), None)
@@ -2564,6 +2581,7 @@ def _autotune(a):
             if mine and due and (not c.state.get("pending_changes") or _known_config(c, sess)):
                 log(f"== re-check: measuring the current configuration again ({since} runs since it was last measured) to control drift")
                 run, _ = _bench_run(c, prof, f"re-check (run {mine[-1]['seq']} config)")
+                measured += 1  # a run like any other: --max-runs is the session's cost (r1 HC-3: 26 runs on a budget of 16)
                 log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}"
                     + (" (DRIFT)" if (run.get('evaluation') or {}).get('drift') else ""))
                 continue
@@ -2626,8 +2644,20 @@ def _autotune(a):
             sess.pop("pending_hypothesis", None)
             if item["kind"] != "revert":  # an experiment that only leads back to a measured configuration is done
                 sess.setdefault("failed_recs", []).append(nxt)
+            else:
+                # reverts cost no run, so two of them could alternate forever (r1: 24 times until the iteration cap): a
+                # configuration reached twice by a revert without a measurement in between ends that revert
+                key = repr(evaluate.config_key({k: v["value"] for k, v in c.state.get("managed", {}).items()}))
+                seen = sess.setdefault("revert_targets", [])
+                if key in seen:
+                    log("   reverts are going back and forth between measured configurations: no more reverts until the next run")
+                    sess.setdefault("failed_recs", []).append(nxt)
+                seen.append(key)
             c.state.set("session", sess)
             continue
+        sess = c.session()
+        sess["revert_targets"] = []
+        c.state.set("session", sess)
         try:
             run, _ = _bench_run(c, prof, f"{nxt}")
         except (TooSlow, ServerDown, BenchFailed) as e:
@@ -2650,10 +2680,37 @@ def _autotune(a):
             # a single run above the threshold can be luck (winner's curse): measure it again before building on it. An
             # efficiency gain is kept with the goal within noise: one low run can hide a real loss (canary #141)
             log(f"   {'improvement' if run['verdict'] == 'improved' else 'efficiency gain'}: measuring the same configuration again to confirm it")
+            first = run
             run, _ = _bench_run(c, prof, f"{nxt} (confirm)")
             measured += 1
             log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
-            _confirm(c)  # the improvement must hold for the mean of both runs
+            nz = float((first.get("evaluation") or {}).get("goal_noise_pct") or 0)
+            if nz and first.get("goal_value") and run.get("goal_value") is not None and measured < a.max_runs \
+                    and abs(run["goal_value"] - first["goal_value"]) / abs(first["goal_value"]) * 100 > 2 * nz:
+                # the two runs disagree by more than twice the noise: one of them is wrong - a third run decides instead of
+                # a wild pair inflating the session's noise (r1 RW-1: 1955 vs 2148, noise 2% -> 8%)
+                log("   the confirmation disagrees with the first run by more than twice the noise threshold: a third run decides")
+                run, _ = _bench_run(c, prof, f"{nxt} (confirm 2)")
+                measured += 1
+                log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
+            _confirm(c)  # the improvement must hold for the mean of its runs
+        elif run["verdict"] == "neutral" and measured < a.max_runs:
+            ev = run.get("evaluation") or {}
+            d, nz = ev.get("goal_delta_pct"), ev.get("goal_noise_pct")
+            if d is not None and nz and nz / 2 < d <= nz:
+                # within the threshold but above half of it: one more run (two runs resolve smaller differences) instead of
+                # calling it noise - the noise plan asked for repeats that single runs never got (r1 KV-1: 1.4-3% gains)
+                sess = c.session()
+                r0 = next(x for x in sess["runs"] if x["seq"] == run["seq"])
+                r0["evaluation"] = dict(ev, hint_repeat=True)
+                c.state.set("session", sess)
+                if r0.get("id"):
+                    c.client.post(f"/runs/{r0['id']}/evaluation", {"verdict": r0["verdict"], "evaluation": r0["evaluation"]})
+                log(f"   within noise but above half the threshold ({d:+.1f}%, ±{nz}%): measuring it again")
+                run, _ = _bench_run(c, prof, f"{nxt} (repeat: within noise)")
+                measured += 1
+                log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
+                _confirm(c)  # the mean of both runs against the (tighter) two-run threshold
         if run["verdict"] == "unreliable":
             log("   hypervisor steal made the run unreliable: measuring the same configuration again")
             run, _ = _bench_run(c, prof, f"{nxt} (re-measure: CPU steal)")

@@ -444,7 +444,8 @@ def confirm_pass(runs, goal, noise):
     changed = []
     for r in runs:
         ev = r.get("evaluation") or {}
-        if r.get("verdict") not in ("improved", "efficiency-gain") and not (r.get("verdict") == "neutral" and ev.get("confirmed") is False):
+        if r.get("verdict") not in ("improved", "efficiency-gain") and not (r.get("verdict") == "neutral" and (ev.get("confirmed") is False
+                                                                                                         or ev.get("hint_repeat"))):
             continue
         # an efficiency gain was kept with the goal within noise of the parent: its repeats must keep it there
         eff = r.get("verdict") == "efficiency-gain" or (r.get("verdict") == "neutral" and ev.get("confirmed_kind") == "efficiency-gain")

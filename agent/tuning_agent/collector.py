@@ -91,6 +91,11 @@ class DBSampler:
             if seen:
                 out[name] = round(max(tot, 0) / dt, 2)
         out["tps"] = round(out.get("commits", 0) + out.get("rollbacks", 0), 2)
+        if not out["tps"] and out.get("handler_commits"):
+            # autocommit statements send no COMMIT: each is a transaction the engine commits (r1 WI-3: tps 0 hid a
+            # workload spending 45% of its time in group commit from every commit rule)
+            out["tps"] = out["handler_commits"]
+            out["tps_from"] = "Handler_commit (autocommit)"
         for name, k in GAUGES.items():
             v = _num(sb.get(k))
             if v is not None:
