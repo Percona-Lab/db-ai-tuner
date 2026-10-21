@@ -429,6 +429,7 @@ class OSCounters:
             out["mem_used_pct"] = round(100.0 * (1 - m["MemAvailable"] / m["MemTotal"]), 2)
             out["mem_available_mb"] = round(m["MemAvailable"] / 2 ** 20, 1)
             out["page_cache_mb"] = round(m["Cached"] / 2 ** 20, 1)
+            out["page_cache_dirty_mb"] = round(m.get("Dirty", 0) / 2 ** 20, 1)  # written, not yet on disk: what writeback limits act on
             out["swap_used_mb"] = round((m["SwapTotal"] - m["SwapFree"]) / 2 ** 20, 1)
             out["swap_total_mb"] = round(m["SwapTotal"] / 2 ** 20, 1)
             out["inactive_anon_mb"] = round(m.get("Inactive(anon)", 0) / 2 ** 20, 1)  # cold anonymous memory: swap candidates

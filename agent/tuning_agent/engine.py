@@ -835,14 +835,22 @@ def recommend(ctx):
             b.add("os-noatime", "Mount the data filesystem with noatime", [("os:mount_noatime", "ON")],
                   "Access-time updates turn reads into metadata writes; databases never need them.",
                   {"filesystem": osf.get("os:filesystem")}, impact=1, confidence=2)
-        if (commit_bound or redo_mbs > 2) and v.get("os:vm.dirty_bytes") == "0" and v.get("os:vm.dirty_background_bytes") == "0" and ram >= 2 * GiB:
+        # only on a measured build-up of dirty page cache: redo / binary log fsync'ed many times a second never accumulate
+        # much (each fsync writes it out), so commit-bound load alone is no evidence. Data files without O_DIRECT, a binary
+        # log with sync_binlog = 0 or temporary files can pile up gigabytes, and the writeback of that pile stalls fsyncs.
+        dirty_max = s.get("page_cache_dirty_mb_max")
+        if dirty_max is not None and dirty_max >= 256 and v.get("os:vm.dirty_bytes") == "0" and v.get("os:vm.dirty_background_bytes") == "0" \
+                and ram >= 2 * GiB and (s.get("tput_dip_samples") or (s.get("disk_await_ms") or 0) >= 5 or commit_bound):
             b.add("os-dirty-writeback", "Write back dirty page cache earlier", [("os:vm.dirty_background_bytes", str(64 * MiB)),
                                                                                  ("os:vm.dirty_bytes", str(512 * MiB)),
                                                                                  ("os:vm.dirty_expire_centisecs", "500"),
                                                                                  ("os:vm.dirty_writeback_centisecs", "100")],
-                  "Binary log and redo are written through the page cache and fsync'ed at commit. With the default ratios gigabytes can "
-                  "accumulate, turning periodic writeback and fsyncs into stalls; small byte limits keep fsync work small and steady. Experiment.",
-                  {"redo_mbs": redo_mbs, "fsyncs_per_trx": s.get("fsyncs_per_trx"), "disk_await_ms": s.get("disk_await_ms")}, impact=1, confidence=1)
+                  f"Up to {dirty_max:,.0f} MB of written data waited in the page cache during the run (average "
+                  f"{s.get('page_cache_dirty_mb_avg') or 0:,.0f} MB) under the default ratio limits; writing that out in bulk competes "
+                  "with redo / binary log fsyncs. Small byte limits keep writeback small and steady. Experiment.",
+                  {"page_cache_dirty_mb_max": dirty_max, "page_cache_dirty_mb_avg": s.get("page_cache_dirty_mb_avg"),
+                   "log_fsyncs_per_s": s.get("log_fsyncs_per_s"), "disk_await_ms": s.get("disk_await_ms"),
+                   "innodb_flush_method": v.get("innodb_flush_method")}, impact=1, confidence=1)
         alloc_pct = ((inp.get("cpu_profile") or {}).get("categories") or {}).get("memory allocator", 0)
         if v.get("os:malloc") == "glibc" and busy_ >= 70 and ((s.get("threads_running_avg") or 0) >= cpus or alloc_pct >= 8):
             b.add("os-jemalloc", "Run mysqld with jemalloc", [("os:malloc", "jemalloc")],

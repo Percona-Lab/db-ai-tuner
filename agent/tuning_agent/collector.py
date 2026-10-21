@@ -582,6 +582,11 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None):
         "swap_out": os_rates.get("swap_out"),
         "mem_used_pct": os_rates.get("mem_used_pct"),
         "mem_available_mb": os_rates.get("mem_available_mb"),
+        # dirty page cache (buffered writes not yet on disk): the build-up vm.dirty_* limits act on. Redo fsync'ed at every
+        # commit never gets far; data files without O_DIRECT, binary log with sync_binlog = 0, temporary files can
+        "page_cache_dirty_mb_max": mx("os", "page_cache_dirty_mb"),
+        "page_cache_dirty_mb_avg": avg("os", "page_cache_dirty_mb"),
+        "log_fsyncs_per_s": db_rates.get("log_fsyncs"),
         # NUMA (multi-node hosts only): remote share of allocations, misses, page migrations, the tightest node
         **{k: os_rates.get(k) for k in ("numa_other_node_pct", "numa_miss_per_s", "numa_pages_migrated_per_s", "numa_hint_faults_per_s",
                                          "numa_hint_faults_remote_pct", "numa_node_free_min_mb", "numa_node_free_max_mb") if k in os_rates},

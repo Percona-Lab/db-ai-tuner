@@ -89,8 +89,14 @@ def test_olap_rules():
 
 def test_os_rules():
     it = ids(run(*OLTP, policy="safe"))
-    for k in ("os-dirty-writeback", "os-jemalloc", "os-autogroup"):
+    for k in ("os-jemalloc", "os-autogroup"):
         assert k in it, (k, list(it))
+    # dirty page cache limits only with a measured build-up: redo fsync'ed at every commit never piles up
+    assert "os-dirty-writeback" not in it
+    piled = ids(run(dict(OLTP[0], page_cache_dirty_mb_max=2400.0, page_cache_dirty_mb_avg=900.0), OLTP[1], policy="safe"))
+    assert "os-dirty-writeback" in piled and "2,400 MB" in piled["os-dirty-writeback"]["rationale"]
+    small = ids(run(dict(OLTP[0], page_cache_dirty_mb_max=40.0), OLTP[1], policy="safe"))
+    assert "os-dirty-writeback" not in small
     # best practices are bundled
     assert {"os-swappiness", "os-thp-off", "os-scheduler", "os-noatime", "os-aio"} <= set(it["best-practices"]["evidence"]["rules"])
     assert it["best-practices"]["priority"] and not {"os-swappiness", "os-noatime"} & set(it)
