@@ -168,20 +168,31 @@ def bp_round(v, n, up=False):
     return max(unit, k * unit)
 
 
-def group_commit(s, inp, breakdown):
-    """Group commit efficiency: the achieved batch (commits per redo fsync) against what was possible - the threads
-    waiting for a commit flush (all of them can join the next one) and, as the ceiling, the transactions in flight.
-    Complete grouping (batch ~ waiters) leaves the flush latency as the limit; batches far below the waiters mean the
-    grouping itself loses (group commit settings can help). None without the counters."""
+def group_commit(s, inp, breakdown, log_bin=None):
+    """Group commit efficiency: the achieved batch against what was possible - the threads waiting at commit (all of
+    them can join the next flush) and, as the ceiling, the transactions in flight. Two different mechanisms:
+    * binary log on: the binary log group commit (flush / sync / commit stages); its leader also flushes the redo for the
+      whole group, so the batch is commits per binary log fsync, and binlog_group_commit_sync_* shape it;
+    * binary log off: InnoDB's own redo group commit (log writer / flusher threads); batch = commits per redo fsync; no
+      binlog setting has anything to act on.
+    Complete grouping (batch >= 70% of the waiters) leaves the flush latency as the limit. None without the counters."""
     commits = s.get("tps") or 0
-    lf = s.get("log_fsyncs_per_s") or (inp.get("db_rates") or {}).get("log_fsyncs")
-    if not commits or not lf:
+    dur = s.get("duration_s") or 0
+    fio = inp.get("file_io") or {}
+    redo = s.get("log_fsyncs_per_s") or (inp.get("db_rates") or {}).get("log_fsyncs") or (
+        (fio.get("redo") or {}).get("syncs", 0) / dur if dur and (fio.get("redo") or {}).get("syncs") else None)
+    binlog_on = str(log_bin).upper() == "ON"
+    bsync = (fio.get("binlog") or {}).get("syncs", 0) / dur if binlog_on and dur and (fio.get("binlog") or {}).get("syncs") else None
+    flushes = bsync if binlog_on and bsync else redo
+    if not commits or not flushes:
         return None
-    batch = commits / lf
+    batch = commits / flushes
     waiters = sum(p.get("threads") or 0 for p in breakdown or [] if "commit" in (p.get("tags") or ()) and str(p.get("name", "")).startswith("Waiting"))
     in_flight = s.get("threads_running_avg") or s.get("threads_connected_avg")
-    out = {"batch": round(batch, 1), "redo_fsyncs_per_s": round(lf, 1), "commits_per_s": round(commits, 1),
-           "flush_interval_ms": round(1000.0 / lf, 1), "in_flight": round(in_flight, 1) if in_flight else None}
+    out = {"mechanism": "binlog" if binlog_on else "innodb", "batch": round(batch, 1), "flushes_per_s": round(flushes, 1),
+           "redo_fsyncs_per_s": round(redo, 1) if redo else None, "binlog_fsyncs_per_s": round(bsync, 1) if bsync else None,
+           "commits_per_s": round(commits, 1), "flush_interval_ms": round(1000.0 / flushes, 1),
+           "in_flight": round(in_flight, 1) if in_flight else None}
     if waiters >= 1:
         out["waiters"] = round(waiters, 1)
         out["of_waiters_pct"] = round(min(100.0, 100.0 * batch / waiters))
@@ -192,7 +203,9 @@ def group_commit(s, inp, breakdown):
 
 
 def gc_text(g):
-    t = f"{g['batch']:.0f} commits per redo flush ({g['redo_fsyncs_per_s']:.1f} flushes/s, one every {g['flush_interval_ms']:.0f} ms)"
+    what = "binary log group commit" if g.get("mechanism") == "binlog" else "InnoDB redo group commit"
+    unit = "binary log fsync" if g.get("mechanism") == "binlog" else "redo flush"
+    t = f"{what}: {g['batch']:.0f} commits per {unit} ({g['flushes_per_s']:.1f}/s, one every {g['flush_interval_ms']:.0f} ms)"
     if g.get("waiters"):
         t += f", {g['waiters']:.0f} threads waiting at commit"
     if g.get("in_flight"):
@@ -314,10 +327,12 @@ def diagnose(ctx):
     lf = s.get("log_fsyncs_per_s") or ((inp.get("db_rates") or {}).get("log_fsyncs")) or fsyncs
     if commit_share > noise and not any(d["type"] == "commit" for d in out):
         w_ms = max(s.get("disk_w_await_ms") or 0, s.get("disk_flush_await_ms") or 0)
-        g = group_commit(s, inp, ctx.get("breakdown"))
+        log_bin = (ctx.get("variables") or {}).get("log_bin")
+        g = group_commit(s, inp, ctx.get("breakdown"), log_bin)
         add("commit", "high" if commit_share >= 50 else "medium",
-            f"Commit-bound: {commit_share:.0f}% of the threads' time waits for commits (redo / binary log flush)"
-            + (f"; each write takes {w_ms:.1f} ms" if w_ms else "") + (f". Group commit: {gc_text(g)}" if g else "") + ".",
+            f"Commit-bound: {commit_share:.0f}% of the threads' time waits for commits "
+            + ("(binary log group commit and redo flush)" if str(log_bin).upper() == "ON" else "(redo flush)")
+            + (f"; each write takes {w_ms:.1f} ms" if w_ms else "") + (f". {gc_text(g)[0].upper() + gc_text(g)[1:]}" if g else "") + ".",
             {"commit_wait_share_pct": round(commit_share, 1), "disk_w_await_ms": s.get("disk_w_await_ms"), "log_fsyncs_per_s": lf, "tps": tps,
              "group_commit": g})
     # CPU profile (perf sampling of a slice of the run): which kind of work burns the database's CPU
@@ -814,13 +829,12 @@ def recommend(ctx):
                   {"Handler_read_key_per_s": key_reads, "Select_full_join_per_s": rates.get("Select_full_join")}, impact=2, confidence=1)
     commit_diag = any(d["type"] == "commit" for d in ctx.get("diagnosis") or [])
     w_ms = max(s.get("disk_w_await_ms") or 0, s.get("disk_flush_await_ms") or 0)
-    gc0 = group_commit(s, inp, ctx.get("breakdown"))
+    gc0 = group_commit(s, inp, ctx.get("breakdown"), v.get("log_bin"))
     if have_run and commit_diag and w_ms >= 5 and not (gc0 and gc0.get("waiters") and not gc0["complete"]):  # loose grouping: tune it first
-        why = ("the drive's write cache is off" if v.get("os:disk_write_cache") == "OFF" else
-               "the binary log is off, so there is no binlog group commit to tune" if v.get("log_bin") == "OFF" else "")
+        why = "the drive's write cache is off" if v.get("os:disk_write_cache") == "OFF" else ""
         b.add("commit-storage-latency", "Commits wait for slow storage writes",
               [], f"Each write to the data device takes {w_ms:.1f} ms (fast SSD: well under 1 ms) and commits wait for it"
-              + (f"; {why}" if why else "") + "." + (f" Group commit: {gc_text(gc0)}." if gc0 else "")
+              + (f"; {why}" if why else "") + "." + (f" {gc_text(gc0)[0].upper() + gc_text(gc0)[1:]}." if gc0 else "")
               + " What remains is the storage: a drive with "
               "power-loss protection, the drive write cache (a durability trade-off without it), a separate fast device for the "
               "redo log, or relaxing durability (innodb_flush_log_at_trx_commit = 2). Server settings cannot make the device faster.",
@@ -828,18 +842,25 @@ def recommend(ctx):
                "data_fsyncs": s.get("data_fsyncs"), "tps": s.get("tps"), "log_bin": v.get("log_bin"),
                "disk_write_cache": v.get("os:disk_write_cache")}, impact=3, confidence=2, kind="advice")
     if have_run and wtype in ("oltp-write", "mixed"):
-        gc = group_commit(s, inp, ctx.get("breakdown"))
+        gc = group_commit(s, inp, ctx.get("breakdown"), v.get("log_bin"))
         # worth it when the batches hold far fewer commits than are waiting (or fsyncs per transaction stay high): a short
         # wait lets the waiting commits join; with complete grouping it only adds latency
         loose = (gc and gc.get("waiters") and not gc["complete"] and gc["waiters"] >= 4) or (
             not (gc and gc.get("waiters")) and (s.get("fsyncs_per_trx") or 0) > 0.8 and (s.get("threads_running_avg") or 0) >= 4)
+        if v.get("log_bin") != "ON" and gc and gc.get("waiters") and not gc["complete"] and gc["waiters"] >= 4 \
+                and "innodb_log_writer_threads" in v and not _on(v, "innodb_log_writer_threads"):
+            # InnoDB's own group commit (no binary log): the dedicated log writer / flusher threads gather the waiting
+            # commits into one write and flush; without them user threads take turns
+            b.add("log-writer-threads-on", "Let dedicated log threads group the commits", [("innodb_log_writer_threads", "ON")],
+                  f"{gc_text(gc)[0].upper() + gc_text(gc)[1:]}. Dedicated log writer / flusher threads gather all waiting commits into one "
+                  "write and flush. Experiment.", {"group_commit": gc}, impact=2, confidence=1)
         if v.get("log_bin") == "ON" and "binlog_group_commit_sync_delay" in v and _int(v, "binlog_group_commit_sync_delay") == 0 and loose:
             w_ms = max(s.get("disk_w_await_ms") or 0, s.get("disk_flush_await_ms") or 0)
             delay = nice_value("binlog_group_commit_sync_delay", int(min(2000, max(100, 250 * w_ms))) if w_ms else 200)  # a fraction of one flush
             count = nice_value("binlog_group_commit_sync_no_delay_count", int(max(4, min(1000, (gc or {}).get("waiters") or 16))))  # flush early once the waiters joined
             b.add("group-commit-delay", "Grow binlog commit groups", [("binlog_group_commit_sync_delay", str(delay)),
                                                                        ("binlog_group_commit_sync_no_delay_count", str(count))],
-                  (f"Group commit: {gc_text(gc)}. " if gc else f"{s.get('fsyncs_per_trx'):.2f} fsyncs per transaction with "
+                  (f"{gc_text(gc)[0].upper() + gc_text(gc)[1:]}. " if gc else f"{s.get('fsyncs_per_trx'):.2f} fsyncs per transaction with "
                    f"{s.get('threads_running_avg'):.0f} running threads. ")
                   + f"Waiting up to {delay} µs (or until {count} commits joined) lets more transactions share one flush. "
                   "Durability unchanged; adds latency when the commits do not come. Experiment.",

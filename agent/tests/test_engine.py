@@ -1457,11 +1457,12 @@ def test_commit_bound_from_measured_wait_despite_group_commit():
            "noise_pct": 19.7, "managed": {}}
     res = engine.run_engine(ctx)
     d = [x for x in res["diagnosis"] if x["type"] == "commit"]
-    assert d and d[0]["severity"] == "high" and "34 commits per redo flush" in d[0]["text"] and "grouping is complete" in d[0]["text"], res["diagnosis"]
+    assert d and d[0]["severity"] == "high" and "InnoDB redo group commit: 34 commits per redo flush" in d[0]["text"] and "grouping is complete" in d[0]["text"]
+    assert "binary log" not in d[0]["text"]  # binlog off: its group commit is irrelevant, res["diagnosis"]
     it = {i["id"]: i for i in res["items"]}
     assert "sweep-log-write-ahead" in it and {c["proposed"] for c in it["sweep-log-write-ahead"]["changes"]} <= {"4096", "16384"}
     adv = it["commit-storage-latency"]
-    assert adv["kind"] == "advice" and "20.9 ms" in adv["rationale"] and "binary log is off" in adv["rationale"]
+    assert adv["kind"] == "advice" and "20.9 ms" in adv["rationale"] and "binary log" not in adv["rationale"]
     # 76% of the time on commits outranks everything else (relevance 4); measured run-queue time (9.7%) decides for the
     # scheduling-delay levers instead of the diagnosis
     assert it["sweep-log-write-ahead"]["relevance"] == 4
@@ -1479,6 +1480,9 @@ def test_group_commit_efficiency_achieved_vs_possible():
     s = {"tps": 20000.0, "log_fsyncs_per_s": 1000.0, "threads_running_avg": 1000.0}
     g = group_commit(s, {}, bd)
     assert g["batch"] == 20.0 and g["waiters"] == 800.0 and not g["complete"] and g["of_in_flight_pct"] == 2, g
+    assert g["mechanism"] == "innodb"
+    gb = group_commit(dict(s, duration_s=100.0), {"file_io": {"binlog": {"syncs": 50000}, "redo": {"syncs": 100000}}}, bd, "ON")
+    assert gb["mechanism"] == "binlog" and gb["batch"] == 40.0 and gb["binlog_fsyncs_per_s"] == 500.0, gb
     g2 = group_commit({"tps": 1288.0, "log_fsyncs_per_s": 37.7, "threads_running_avg": 64.75},
                       {}, [{"name": "Waiting: commit - redo flush", "threads": 34.5, "tags": ["commit"]}])
     assert g2["complete"] and round(g2["batch"]) == 34, g2
@@ -1491,6 +1495,11 @@ def test_group_commit_efficiency_achieved_vs_possible():
     ch = {c["variable"]: c["proposed"] for c in it["changes"]}
     assert ch["binlog_group_commit_sync_no_delay_count"] == "800" and 100 <= int(ch["binlog_group_commit_sync_delay"]) <= 2000, ch
     assert "only 2% of the waiting commits" in it["rationale"], it["rationale"]
+    # binary log off: no binlog setting; InnoDB's grouping by dedicated log threads instead
+    ctx_off = dict(ctx, variables=dict(VARS, log_bin="OFF", innodb_log_writer_threads="OFF", binlog_group_commit_sync_delay="0"))
+    it_off = {i["id"]: i for i in engine.run_engine(ctx_off)["items"]}
+    assert "group-commit-delay" not in it_off and "log-writer-threads-on" in it_off, list(it_off)
+    assert "InnoDB redo group commit" in it_off["log-writer-threads-on"]["rationale"]
 
 if __name__ == "__main__":
     fails = 0

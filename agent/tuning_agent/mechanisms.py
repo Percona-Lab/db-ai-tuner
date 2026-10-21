@@ -42,6 +42,7 @@ MECHANISMS = {
     "trx-commit-2": (("commit", "io"), "No fsync per commit."),
     "sweep-log-write-ahead": (("commit", "redo"), "Redo writes aligned with the device block: no read-modify-write per flush."),
     "commit-storage-latency": (("commit", "io"), "Faster or cached storage writes: each commit waits less for its flush."),
+    "log-writer-threads-on": (("commit",), "Dedicated log threads gather the waiting commits into one write and flush."),
     "sync-binlog": (("commit", "io"), "No binlog fsync per commit group."),
     "doublewrite-off": (("io", "commit", "io-flush"), "Pages written once instead of twice."),
     "binlog-off": (("commit", "io", "cpu"), "No binary log writes, fsyncs or two-phase commit."),

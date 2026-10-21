@@ -1156,7 +1156,7 @@ def _maybe_offcpu(c, sess, warmup_s, cpu_secs, in_window=False):
     profile so the two never overlap (kprobe overhead would show up as CPU). agent.ini: offcpu_profiling = auto | off,
     offcpu_seconds (10)."""
     from . import probes
-    if str(c.cfg.get("offcpu_profiling", "auto")).lower() == "off" or not probes.available():
+    if str(c.cfg.get("offcpu_profiling", "auto")).lower() == "off" or not probes.available() or sess.get("offcpu_failures", 0) >= 2:
         return None
     key = repr(evaluate.config_key({k: v["value"] for k, v in c.state.get("managed", {}).items()}))
     if key in (sess.get("offcpu_configs") or []):
@@ -1436,6 +1436,17 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         extra["cpu_profile"] = _finish_profile(c, profiler, t_meas0)
     if offcpu:
         extra["offcpu"] = _finish_offcpu(offcpu)
+        if (extra["offcpu"] or {}).get("error"):
+            # a profiler that fails keeps failing on this host (tuning-db-arm16: a bpftrace assertion in 24 of 24 runs):
+            # stop after two failures in the session and say why once, instead of paying for it in every run
+            s2 = c.session()
+            s2["offcpu_failures"] = s2.get("offcpu_failures", 0) + 1
+            if s2["offcpu_failures"] == 2:
+                msg = ("off-CPU profiling disabled for this session after two failures: " + str(extra["offcpu"]["error"])[:200]
+                       + ". Time breakdowns use the CPU profile and wait instruments only (commit / lock waits are less detailed).")
+                log("   WARNING: " + msg)
+                c.event("profiler", msg, {"error": extra["offcpu"]["error"]})
+            c.state.set("session", s2)
     if probes:
         extra["probes"] = probes.result()
         if getattr(probes, "block", None):
