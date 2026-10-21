@@ -43,10 +43,22 @@ def generate(hw, variables, flavor, version, opts=None):
     bp = min(int(ram * 0.75), int((ram - reserve - overhead) / (1 + memory.COST["bp_control"])))
     bp = max(bp, 128 * MiB)
     instances = 1
+    from . import numa
+    topo = numa.topology()
+    nodes = topo["nodes"]
     if "innodb_buffer_pool_instances" in variables and flavor != "mariadb":
         instances = 8 if bp >= 8 * GiB else max(1, bp // GiB)
-        add("innodb_buffer_pool_instances", str(instances),
-            f"{instances} instance(s) for a {human_size(bp)} pool (~1 GiB per instance, max 8) to spread mutex contention.")
+        why = f"{instances} instance(s) for a {human_size(bp)} pool (~1 GiB per instance, max 8) to spread mutex contention."
+        if nodes > 1 and bp >= GiB and instances % nodes:
+            instances = max(nodes, -(-instances // nodes) * nodes)  # a multiple of the NUMA nodes: partitions spread evenly
+            why += f" Rounded to a multiple of the {nodes} NUMA nodes."
+        add("innodb_buffer_pool_instances", str(instances), why)
+    node_mem = min((x["mem_bytes"] for x in topo["per_node"] if x["mem_bytes"]), default=0)
+    if nodes > 1 and node_mem and bp > 0.8 * node_mem and "innodb_numa_interleave" in variables \
+            and str(variables.get("innodb_numa_interleave")).upper() not in ("ON", "1"):
+        # a pool larger than one node cannot be local anyway: allocated from one node it fills that node first
+        add("innodb_numa_interleave", "ON", f"The {human_size(bp)} buffer pool is larger than one of the {nodes} NUMA nodes "
+            f"({human_size(node_mem)}): interleaved across all nodes, no node runs out first.")
     chunk = int(variables.get("innodb_buffer_pool_chunk_size") or 0) or 128 * MiB  # MariaDB 10.11+ reports 0 (auto)
     bp = _round_down(bp, chunk * instances)
     add("innodb_buffer_pool_size", fmt_size(bp),

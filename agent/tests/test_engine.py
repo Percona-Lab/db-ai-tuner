@@ -1186,6 +1186,75 @@ def test_within_noise_hint_repeat_resolves_small_gains():
     assert runs[3]["verdict"] == "neutral"
 
 
+def _fake_numa(nodes=2, free_gb=(0.5, 40.0), mem_gb=64):
+    import tempfile
+    root = tempfile.mkdtemp()
+    for n in range(nodes):
+        d = os.path.join(root, f"node{n}")
+        os.makedirs(d)
+        open(os.path.join(d, "cpulist"), "w").write(f"{n * 16}-{n * 16 + 15}")
+        open(os.path.join(d, "meminfo"), "w").write(f"Node {n} MemTotal:       {mem_gb * 1048576} kB\nNode {n} MemFree:        {int(free_gb[n] * 1048576)} kB\n")
+        open(os.path.join(d, "distance"), "w").write(" ".join("10" if m == n else "21" for m in range(nodes)))
+        open(os.path.join(d, "numastat"), "w").write(f"numa_hit 1000\nnuma_miss {n * 50}\nnuma_foreign 0\ninterleave_hit 0\nlocal_node 900\nother_node {100 + n * 50}\n")
+    return root
+
+
+def test_numa_detection_and_rules():
+    # a client's NUMA host: two nodes, the buffer pool landed on node 0 and filled it while node 1 stays free
+    from tuning_agent import numa
+    root = _fake_numa()
+    topo = numa.topology(root)
+    assert topo["nodes"] == 2 and topo["per_node"][0]["cpus"] == 16 and topo["distances"][0] == [10, 21]
+    a = numa.counters(root, vmstat="/nonexistent")
+    b = {"numastat": dict(a["numastat"], local_node=a["numastat"]["local_node"] + 900, other_node=a["numastat"]["other_node"] + 100,
+                          numa_miss=a["numastat"]["numa_miss"] + 300), "free": a["free"], "vm": {}}
+    r = numa.rates(a, b, 10)
+    assert r["numa_other_node_pct"] == 10.0 and r["numa_miss_per_s"] == 30.0 and r["numa_node_free_min_mb"] == 512.0
+    osf = {"os:numa_nodes": 2, "os:numa_node_mem_gb": "64.0,64.0", "os:numa_node_cpus": "16,16", "os:numa_node_cpulists": "0-15;16-31"}
+    summ = dict(OLTP[0], numa_mysqld_max_node_pct=92.0, numa_node_free_min_mb=512.0, numa_node_free_max_mb=40960.0,
+                numa_other_node_pct=10.0, numa_miss_per_s=30.0, mysqld_cpu_pct=900, db_mem_mb=60000)
+    vars_ = dict(VARS, innodb_numa_interleave="OFF", innodb_buffer_pool_size=str(56 * GiB),
+                 **{"os:vm.zone_reclaim_mode": "1", "os:kernel.numa_balancing": "1", "os:mysqld_numa_policy": "default"})
+    ctx = {"goal": "tps", "policy": "safe", "os_tuning": True, "os_facts": osf, "hw": dict(HW, ram_bytes=128 * GiB, cpus=32),
+           "flavor": "percona", "version": (8, 4, 11), "variables": vars_, "summary": summ, "inputs": OLTP[1],
+           "history": [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}], "noise_pct": 2.0, "managed": {}}
+    res = engine.run_engine(ctx)
+    ids = {i["id"]: i for i in res["items"]}
+    assert any(d["type"] == "numa" for d in res["diagnosis"])
+    assert "numa-interleave" in ids and ids["numa-interleave"]["changes"][0]["proposed"] == "ON"
+    assert "numa-interleave-all" in ids and "best-practices" in ids  # zone reclaim + balancing go into the bundle
+    bundle = {c["variable"] for c in ids["best-practices"]["changes"]}
+    assert {"os:vm.zone_reclaim_mode", "os:kernel.numa_balancing"} <= bundle
+    assert "numa-single-node" not in ids  # 9 CPUs / 60 GB do not fit node 0 comfortably
+    # uniform host: nothing NUMA
+    ctx1 = dict(ctx, os_facts={"os:numa_nodes": 1})
+    assert not any(i["id"].startswith(("numa-", "os-zone")) for i in engine.run_engine(ctx1)["items"])
+    # a small server that fits one node: the single-node experiment
+    small = dict(ctx, summary=dict(summ, mysqld_cpu_pct=400, db_mem_mb=20000),
+                 variables=dict(vars_, innodb_buffer_pool_size=str(16 * GiB)))
+    assert "numa-single-node" in {i["id"] for i in engine.run_engine(small)["items"]}
+
+
+def test_numa_mysql_side():
+    # partitioned structures spread evenly over the nodes; latch spinning ranks higher on multi-node hosts
+    ctx = {"os_facts": {"os:numa_nodes": 2}}
+    assert engine._numa_multiple("innodb_buffer_pool_instances", "3", ctx) == "4"
+    assert engine._numa_multiple("innodb_page_cleaners", "8", ctx) == "8"
+    assert engine._numa_multiple("innodb_buffer_pool_instances", "3", {"os_facts": {"os:numa_nodes": 1}}) == "3"
+    assert engine._numa_multiple("table_open_cache_instances", "63", {"os_facts": {"os:numa_nodes": 4}}) == "64"
+    base = {"goal": "tps", "policy": "safe", "os_tuning": True, "hw": HW, "flavor": "percona", "version": (8, 4, 11),
+            "variables": dict(VARS), "summary": dict(OLTP[0], mysqld_cpu_pct=90, cpu_busy=95),
+            "inputs": dict(OLTP[1], cpu_profile={"categories": {"spin / mutex wait": 35, "B-tree / row access": 65}}),
+            "history": [], "noise_pct": 2.0, "managed": {}}
+    def spin(nodes):
+        its = engine.run_engine(dict(base, os_facts={"os:filesystem": "ext4", "os:numa_nodes": nodes}))["items"]
+        return next((i for i in its if i["id"] == "spin-loops"), None)
+    one, two = spin(1), spin(2)
+    assert one is None or two is None or two["score"] >= one["score"]
+    if two:
+        assert "NUMA" in (two.get("score_note") or "")
+
+
 def test_round_values():
     from tuning_agent.knowledge import nice_number, roundness
     assert nice_number("innodb_io_capacity", 1072) == 1000 and nice_number("innodb_io_capacity", 1500) == 1500

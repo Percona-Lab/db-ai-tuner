@@ -1,4 +1,5 @@
 """Host hardware facts and OS metric counters from /proc and /sys (Linux)."""
+import glob
 import os
 import platform
 import re
@@ -94,6 +95,7 @@ def hardware(datadir="/var/lib/mysql"):
         "cpus": os.cpu_count(),
         "cpu_model": cpu_model(),
         "ram_bytes": mi.get("MemTotal", 0),
+        "numa_nodes": len(glob.glob("/sys/devices/system/node/node[0-9]*")) or 1,
         "swap_bytes": mi.get("SwapTotal", 0),
         "os": os_release(),
         "kernel": platform.release(),
@@ -275,6 +277,8 @@ class OSCounters:
         self.pid = None
         self.mysql_port = mysql_port
         self.role = role
+        from . import numa
+        self._numa_nodes = len(numa.nodes())
 
     def snapshot(self):
         s = {"t": time.time()}
@@ -345,6 +349,9 @@ class OSCounters:
             if k in ("pswpin", "pswpout", "pgmajfault", "oom_kill"):
                 vm[k] = int(v)
         s["vm"] = vm
+        if self._numa_nodes > 1:  # allocation locality, page migrations and free memory per node
+            from . import numa
+            s["numa"] = numa.counters()
         mi = meminfo()
         s["mem"] = {k: mi.get(k, 0) for k in ("MemTotal", "MemAvailable", "Cached", "SwapTotal", "SwapFree", "Dirty",
                                                "Inactive(anon)", "AnonPages", "SwapCached")}
@@ -414,6 +421,9 @@ class OSCounters:
                 out[name] = round((vb[k] - va[k]) / dt, 2)
         if "oom_kill" in va and "oom_kill" in vb:
             out["oom_kills"] = vb["oom_kill"] - va["oom_kill"]
+        if a.get("numa") and b.get("numa"):
+            from . import numa
+            out.update(numa.rates(a["numa"], b["numa"], dt))
         m = b.get("mem", {})
         if m.get("MemTotal"):
             out["mem_used_pct"] = round(100.0 * (1 - m["MemAvailable"] / m["MemTotal"]), 2)

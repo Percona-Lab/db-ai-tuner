@@ -343,10 +343,32 @@ def diagnose(ctx):
         add("client-bound", "high", f"The benchmark/application client is saturated ({s['client_cpu_busy']:.0f}% CPU): measured throughput "
             "reflects the client, not the database. Use a bigger client host or fewer client-side cycles before tuning the server.",
             {"client_cpu_busy": s.get("client_cpu_busy")})
+    # NUMA placement measured in the run (multi-node hosts): a node out of memory while others are free, mysqld's memory
+    # concentrated on one node, a pool larger than a node, remote allocations
+    nev = numa_evidence(s, ctx.get("os_facts") or {}, _int(ctx.get("variables") or {}, "innodb_buffer_pool_size"))
+    if nev and nev["imbalance"]:
+        add("numa", "medium", f"NUMA ({nev['nodes']} nodes): " + "; ".join(nev["imbalance"]) + ".",
+            {k: s.get(k) for k in ("numa_mysqld_max_node_pct", "numa_other_node_pct", "numa_miss_per_s", "numa_node_free_min_mb",
+                                   "numa_node_free_max_mb")})
     if not out:
         add("none", "low", "No dominant bottleneck: the server is not saturated by this workload (client-bound or too little load?).",
             {"cpu_busy": busy, "cpu_iowait": iow})
     return out
+
+
+# partitioned structures whose partitions should spread evenly over NUMA nodes: values as multiples of the node count
+NUMA_PARTITIONED = {"innodb_buffer_pool_instances": 64, "innodb_page_cleaners": 64, "table_open_cache_instances": 64}
+
+
+def _numa_multiple(var, val, ctx):
+    nodes = int((ctx.get("os_facts") or {}).get("os:numa_nodes") or 1)
+    try:
+        n = int(val)
+    except (TypeError, ValueError):
+        return val
+    if nodes < 2 or n <= 1 or n % nodes == 0:
+        return val
+    return str(min(NUMA_PARTITIONED[var], -(-n // nodes) * nodes))
 
 
 class Builder:
@@ -373,6 +395,10 @@ class Builder:
                 risk = r
             if not meta.get("dynamic", False):
                 restart = True
+            if var in NUMA_PARTITIONED:
+                val = _numa_multiple(var, val, self.ctx)
+                if normalize(var, self.v.get(var)) == normalize(var, val):
+                    continue
             ch.append({"variable": var, "current": self.v.get(var), "proposed": val})
         if kind == "config" and not ch:
             return
@@ -754,6 +780,8 @@ def recommend(ctx):
               impact=1, confidence=1)
 
     # ---------------- operating system ---------------------------------------------
+    # NUMA: memory placement on multi-node hosts (the buffer pool interleave is a server setting: also without OS tuning)
+    _numa_rules(b, v, s, ctx.get("os_facts") or {}, ctx, have_run, bp, ram)
     if ctx.get("os_tuning") and have_run:
         osf = ctx.get("os_facts") or {}
         busy_ = s.get("cpu_busy") or 0
@@ -805,14 +833,6 @@ def recommend(ctx):
                   f"Reserves {pages} x 2 MiB pages for the {human_size(bp)} buffer pool: fewer TLB misses for memory-bound work "
                   "(MySQL docs / field reports: 5-30%). The memory is reserved even when unused; needs a restart. Experiment.",
                   {"innodb_buffer_pool_size": human_size(bp), "hugepages": pages, "mem_available": human_size(mem_avail)}, impact=2, confidence=1)
-        if int(osf.get("os:numa_nodes") or 1) > 1 and v.get("os:kernel.numa_balancing") == "1":
-            ch = [("os:kernel.numa_balancing", "0")]
-            if "innodb_numa_interleave" in v and not _on(v, "innodb_numa_interleave"):
-                ch.append(("innodb_numa_interleave", "ON"))
-            b.add("os-numa", "Stop automatic NUMA page migration", ch,
-                  f"{osf.get('os:numa_nodes')} NUMA nodes: the kernel keeps migrating buffer pool pages between nodes; database profiles "
-                  "(tuned oracle/mssql) disable it and InnoDB interleaves the buffer pool instead.", {"numa_nodes": osf.get("os:numa_nodes")},
-                  impact=2, confidence=2)
         my = s.get("mysqld_cpu_pct")
         if v.get("os:kernel.sched_autogroup_enabled") == "1" and my is not None and busy_ >= 85 and my < 0.8 * busy_:
             b.add("os-autogroup", "Disable scheduler autogroups", [("os:kernel.sched_autogroup_enabled", "0")],
@@ -952,6 +972,8 @@ def recommend(ctx):
 
     # ---------------- sweeps: measure several values where a single step is a guess ----
     def sweep(id_, title, var, values, rationale, evidence, impact=2, lead=None, direction=None):
+        if var in NUMA_PARTITIONED:
+            values = [_numa_multiple(var, x, ctx) for x in values]
         values = [x for x in dict.fromkeys(values) if x is not None and normalize(var, x) != normalize(var, v.get(var))]
         values, shape = shaped_values(var, values, v.get(var), direction)
         if var in v and len(values) >= 2:
@@ -1249,7 +1271,7 @@ def config_scores(history, goal="tps"):
 KEEP = ("improved", "efficiency-gain", "reference")
 
 # rules whose changes are best practices: applied as a bundle and kept unless they regress
-PRACTICE_IDS = {"flush-neighbors", "o-direct", "os-swappiness", "os-thp-off", "os-scheduler", "os-noatime", "os-numa", "os-aio", "os-governor"}
+PRACTICE_IDS = {"flush-neighbors", "o-direct", "os-swappiness", "os-thp-off", "os-scheduler", "os-noatime", "os-numa", "os-zone-reclaim-off", "os-aio", "os-governor"}
 BUNDLE = "best-practices"
 
 
@@ -1607,6 +1629,77 @@ def no_evidence(it, ctx):
             f"{' (' + '; '.join(srcs) + ')' if srcs else ''} and no counter or system statistic points at it")
 
 
+def numa_evidence(s, osf, bp=0):
+    """What the run measured on a multi-node host: None on a uniform host, else {"imbalance": [why], ...}."""
+    nn = int(osf.get("os:numa_nodes") or 1)
+    if nn < 2:
+        return None
+    mem = [float(x) * GiB for x in str(osf.get("os:numa_node_mem_gb") or "").split(",") if x]
+    why = []
+    skew = s.get("numa_mysqld_max_node_pct")
+    if skew is not None and skew > 100.0 / nn + 25:
+        why.append(f"{skew:.0f}% of mysqld's memory is on one of {nn} nodes")
+    fmin, fmax = s.get("numa_node_free_min_mb"), s.get("numa_node_free_max_mb")
+    if mem and fmin is not None and fmax is not None and fmin * MiB < 0.03 * min(mem) and fmax * MiB > 0.2 * max(mem):
+        why.append(f"one node is out of memory ({fmin:.0f} MB free) while another has {fmax:.0f} MB free")
+    if mem and bp and bp > 0.8 * min(mem):
+        why.append(f"the {human_size(bp)} buffer pool does not fit one node ({human_size(min(mem))})")
+    if (s.get("numa_miss_per_s") or 0) > 0 and (s.get("numa_other_node_pct") or 0) >= 1:
+        why.append(f"{s['numa_other_node_pct']:.1f}% of allocations came from another node ({s['numa_miss_per_s']:.0f} misses/s)")
+    return {"nodes": nn, "node_mem": mem, "imbalance": why,
+            "migrating": (s.get("numa_pages_migrated_per_s") or 0) > 0 or (s.get("numa_hint_faults_per_s") or 0) > 0}
+
+
+def _numa_rules(b, v, s, osf, ctx, have_run, bp, ram):
+    """Multi-node hosts: zone reclaim and automatic balancing (best practices), then memory placement from evidence:
+    the buffer pool interleaved (InnoDB), all of mysqld's memory interleaved (systemd NUMAPolicy), or mysqld kept on
+    one node when it fits there (CPUs and memory)."""
+    ev = numa_evidence(s, osf, bp)
+    if not ev:
+        return
+    nn = ev["nodes"]
+    if ctx.get("os_tuning") and v.get("os:vm.zone_reclaim_mode") not in (None, "", "0"):
+        b.add("os-zone-reclaim-off", "Allocate from other NUMA nodes instead of reclaiming locally", [("os:vm.zone_reclaim_mode", "0")],
+              f"vm.zone_reclaim_mode = {v.get('os:vm.zone_reclaim_mode')} on {nn} NUMA nodes: a full node drops page cache or swaps "
+              "although other nodes have free memory (the 'MySQL swap insanity' pattern); database guidance is 0.",
+              {"numa_nodes": nn, "zone_reclaim_mode": v.get("os:vm.zone_reclaim_mode")}, impact=2, confidence=3)
+    if ctx.get("os_tuning") and v.get("os:kernel.numa_balancing") == "1":
+        moving = (f"{s.get('numa_pages_migrated_per_s') or 0:.0f} pages/s migrated, {s.get('numa_hint_faults_per_s') or 0:.0f} hint faults/s"
+                  if have_run else "")
+        b.add("os-numa", "Stop automatic NUMA page migration", [("os:kernel.numa_balancing", "0")],
+              f"{nn} NUMA nodes{': ' + moving if moving else ''}: the kernel samples and migrates database pages between nodes "
+              "(page faults and copies on hot buffer pool pages); database profiles (tuned oracle / mssql) disable it.",
+              {"numa_nodes": nn, "numa_pages_migrated_per_s": s.get("numa_pages_migrated_per_s"),
+               "numa_hint_faults_per_s": s.get("numa_hint_faults_per_s")}, impact=2 if ev["migrating"] else 1, confidence=2)
+    if not have_run:
+        return
+    why = "; ".join(ev["imbalance"])
+    evidence = {"numa_nodes": nn, "numa_mysqld_max_node_pct": s.get("numa_mysqld_max_node_pct"),
+                "numa_other_node_pct": s.get("numa_other_node_pct"), "numa_node_free_min_mb": s.get("numa_node_free_min_mb")}
+    if ev["imbalance"] and "innodb_numa_interleave" in v and not _on(v, "innodb_numa_interleave"):
+        b.add("numa-interleave", "Interleave the buffer pool across NUMA nodes", [("innodb_numa_interleave", "ON")],
+              f"Measured: {why}. InnoDB allocates the buffer pool interleaved across all nodes: every node keeps free memory and "
+              "accesses spread evenly instead of one node serving (and running out for) everything. Needs a restart.",
+              evidence, impact=3, confidence=2)
+    if ev["imbalance"] and ctx.get("os_tuning") and v.get("os:mysqld_numa_policy", "default") == "default" and "os:mysqld_numa_policy" in v:
+        b.add("numa-interleave-all", "Interleave all of mysqld's memory across NUMA nodes", [("os:mysqld_numa_policy", "interleave")],
+              f"Measured: {why}. Beyond the buffer pool (innodb_numa_interleave), connection buffers, caches and the dictionary also "
+              "come from one node; a process-wide interleave policy (numactl --interleave, systemd NUMAPolicy) spreads them too. "
+              "Needs a restart.", evidence, impact=2, confidence=1)
+    # the whole server fits one node (CPUs it needs and its memory): local memory only, no cross-node traffic at all
+    cpus_used = (s.get("mysqld_cpu_pct") or 0) / 100.0
+    lists = str(osf.get("os:numa_node_cpulists") or "").split(";")
+    ncpus = [int(x) for x in str(osf.get("os:numa_node_cpus") or "").split(",") if x.isdigit()]
+    db_mem = (s.get("db_mem_mb") or 0) * MiB
+    if ctx.get("os_tuning") and lists and lists[0] and ncpus and ev["node_mem"] and "os:mysqld_numa_policy" in v \
+            and 0 < cpus_used < 0.7 * ncpus[0] and db_mem and db_mem < 0.7 * ev["node_mem"][0] and v.get("os:mysqld_numa_policy", "default") == "default":
+        b.add("numa-single-node", "Keep mysqld on one NUMA node", [("os:cpu_affinity", lists[0]), ("os:mysqld_numa_policy", "bind:0")],
+              f"mysqld uses {cpus_used:.1f} CPUs and {human_size(db_mem)} - both fit node 0 ({ncpus[0]} CPUs, {human_size(ev['node_mem'][0])}): "
+              "bound there, every memory access is local. Kept only if the goal improves; memory growth beyond the node would fail "
+              "instead of spilling over, so it is proposed only while mysqld uses under 70% of the node's memory. Experiment.",
+              dict(evidence, mysqld_cpus=round(cpus_used, 2), node0_cpus=ncpus[0]), impact=2, confidence=1)
+
+
 def _swapfile_bytes(val):
     try:
         return 0 if str(val or "0").lower() in ("0", "off", "") else parse_size(val)
@@ -1867,6 +1960,16 @@ def run_engine(ctx):
         # priority only for returning to measured configurations; everything else - the best-practice bundle included -
         # ranks by the evidence for what it acts on
         it["score"] = 100 if it.get("priority") and not it.get("no_mechanism") and not it.get("practice") else sc
+    # NUMA: a latch handed between threads on different nodes moves its cache line across the interconnect - measured
+    # spinning costs more there, so the changes that act on it rank higher (with the measured share, not by default)
+    nodes_ = int((ctx.get("os_facts") or {}).get("os:numa_nodes") or 1)
+    spin_share = sum(p.get("share_pct") or 0 for p in ctx.get("breakdown") or [] if "cpu-spin" in (p.get("tags") or ()))
+    if nodes_ > 1 and spin_share > float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0):
+        for it in items:
+            if it["kind"] == "config" and it["id"] in MECHANISMS and "cpu-spin" in MECHANISMS[it["id"]][0] and it["score"] < 100:
+                it["score"] += 1
+                it["score_note"] = (f"{nodes_} NUMA nodes and {spin_share:.0f}% of the time spinning on latches: cross-node cache-line "
+                                    "transfers make contention costlier")
     # no swap at all: the swap state is a precondition for sizing memory (pressure means OOM without it, slower pages
     # with it) - memory-setting experiments wait until the swap experiment ran (then they are measured with it)
     sw = next((i for i in items if i["id"] == "best-practices-swap" and i.get("confidence", 0) > 0), None)

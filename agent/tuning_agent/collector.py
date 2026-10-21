@@ -482,6 +482,9 @@ def analyze_window(a, b, samples):
         "swap_out": os_rates.get("swap_out"),
         "mem_used_pct": os_rates.get("mem_used_pct"),
         "mem_available_mb": os_rates.get("mem_available_mb"),
+        # NUMA (multi-node hosts only): remote share of allocations, misses, page migrations, the tightest node
+        **{k: os_rates.get(k) for k in ("numa_other_node_pct", "numa_miss_per_s", "numa_pages_migrated_per_s", "numa_hint_faults_per_s",
+                                         "numa_hint_faults_remote_pct", "numa_node_free_min_mb", "numa_node_free_max_mb") if k in os_rates},
         # database memory footprint incl. what was swapped out (swapping must not look like using less memory)
         "db_mem_mb": (round((os_rates.get("dbproc_pss_mb") or 0) + (os_rates.get("dbproc_swap_pss_mb") or 0), 1)
                       if os_rates.get("dbproc_pss_mb") is not None else None),

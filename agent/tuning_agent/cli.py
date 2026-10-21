@@ -882,6 +882,18 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
         inputs["memory_budget"] = mb
     except Exception:
         pass
+    try:  # NUMA: the topology and where mysqld's memory lives (only on multi-node hosts)
+        from . import numa as _numa
+        from .hostinfo import mysqld_pid as _mpid
+        topo = _numa.topology()
+        if topo["nodes"] > 1:
+            pl = _numa.placement(_mpid()) if _mpid() else {}
+            inputs["numa"] = {"topology": topo, "mysqld": pl}
+            summary["numa_nodes"] = topo["nodes"]
+            if pl:
+                summary["numa_mysqld_max_node_pct"] = pl["max_node_pct"]
+    except Exception:  # noqa
+        pass
     if extra_inputs:
         inputs.update(extra_inputs)
         if (extra_inputs.get("cow") or {}).get("issues"):
@@ -1814,7 +1826,7 @@ def _engine_ctx(c, sess):
         wl = classify_workload(last.get("summary"), last.get("inputs")).get("type") if last.get("summary") else None
         conns = (last.get("summary") or {}).get("threads_connected_avg")
         q = (f"/experience?cpus={os.cpu_count()}&exclude_session={sess['id']}" + (f"&workload={wl}" if wl else "")
-             + (f"&conns={int(conns)}" if conns else ""))
+             + (f"&conns={int(conns)}" if conns else "") + f"&numa_nodes={(c.hw() or {}).get('numa_nodes') or 1}")
         ex = c.client.get(q)
         experience = ex.get("experience", {})
         insights = ex.get("insights") or []

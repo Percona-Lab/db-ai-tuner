@@ -43,7 +43,7 @@ def allocator_env(value):
     return lines
 
 SYSCTLS = ["vm.swappiness", "vm.dirty_background_bytes", "vm.dirty_bytes", "vm.dirty_ratio", "vm.dirty_background_ratio", "vm.dirty_expire_centisecs", "vm.dirty_writeback_centisecs",
-           "kernel.numa_balancing", "kernel.sched_autogroup_enabled", "fs.aio-max-nr", "vm.min_free_kbytes",
+           "kernel.numa_balancing", "vm.zone_reclaim_mode", "kernel.sched_autogroup_enabled", "fs.aio-max-nr", "vm.min_free_kbytes",
            "net.core.somaxconn", "net.ipv4.tcp_max_syn_backlog", "net.core.netdev_max_backlog", "net.core.netdev_budget",
            "net.core.netdev_budget_usecs", "net.ipv4.ip_local_port_range", "net.ipv4.tcp_tw_reuse", "net.ipv4.tcp_slow_start_after_idle",
            "net.ipv4.tcp_congestion_control", "net.core.default_qdisc", "net.ipv4.tcp_rmem", "net.ipv4.tcp_wmem", "net.core.rmem_max",
@@ -79,6 +79,8 @@ OS_KB = {
     "os:vm.dirty_expire_centisecs": ("Age at which dirty page cache must be written back.", False, "io"),
     "os:vm.dirty_writeback_centisecs": ("Interval of the background writeback thread.", False, "io"),
     "os:kernel.numa_balancing": ("Automatic NUMA page migration (multi-socket hosts).", False, "cpu"),
+    "os:vm.zone_reclaim_mode": ("Reclaim memory on the local NUMA node (drop cache, swap) before allocating on another node (0 = allocate remotely).", False, "memory"),
+    "os:mysqld_numa_policy": ("NUMA memory policy of mysqld (default / interleave across all nodes / bind:N or preferred:N to one node), via systemd NUMAPolicy.", True, "memory"),
     "os:kernel.sched_autogroup_enabled": ("Group CPU time per terminal session (desktop feature).", False, "cpu"),
     "os:fs.aio-max-nr": ("System-wide limit of in-flight asynchronous I/O requests (InnoDB native AIO).", False, "io"),
     "os:thp": ("Transparent Huge Pages (never / madvise / always).", False, "memory"),
@@ -238,6 +240,10 @@ def current(datadir, device, service, fs_device=None):
     m = re.search(r"^# os:malloc=(.+)$", dropin, re.M)
     out["os:malloc"] = m.group(1).strip() if m else ("jemalloc" if "jemalloc" in dropin else "glibc")
     out["os:hugepages"] = _read("/proc/sys/vm/nr_hugepages")
+    dropin = _read(service_dropin(service))
+    mp = re.search(r"^NUMAPolicy=(\w+)", dropin, re.M)
+    mm = re.search(r"^NUMAMask=(\S+)", dropin, re.M)
+    out["os:mysqld_numa_policy"] = "default" if not mp else (mp.group(1) if mp.group(1) == "interleave" or not mm else f"{mp.group(1)}:{mm.group(1)}")
     swaps = _read("/proc/swaps")
     if SWAPFILE in swaps and os.path.exists(SWAPFILE):
         mb = os.path.getsize(SWAPFILE) // 2 ** 20
@@ -270,6 +276,12 @@ def facts(datadir, device, service, fs_device=None):
     f["os:filesystem"] = m[2] if m else None
     f["os:jemalloc_available"] = any(os.path.exists(p) for p in JEMALLOC_CANDIDATES)
     f["os:numa_nodes"] = len(glob.glob("/sys/devices/system/node/node[0-9]*"))
+    if f["os:numa_nodes"] > 1:
+        from . import numa
+        topo = numa.topology()
+        f["os:numa_node_cpus"] = ",".join(str(x["cpus"]) for x in topo["per_node"])
+        f["os:numa_node_mem_gb"] = ",".join(str(round(x["mem_bytes"] / 2 ** 30, 1)) for x in topo["per_node"])
+        f["os:numa_node_cpulists"] = ";".join(x["cpulist"] for x in topo["per_node"])
     f["os:aio_in_use"] = _read("/proc/sys/fs/aio-nr")
     return f
 
@@ -410,6 +422,14 @@ class OSApplier:
                 _write("/sys/module/zswap/parameters/compressor", comp)
             _write("/sys/module/zswap/parameters/enabled", "Y" if on == "on" else "N")
             return False
+        if name == "os:mysqld_numa_policy":
+            m = re.fullmatch(r"(default|interleave)|(bind|preferred):(\d+(?:[-,]\d+)*)", str(value or "default"))
+            if not m:
+                raise RuntimeError(f"NUMA policy {value}: default, interleave, bind:<nodes> or preferred:<node>")
+            from . import numa
+            if len(numa.nodes()) < 2 and str(value) != "default":
+                raise RuntimeError("a NUMA memory policy needs a host with more than one NUMA node")
+            return True  # systemd applies it when mysqld starts (drop-in written by persist)
         if name == "os:cpu_affinity":
             from .hostinfo import mysqld_pid
             cpus = online_cpus() if value in ("all", "", None) else str(value)
@@ -516,6 +536,15 @@ class OSApplier:
             lines.append("LimitMEMLOCK=infinity")
         if osm.get("os:cpu_affinity") not in (None, "all"):
             lines.append(f"CPUAffinity={osm['os:cpu_affinity'].replace(',', ' ')}")
+        pol = str(osm.get("os:mysqld_numa_policy") or "default")
+        if pol != "default":
+            kind, _, mask = pol.partition(":")
+            lines.append(f"NUMAPolicy={kind}")
+            if kind == "interleave":
+                from . import numa
+                lines.append("NUMAMask=" + ",".join(str(n) for n in numa.nodes()))
+            elif mask:
+                lines.append(f"NUMAMask={mask}")
         self._file(service_dropin(self.service), "# Managed by tuning-agent\n[Service]\n" + "\n".join(lines) + "\n" if lines else None)
         subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
         # fstab mount options for the data directory filesystem; settings no longer managed go back to their originals

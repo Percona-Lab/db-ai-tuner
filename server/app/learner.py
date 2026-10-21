@@ -156,6 +156,7 @@ def digest(sid):
             "policy": s["policy"],
             "agent_version": s["agent_version"] if "agent_version" in s.keys() else None,
             "conditions": {"workload": wl, "cpu_class": _cpu_class(hw.get("cpus")), "concurrency_class": _conc_class(conns),
+                           "numa": ("multi-node" if int(hw.get("numa_nodes") or 1) > 1 else "uniform"),
                            "cpus": hw.get("cpus"), "ram_gb": round((hw.get("ram_bytes") or 0) / 2 ** 30), "disk": hw.get("disk_model") or hw.get("disk")},
             "noise_pct": (cal or {}).get("noise_pct"), "baseline_time_breakdown": base_bd, "runs": out_runs}
 
@@ -549,8 +550,9 @@ def revalidate(c=None):
 
 
 # ------------------------------------------------------------------------------------------------ for agents and admins
-def matching(workload=None, cpu_class=None, concurrency_class=None):
-    """Live insights whose conditions match (unset conditions match anything)."""
+def matching(workload=None, cpu_class=None, concurrency_class=None, numa=None):
+    """Live insights whose conditions match (unset conditions match anything). NUMA: results from multi-node hosts are
+    not served to uniform ones and back (memory placement changes what a setting does)."""
     out = []
     for r in db().execute("SELECT * FROM insights WHERE status IN ('repeated','observed','contested') ORDER BY confidence DESC"):
         cond = _uj(r["conditions"], {}) or {}
@@ -559,6 +561,8 @@ def matching(workload=None, cpu_class=None, concurrency_class=None):
         if cpu_class and cond.get("cpu_class") and cond["cpu_class"] != cpu_class:
             continue
         if concurrency_class and cond.get("concurrency_class") and cond["concurrency_class"] != concurrency_class:
+            continue
+        if numa and cond.get("numa") and cond["numa"] != numa:
             continue
         out.append({"id": r["id"], "statement": r["statement"], "settings": _uj(r["settings"], []), "direction": r["direction"],
                     "conditions": cond, "status": r["status"], "confidence": r["confidence"], "support": r["support"],
