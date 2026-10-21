@@ -2,6 +2,8 @@
 # One-time setup of the bare-metal deploy canary host (tuner-canary): a small pristine data set for reset_datadir.sh.
 # Earlier study data sets on /data stay where they are; /var/lib/mysql_base points at the canary set.
 set -ex
+# server defaults first: a tuned configuration left behind (4.5 GB redo) would end up in the pristine copy
+tuning-agent rollback --reset
 mysql -e "CREATE DATABASE IF NOT EXISTS sbtest; CREATE USER IF NOT EXISTS sbtest@localhost IDENTIFIED BY 'sbtest'; GRANT ALL ON sbtest.* TO sbtest@localhost"
 mysql -e "DROP DATABASE sbtest; CREATE DATABASE sbtest"
 sysbench oltp_read_write --mysql-user=sbtest --mysql-password=sbtest --mysql-socket=/var/run/mysqld/mysqld.sock --mysql-db=sbtest \

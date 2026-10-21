@@ -1,6 +1,6 @@
 #!/bin/bash
 # Suite node setup: node.sh <suite version> <cell> <agent name> <api key> <study> [client ip]
-# Percona Server 9.7 with its defaults (binary log ON, full durability), the benchmark data set of the cell, the
+# Percona Server 8.4 LTS (with debug symbols for the profiles) with its defaults (binary log ON, full durability), the benchmark data set of the cell, the
 # benchmark profile /root/bench/suite.ini and the tuning session (queue.sh). Cells: docs/battery/suite-v1.md.
 # With a client ip (class L cells) the benchmark runs on the client host over the network.
 set -x
@@ -13,10 +13,11 @@ apt-get update -q
 apt-get install -yq curl gnupg lsb-release python3-venv sysstat fio rsync sysbench libjemalloc2 libtcmalloc-minimal4 libtcl8.6 bpftrace \
   linux-tools-common linux-tools-$(uname -r) || true
 curl -sO https://repo.percona.com/apt/percona-release_latest.generic_all.deb && apt-get install -yq ./percona-release_latest.generic_all.deb
-percona-release enable-only ps-97-lts release && apt-get update -q
+# PS 8.4 LTS: the only line with published debug symbols (percona-server-dbg) - the CPU / off-CPU profiles need them
+percona-release enable-only ps-84-lts release && apt-get update -q
 debconf-set-selections <<< "percona-server-server percona-server-server/root-pass password"
 debconf-set-selections <<< "percona-server-server percona-server-server/re-root-pass password"
-apt-get install -yq percona-server-server || { echo SETUPFAILED; exit 1; }
+apt-get install -yq percona-server-server percona-server-dbg || { echo SETUPFAILED; exit 1; }
 # many connections: limits for mysqld and the client (4096-connection cells)
 mkdir -p /etc/systemd/system/mysql.service.d && printf '[Service]\nLimitNOFILE=1048576\n' > /etc/systemd/system/mysql.service.d/limits.conf
 printf '[mysqld]\n# suite: listen on all interfaces for a separate client host; everything else is the server default\nbind_address = 0.0.0.0\n' > /etc/mysql/mysql.conf.d/suite.cnf

@@ -82,7 +82,8 @@ explains what the tuning session finds.
 
 ## Protocol (every cell)
 
-- **Server:** Percona Server 9.7 (current LTS) unless the cell says otherwise. Binary log on with full durability by
+- **Server:** Percona Server 8.4 LTS (latest 8.4, with `percona-server-dbg`) unless the cell says otherwise. 9.7 publishes no
+  debug symbols, and the evidence gate depends on CPU / off-CPU profiles that can name mysqld's internal functions. Binary log on with full durability by
   default (production-like); cells that measure without binlog say so.
 - **Data:** writing cells restore a pristine copy before every run (`data_state = reset`); read-only cells keep the data
   (`data_state = read-only`). Data sizes are set relative to the class's RAM.
