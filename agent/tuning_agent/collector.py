@@ -367,16 +367,18 @@ def _percentile_from_hist(hist_a, hist_b, q):
 def steady_state(samples):
     """Is the measured window in steady state, or is deferred work still piling up? Flushing (dirty pages, checkpoint
     age), purge (history list) and change-buffer merges can be postponed: a window that ends while that debt grows
-    never pays it, which flatters settings that defer more. Compares the first and last third of the window."""
+    never pays it, which flatters settings that defer more. Compares the middle and last third of the window: growth still
+    going on at the end. State that settles earlier inside the window is a warm-up warning (warmup_signals), not this."""
     def thirds(key):
         v = [s["db"][key] for s in samples if s.get("db", {}).get(key) is not None]
         if len(v) < 9:
             return None
         n = len(v) // 3
-        return sum(v[:n]) / n, sum(v[-n:]) / n
+        return sum(v[n:2 * n]) / n, sum(v[-n:]) / n
     growing, ev = [], {}
-    for key, label, absmin, rel in (("bp_dirty_pct", "dirty pages %", 3.0, 0.15), ("checkpoint_age_pct", "checkpoint age %", 5.0, 0.15),
-                                    ("history_list_length", "history list length", 50000, 0.25), ("ibuf_size", "change buffer pages", 2000, 0.25)):
+    # thresholds for one third of the window (half of the earlier first-to-last-third ones: same growth rate)
+    for key, label, absmin, rel in (("bp_dirty_pct", "dirty pages %", 1.5, 0.075), ("checkpoint_age_pct", "checkpoint age %", 2.5, 0.075),
+                                    ("history_list_length", "history list length", 25000, 0.125), ("ibuf_size", "change buffer pages", 1000, 0.125)):
         t = thirds(key)
         if not t:
             continue
@@ -388,13 +390,83 @@ def steady_state(samples):
     if tp and tp[0]:
         drift = 100.0 * (tp[1] - tp[0]) / tp[0]
         ev["throughput_drift_pct"] = round(drift, 1)
-        if abs(drift) >= 5:  # falling: debt being paid; rising: still warming up (caches filling, #124 +4-9%)
-            growing.append(f"throughput {drift:+.0f}% from the first to the last third")
+        if abs(drift) >= 3:  # falling: debt being paid; rising: still warming up (caches filling, #124 +4-9%)
+            growing.append(f"throughput {drift:+.0f}% from the middle to the last third")
     return {"steady": not growing, "growing": growing, "evidence": ev} if ev else None
 
 
 
-def analyze_window(a, b, samples):
+# state that a warm-up has to bring to its working level before measuring: (key, label, minimum absolute change,
+# minimum change relative to the settled level). Each one moving at the start of the window and settling only inside it
+# means the first part of the window measured a different state (redo / dirty pages not yet at their equilibrium: less
+# flushing than in the steady state; a cold or filling buffer pool: more reads).
+WARMUP_SIGNALS = (("checkpoint_age_pct", "checkpoint age %", 3.0, 0.15), ("bp_dirty_pct", "dirty pages %", 2.0, 0.15),
+                  ("bp_free_pct", "free buffer pool pages %", 5.0, 0.0), ("bp_hit_pct", "buffer pool hit %", 0.5, 0.0),
+                  ("history_list_length", "history list length", 20000, 0.25), ("ibuf_size", "change buffer pages", 1000, 0.25),
+                  ("tps", "throughput", 0.0, 0.05), ("avg_latency_ms", "average latency", 0.0, 0.10))
+
+
+def warmup_signals(samples, warmup_s=None, tail=None):
+    """Was the warm-up long enough? For each state metric: its level in the first minute of the window vs the level it
+    settled at (the last third), and how far into the window it got there. A metric still moving at the end is the
+    steady-state check's (not steady); this one catches state that settles only inside the window - the window then
+    averages two regimes. `tail`: samples of the last part of the warm-up - an adequate warm-up ends in the state the
+    window measures, so its last 10-20% should look like the window. Returns {"settling", "tail_vs_window",
+    "suggest_warmup_s", "text"} or None; a warning, not a verdict."""
+    if len(samples) < 18:
+        return None
+    t0 = samples[0].get("ts") or 0
+    out, differs = [], []
+    for key, label, absmin, rel in WARMUP_SIGNALS:
+        tv = [s["db"][key] for s in (tail or []) if (s.get("db") or {}).get(key) is not None]
+        wv = [s["db"][key] for s in samples if (s.get("db") or {}).get(key) is not None]
+        if len(tv) >= 3 and len(wv) >= 9:
+            tm, wm = sum(tv) / len(tv), sum(wv) / len(wv)
+            if wm != tm and abs(wm - tm) >= absmin and abs(wm - tm) >= rel * abs(wm):
+                differs.append({"metric": key, "label": label, "warmup_tail": round(tm, 2), "window": round(wm, 2)})
+        pts = [(s.get("ts") or 0, s["db"][key]) for s in samples if (s.get("db") or {}).get(key) is not None]
+        if len(pts) < 18:
+            continue
+        w = 6  # ~1 minute of 10 s samples
+        sm = [(pts[i][0], sum(v for _, v in pts[max(0, i - w + 1):i + 1]) / len(pts[max(0, i - w + 1):i + 1])) for i in range(len(pts))]
+        n = len(pts) // 3
+        plateau = sum(v for _, v in pts[-n:]) / n
+        start = sum(v for _, v in pts[:w]) / w
+        ch = plateau - start
+        if abs(ch) < absmin or abs(ch) < rel * abs(plateau) or not ch:
+            continue
+        # settled: the smoothed value stays within a quarter of the change from the plateau from then on
+        tol = abs(ch) * 0.25
+        settled = None
+        for i in range(len(sm)):
+            if all(abs(v - plateau) <= tol for _, v in sm[i:]):
+                settled = sm[i][0]
+                break
+        if settled is None:
+            continue
+        after = settled - t0
+        span = (pts[-1][0] - t0) or 1
+        if after < 0.2 * span:  # settled early in the window: the first minutes barely matter
+            continue
+        out.append({"metric": key, "label": label, "start": round(start, 2), "settled_at": round(plateau, 2),
+                    "settled_after_s": int(after), "window_share_pct": round(100.0 * after / span)})
+    if not out and not differs:
+        return None
+    longest = max([x["settled_after_s"] for x in out] or [0])
+    # current warm-up plus the settling time (whole minutes); without a settling time, half as long again
+    sug = int(-(-((warmup_s or 0) + (longest or (warmup_s or 0) // 2)) // 60) * 60) if warmup_s else None
+    parts = []
+    if differs:
+        parts.append("the end of the warm-up differs from the window (" + "; ".join(
+            "%s %s vs %s" % (x["label"], format(x["warmup_tail"], ",.4g"), format(x["window"], ",.4g")) for x in differs) + ")")
+    parts += ["%s %s -> %s, settled %d min into the window" % (x["label"], format(x["start"], ",.4g"), format(x["settled_at"], ",.4g"),
+                                                               x["settled_after_s"] // 60) for x in out]
+    return {"settling": out, "tail_vs_window": differs, "suggest_warmup_s": sug,
+            "text": "Warm-up may be too short: " + "; ".join(parts)
+                    + (". A warm-up of about %d s would measure the settled state only." % sug if sug else ".")}
+
+
+def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None):
     """Summary + decision inputs for a measurement window between snapshots a and b."""
     dt = max(b["t"] - a["t"], 1e-6)
     sa, sb = a["status"], b["status"]
@@ -451,6 +523,7 @@ def analyze_window(a, b, samples):
         "within_se_pct": batch_se_pct("db", "tps") or batch_se_pct("db", "qps"),
         "rows_changed_per_s": avg("db", "rows_changed"),
         "steady_state": steady_state(samples),
+        "warmup_signals": warmup_signals(samples, warmup_s, warmup_tail),
         "qps": db_rates.get("qps"),
         "handler_commits": db_rates.get("handler_commits"),
         "statements_per_s": db_rates.get("statements"),

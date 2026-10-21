@@ -1391,6 +1391,31 @@ def test_runtime_changeability_by_release_series():
     assert dynamic_in("innodb_doublewrite", "percona 8.4") is None        # partly dynamic: knowledge base decides
     assert dynamic_in("no_such_variable", "percona 8.4") is None
 
+
+def test_warmup_signals_catch_state_settling_inside_the_window():
+    from tuning_agent import collector, evaluate
+    # 15 min window, 10 s samples: checkpoint age 22% -> 29% plateau reached ~9 min in (the case in the chart), throughput flat
+    def samples(ck):
+        return [{"ts": 1000 + 10 * i, "db": {"checkpoint_age_pct": ck(i), "bp_dirty_pct": 2.5, "tps": 1000 + (i % 3)}} for i in range(90)]
+    rising = samples(lambda i: min(29.0, 22.0 + 7.0 * i / 54))
+    w = collector.warmup_signals(rising, warmup_s=900)
+    assert w and [x["metric"] for x in w["settling"]] == ["checkpoint_age_pct"], w
+    assert 360 <= w["settling"][0]["settled_after_s"] <= 600 and w["suggest_warmup_s"] >= 1380, w
+    assert collector.steady_state(rising)["steady"]          # the end of the window is steady: no verdict change
+    assert collector.warmup_signals(samples(lambda i: 29.0 + (i % 2) * 0.3), warmup_s=900) is None   # settled before the window
+    assert collector.warmup_signals(samples(lambda i: min(29.0, 26.0 + 3.0 * i / 6)), warmup_s=900) is None  # settles in the first minute
+    # the user's framing: the last 10-20% of the warm-up should look like the window
+    tail = [{"ts": 1000 - 10 * i, "db": {"checkpoint_age_pct": 21.0, "bp_dirty_pct": 2.5, "tps": 1000}} for i in range(1, 14)]
+    wt = collector.warmup_signals(rising, warmup_s=900, tail=tail)
+    assert [x["metric"] for x in wt["tail_vs_window"]] == ["checkpoint_age_pct"] and "end of the warm-up" in wt["text"], wt
+    flat = samples(lambda i: 29.0 + (i % 2) * 0.3)
+    same = [{"ts": 1000 - 10 * i, "db": {"checkpoint_age_pct": 29.1, "bp_dirty_pct": 2.5, "tps": 1001}} for i in range(1, 14)]
+    assert collector.warmup_signals(flat, warmup_s=900, tail=same) is None
+    # calibration: a warning with a suggested warm-up, the runs stay valid
+    runs = [{"summary": {"steady_state": collector.steady_state(rising), "warmup_signals": w}} for _ in range(3)]
+    wu = evaluate.warmup_check(runs, 900)
+    assert wu["adequate"] and wu["settling_runs"] == 3 and wu["suggest_warmup_s"] == w["suggest_warmup_s"], wu
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

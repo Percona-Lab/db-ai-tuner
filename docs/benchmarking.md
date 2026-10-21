@@ -53,8 +53,10 @@ device (`tuning-agent init --fs-device ... --allow-fs-experiments`).
 
 ## Same conditions for every run
 
-* Same run length, same warm-up, same client threads; a warm-up long enough to reach a steady state (the agent
-  checks the window and lengthens the warm-up when deferred work is still growing).
+* Same run length, same warm-up, same client threads; a warm-up long enough to reach a steady state. The last 10-20% of
+  the warm-up should look like the measured window: checkpoint age, dirty pages and the buffer pool at their working
+  level, not still climbing (the agent compares them and suggests a longer warm-up; it lengthens the warm-up itself
+  when deferred work is still growing at the end of the window).
 * The benchmark client must not saturate its own CPU (the agent flags a saturated client); for many connections put
   it on a separate host.
 * Keep other work off the host (backups, package updates, other benchmarks).
@@ -74,7 +76,8 @@ device (`tuning-agent init --fs-device ... --allow-fs-experiments`).
 |---|---|---|
 | Reflink / snapshot clone: shared extents of the largest data files (`filefrag`) | after each data reset | warning, event, calibration disturbance |
 | Copy-on-write file system (btrfs without `+C`, ZFS, overlay) and device-mapper thin / snapshot targets | after each data reset | warning, event, calibration disturbance; a note only with `copy_on_write = intended` |
-| Throughput rising or deferred work growing in the window | every run | run marked not steady; warm-up lengthened in calibration |
+| Deferred work still growing at the end of the window (middle vs last third: dirty pages, checkpoint age, history list, change buffer) or throughput drifting | every run | run marked not steady (an improvement does not count); warm-up lengthened in calibration |
+| Warm-up ending in a different state than the window measures: the last ~15% of the warm-up vs the window, and state settling only inside the window (checkpoint age, dirty pages, buffer pool filling, hit ratio, history list, change buffer, throughput, latency) | every run / calibration | warning with the settling time and a suggested warm-up; the run stays valid |
 | Swap with measured cost, CPU steal, storage latency drift, in-run stalls, client saturation | every run / calibration | flags; calibration stops in an unfit environment |
 | Scheduled timers (fstrim, apt, logrotate) | session start | warning |
 | Host clock vs the server's (and NTP synchronisation) | session start | warning over 2 s, refused over 60 s |

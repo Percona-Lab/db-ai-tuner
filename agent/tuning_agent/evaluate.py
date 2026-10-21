@@ -169,6 +169,16 @@ def warmup_check(runs, warmup):
                         "Results would favour settings that postpone flushing, purge or change-buffer merges.")
     else:
         out.update(adequate=True, text=f"Steady state reached in {len(sts) - len(bad)} of {len(sts)} calibration runs.")
+    # state that settled only inside the window (checkpoint age, buffer pool filling, ...): the end is steady, but the
+    # window's first part measured another regime. A warning with a suggested warm-up; the runs stay valid.
+    sig = [w for w in ((r.get("summary") or {}).get("warmup_signals") for r in runs) if w]
+    if sig and len(sig) * 2 > len(runs) and out.get("adequate"):
+        sug = max((w.get("suggest_warmup_s") or 0) for w in sig) or None
+        labels = sorted({x["label"] for w in sig for x in w["settling"]})
+        out.update(settling_runs=len(sig), suggest_warmup_s=sug,
+                   text=f"Steady by the end of the window, but in {len(sig)} of {len(runs)} calibration runs {', '.join(labels)} settled only "
+                        f"inside the measured window ({sig[0]['text'].split(': ', 1)[-1]})."
+                        + (f" Consider a warm-up of about {sug} s (now {warmup} s)." if sug and warmup else ""))
     return out
 
 
@@ -586,6 +596,8 @@ def _verdict(run, history, goal, noise):
     st = s.get("steady_state") or {}
     if st and not st.get("steady"):  # deferred work still accumulating at the end of the window: result may be optimistic
         details["not_steady"] = st.get("growing")
+    if s.get("warmup_signals"):  # state settled only inside the window: a warning about the warm-up, not about this change
+        details["warmup_short"] = s["warmup_signals"]
     if s.get("tput_dip_samples"):  # the average hides stalls inside the window
         details["unstable_within_run"] = {k: s.get(k) for k in ("tput_dip_samples", "tput_dip_longest_samples", "tput_samples",
                                                                 "tput_min_vs_median_pct", "blk_write_max_ms", "blk_flush_max_ms",

@@ -897,7 +897,10 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
         c.state.data["measurement"] = None
         c.state.save()
         raise Fail(why + " (run aborted; measure again)")
-    summary, inputs = collector.analyze_window(a_snap, b_snap, samples)
+    wu_s = ((extra_inputs or {}).get("bench") or {}).get("warmup_s")
+    # the last ~15% of the warm-up (at least a minute): an adequate warm-up ends in the state the window measures
+    tail = SampleStore(c.state.dir).window(a_snap["t"] - max(60, 0.15 * wu_s), a_snap["t"]) if wu_s else None
+    summary, inputs = collector.analyze_window(a_snap, b_snap, samples, wu_s, tail)
     try:  # who holds swapped-out memory at the end of the window
         top = hostinfo.swap_top()
         if top:
@@ -1616,6 +1619,9 @@ def _noise_plan(c, prof, runs, n):
     wu = evaluate.warmup_check(runs, int(prof.warmup) if str(prof.warmup).isdigit() else None)
     if wu:
         cal["warmup"] = wu
+        if wu.get("adequate") and wu.get("settling_runs"):
+            log(f"   WARNING: {wu['text']}")
+            c.event("warmup", wu["text"], wu)
         if not wu["adequate"]:
             log(f"   WARNING: {wu['text']}")
             c.event("warmup", wu["text"], wu)
