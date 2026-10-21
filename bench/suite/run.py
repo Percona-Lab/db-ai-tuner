@@ -233,7 +233,7 @@ def main():
     elif cmd == "status":
         d = os.path.join(OPS, "suite", run)
         for f in sorted(os.listdir(d)):
-            if f.endswith(".json"):
+            if f.endswith(".json") and f != "scorecard.json":
                 st = json.load(open(os.path.join(d, f)))
                 print(f"{st['cell']:<6} {st['status']:<8} session={st.get('session')} vms={len(st.get('vms', []))} "
                       f"deleted={len(st.get('deleted', []))} {(st.get('error') or '')[:100]}")
