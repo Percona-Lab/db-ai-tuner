@@ -913,10 +913,10 @@ def test_time_breakdown_drives_relevance():
     spin = bottleneck.breakdown({"mysqld_cpu_pct": 90, "duration_s": 300, "dbproc_runq_wait_threads": 0.3},
                                 {"cpu_profile": {"categories": {"spin / mutex wait": 35, "B-tree / row access": 40, "SQL executor": 25}}}, 8)
     assert spin[0]["name"].startswith("CPU: B-tree") or spin[0]["name"].startswith("CPU: spinning")
-    assert rel("spin-loops", spin) == 3 and rel("bp-grow", spin) == 0 and rel("thread-pool", spin) >= 2
+    assert rel("spin-loops", spin) >= 3 and rel("bp-grow", spin) == 0 and rel("thread-pool", spin) >= 2
     # half the time waiting for data file reads: buffer pool / read path first
     io = bottleneck.breakdown({"mysqld_cpu_pct": 10, "duration_s": 300}, {"wait_classes": {"data_io": 1500, "redo_io": 60}}, 8)
-    assert io[0]["name"] == "Waiting: data file I/O" and rel("bp-grow", io) == 3 and rel("spin-loops", io) <= 1  # 13% unprofiled CPU
+    assert io[0]["name"] == "Waiting: data file I/O" and rel("bp-grow", io) >= 3 and rel("spin-loops", io) <= 1  # 13% unprofiled CPU
     # the server mostly waits for the client: no server-side change gets credit for that time
     cl = bottleneck.breakdown({"mysqld_cpu_pct": 5, "duration_s": 300}, {"wait_classes": {"socket": 3000}}, 8)
     assert cl[0]["name"].startswith("Client / network") and rel("spin-loops", cl) == 0 and rel("bp-grow", cl) == 0
@@ -1457,11 +1457,40 @@ def test_commit_bound_from_measured_wait_despite_group_commit():
            "noise_pct": 19.7, "managed": {}}
     res = engine.run_engine(ctx)
     d = [x for x in res["diagnosis"] if x["type"] == "commit"]
-    assert d and d[0]["severity"] == "high" and "34 commits share one redo fsync" in d[0]["text"], res["diagnosis"]
+    assert d and d[0]["severity"] == "high" and "34 commits per redo flush" in d[0]["text"] and "grouping is complete" in d[0]["text"], res["diagnosis"]
     it = {i["id"]: i for i in res["items"]}
     assert "sweep-log-write-ahead" in it and {c["proposed"] for c in it["sweep-log-write-ahead"]["changes"]} <= {"4096", "16384"}
     adv = it["commit-storage-latency"]
     assert adv["kind"] == "advice" and "20.9 ms" in adv["rationale"] and "binary log is off" in adv["rationale"]
+    # 76% of the time on commits outranks everything else (relevance 4); measured run-queue time (9.7%) decides for the
+    # scheduling-delay levers instead of the diagnosis
+    assert it["sweep-log-write-ahead"]["relevance"] == 4
+    bd[0]["cpu_queue_share_pct"] = 9.7
+    summ2 = dict(summ, dbproc_runq_wait_threads=20.0, dbproc_threads=70.0, threads_running_avg=64.0)
+    it2 = {i["id"]: i for i in engine.run_engine(dict(ctx, summary=summ2, inputs=dict(OLTP[1], time_breakdown=bd)))["items"]}
+    tp = it2.get("thread-pool")
+    assert tp is None or (tp.get("relevance") or 0) <= 1, tp and (tp.get("relevance"), tp.get("addresses"))
+
+
+def test_group_commit_efficiency_achieved_vs_possible():
+    # batches far below the commits waiting: the grouping loses, so a delay sized from the waiters is worth measuring
+    from tuning_agent.engine import group_commit
+    bd = [{"name": "Waiting: commit - redo flush", "threads": 800.0, "tags": ["commit"], "share_pct": 70.0}]
+    s = {"tps": 20000.0, "log_fsyncs_per_s": 1000.0, "threads_running_avg": 1000.0}
+    g = group_commit(s, {}, bd)
+    assert g["batch"] == 20.0 and g["waiters"] == 800.0 and not g["complete"] and g["of_in_flight_pct"] == 2, g
+    g2 = group_commit({"tps": 1288.0, "log_fsyncs_per_s": 37.7, "threads_running_avg": 64.75},
+                      {}, [{"name": "Waiting: commit - redo flush", "threads": 34.5, "tags": ["commit"]}])
+    assert g2["complete"] and round(g2["batch"]) == 34, g2
+    ctx = {"goal": "tps", "policy": "safe", "os_tuning": False, "os_facts": {}, "hw": HW, "flavor": "percona", "version": (8, 4, 11),
+           "variables": dict(VARS, log_bin="ON", binlog_group_commit_sync_delay="0", binlog_group_commit_sync_no_delay_count="0"),
+           "summary": dict(OLTP[0], tps=20000.0, log_fsyncs_per_s=1000.0, threads_running_avg=1000.0, disk_w_await_ms=0.8),
+           "inputs": dict(OLTP[1], time_breakdown=bd), "history": [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}],
+           "noise_pct": 2.0, "managed": {}}
+    it = {i["id"]: i for i in engine.run_engine(ctx)["items"]}["group-commit-delay"]
+    ch = {c["variable"]: c["proposed"] for c in it["changes"]}
+    assert ch["binlog_group_commit_sync_no_delay_count"] == "800" and 100 <= int(ch["binlog_group_commit_sync_delay"]) <= 2000, ch
+    assert "only 2% of the waiting commits" in it["rationale"], it["rationale"]
 
 if __name__ == "__main__":
     fails = 0

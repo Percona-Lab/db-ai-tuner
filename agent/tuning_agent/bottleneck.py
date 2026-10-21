@@ -167,11 +167,11 @@ def acted_on(relieves, parts):
 
 
 def relevance(relieves, parts):
-    """(0..3, matched component names): the share of database time a change can act on."""
+    """(0..4, matched component names): the share of database time a change can act on (4: most of it, >= 60%)."""
     if not parts:
         return None, []
     rel = specific(relieves, parts)
     hit = [p for p in parts if rel & set(p["tags"]) and "network" not in p["tags"]]
     share = sum(p["share_pct"] for p in hit)
-    score = 3 if share >= 30 else 2 if share >= 15 else 1 if share >= 5 else 0
+    score = 4 if share >= 60 else 3 if share >= 30 else 2 if share >= 15 else 1 if share >= 5 else 0
     return score, [f"{p['name']} ({p['share_pct']:.0f}%)" for p in hit]

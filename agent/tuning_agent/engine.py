@@ -168,6 +168,41 @@ def bp_round(v, n, up=False):
     return max(unit, k * unit)
 
 
+def group_commit(s, inp, breakdown):
+    """Group commit efficiency: the achieved batch (commits per redo fsync) against what was possible - the threads
+    waiting for a commit flush (all of them can join the next one) and, as the ceiling, the transactions in flight.
+    Complete grouping (batch ~ waiters) leaves the flush latency as the limit; batches far below the waiters mean the
+    grouping itself loses (group commit settings can help). None without the counters."""
+    commits = s.get("tps") or 0
+    lf = s.get("log_fsyncs_per_s") or (inp.get("db_rates") or {}).get("log_fsyncs")
+    if not commits or not lf:
+        return None
+    batch = commits / lf
+    waiters = sum(p.get("threads") or 0 for p in breakdown or [] if "commit" in (p.get("tags") or ()) and str(p.get("name", "")).startswith("Waiting"))
+    in_flight = s.get("threads_running_avg") or s.get("threads_connected_avg")
+    out = {"batch": round(batch, 1), "redo_fsyncs_per_s": round(lf, 1), "commits_per_s": round(commits, 1),
+           "flush_interval_ms": round(1000.0 / lf, 1), "in_flight": round(in_flight, 1) if in_flight else None}
+    if waiters >= 1:
+        out["waiters"] = round(waiters, 1)
+        out["of_waiters_pct"] = round(min(100.0, 100.0 * batch / waiters))
+    if in_flight:
+        out["of_in_flight_pct"] = round(min(100.0, 100.0 * batch / in_flight))
+    out["complete"] = bool(waiters >= 1 and batch >= 0.7 * waiters)
+    return out
+
+
+def gc_text(g):
+    t = f"{g['batch']:.0f} commits per redo flush ({g['redo_fsyncs_per_s']:.1f} flushes/s, one every {g['flush_interval_ms']:.0f} ms)"
+    if g.get("waiters"):
+        t += f", {g['waiters']:.0f} threads waiting at commit"
+    if g.get("in_flight"):
+        t += f", {g['in_flight']:.0f} in flight"
+    if g.get("waiters"):
+        t += (": grouping is complete (every waiting commit joins the next flush), so the flush time is the limit" if g["complete"] else
+              f": batches hold only {g['of_waiters_pct']}% of the waiting commits - the grouping itself loses")
+    return t
+
+
 def diagnose(ctx):
     """Classify the bottleneck of the last run."""
     s = ctx.get("summary") or {}
@@ -279,10 +314,12 @@ def diagnose(ctx):
     lf = s.get("log_fsyncs_per_s") or ((inp.get("db_rates") or {}).get("log_fsyncs")) or fsyncs
     if commit_share > noise and not any(d["type"] == "commit" for d in out):
         w_ms = max(s.get("disk_w_await_ms") or 0, s.get("disk_flush_await_ms") or 0)
+        g = group_commit(s, inp, ctx.get("breakdown"))
         add("commit", "high" if commit_share >= 50 else "medium",
             f"Commit-bound: {commit_share:.0f}% of the threads' time waits for commits (redo / binary log flush)"
-            + (f"; each write takes {w_ms:.1f} ms" if w_ms else "") + (f"; {tps / lf:.0f} commits share one redo fsync ({lf:.1f}/s)" if lf and tps else "") + ".",
-            {"commit_wait_share_pct": round(commit_share, 1), "disk_w_await_ms": s.get("disk_w_await_ms"), "log_fsyncs_per_s": lf, "tps": tps})
+            + (f"; each write takes {w_ms:.1f} ms" if w_ms else "") + (f". Group commit: {gc_text(g)}" if g else "") + ".",
+            {"commit_wait_share_pct": round(commit_share, 1), "disk_w_await_ms": s.get("disk_w_await_ms"), "log_fsyncs_per_s": lf, "tps": tps,
+             "group_commit": g})
     # CPU profile (perf sampling of a slice of the run): which kind of work burns the database's CPU
     cp = (inp.get("cpu_profile") or {}).get("categories") or {}
     if cp and busy >= 50:
@@ -777,26 +814,37 @@ def recommend(ctx):
                   {"Handler_read_key_per_s": key_reads, "Select_full_join_per_s": rates.get("Select_full_join")}, impact=2, confidence=1)
     commit_diag = any(d["type"] == "commit" for d in ctx.get("diagnosis") or [])
     w_ms = max(s.get("disk_w_await_ms") or 0, s.get("disk_flush_await_ms") or 0)
-    if have_run and commit_diag and w_ms >= 5:
+    gc0 = group_commit(s, inp, ctx.get("breakdown"))
+    if have_run and commit_diag and w_ms >= 5 and not (gc0 and gc0.get("waiters") and not gc0["complete"]):  # loose grouping: tune it first
         why = ("the drive's write cache is off" if v.get("os:disk_write_cache") == "OFF" else
                "the binary log is off, so there is no binlog group commit to tune" if v.get("log_bin") == "OFF" else "")
         b.add("commit-storage-latency", "Commits wait for slow storage writes",
               [], f"Each write to the data device takes {w_ms:.1f} ms (fast SSD: well under 1 ms) and commits wait for it"
-              + (f"; {why}" if why else "") + ". Group commit already shares flushes "
-              f"({(s.get('tps') or 0) / max(s.get('log_fsyncs_per_s') or (inp.get('db_rates') or {}).get('log_fsyncs') or s.get('data_fsyncs') or 1, 1):.0f} commits per redo fsync); what remains is the storage: a drive with "
+              + (f"; {why}" if why else "") + "." + (f" Group commit: {gc_text(gc0)}." if gc0 else "")
+              + " What remains is the storage: a drive with "
               "power-loss protection, the drive write cache (a durability trade-off without it), a separate fast device for the "
               "redo log, or relaxing durability (innodb_flush_log_at_trx_commit = 2). Server settings cannot make the device faster.",
               {"disk_w_await_ms": s.get("disk_w_await_ms"), "disk_flush_await_ms": s.get("disk_flush_await_ms"),
                "data_fsyncs": s.get("data_fsyncs"), "tps": s.get("tps"), "log_bin": v.get("log_bin"),
                "disk_write_cache": v.get("os:disk_write_cache")}, impact=3, confidence=2, kind="advice")
     if have_run and wtype in ("oltp-write", "mixed"):
-        if v.get("log_bin") == "ON" and "binlog_group_commit_sync_delay" in v and _int(v, "binlog_group_commit_sync_delay") == 0 \
-                and (s.get("fsyncs_per_trx") or 0) > 0.8 and (s.get("threads_running_avg") or 0) >= 4:
-            b.add("group-commit-delay", "Grow binlog commit groups", [("binlog_group_commit_sync_delay", "200"),
-                                                                       ("binlog_group_commit_sync_no_delay_count", "16")],
-                  f"{s.get('fsyncs_per_trx'):.2f} fsyncs per transaction with {s.get('threads_running_avg'):.0f} running threads: waiting up to 200 µs "
-                  "lets more transactions share one binlog fsync. Durability unchanged; may add latency at low concurrency. Experiment.",
-                  {"fsyncs_per_trx": s.get("fsyncs_per_trx"), "threads_running_avg": s.get("threads_running_avg")}, impact=2, confidence=1)
+        gc = group_commit(s, inp, ctx.get("breakdown"))
+        # worth it when the batches hold far fewer commits than are waiting (or fsyncs per transaction stay high): a short
+        # wait lets the waiting commits join; with complete grouping it only adds latency
+        loose = (gc and gc.get("waiters") and not gc["complete"] and gc["waiters"] >= 4) or (
+            not (gc and gc.get("waiters")) and (s.get("fsyncs_per_trx") or 0) > 0.8 and (s.get("threads_running_avg") or 0) >= 4)
+        if v.get("log_bin") == "ON" and "binlog_group_commit_sync_delay" in v and _int(v, "binlog_group_commit_sync_delay") == 0 and loose:
+            w_ms = max(s.get("disk_w_await_ms") or 0, s.get("disk_flush_await_ms") or 0)
+            delay = nice_value("binlog_group_commit_sync_delay", int(min(2000, max(100, 250 * w_ms))) if w_ms else 200)  # a fraction of one flush
+            count = nice_value("binlog_group_commit_sync_no_delay_count", int(max(4, min(1000, (gc or {}).get("waiters") or 16))))  # flush early once the waiters joined
+            b.add("group-commit-delay", "Grow binlog commit groups", [("binlog_group_commit_sync_delay", str(delay)),
+                                                                       ("binlog_group_commit_sync_no_delay_count", str(count))],
+                  (f"Group commit: {gc_text(gc)}. " if gc else f"{s.get('fsyncs_per_trx'):.2f} fsyncs per transaction with "
+                   f"{s.get('threads_running_avg'):.0f} running threads. ")
+                  + f"Waiting up to {delay} µs (or until {count} commits joined) lets more transactions share one flush. "
+                  "Durability unchanged; adds latency when the commits do not come. Experiment.",
+                  {"group_commit": gc, "fsyncs_per_trx": s.get("fsyncs_per_trx"), "threads_running_avg": s.get("threads_running_avg")},
+                  impact=2, confidence=1)
         # change buffering is a both-ways experiment like the adaptive hash index (and the default flipped: 8.4 none, 9.7 all):
         # it saves secondary-index page reads on writes, but costs merge work, buffer pool space and latching
         cb = str(v.get("innodb_change_buffering") or "").lower()
@@ -2014,8 +2062,17 @@ def run_engine(ctx):
             # evidence combines sources: a diagnosis from counters / system statistics counts unless this run's measured
             # time already covers that bottleneck (then its share decides)
             in_time = {t for p in ctx["breakdown"] for t in p["tags"]}
+            # waiting for a CPU is measured too (the off-CPU profile's run-queue share): it decides instead of the
+            # scheduling-delay diagnosis (session 194: thread pool ranked first on 'sched-delay' with 9.7% of time queued)
+            q = next((p.get("cpu_queue_share_pct") for p in ctx["breakdown"] if p.get("cpu_queue_share_pct") is not None), None)
+            if q is not None:
+                in_time.add("sched-delay")
             rd, md = relevance(it["id"], [d for d in ctx["diagnosis"] if d["type"] not in in_time or d["type"] in ALSO_FROM_DIAGNOSIS])
             rel, matched = max(rb or 0, rd or 0), mb + md
+            if q is not None and "sched-delay" in MECHANISMS[it["id"]][0]:
+                rq = 4 if q >= 60 else 3 if q >= 30 else 2 if q >= 15 else 1 if q >= 5 else 0
+                if rq > rel:
+                    rel, matched = rq, matched + [f"Waiting for a CPU ({q:.0f}%)"]
         if it["id"] not in MECHANISMS and it.get("acts_on_tags") and ctx["breakdown"]:
             # a bundle (or an analysed suggestion) acts on what its members act on
             rel, matched = bottleneck.relevance(it["acts_on_tags"], ctx["breakdown"])
