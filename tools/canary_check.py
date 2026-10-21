@@ -83,8 +83,8 @@ def main():
     # 3) every improvement confirmed by a repeat (or the budget ended right after it)
     unconf = []
     for r in hist:
-        if r["verdict"] != "improved":
-            continue
+        if r["verdict"] != "improved" or (r.get("evaluation") or {}).get("rejudged_unconfirmed"):
+            continue  # promoted by a later, tighter threshold: flagged unconfirmed and never kept (checked in 4)
         m = re.match(r"exp#(\d+) ", r["label"])
         if m and any(x["label"].startswith(f"exp#{m.group(1)} ") and "(confirm)" in x["label"] for x in hist):
             continue  # a sweep point the sweep did not pick: the chosen point was confirmed

@@ -1575,6 +1575,15 @@ def _reevaluate(c, sess):
         v, ev = evaluate.verdict(r, sess["runs"][:i], sess["goal"], noise)
         # what the verdict does not recompute stays: the hypothesis this run tested and its outcome
         ev = dict(ev, **{k: (r.get("evaluation") or {})[k] for k in KEEP_ON_REJUDGE if k in (r.get("evaluation") or {})})
+        if v in ("improved", "efficiency-gain") and r.get("verdict") not in ("improved", "efficiency-gain") and i + 1 < len(sess["runs"]):
+            # promoted only because the threshold tightened later (canary #146 run 7: +3.0% within ±4.07% at the time,
+            # beyond ±2.07% at the end): a single run the session moved on from - not kept until a repeat confirms it
+            same = [x for x in sess["runs"] if evaluate.config_key(x.get("managed")) == evaluate.config_key(r.get("managed"))
+                    and x.get("verdict") not in evaluate.EXCLUDED]
+            if len(same) < 2:
+                ev = dict(ev, confirmed=False, rejudged_unconfirmed=True,
+                          note=f"Beyond the threshold only after it tightened to ±{(noise or {}).get('noise_pct')}%; measured once, "
+                               "not kept until a repeat confirms it.")
         if v != r.get("verdict") or ev != r.get("evaluation"):
             changed.append((r["seq"], r.get("verdict"), v))
             r["verdict"], r["evaluation"] = v, ev
