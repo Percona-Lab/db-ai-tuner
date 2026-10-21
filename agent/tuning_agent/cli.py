@@ -615,7 +615,10 @@ def _measure_start(c, label=None, notes=None, warmed=False):
         w2 = f"mysqld restarted {up}s ago: caches may still be cold (use `measure run --warmup auto`)"
         log("WARNING: " + w2)
         warn = (warn + "; " if warn else "") + w2
-    seq = len(sess["runs"]) + 1
+    # numbers are never reused: an aborted run keeps its number on the server (#162 had two runs "2")
+    seq = max(len(sess["runs"]), int(sess.get("last_seq") or 0)) + 1
+    sess["last_seq"] = seq
+    c.state.set("session", sess)
     pending = c.state.get("pending_changes") or []
     managed = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
     label = label or ("initial" if seq == 1 and not managed else f"run-{seq}")
@@ -2310,7 +2313,13 @@ def cmd_autotune(a):
     if not sess.get("noise"):
         log(f"== calibration: {a.calibrate} runs of the current configuration")
         c.activity("calibrating", f"{a.calibrate} runs of the starting configuration to measure noise")
-        runs = []
+        # calibration runs of this configuration from an earlier, interrupted autotune (an aborted run, a restarted
+        # harness) count: the calibration continues instead of starting over at 1/3 (#162)
+        key = evaluate.config_key({k: v["value"] for k, v in c.state.get("managed", {}).items()})
+        runs = [r for r in c.session()["runs"] if str(r.get("label") or "").startswith("baseline")
+                and evaluate.config_key(r.get("managed")) == key]
+        if runs:
+            log(f"   continuing the calibration: {len(runs)} run(s) of this configuration already measured")
         extra = 0
         while len([r for r in runs if r.get("verdict") not in evaluate.EXCLUDED]) < a.calibrate:
             run, _ = _bench_run(c, prof, f"baseline ({len(runs) + 1}/{a.calibrate + extra})")
