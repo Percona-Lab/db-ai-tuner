@@ -946,13 +946,14 @@ def agent_event(body: dict = Body(...), key=Depends(auth.agent_key)):
 @app.post("/api/v1/agent/sessions")
 def agent_session_start(body: dict = Body(...), key=Depends(auth.agent_key)):
     e = agent_env(body.get("environment_id"), key)
-    # results only say something about the engine build that produced them: refuse stale agents (all 11 sessions of
-    # 2026-10-20 ran builds older than the fixes they were meant to exercise)
+    # results say something about the engine build that produced them: an agent older than the server's build is
+    # warned (the harness updates at the earliest opportunity) and the session is recorded as run on a stale agent (the
+    # learner weighs it like pre-fix evidence) - never refused: a deploy must not break anyone's next session
     have = str(body.get("agent_version") or "").partition("+")[2]
     want = _agent_build()
-    if want not in ("", "unknown") and have != want and not body.get("allow_stale_agent"):
-        raise HTTPException(409, f"agent build {have or 'unknown'} differs from the server's {want}: update the agent "
-                                 f"(curl -fsSL {PUBLIC_URL}/install.sh | bash) or start the session with --allow-stale-agent")
+    stale = want not in ("", "unknown") and have != want
+    warning = (f"agent build {have or 'unknown'} differs from the server's {want}: update the agent at the earliest "
+               f"opportunity (curl -fsSL {PUBLIC_URL}/install.sh | bash); this session is recorded as run on an outdated agent") if stale else None
     goal = body.get("goal") if body.get("goal") in ("tps", "latency") else "tps"
     store.ex("UPDATE tsessions SET status='abandoned', ended=? WHERE env_id=? AND status='active'", (now(), e["id"]))
     n = store.q1("SELECT COUNT(*) n FROM tsessions WHERE env_id=?", (e["id"],))["n"] + 1
@@ -967,7 +968,7 @@ def agent_session_start(body: dict = Body(...), key=Depends(auth.agent_key)):
     if body.get("study"):
         study = study_get_or_create(key["user_id"], body["study"], goal, body.get("workload"))
         store.ex("UPDATE tsessions SET study_id=? WHERE id=?", (study["id"], sid))
-    return {"session_id": sid, "name": name, "url": f"{PUBLIC_URL}/#/session/{sid}",
+    return {"session_id": sid, "name": name, "url": f"{PUBLIC_URL}/#/session/{sid}", "warning": warning,
             "study": {"id": study["id"], "name": study["name"], "url": f"{PUBLIC_URL}/#/study/{study['id']}"} if study else None}
 
 

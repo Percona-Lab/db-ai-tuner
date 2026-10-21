@@ -131,6 +131,7 @@ def main():
     capped = [r["seq"] for r in hist if evaluate.client_saturated(r.get("summary") or {}) and r["verdict"] not in evaluate.EXCLUDED]
     check(not capped, f"no client-saturated run judged ({capped})")
     check(bool(s.get("agent_version")), f"agent build recorded for the session ({s.get('agent_version')})")
+    check("stale" not in str(s.get("agent_version") or ""), f"agent build matched the server's at session start ({s.get('agent_version')})")
 
     # 4d) no configuration measured over and over (AMD #142: a sweep re-ran one point 11 times)
     import collections

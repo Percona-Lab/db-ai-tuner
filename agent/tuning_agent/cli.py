@@ -547,6 +547,8 @@ def cmd_session(a):
                                         "agent_version": __version__, "allow_stale_agent": bool(getattr(a, "allow_stale_agent", False)),
                                         "noise_pct": a.noise_pct, "notes": a.notes, "workload": a.workload, "os_tuning": os_tuning,
                                         "study": a.study})
+        if r.get("warning"):
+            log("WARNING: " + r["warning"])
         warn = _maintenance_tasks(c)
         if warn:
             log("WARNING: scheduled tasks can disturb measurements: " + "; ".join(warn))
@@ -2778,7 +2780,7 @@ def main(argv=None):
     s.add_argument("--noise-pct", type=float, default=None, help="fixed noise threshold (default: 2%% until calibrated)")
     s.add_argument("--no-os-tuning", action="store_true", help="do not tune operating-system settings in this session")
     s.add_argument("--scope", help="what may be tuned: knobs,os (default); add 'filesystem' for filesystem experiments")
-    s.add_argument("--allow-stale-agent", action="store_true", help="start even when this agent's build differs from the server's (results then do not reflect the server's engine)")
+    s.add_argument("--allow-stale-agent", action="store_true", help="kept for older scripts: a build mismatch is only a warning now")
     s.add_argument("--study", help="study (name or id) this session belongs to; created if it does not exist. Studies compare "
                                    "sessions across environments (hardware scaling, minimum hardware for a target)")
     s.add_argument("--force", action="store_true")
