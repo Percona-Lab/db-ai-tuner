@@ -257,8 +257,10 @@ class OffCpu:
         stacks = []
         try:
             sym = Symbolizer(self.pid, self.cache_dir)
-        except Exception:  # noqa - unresolved frames only make the classification coarser
-            sym = None
+        except Exception as e:  # noqa - unresolved frames only make the classification coarser, but say so
+            sym, sym_err = None, f"{type(e).__name__}: {e}"
+        else:
+            sym_err = None
         for comm, kst, ust, ns in parse_offcpu(self.out or ""):
             if sym:
                 ust = sym.stack(ust)
@@ -268,9 +270,10 @@ class OffCpu:
             c = cats.setdefault(key, {"seconds": 0.0, "tags": list(tags)})
             c["seconds"] += ns / 1e9
             if fg:
-                stacks.append((ns, cat, _frames(ust, 6), _frames(kst, 3)))
+                stacks.append((ns, cat, _frames(ust, 12), _frames(kst, 6)))
         stacks.sort(reverse=True)
         out = {"window_s": round(window, 1), "foreground": {}, "background": {},
+               "symbolizer": sym.stats() if sym else {"error": sym_err or "not available"},
                "top_stacks": [{"category": c, "seconds": round(ns / 1e9, 3), "user": u, "kernel": k} for ns, c, u, k in stacks[:top]]}
         for (side, cat), c in sorted(cats.items(), key=lambda x: -x[1]["seconds"]):
             out[side][cat] = {"seconds": round(c["seconds"], 3), "threads": round(c["seconds"] / window, 3), "tags": c["tags"]}
@@ -291,72 +294,143 @@ def _frames(stack, n):
 
 # ---------------- symbols ----------------
 class Symbolizer:
-    """Resolves raw user addresses of the mysqld binary through its separate debug file (/usr/lib/debug/.build-id), which
-    bpftrace does not read. The symbol table is extracted once per build and cached next to the agent state."""
+    """Resolves raw user addresses that bpftrace leaves: mysqld through its separate debug file
+    (/usr/lib/debug/.build-id), shared libraries (libc: pread64, fsync, pthread_cond_wait, ...) through their dynamic
+    symbol tables. Symbol tables are extracted once per file build and cached next to the agent state."""
 
     def __init__(self, pid, cache_dir):
-        self.ranges, self.addrs, self.names = [], [], []
+        self.objs = []  # (lo, hi, base, addrs, names)
+        self.error = None
+        self.seen = self.resolved = 0
+        if not shutil.which("nm"):
+            self.error = "nm (binutils) not installed: frames stay unresolved"
+            return
         exe = os.path.realpath(f"/proc/{pid}/exe")
+        maps = {}
         try:
             for line in open(f"/proc/{pid}/maps"):
                 f = line.split()
-                if len(f) >= 6 and os.path.realpath(f[5]) == exe:
+                if len(f) >= 6 and f[5].startswith("/") and "x" in f[1]:
                     lo, hi = (int(x, 16) for x in f[0].split("-"))
-                    self.ranges.append((lo, hi, int(f[2], 16)))
+                    maps.setdefault(os.path.realpath(f[5]), []).append((lo, hi, int(f[2], 16)))
+        except OSError as e:
+            self.error = f"maps: {e}"
+            return
+        allmaps = {}
+        try:  # the load base comes from the lowest mapping of the file (any permissions)
+            for line in open(f"/proc/{pid}/maps"):
+                f = line.split()
+                if len(f) >= 6 and f[5].startswith("/"):
+                    lo = int(f[0].split("-")[0], 16)
+                    allmaps.setdefault(os.path.realpath(f[5]), []).append(lo - int(f[2], 16))
         except OSError:
-            return
-        if not self.ranges:
-            return
-        self.base = min(lo - off for lo, hi, off in self.ranges)
-        bid = _build_id(exe)
+            pass
+        for path, ranges in maps.items():
+            addrs, names = self._table(path, path == exe, cache_dir)
+            if not addrs:
+                continue
+            base = min(allmaps.get(path) or [lo - off for lo, hi, off in ranges])
+            for lo, hi, off in ranges:
+                self.objs.append((lo, hi, base, addrs, names))
+        if not self.objs:
+            self.error = self.error or "no symbol tables"
+
+    def _table(self, path, is_exe, cache_dir):
+        bid = _build_id(path)
         dbg = f"/usr/lib/debug/.build-id/{bid[:2]}/{bid[2:]}.debug" if bid else None
-        src = dbg if dbg and os.path.exists(dbg) else exe
-        cache = os.path.join(cache_dir, f"syms-{bid or 'nobuildid'}.tsv")
+        src, dyn = (dbg, False) if dbg and os.path.exists(dbg) else (path, not is_exe)
+        key = bid or re.sub(r"[^A-Za-z0-9_.-]", "_", path)
+        cache = os.path.join(cache_dir, f"syms-{key}{'-dyn' if dyn else ''}.tsv")
         if not os.path.exists(cache):
-            r = subprocess.run(["nice", "-n", "19", "nm", "-n", "-C", "--defined-only", src], capture_output=True, text=True, timeout=1800)
+            try:
+                cmd = ["nice", "-n", "19", "nm", "-n", "-C", "--defined-only"] + (["-D"] if dyn else []) + [src]
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            except Exception as e:  # noqa
+                self.error = f"nm {os.path.basename(src)}: {e}"
+                return [], []
             rows = []
             for l in r.stdout.splitlines():
                 parts = l.split(" ", 2)
-                if len(parts) == 3 and parts[1] in "tTwW":
+                if len(parts) == 3 and parts[1] in "tTwWiI":
                     rows.append(f"{parts[0]}\t{parts[2]}")
             if rows:
                 tmp = cache + ".tmp"
                 with open(tmp, "w") as fh:
                     fh.write("\n".join(rows))
                 os.replace(tmp, cache)
+        addrs, names = [], []
         try:
             for l in open(cache):
                 a, _, n = l.rstrip("\n").partition("\t")
-                self.addrs.append(int(a, 16))
-                self.names.append(n)
+                addrs.append(int(a, 16))
+                names.append(n)
         except OSError:
             pass
+        return addrs, names
 
     def resolve(self, frame):
         f = frame.strip()
-        if not f.startswith("0x") or not self.addrs:
+        if not f.startswith("0x"):
             return f
+        self.seen += 1
         try:
             a = int(f.split()[0], 16)
         except ValueError:
             return f
-        if not any(lo <= a < hi for lo, hi, _ in self.ranges):
-            return f
         import bisect
-        i = bisect.bisect_right(self.addrs, a - self.base) - 1
-        return self.names[i] if i >= 0 else f
+        for lo, hi, base, addrs, names in self.objs:
+            if lo <= a < hi:
+                i = bisect.bisect_right(addrs, a - base) - 1
+                if i >= 0:
+                    self.resolved += 1
+                    return names[i]
+        return f
 
     def stack(self, text):
         return "\n".join(self.resolve(l) for l in text.splitlines())
 
+    def stats(self):
+        return {"error": self.error, "hex_frames": self.seen, "resolved": self.resolved,
+                "resolved_pct": round(100.0 * self.resolved / self.seen, 1) if self.seen else None}
+
 
 def _build_id(path):
+    """GNU build ID of an ELF file, read from its PT_NOTE segments (no binutils needed: suite VMs had none, so the
+    debug symbols were never found and off-CPU stacks stayed as raw addresses)."""
+    import struct
     try:
-        out = subprocess.run(["readelf", "-n", path], capture_output=True, text=True, timeout=30).stdout
-        m = re.search(r"Build ID:\s*([0-9a-f]+)", out)
-        return m.group(1) if m else None
-    except Exception:
+        with open(path, "rb") as f:
+            hdr = f.read(64)
+            if hdr[:4] != b"\x7fELF":
+                return None
+            is64, le = hdr[4] == 2, hdr[5] == 1
+            e = "<" if le else ">"
+            if is64:
+                phoff, = struct.unpack(e + "Q", hdr[32:40]); phentsize, phnum = struct.unpack(e + "HH", hdr[54:58])
+            else:
+                phoff, = struct.unpack(e + "I", hdr[28:32]); phentsize, phnum = struct.unpack(e + "HH", hdr[42:46])
+            for i in range(phnum):
+                f.seek(phoff + i * phentsize)
+                ph = f.read(phentsize)
+                ptype, = struct.unpack(e + "I", ph[:4])
+                if ptype != 4:  # PT_NOTE
+                    continue
+                if is64:
+                    off, = struct.unpack(e + "Q", ph[8:16]); size, = struct.unpack(e + "Q", ph[32:40])
+                else:
+                    off, = struct.unpack(e + "I", ph[4:8]); size, = struct.unpack(e + "I", ph[16:20])
+                f.seek(off)
+                data, pos = f.read(size), 0
+                while pos + 12 <= len(data):
+                    namesz, descsz, ntype = struct.unpack(e + "III", data[pos:pos + 12])
+                    name = data[pos + 12:pos + 12 + namesz]
+                    dpos = pos + 12 + ((namesz + 3) & ~3)
+                    if ntype == 3 and name.rstrip(b"\0") == b"GNU":
+                        return data[dpos:dpos + descsz].hex()
+                    pos = dpos + ((descsz + 3) & ~3)
+    except (OSError, struct.error):
         return None
+    return None
 
 
 DBG_PACKAGES = (("percona-server-server", "percona-server-dbg"), ("mysql-server-core", "mysql-server-core-dbgsym"),
@@ -366,6 +440,10 @@ DBG_PACKAGES = (("percona-server-server", "percona-server-dbg"), ("mysql-server-
 def ensure_debug_symbols(log=print, min_free_gb=20):
     """Debug symbols for mysqld (internal InnoDB functions in CPU / off-CPU profiles). Installed once when the package is
     available and the root disk keeps min_free_gb free; otherwise profiles use the exported symbols only."""
+    if not shutil.which("nm") and shutil.which("apt-get"):  # the symbolizer reads symbol tables with nm (binutils)
+        log("installing binutils (symbol tables for the profiles) ...")
+        subprocess.run(["apt-get", "install", "-yq", "binutils"], capture_output=True, timeout=600,
+                       env=dict(os.environ, DEBIAN_FRONTEND="noninteractive"))
     exe = shutil.which("mysqld") or "/usr/sbin/mysqld"
     bid = _build_id(exe) if os.path.exists(exe) else None
     if not bid or os.path.exists(f"/usr/lib/debug/.build-id/{bid[:2]}/{bid[2:]}.debug") or not shutil.which("apt-get"):

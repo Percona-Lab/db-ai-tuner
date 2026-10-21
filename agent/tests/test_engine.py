@@ -1154,6 +1154,21 @@ def test_buffer_pool_size_kept_exact_and_mismatch_unreliable():
     assert v == "unreliable" and "51539607552" in ev["note"]
 
 
+def test_cpu_profile_categories():
+    # suite r1: pfs_spawn_thread (root of every connection thread) booked unmatched stacks as performance_schema (15-30%
+    # instead of 2-7%); kernel psi_* (pressure stall info) too
+    from tuning_agent.cpuprof import category
+    root = ["handle_connection", "pfs_spawn_thread", "start_thread"]
+    assert category(["Table_cache::get_table", "open_table", "mysql_execute_command"] + root) == "table open / cache"
+    assert category(["mysql_execute_command", "dispatch_command"] + root) == "statement dispatch"
+    assert category(["sp_head::execute"] + root) == "stored procedures"
+    assert category(["psi_group_change", "psi_task_switch", "__schedule"]) == "scheduler / futex"
+    assert category(["insert_events_statements_history", "pfs_end_statement_vc", "dispatch_command"]) == "performance_schema"
+    assert category(["unknown_function"] + root) == "other"
+    from tuning_agent.probes import _build_id
+    assert _build_id(sys.executable) is None or len(_build_id(sys.executable)) >= 16
+
+
 def test_round_values():
     from tuning_agent.knowledge import nice_number, roundness
     assert nice_number("innodb_io_capacity", 1072) == 1000 and nice_number("innodb_io_capacity", 1500) == 1500

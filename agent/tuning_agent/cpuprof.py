@@ -25,17 +25,24 @@ import time
 CATEGORIES = (  # (category, regex on one frame) - frames are checked from the leaf upwards, first match wins
     ("spin / mutex wait", r"ut_delay|PolicyMutex|TTASEventMutex|spin_and_try|rw_lock_[xs]_lock_(spin|func)|sync_array|::spin|lock_word|Spin_lock"),
     ("memory allocator", r"^(malloc|free|calloc|realloc|_int_malloc|_int_free|cfree|operator new|operator delete|je_|tc_|mi_|arena_|tcache)"),
-    ("performance_schema", r"^(pfs_|PFS_|psi_|PSI_|start_(mutex|rwlock|cond|statement|stage)_wait|insert_events_|aggregate_)|pfs_.*_v[0-9]"),
+    # performance_schema: its own code only - not pfs_spawn_thread (the root of every connection thread: everything that
+    # matched nothing else used to land here, 15-30% instead of 2-7%) and not the kernel's psi_* (pressure stall info)
+    ("performance_schema", r"^(pfs_(?!spawn_thread)|PFS_|PSI_|insert_events_|aggregate_(thread|all)|find_or_create_digest|start_(mutex|rwlock|cond|statement|stage)_wait)|pfs_.*_v[0-9]|_noop$"),
     ("compression / checksums", r"crc32|ut_crc|zlib|deflate|inflate|lz4|zstd|buf_calc_page|page_zip"),
     ("parser / optimizer", r"MYSQLparse|my_sql_parser|THD::sql_parser|JOIN::optimize|Optimize_table_order|make_join_plan|find_best_ref|test_quick_select|Item::fix_fields|setup_fields|Query_block::prepare|bind_fields"),
     ("redo / commit", r"^log_|mtr_t::commit|mtr_commit|trx_commit|ha_commit|log_buffer|redo"),
     ("row locks", r"^lock_rec|^lock_table|lock_sys|RecLock|lock_clust|lock_sec"),
     ("buffer pool", r"buf_page_get|buf_LRU|buf_flush|buf_pool|buf_read|Buf_fetch|buf_block"),
     ("B-tree / row access", r"row_search|btr_cur|btr_pcur|page_cur|rec_get_offsets|cmp_dtuple|row_sel|row_ins|row_upd|row_purge|Row_sel|row_mysql"),
-    ("SQL executor", r"Iterator::Read|Query_expression::execute|do_select|evaluate_join|handler::ha_|ha_innobase::|Item_.*::val_"),
+    ("table open / cache", r"open_table|Table_cache|open_tables|close_thread_tables|mysql_lock_tables|^MDL_|MDL_context|MDL_lock"),
+    ("stored procedures", r"^sp_|sp_head::|sp_instr|sp_lex_instr|sp_rcontext"),
+    ("charset / collation", r"my_strnxfrm|my_strnncoll|_uca_|my_ismbchar|my_well_formed|my_charpos|utf8mb4|my_mb_wc"),
+    ("SQL executor", r"Iterator::Read|Query_expression::execute|do_select|evaluate_join|handler::ha_|ha_innobase::|Item_.*::val_|Field_.*::(val_|store)|Protocol_.*::(store|send)"),
+    ("statement dispatch", r"dispatch_command|do_command|mysql_execute_command|Prepared_statement|launch_hook|Session_sysvars_tracker|check_event_subscribers|THD::send_|Sql_cmd_"),
+    ("TLS encryption", r"^(SSL_|EVP_|ssl3_|tls13_|aesni_|gcm_|ChaCha20|Poly1305)|libssl|libcrypto"),
     ("network / protocol", r"^(vio_|net_|my_net|tcp_|sock_|inet_|__sys_(send|recv)|ip_|dev_queue|napi_|net_rx|__netif)"),
     ("disk I/O (kernel)", r"io_submit|blk_|ext4_|xfs_|btrfs_|zfs|nvme|scsi|iomap|filemap_|fsync|__x64_sys_(pwrite|pread|fdatasync)"),
-    ("scheduler / futex", r"futex|schedule|__switch_to|finish_task_switch|pick_next_task|try_to_wake_up|ttwu"),
+    ("scheduler / futex", r"futex|schedule|__switch_to|finish_task_switch|pick_next_task|try_to_wake_up|ttwu|^psi_(group_change|task_switch|task_change|account_irqtime|flags_change)"),
     ("memory management (kernel)", r"handle_mm_fault|do_page_fault|exc_page_fault|clear_page|compact_zone|khugepaged|folio|lru_|shrink_|swap"),
 )
 _CAT_RE = [(c, re.compile(r)) for c, r in CATEGORIES]
@@ -49,8 +56,14 @@ def short(sym):
     return s[:120] or "[unknown]"
 
 
+# thread roots: on every stack, they say nothing about where the time went
+_ROOT = re.compile(r"^(pfs_spawn_thread|handle_connection|start_thread|clone3?|__clone3?|thread_start|std::thread::_State|mysqld_main|main)$")
+
+
 def category(frames):
     for f in frames:  # leaf first
+        if _ROOT.match(short(f)):
+            continue
         for c, r in _CAT_RE:
             if r.search(f):
                 return c
