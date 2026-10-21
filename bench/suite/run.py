@@ -73,6 +73,7 @@ def create(st, role, typ):
                                               "tags": ["aituner", f"suite-{VERSION}"], "authorized_keys": [key],
                                               "root_pass": secrets.token_urlsafe(24), "booted": True})
     alias = f"su-{st['cell'].lower()}-{role}"
+    _forget_host(alias, d["ipv4"][0])
     with open(os.path.join(OPS, "ssh_config"), "a") as f:
         f.write(f"\nHost {alias}\n  HostName {d['ipv4'][0]}\n  User root\n  IdentityFile ~/aituner/ops/keys/at_key\n"
                 f"  UserKnownHostsFile ~/aituner/ops/known_hosts\n  StrictHostKeyChecking accept-new\n  ServerAliveInterval 30\n")
@@ -83,6 +84,23 @@ def create(st, role, typ):
             return alias
         time.sleep(15)
     raise RuntimeError(f"{label}: no ssh")
+
+
+def _forget_host(alias, ip):
+    """A VM of an earlier run may have used this alias (ssh takes the first matching block) and Linode reuses IPs (an
+    old host key then fails verification): drop both before the new VM is added. r1: HC-2's client setup went to
+    another cell's server through a stale alias."""
+    p = os.path.join(OPS, "ssh_config")
+    lines = open(p).read().splitlines()
+    out, skip = [], False
+    for line in lines:
+        if line.startswith("Host "):
+            skip = line.split()[1:] == [alias]
+        if not skip:
+            out.append(line)
+    with open(p, "w") as f:
+        f.write("\n".join(out) + "\n")
+    subprocess.run(["ssh-keygen", "-q", "-R", ip, "-f", os.path.join(OPS, "known_hosts")], capture_output=True)
 
 
 def fetch_logs(st, alias):
