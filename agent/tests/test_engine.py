@@ -1274,6 +1274,20 @@ def test_memory_measured_by_mysql():
     assert any(x["type"] == "memory-growth" for x in d)
 
 
+def test_evidence_weight_by_server_closeness():
+    # the same wins count less when they come from another release series or another server variant
+    base = {"goal": "tps", "policy": "safe", "os_tuning": True, "os_facts": {"os:filesystem": "ext4"}, "hw": HW, "flavor": "percona",
+            "version": (8, 4, 11), "variables": dict(VARS), "summary": OLTP[0], "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}}
+    first = next(i for i in engine.run_engine(base)["items"] if not i.get("priority") and i["kind"] == "config")
+    good = {"n": 6, "wins": 6, "losses": 0}
+    def score(exp):
+        its = engine.run_engine({**base, "experience": {first["id"]: exp}})["items"]
+        return next(i for i in its if i["id"] == first["id"])["score"]
+    same, family, other = score(good), score(dict(good, scope="same server variant, other release series", weight=0.6)), \
+        score(dict(good, scope="other server variants", weight=0.3))
+    assert same > family > other > score({}), (same, family, other)
+
+
 def test_round_values():
     from tuning_agent.knowledge import nice_number, roundness
     assert nice_number("innodb_io_capacity", 1072) == 1000 and nice_number("innodb_io_capacity", 1500) == 1500

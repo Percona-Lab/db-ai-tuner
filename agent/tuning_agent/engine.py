@@ -592,7 +592,9 @@ def recommend(ctx):
     # runnable threads as the scheduler sees them: sampled Threads_running undercounts when the run queue is long (C3:
     # Threads_running 12-14 while ~500 threads waited for a CPU at 97% run-queue wait - the pool was never proposed)
     active = max(tr, (s.get("dbproc_runq_wait_threads") or 0) + min(cpus, busy / 100.0 * cpus))
-    if have_run and "thread_handling" in v and v.get("thread_handling") == "one-thread-per-connection" and \
+    # the pool exists only where thread_pool_size does (Percona Server, MariaDB, MySQL Enterprise): MySQL Community has
+    # thread_handling but not its pool-of-threads value
+    if have_run and "thread_handling" in v and "thread_pool_size" in v and v.get("thread_handling") == "one-thread-per-connection" and \
             (active > cpus * 4 and busy >= 70 or active > cpus and (s.get("dbproc_runq_wait_pct") or 0) >= 15):
         tr = active
         b.add("thread-pool", "Try the thread pool", [("thread_handling", "pool-of-threads")],
@@ -1940,8 +1942,9 @@ def run_engine(ctx):
             # for validated insights - the evidence gate above still decides whether the change runs at all
             it["insights"] = learned
             for x in learned:  # only results that repeated across sessions move the ranking, and only a little
-                if x["status"] == "repeated":
-                    it["score_prior"] = it.get("score_prior", 0) + (1 if x["direction"] == "helps" else -2 if x["direction"] == "hurts" else -1)
+                if x["status"] == "repeated":  # weighted by how close the insight's server was (variant, release series)
+                    it["score_prior"] = it.get("score_prior", 0) + float(x.get("weight", 1.0)) * (
+                        1 if x["direction"] == "helps" else -2 if x["direction"] == "hurts" else -1)
         if it["kind"] in ("config", "revert"):
             it["hypothesis"] = hypothesis(it, ctx)
             _retest_after_shift(it, ctx)
@@ -1972,7 +1975,7 @@ def run_engine(ctx):
             sc += 2 * it["relevance"] if it["relevance"] else (-3 if has_major else 0)
         if it.get("experience"):
             e = it["experience"]
-            w = 0.5 if e.get("scope") else 1.0  # evidence from other workloads / machine sizes counts half
+            w = e.get("weight", 0.5 if e.get("scope") else 1.0)  # less comparable evidence counts less (version, variant, conditions)
             sc += round(w * 3 * (e.get("wins", 0) - e.get("losses", 0)) / max(e["n"], 1) * min(e["n"], 3) / 3, 2)
             # strong penalties only from comparable evidence (same workload, CPU class and concurrency): contention-related
             # changes (thread pool, spin settings, concurrency limits) that lose on small low-concurrency boxes can win

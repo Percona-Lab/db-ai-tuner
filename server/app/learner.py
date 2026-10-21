@@ -20,6 +20,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -82,6 +83,8 @@ def db():
         for col, typ in (("hosts", "INTEGER"), ("caveats", "TEXT"), ("support_sessions", "INTEGER")):
             if col not in cols:
                 _alter(c, f"ALTER TABLE insights ADD COLUMN {col} {typ}")
+        if "series" not in {r[1] for r in c.execute("PRAGMA table_info(param_evidence)")}:
+            _alter(c, "ALTER TABLE param_evidence ADD COLUMN series TEXT")
         cols = {r[1] for r in c.execute("PRAGMA table_info(proposals)")}
         for col in ("proposal", "expected_effect"):
             if col not in cols:
@@ -110,6 +113,12 @@ def _uj(s, d=None):
 
 
 # ------------------------------------------------------------------------------------------------ session digests
+def _series(flavor, version):
+    """'percona 8.4', 'mariadb 11.4' (the same rule as main.server_series)."""
+    m = re.match(r"(\d+)\.(\d+)", str(version or ""))
+    return f"{str(flavor).lower()} {m.group(1)}.{m.group(2)}" if flavor and m else None
+
+
 def _cpu_class(n):  # the same classes as the experience endpoint (main.cpu_class)
     n = int(n or 0)
     return None if not n else "1-2" if n <= 2 else "3-8" if n <= 8 else "9-32" if n <= 32 else "33+"
@@ -157,6 +166,7 @@ def digest(sid):
             "agent_version": s["agent_version"] if "agent_version" in s.keys() else None,
             "conditions": {"workload": wl, "cpu_class": _cpu_class(hw.get("cpus")), "concurrency_class": _conc_class(conns),
                            "numa": ("multi-node" if int(hw.get("numa_nodes") or 1) > 1 else "uniform"),
+                           "series": _series((facts.get("db") or {}).get("flavor"), (facts.get("db") or {}).get("version")),
                            "cpus": hw.get("cpus"), "ram_gb": round((hw.get("ram_bytes") or 0) / 2 ** 30), "disk": hw.get("disk_model") or hw.get("disk")},
             "noise_pct": (cal or {}).get("noise_pct"), "baseline_time_breakdown": base_bd, "runs": out_runs}
 
@@ -440,7 +450,8 @@ def collect_param_evidence(c=None):
     goal changes against the parent configuration. Stored per session so it outlives the observations."""
     c = c or db()
     rows = store.q("SELECT r.session_id, s.agent_version, r.changes, r.verdict, r.evaluation, json_extract(r.inputs, '$.workload.type') wl, "
-                   "json_extract(e.facts, '$.hardware.cpus') cpus FROM runs r JOIN tsessions s ON s.id=r.session_id "
+                   "json_extract(e.facts, '$.hardware.cpus') cpus, json_extract(e.facts, '$.db.flavor') fl, json_extract(e.facts, '$.db.version') ver "
+                   "FROM runs r JOIN tsessions s ON s.id=r.session_id "
                    "JOIN environments e ON e.id=s.env_id WHERE r.status='done' AND r.verdict IN "
                    "('improved','efficiency-gain','neutral','regressed','efficiency-loss')")
     acc = {}
@@ -463,7 +474,7 @@ def collect_param_evidence(c=None):
         if len(vars_) != 1:
             continue  # several settings at once: the effect cannot be attributed to one of them
         var = vars_.pop()
-        a = acc.setdefault((var, r["session_id"]), {"wl": r["wl"], "cpu": _cpu_class(r["cpus"]), "legacy": 0 if r["agent_version"] and "stale" not in r["agent_version"] else 1,
+        a = acc.setdefault((var, r["session_id"]), {"wl": r["wl"], "cpu": _cpu_class(r["cpus"]), "series": _series(r["fl"], r["ver"]), "legacy": 0 if r["agent_version"] and "stale" not in r["agent_version"] else 1,
                                                     "runs": 0, "improved": 0, "regressed": 0, "neutral": 0, "deltas": []})
         a["runs"] += 1
         a["improved" if r["verdict"] in GOOD else "regressed" if r["verdict"] in BAD else "neutral"] += 1
@@ -476,12 +487,24 @@ def collect_param_evidence(c=None):
         if sid in present and (var, sid) not in acc:  # re-judged / flawed since; sessions gone from the observations keep theirs
             c.execute("DELETE FROM param_evidence WHERE variable=? AND session_id=?", (var, sid))
     for (var, sid), a in acc.items():
-        c.execute("INSERT OR REPLACE INTO param_evidence VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                  (var, sid, a["wl"], a["cpu"], a["runs"], a["improved"], a["regressed"], a["neutral"], _j(a["deltas"]), a["legacy"], time.time()))
+        c.execute("INSERT OR REPLACE INTO param_evidence(variable, session_id, workload, cpu_class, runs, improved, regressed, neutral, deltas, "
+                  "legacy, counted, series) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                  (var, sid, a["wl"], a["cpu"], a["runs"], a["improved"], a["regressed"], a["neutral"], _j(a["deltas"]), a["legacy"], time.time(),
+                   a.get("series")))
     return len(acc)
 
 
-def param_impact(workload=None, cpu_class=None, min_runs=3):
+def _closeness(row_series, series):
+    """Weight of evidence from a server of row_series for a server of series: same series 1, same variant 0.6 (also when
+    not recorded), another variant 0.3."""
+    if not series or not row_series:
+        return 1.0 if not series else 0.6
+    if row_series == series:
+        return 1.0
+    return 0.6 if row_series.split()[0] == series.split()[0] else 0.3
+
+
+def param_impact(workload=None, cpu_class=None, min_runs=3, series=None):
     """Measured impact per setting: high when experiments that changed it moved the goal beyond noise by a median of
     10% or more, medium for 3-10%, low when at least min_runs experiments never moved it beyond noise. Sessions from
     pre-fix builds count half. A summary of experiment data in the given conditions, not a law."""
@@ -491,8 +514,11 @@ def param_impact(workload=None, cpu_class=None, min_runs=3):
     args = [x for x in (workload, cpu_class) if x]
     agg = {}
     for r in c.execute(q, args):
-        w = LEGACY_WEIGHT if r["legacy"] else 1.0
-        a = agg.setdefault(r["variable"], {"runs": 0.0, "improved": 0.0, "regressed": 0.0, "neutral": 0.0, "decisive": [], "sessions": 0})
+        w = (LEGACY_WEIGHT if r["legacy"] else 1.0) * _closeness(r["series"] if "series" in r.keys() else None, series)
+        a = agg.setdefault(r["variable"], {"runs": 0.0, "improved": 0.0, "regressed": 0.0, "neutral": 0.0, "decisive": [], "sessions": 0,
+                                           "same_series_runs": 0.0})
+        if series and "series" in r.keys() and r["series"] == series:
+            a["same_series_runs"] += r["runs"]
         a["runs"] += r["runs"] * w
         a["improved"] += r["improved"] * w
         a["regressed"] += r["regressed"] * w
@@ -515,7 +541,7 @@ def param_impact(workload=None, cpu_class=None, min_runs=3):
             imp = "low"
         out[var] = {"impact": imp, "runs": round(a["runs"], 1), "sessions": a["sessions"], "improved": round(a["improved"], 1),
                     "regressed": round(a["regressed"], 1), "neutral": round(a["neutral"], 1), "median_abs_delta_pct": med,
-                    "max_abs_delta_pct": dec[-1] if dec else 0}
+                    "max_abs_delta_pct": dec[-1] if dec else 0, "same_series_runs": round(a["same_series_runs"], 1)}
     return out
 
 
@@ -550,7 +576,7 @@ def revalidate(c=None):
 
 
 # ------------------------------------------------------------------------------------------------ for agents and admins
-def matching(workload=None, cpu_class=None, concurrency_class=None, numa=None):
+def matching(workload=None, cpu_class=None, concurrency_class=None, numa=None, series=None):
     """Live insights whose conditions match (unset conditions match anything). NUMA: results from multi-node hosts are
     not served to uniform ones and back (memory placement changes what a setting does)."""
     out = []
@@ -564,10 +590,28 @@ def matching(workload=None, cpu_class=None, concurrency_class=None, numa=None):
             continue
         if numa and cond.get("numa") and cond["numa"] != numa:
             continue
+        # how close the insight's server was: the same variant and release series counts fully, the same variant in
+        # another series (or not recorded: insights before 2026-10-21) 0.6, another variant 0.3
+        cs = cond.get("series")
+        if not series or not cs:
+            weight, scope = (1.0, None) if not series else (0.6, "release series not recorded")
+        elif cs == series:
+            weight, scope = 1.0, None
+        elif cs.split()[0] == series.split()[0]:
+            weight, scope = 0.6, f"from {cs}"
+        else:
+            weight, scope = 0.3, f"from {cs}"
         out.append({"id": r["id"], "statement": r["statement"], "settings": _uj(r["settings"], []), "direction": r["direction"],
                     "conditions": cond, "status": r["status"], "confidence": r["confidence"], "support": r["support"],
                     "contradict": r["contradict"], "sessions": len(_uj(r["sessions"], []) or []), "hosts": r["hosts"],
-                    "caveats": r["caveats"]})
+                    "caveats": r["caveats"], "weight": weight, "scope": scope})
+    # the same statement from a closer server wins: drop less specific duplicates (same settings and direction)
+    best = {}
+    for x in out:
+        k = (repr(sorted((s_.get("variable"), str(s_.get("value"))) for s_ in x["settings"])), x["direction"])
+        if k not in best or x["weight"] > best[k]["weight"]:
+            best[k] = x
+    out = [x for x in out if best.get((repr(sorted((s_.get("variable"), str(s_.get("value"))) for s_ in x["settings"])), x["direction"])) is x]
     return out[:80]
 
 

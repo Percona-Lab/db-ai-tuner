@@ -1849,7 +1849,8 @@ def _engine_ctx(c, sess):
         wl = classify_workload(last.get("summary"), last.get("inputs")).get("type") if last.get("summary") else None
         conns = (last.get("summary") or {}).get("threads_connected_avg")
         q = (f"/experience?cpus={os.cpu_count()}&exclude_session={sess['id']}" + (f"&workload={wl}" if wl else "")
-             + (f"&conns={int(conns)}" if conns else "") + f"&numa_nodes={(c.hw() or {}).get('numa_nodes') or 1}")
+             + (f"&conns={int(conns)}" if conns else "") + f"&numa_nodes={(c.hw() or {}).get('numa_nodes') or 1}"
+             + f"&flavor={flavor}&version={ver}")
         ex = c.client.get(q)
         experience = ex.get("experience", {})
         insights = ex.get("insights") or []
@@ -1859,9 +1860,16 @@ def _engine_ctx(c, sess):
         except Exception:
             blocked = set()
         hyp_exp = {"similar": ex.get("hypotheses") or [], "all": ex.get("hypotheses_all") or []}
-        for rid, e in (ex.get("experience_all") or {}).items():  # thin same-class evidence: fall back to all sessions
-            if e.get("n", 0) >= 3 and (experience.get(rid) or {}).get("n", 0) < 2:
-                experience[rid] = dict(e, scope="other workloads / machine sizes / concurrency")
+        # evidence tiers, most specific first: this variant and release series in similar conditions (full weight), the same
+        # variant in other series, other variants (MySQL / Percona / MariaDB differ in options, defaults and behaviour),
+        # then every session. A tier is used only where the more specific ones have too little.
+        tiers = [(ex.get("experience_family") or {}, 2, 0.6, "same server variant, other release series"),
+                 (ex.get("experience_other_variant") or {}, 3, 0.3, "other server variants"),
+                 (ex.get("experience_all") or {}, 3, 0.3, "other workloads / machine sizes / concurrency")]
+        for data, need, weight, scope in tiers:
+            for rid, e in data.items():
+                if e.get("n", 0) >= need and (experience.get(rid) or {}).get("n", 0) < 2:
+                    experience[rid] = dict(e, scope=scope, weight=weight)
     except Exception as e:  # experience is a hint; never block a recommendation on it
         log(f"note: no experience data ({e})")
     b = (last.get("inputs") or {}).get("bench") or {}

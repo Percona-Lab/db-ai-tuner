@@ -1036,16 +1036,29 @@ def conc_class(n):
     return "1-16" if n <= 16 else "17-128" if n <= 128 else "129+"
 
 
+def server_series(flavor, version):
+    """'percona 8.4', 'mysql 9.7', 'mariadb 11.4': the variant and its release series (major.minor). Behaviour and
+    optimal settings can differ between series and variants, so evidence is weighed by how close its server was."""
+    if not flavor or not version:
+        return None
+    m = re.match(r"(\d+)\.(\d+)", str(version))
+    return f"{str(flavor).lower()} {m.group(1)}.{m.group(2)}" if m else None
+
+
 @app.get("/api/v1/agent/experience")
 def agent_experience(workload: str = None, cpus: int = None, conns: int = None, exclude_session: int = None, numa_nodes: int = None,
-                     key=Depends(auth.agent_key)):
-    """Outcomes of each recommendation in this account's earlier sessions with a similar workload, CPU class and concurrency."""
+                     flavor: str = None, version: str = None, key=Depends(auth.agent_key)):
+    """Outcomes of each recommendation in this account's earlier sessions with a similar workload, CPU class and concurrency,
+    in tiers of server closeness: the same variant and release series, the same variant in other series, other variants."""
     rows = store.q(
         "SELECT r.changes, r.verdict, r.evaluation, json_extract(r.inputs, '$.workload.type') AS wl, "
-        "json_extract(e.facts, '$.hardware.cpus') AS cpus, json_extract(r.summary, '$.threads_connected_avg') AS conns, r.session_id FROM runs r JOIN tsessions s ON s.id=r.session_id "
+        "json_extract(e.facts, '$.hardware.cpus') AS cpus, json_extract(r.summary, '$.threads_connected_avg') AS conns, r.session_id, "
+        "json_extract(e.facts, '$.db.flavor') AS fl, json_extract(e.facts, '$.db.version') AS ver FROM runs r JOIN tsessions s ON s.id=r.session_id "
         "JOIN environments e ON e.id=s.env_id WHERE e.user_id=? AND r.status='done' AND r.verdict IN "
         "('improved','efficiency-gain','neutral','regressed','efficiency-loss')", (key["user_id"],))
+    series = server_series(flavor, version)
     out, wide, hyp, hyp_wide = {}, {}, {}, {}
+    family, other = {}, {}  # similar conditions on the same variant in another series / on another variant
     for r in rows:
         if exclude_session and r["session_id"] == exclude_session:
             continue
@@ -1055,20 +1068,25 @@ def agent_experience(workload: str = None, cpus: int = None, conns: int = None, 
         _hypothesis_add(hyp_wide, r)
         if not similar:
             continue
+        rs = server_series(r["fl"], r["ver"])
+        if series and rs and rs != series:
+            _experience_add(family if (r["fl"] or "").lower() == str(flavor).lower() else other, r)
+            continue
         _experience_add(out, r)
         _hypothesis_add(hyp, r)
-    for d in (out, wide):
+    for d in (out, wide, family, other):
         for e in d.values():
             x = e.pop("deltas")
             e["mean_delta_pct"] = round(sum(x) / len(x), 2) if x else None
     try:  # learnings (learning.db) that hold in these conditions: leads and priors, never a replacement for evidence
         insights = learner.matching(workload, cpu_class(cpus) if cpus else None, conc_class(conns) if conns else None,
-                                    ("multi-node" if numa_nodes > 1 else "uniform") if numa_nodes else None)
-        params = learner.param_impact(workload, cpu_class(cpus) if cpus else None)
+                                    ("multi-node" if numa_nodes > 1 else "uniform") if numa_nodes else None, series)
+        params = learner.param_impact(workload, cpu_class(cpus) if cpus else None, series=series)
     except Exception:
         insights, params = [], {}
     return {"workload": workload, "cpu_class": cpu_class(cpus) if cpus else None, "concurrency_class": conc_class(conns) if conns else None,
-            "experience": out, "experience_all": wide, "hypotheses": list(hyp.values()), "hypotheses_all": list(hyp_wide.values()),
+            "series": series, "experience": out, "experience_family": family, "experience_other_variant": other, "experience_all": wide,
+            "hypotheses": list(hyp.values()), "hypotheses_all": list(hyp_wide.values()),
             "insights": insights, "parameters": params}
 
 
