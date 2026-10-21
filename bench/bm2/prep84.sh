@@ -8,7 +8,9 @@ tuning-agent session stop >/dev/null 2>&1 || true
 tuning-agent rollback --reset || true
 systemctl stop mysql || true
 apt-get purge -yq 'percona-server-*' 'percona-mysql-router*' >/dev/null || true
-rm -rf /var/lib/mysql /var/lib/mysql_base
+for d in /var/lib/mysql /var/lib/mysql_base; do  # a mounted data directory (file system experiments) is emptied, not removed
+  if mountpoint -q $d; then find $d -mindepth 1 -delete; else rm -rf $d; fi
+done
 mkdir -p /var/lib/mysql_base && chown mysql:mysql /var/lib/mysql_base 2>/dev/null || true
 percona-release enable-only $REPO release
 apt-get update -q >/dev/null

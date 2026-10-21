@@ -6,6 +6,7 @@ usage:
   run.py launch <run id> [cells...]     start every cell (default: the core cells) as a background process
   run.py cell <run id> <cell>           run one cell in the foreground (what launch starts)
   run.py status <run id>                one line per cell
+  run.py resume <run id> <cells...>     run failed cells again on the VMs they kept
 
 Needs LINODE_TOKEN in the environment (never printed). Docs: docs/battery/suite-v1.md.
 """
@@ -112,6 +113,35 @@ def cell(run, cell_id):
     try:
         srv = create(st, "db", CLASSES[cls][0])
         cli = create(st, "cli", CLASSES[cls][1]) if CLASSES[cls][1] else None
+        run_cell(st, srv, cli)
+    except Exception as e:  # noqa - the VMs stay for inspection
+        st["status"] = "failed"
+        st["error"] = str(e)[:800]
+        log(st, f"FAILED - VMs kept for inspection: {e}")
+    save(st)
+
+
+def resume(run, cell_id):
+    """Run a failed cell again on the VMs it kept (scripts copied again, setup and session from the start)."""
+    st = json.load(open(os.path.join(OPS, "suite", run, cell_id + ".json")))
+    vms = {v["role"]: v["alias"] for v in st.get("vms", [])}
+    st.pop("error", None)
+    st.pop("session", None)
+    st["status"] = "starting"
+    log(st, "resuming on the kept VMs")
+    try:  # the failed attempt's logs carry the failure markers the monitor looks for
+        ssh(vms["db"], "rm -f /root/bench/queue.log /root/bench/session-suite.log /root/bench/setup.log", check=True)
+        run_cell(st, vms["db"], vms.get("cli"))
+    except Exception as e:  # noqa
+        st["status"] = "failed"
+        st["error"] = str(e)[:800]
+        log(st, f"FAILED - VMs kept for inspection: {e}")
+    save(st)
+
+
+def run_cell(st, srv, cli):
+    run, cell_id = st["run"], st["cell"]
+    if True:
         key = ssh("atdb", "sed -n 's/^api_key *= *//p' /etc/tuning-agent/agent.ini", check=True).stdout.strip()
         ssh(srv, "mkdir -p /root/bench /opt", check=True)
         tools = subprocess.Popen(SSH + ["atdb", "tar czf - -C /opt HammerDB-6.0 mysqlclient go-tpc"], stdout=subprocess.PIPE)
@@ -158,11 +188,6 @@ def cell(run, cell_id):
         log(st, "finished")
         fetch_logs(st, srv)
         delete(st)
-    except Exception as e:  # noqa - the VMs stay for inspection
-        st["status"] = "failed"
-        st["error"] = str(e)[:800]
-        log(st, f"FAILED - VMs kept for inspection: {e}")
-    save(st)
 
 
 def main():
@@ -171,6 +196,13 @@ def main():
     cmd, run = sys.argv[1], sys.argv[2]
     if cmd == "cell":
         cell(run, sys.argv[3])
+    elif cmd == "resume":  # a failed cell, on its kept VMs, as a background process
+        for c in sys.argv[3:]:
+            subprocess.Popen([sys.executable, os.path.abspath(__file__), "resume-fg", run, c],
+                             stdout=open(os.path.join(OPS, "suite", run, c + ".log"), "a"), stderr=subprocess.STDOUT, start_new_session=True)
+            print("resumed", c)
+    elif cmd == "resume-fg":
+        resume(run, sys.argv[3])
     elif cmd == "launch":
         cells = sys.argv[3:] or [c for c, (t, _) in CELLS.items() if t == "core"]
         d = os.path.join(OPS, "suite", run)

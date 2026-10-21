@@ -5,6 +5,8 @@ W=$1; D=/root/bench/benchbase; T=$D/$W.xml.tpl
 [ -f "$T" ] || { echo "no template $T"; exit 2; }
 BENCH=$(sed -n 's/.*bb-bench: *\([a-z]*\).*/\1/p' "$T" | head -1)
 DB=$(sed -n 's#.*jdbc:mysql://[^/]*/\([A-Za-z0-9_]*\)?.*#\1#p' "$T" | head -1)
+# BenchBase connects as bb/bb over TCP to localhost (template URL); fresh hosts have no such user
+mysql -e "CREATE USER IF NOT EXISTS bb@'localhost' IDENTIFIED BY 'bb'; GRANT ALL ON *.* TO bb@'localhost'" || exit 2
 mysql -e "DROP DATABASE IF EXISTS $DB; CREATE DATABASE $DB"
 mkdir -p $D/load; C=$D/load/$W.xml
 sed -e "s/@WARMUP@/0/g" -e "s/@TIME@/10/g" -e "s/@TERMINALS@/1/g" "$T" > "$C"

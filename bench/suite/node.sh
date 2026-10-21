@@ -22,13 +22,20 @@ apt-get install -yq percona-server-server percona-server-dbg || { echo SETUPFAIL
 mkdir -p /etc/systemd/system/mysql.service.d && printf '[Service]\nLimitNOFILE=1048576\n' > /etc/systemd/system/mysql.service.d/limits.conf
 printf '[mysqld]\n# suite: listen on all interfaces for a separate client host; everything else is the server default\nbind_address = 0.0.0.0\n' > /etc/mysql/mysql.conf.d/suite.cnf
 systemctl daemon-reload; systemctl restart mysql
-HOSTS="localhost"; [ -n "$CLI" ] && HOSTS="localhost %"
+# benchmark users for local clients, and for the cell's own client host only (never '%': the passwords are public)
+HOSTS="localhost"; [ -n "$CLI" ] && HOSTS="localhost $CLI"
+# MySQL ports: loopback and the cell's client host only
+iptables -I INPUT -p tcp -m multiport --dports 3306,33060 ! -i lo -j DROP
+[ -n "$CLI" ] && iptables -I INPUT -p tcp -m multiport --dports 3306,33060 -s "$CLI" -j ACCEPT
+ip6tables -I INPUT -p tcp -m multiport --dports 3306,33060 ! -i lo -j DROP 2>/dev/null || true
 for h in $HOSTS; do
   mysql -e "CREATE USER IF NOT EXISTS sbtest@'$h' IDENTIFIED WITH caching_sha2_password BY 'sbtest'; GRANT ALL ON *.* TO sbtest@'$h';
             CREATE USER IF NOT EXISTS tpcc@'$h' IDENTIFIED BY 'tpcc'; GRANT ALL ON *.* TO tpcc@'$h';"
 done
 mysql -e "CREATE USER IF NOT EXISTS tpcc@'127.0.0.1' IDENTIFIED BY 'tpcc'; GRANT ALL ON *.* TO tpcc@'127.0.0.1'"
+set +x  # the API key stays out of the trace
 curl -fsSL https://50-116-44-237.sslip.io/install.sh | bash -s -- --api-key $KEY --name $NAME || { echo SETUPFAILED; exit 1; }
+set -x
 
 # ---------------------------------------------------------------------------------------------------- cell data + profile
 DB=$(hostname -I | awk '{print $1}')
