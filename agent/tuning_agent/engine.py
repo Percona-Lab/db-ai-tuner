@@ -271,6 +271,16 @@ def diagnose(ctx):
     if tps > 0 and fsyncs / tps > 0.5 and s.get("disk_await_ms", 0) > 0.5:
         add("commit", "medium", f"Commit-bound: {fsyncs:.0f} fsyncs/s for {tps:.0f} tps, disk await {s.get('disk_await_ms', 0):.2f} ms.",
             {"data_fsyncs": fsyncs, "tps": tps, "disk_await_ms": s.get("disk_await_ms")})
+    # measured time waiting for commits (off-CPU profile / wait instruments): group commit can bring fsyncs per transaction
+    # far below 1 (session 194: 0.04, 23 commits per fsync) while every commit still waits for a slow flush
+    commit_share = sum(p.get("share_pct") or 0 for p in ctx.get("breakdown") or [] if "commit" in (p.get("tags") or ()))
+    noise = float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0)
+    if commit_share > noise and not any(d["type"] == "commit" for d in out):
+        w_ms = max(s.get("disk_w_await_ms") or 0, s.get("disk_flush_await_ms") or 0)
+        add("commit", "high" if commit_share >= 50 else "medium",
+            f"Commit-bound: {commit_share:.0f}% of the threads' time waits for commits (redo / binary log flush)"
+            + (f"; each write takes {w_ms:.1f} ms" if w_ms else "") + (f"; {tps / fsyncs:.0f} commits share one fsync" if fsyncs and tps else "") + ".",
+            {"commit_wait_share_pct": round(commit_share, 1), "disk_w_await_ms": s.get("disk_w_await_ms"), "data_fsyncs": fsyncs, "tps": tps})
     # CPU profile (perf sampling of a slice of the run): which kind of work burns the database's CPU
     cp = (inp.get("cpu_profile") or {}).get("categories") or {}
     if cp and busy >= 50:
@@ -763,6 +773,20 @@ def recommend(ctx):
                   "the matching rows in primary-key order (fewer random page accesses). Off by default because the cost model is "
                   "conservative. Same results. Experiment.",
                   {"Handler_read_key_per_s": key_reads, "Select_full_join_per_s": rates.get("Select_full_join")}, impact=2, confidence=1)
+    commit_diag = any(d["type"] == "commit" for d in ctx.get("diagnosis") or [])
+    w_ms = max(s.get("disk_w_await_ms") or 0, s.get("disk_flush_await_ms") or 0)
+    if have_run and commit_diag and w_ms >= 5:
+        why = ("the drive's write cache is off" if v.get("os:disk_write_cache") == "OFF" else
+               "the binary log is off, so there is no binlog group commit to tune" if v.get("log_bin") == "OFF" else "")
+        b.add("commit-storage-latency", "Commits wait for slow storage writes",
+              [], f"Each write to the data device takes {w_ms:.1f} ms (fast SSD: well under 1 ms) and commits wait for it"
+              + (f"; {why}" if why else "") + ". Group commit already shares flushes "
+              f"({(s.get('tps') or 0) / max(s.get('data_fsyncs') or 1, 1):.0f} commits per fsync); what remains is the storage: a drive with "
+              "power-loss protection, the drive write cache (a durability trade-off without it), a separate fast device for the "
+              "redo log, or relaxing durability (innodb_flush_log_at_trx_commit = 2). Server settings cannot make the device faster.",
+              {"disk_w_await_ms": s.get("disk_w_await_ms"), "disk_flush_await_ms": s.get("disk_flush_await_ms"),
+               "data_fsyncs": s.get("data_fsyncs"), "tps": s.get("tps"), "log_bin": v.get("log_bin"),
+               "disk_write_cache": v.get("os:disk_write_cache")}, impact=3, confidence=2, kind="advice")
     if have_run and wtype in ("oltp-write", "mixed"):
         if v.get("log_bin") == "ON" and "binlog_group_commit_sync_delay" in v and _int(v, "binlog_group_commit_sync_delay") == 0 \
                 and (s.get("fsyncs_per_trx") or 0) > 0.8 and (s.get("threads_running_avg") or 0) >= 4:
@@ -1096,6 +1120,14 @@ def recommend(ctx):
             sweep("sweep-bp", "Sweep the buffer pool size", "innodb_buffer_pool_size", [fmt_size(mid), fmt_size(top)],
                   "The working set misses memory and RAM is free: measure how throughput responds to more buffer pool.",
                   {"bp_hit_pct": s.get("bp_hit_pct"), "mem_available": human_size(mem_avail)}, impact=3)
+    if have_run and "commit" in diag_types and "innodb_log_write_ahead_size" in v:
+        # redo writes padded to this size: smaller than the file system / device block costs a read-modify-write, larger
+        # writes more than needed per flush. Cheap, safe, powers of two.
+        wa = _int(v, "innodb_log_write_ahead_size", 8192)
+        vals = [str(x) for x in (4096, 16384) if x != wa]
+        sweep("sweep-log-write-ahead", "Sweep the redo write-ahead (padding) size", "innodb_log_write_ahead_size", vals,
+              f"Commits wait for redo writes: the write-ahead size ({wa} bytes now) decides how redo writes line up with the "
+              "file system and device blocks (read-modify-write when smaller).", {"innodb_log_write_ahead_size": wa})
     if have_run and "redo" in diag_types and cap:
         sweep("sweep-redo", "Sweep the redo log capacity", "innodb_redo_log_capacity", [fmt_size(cap * 2), fmt_size(cap * 4)],
               "Checkpoint pressure: measure 2x and 4x the redo capacity.", {"checkpoint_age_pct_max": ck})
@@ -1888,10 +1920,10 @@ ALSO_FROM_DIAGNOSIS = {"io-read", "io-flush"}  # status / OS evidence (read vs w
 def run_engine(ctx):
     ctx = dict(ctx)
     ctx["workload"] = classify_workload(ctx.get("summary"), ctx.get("inputs")) if ctx.get("summary") else {"type": None}
-    ctx["diagnosis"] = diagnose(ctx) if ctx.get("summary") else []
     # where the database's time goes (on CPU by profile category, waiting for CPU / I/O / locks / latches / the client)
     inp = ctx.get("inputs") or {}
     ctx["breakdown"] = inp.get("time_breakdown") or bottleneck.breakdown(ctx.get("summary"), inp, (ctx.get("hw") or {}).get("cpus"))
+    ctx["diagnosis"] = diagnose(ctx) if ctx.get("summary") else []
     items = recommend(ctx)
     items = apply_history(items, ctx.get("history") or [], (ctx.get("summary") or {}).get("swap_total_mb"))
     items = practice_bundle(items, ctx.get("history") or [])

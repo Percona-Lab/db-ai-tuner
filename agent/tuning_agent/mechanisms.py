@@ -40,6 +40,8 @@ MECHANISMS = {
     "change-buffer-off": (("io-flush", "cpu-bufpool", "concurrency"), "No change-buffer merges competing with foreground work or taking buffer pool pages."),
     "change-buffer": (("io", "io-read"), "Secondary index updates without reading the page."),
     "trx-commit-2": (("commit", "io"), "No fsync per commit."),
+    "sweep-log-write-ahead": (("commit", "redo"), "Redo writes aligned with the device block: no read-modify-write per flush."),
+    "commit-storage-latency": (("commit", "io"), "Faster or cached storage writes: each commit waits less for its flush."),
     "sync-binlog": (("commit", "io"), "No binlog fsync per commit group."),
     "doublewrite-off": (("io", "commit", "io-flush"), "Pages written once instead of twice."),
     "binlog-off": (("commit", "io", "cpu"), "No binary log writes, fsyncs or two-phase commit."),

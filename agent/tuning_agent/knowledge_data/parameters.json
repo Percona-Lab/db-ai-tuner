@@ -3814,13 +3814,18 @@
    "category": "redo",
    "description": "Redo write-ahead block size.",
    "impact": "low",
-   "mechanism_tags": [],
+   "mechanism_tags": [
+    "commit",
+    "redo"
+   ],
    "memory_cost": null,
    "precondition": null,
    "prior_source": "documentation",
    "response": null,
    "restart": null,
-   "rules": [],
+   "rules": [
+    "sweep-log-write-ahead"
+   ],
    "safety": "safe",
    "safety_note": null,
    "scope": "mysql",

@@ -1444,6 +1444,25 @@ def test_drive_write_cache_is_a_durability_tradeoff():
     from tuning_agent.knowledge import TRADEOFFS
     assert TRADEOFFS["os:disk_write_cache"][0]("ON") and not TRADEOFFS["os:disk_write_cache"][0]("OFF")
 
+
+def test_commit_bound_from_measured_wait_despite_group_commit():
+    # session 194 run 2888: 76.5% of thread time waiting for the redo flush, 23 commits per fsync (0.04 fsyncs/trx) and
+    # 21 ms writes; the fsyncs-per-transaction rule missed it, and no commit experiment was ranked
+    bd = [{"name": "Waiting: commit - redo flush", "threads": 34.5, "tags": ["commit"], "share_pct": 76.5},
+          {"name": "CPU: B-tree / row access", "threads": 1.3, "tags": ["cpu", "cpu-btree"], "share_pct": 3.0}]
+    summ = dict(OLTP[0], tps=1294.0, data_fsyncs=55.4, disk_w_await_ms=20.9, disk_await_ms=20.9)
+    ctx = {"goal": "tps", "policy": "safe", "os_tuning": True, "os_facts": {}, "hw": HW, "flavor": "percona", "version": (8, 4, 11),
+           "variables": dict(VARS, log_bin="OFF", innodb_log_write_ahead_size="8192"), "summary": summ,
+           "inputs": dict(OLTP[1], time_breakdown=bd), "history": [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}],
+           "noise_pct": 19.7, "managed": {}}
+    res = engine.run_engine(ctx)
+    d = [x for x in res["diagnosis"] if x["type"] == "commit"]
+    assert d and d[0]["severity"] == "high" and "23 commits share one fsync" in d[0]["text"], res["diagnosis"]
+    it = {i["id"]: i for i in res["items"]}
+    assert "sweep-log-write-ahead" in it and {c["proposed"] for c in it["sweep-log-write-ahead"]["changes"]} <= {"4096", "16384"}
+    adv = it["commit-storage-latency"]
+    assert adv["kind"] == "advice" and "20.9 ms" in adv["rationale"] and "binary log is off" in adv["rationale"]
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
