@@ -991,6 +991,26 @@ def recommend(ctx):
                   f"{human_size(new - bp)} more. Kept only if the goal improves and pages are not swapped back in heavily. Experiment.",
                   {"bp_hit_pct": s.get("bp_hit_pct"), "mem_available": human_size(mem_avail), "inactive_anon": human_size(cold),
                    "swap_free": human_size(swap_free), "swap_in": s.get("swap_in")}, impact=2, confidence=1)
+    # Swap as OS protection: without it (Scaleway hosts come with 0) memory pressure ends in an OOM kill of mysqld instead
+    # of slower pages, and every memory-using setting is sized against a hard wall. About 1x RAM (common practice), on the
+    # free disk; measured on its own and kept unless it costs throughput (a protective change, like the best practices).
+    # Memory settings measured before the swap state changed are measured again after it (apply_history).
+    swap_total = (s.get("swap_total_mb") or 0) * MiB
+    own_swap = _swapfile_bytes(v.get("os:swapfile"))
+    if have_run and ctx.get("os_tuning") and ram >= 2 * GiB and swap_total < ram * 0.9 and "os:swapfile" in v:
+        free = int((ctx.get("hw") or {}).get("disk_free_bytes") or 0)
+        size = (ram - (swap_total - own_swap)) // GiB * GiB
+        if free:
+            size = min(size, max(0, int((free - 2 * GiB) * 0.5)) // GiB * GiB)  # at most half of the free disk
+        if size >= GiB and size > own_swap:
+            b.add("best-practices-swap", "Add swap (about 1x RAM): memory pressure slows instead of OOM-killing mysqld",
+                  [("os:swapfile", fmt_size(size))],
+                  f"{'No swap' if not swap_total else human_size(swap_total) + ' of swap'} on a host with {human_size(ram)} RAM: when memory "
+                  "runs out the kernel kills mysqld instead of moving cold pages out, so memory settings are sized against a hard "
+                  f"wall. A {human_size(size)} swap file is protection, measured on its own and kept unless it costs throughput; "
+                  "memory settings measured before it are measured again with it.",
+                  {"swap_total": human_size(swap_total), "ram": human_size(ram), "disk_free": human_size(free) if free else None},
+                  impact=3 if not swap_total else 2, confidence=2)
     if have_run and diag_types & {"memory", "io"} and not swapping and mem_avail > 512 * MiB and bp:
         top = bp_round(v, min(ram * 0.80, bp + mem_avail - 512 * MiB))
         mid = bp_round(v, (bp + top) // 2)
@@ -1141,8 +1161,9 @@ def score(item, goal):
     return s
 
 
-def apply_history(items, history):
-    """Mark/skip items already tried."""
+def apply_history(items, history, swap_now_mb=None):
+    """Mark/skip items already tried. A memory-using setting tried while the swap state was different (no swap -> a swap
+    file of about 1x RAM, or back) is tried again: its best value depends on whether pressure means slower or killed."""
     tried = {}
     tried_ids = {}
     swept = {}  # variable -> last run of an agent sweep over it (screening skips points: the first value may never run)
@@ -1164,6 +1185,15 @@ def apply_history(items, history):
             p = prior[-1]
             it["tried_in_run"] = p.get("seq")
             it["tried_verdict"] = p.get("verdict")
+            swap_then = (p.get("summary") or {}).get("swap_total_mb")
+            from .memory import MEMORY_VARS
+            if swap_now_mb is not None and swap_then is not None and abs(swap_now_mb - swap_then) >= 1024 \
+                    and any(c["variable"] in MEMORY_VARS for c in it["changes"]):
+                it["retest"] = {"run": p.get("seq"), "swap_then_mb": swap_then, "swap_now_mb": swap_now_mb}
+                it["note"] = (f"Tried in run #{p.get('seq')} ({p.get('verdict')}) with {swap_then / 1024:.0f} GiB swap; now "
+                              f"{swap_now_mb / 1024:.0f} GiB: memory settings are measured again with the new swap state.")
+                out.append(it)
+                continue
             if p.get("verdict") in ("regressed", "neutral", "efficiency-loss"):
                 it["confidence"] = 0
                 it["note"] = f"Already tried in run #{p.get('seq')} ({p.get('verdict')})."
@@ -1637,7 +1667,7 @@ def run_engine(ctx):
     inp = ctx.get("inputs") or {}
     ctx["breakdown"] = inp.get("time_breakdown") or bottleneck.breakdown(ctx.get("summary"), inp, (ctx.get("hw") or {}).get("cpus"))
     items = recommend(ctx)
-    items = apply_history(items, ctx.get("history") or [])
+    items = apply_history(items, ctx.get("history") or [], (ctx.get("summary") or {}).get("swap_total_mb"))
     items = practice_bundle(items, ctx.get("history") or [])
     items = stack_small_wins(items, ctx)
     items = items + per_query_hints(ctx.get("history") or [], ctx["variables"])
@@ -1740,7 +1770,7 @@ def run_engine(ctx):
             # Battery 1: 33 sweep runs, no real gain; without a corroborated mechanism start with two points only
             it["sweep"]["values"] = it["sweep"]["values"][:2]
             it["score_note"] = "sweep without a matching bottleneck: 2 points, lower priority"
-        if it["id"] in (ctx.get("failed") or []):
+        if it["id"] in (ctx.get("failed") or []) and not it.get("retest"):
             it["confidence"] = 0
             it["note"] = (it.get("note", "") + " Failed earlier in this session (apply/restart failure or run too slow).").strip()
         # experience prior: how did this change do in earlier sessions with a similar workload?
@@ -1769,6 +1799,16 @@ def run_engine(ctx):
         # priority only for returning to measured configurations; everything else - the best-practice bundle included -
         # ranks by the evidence for what it acts on
         it["score"] = 100 if it.get("priority") and not it.get("no_mechanism") and not it.get("practice") else sc
+    # no swap at all: the swap state is a precondition for sizing memory (pressure means OOM without it, slower pages
+    # with it) - memory-setting experiments wait until the swap experiment ran (then they are measured with it)
+    sw = next((i for i in items if i["id"] == "best-practices-swap" and i.get("confidence", 0) > 0), None)
+    if sw and not (ctx.get("summary") or {}).get("swap_total_mb"):
+        from .memory import MEMORY_VARS
+        for it in items:
+            if it is not sw and it["kind"] == "config" and any(c["variable"] in MEMORY_VARS for c in it["changes"]) \
+                    and it["score"] >= sw["score"] and it["score"] < 100:
+                it["score"] = sw["score"] - 0.5
+                it["score_note"] = "after the swap experiment: memory settings are sized with swap in place"
     items.sort(key=lambda i: (i["safety"] == "trade-off" and i["kind"] != "revert", -i["score"]))
     for n, it in enumerate(items, 1):
         it["rank"] = n

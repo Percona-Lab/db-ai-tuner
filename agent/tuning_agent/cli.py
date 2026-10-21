@@ -2364,9 +2364,11 @@ def cmd_autotune(a):
         c.activity("choosing next experiment", "diagnosis and recommendation")
         res = _recommend(c, sess)
         nxt = res.get("next")
-        if nxt in (sess.get("failed_recs") or []):
+        # done for this session - unless the engine asks for it again (memory settings after the swap state changed)
+        blocked = set(sess.get("failed_recs") or []) - {i["id"] for i in res["items"] if i.get("retest")}
+        if nxt in blocked:
             alt = next((i for i in res["items"] if i["kind"] in ("config", "revert") and i.get("confidence", 0) > 0
-                        and i["id"] not in (sess.get("failed_recs") or []) and (i.get("safety") == "safe" or a.tradeoffs)), None)
+                        and i["id"] not in blocked and (i.get("safety") == "safe" or a.tradeoffs)), None)
             if not alt:
                 log(f"== {nxt} failed before and nothing else is left; stopping")
                 break
@@ -2377,7 +2379,7 @@ def cmd_autotune(a):
         if a.tradeoffs and measured >= int(a.max_runs * 0.7) and (not item or item.get("safety") == "safe" and item["kind"] != "revert"):
             tried = {r["label"].split(" ")[0] for r in sess["runs"]}
             trade = next((i for i in res["items"] if i.get("safety") == "trade-off" and i["kind"] == "config" and i.get("confidence", 0) > 0
-                          and i["id"] not in tried and i["id"] not in (sess.get("failed_recs") or [])), None)
+                          and i["id"] not in tried and i["id"] not in blocked), None)
             if trade:
                 log(f"== trade-off budget: {measured} of {a.max_runs} runs used, switching to trade-off experiments")
                 item, nxt = trade, trade["id"]

@@ -1068,6 +1068,34 @@ def test_flat_sweep_retested_after_bottleneck_shift():
     assert it["confidence"] == 1 and it["retest"]["share_now_pct"] == 31.0
 
 
+def test_swap_protection_and_memory_retest():
+    # Scaleway hosts come with 0 swap: with OS tuning the agent tests a swap file (~1x RAM, capped by free disk) as a
+    # protective change, and memory settings tried before the swap state changed are tried again
+    def items(swap_mb, free=200 * GiB, os_tuning=True):
+        ctx = {"goal": "tps", "policy": "safe", "os_tuning": os_tuning, "os_facts": {"os:filesystem": "ext4"},
+               "hw": dict(HW, ram_bytes=16 * GiB, disk_free_bytes=free), "flavor": "percona", "version": (8, 4, 11),
+               "variables": dict(VARS, **{"os:swapfile": "0"}), "summary": dict(OLTP[0], swap_total_mb=swap_mb),
+               "inputs": OLTP[1], "history": [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}],
+               "noise_pct": 2.0, "managed": {}}
+        return {i["id"]: i for i in engine.run_engine(ctx)["items"]}
+    it = items(0).get("best-practices-swap")
+    assert it and it["changes"][0]["proposed"] == "16G" and it["impact"] == 3, it and it["changes"]
+    assert items(0, free=12 * GiB)["best-practices-swap"]["changes"][0]["proposed"] == "5G"  # half of the free disk
+    assert "best-practices-swap" not in items(16 * 1024) and "best-practices-swap" not in items(0, os_tuning=False)
+    assert engine.is_practice_run({"label": "best-practices-swap"})  # kept unless it regresses
+    from tuning_agent.memory import MEMORY_VARS
+    ranked = items(0)
+    mem = [i for i in ranked.values() if i["kind"] == "config" and any(c["variable"] in MEMORY_VARS for c in i["changes"])]
+    assert all(i["score"] < ranked["best-practices-swap"]["score"] for i in mem), [(i["id"], i["score"]) for i in mem]
+    hist = [{"seq": 6, "label": "bp-grow", "verdict": "neutral", "summary": {"swap_total_mb": 0},
+             "changes": [{"variable": "innodb_buffer_pool_size", "old": "8G", "new": "10G", "source": "rec:bp-grow"}]}]
+    mk = lambda: {"id": "bp-grow", "kind": "config", "confidence": 2,  # noqa: E731
+                  "changes": [{"variable": "innodb_buffer_pool_size", "current": "8G", "proposed": "10G"}]}
+    assert engine.apply_history([mk()], hist, 0)[0]["confidence"] == 0                      # same swap state: tried
+    again = engine.apply_history([mk()], hist, 16384)[0]
+    assert again["confidence"] == 2 and again["retest"]["swap_now_mb"] == 16384           # swap added: try again
+
+
 def test_round_values():
     from tuning_agent.knowledge import nice_number, roundness
     assert nice_number("innodb_io_capacity", 1072) == 1000 and nice_number("innodb_io_capacity", 1500) == 1500
