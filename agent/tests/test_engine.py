@@ -1114,6 +1114,30 @@ def test_over_budget_beyond_swap_is_a_crash_not_a_tradeoff():
     assert without["confidence"] == 0 and "OOM-killed" in without["note"]
 
 
+def test_copy_on_write_check():
+    # reflink clones of the pristine copy are always flagged; a copy-on-write file system can be intended by the profile
+    from tuning_agent import cowcheck
+    import tempfile
+    calls = {"findmnt": "zfs tank/mysql", "filefrag": ""}
+    saved = cowcheck._run
+    try:
+        cowcheck._run = lambda cmd, timeout=20: calls.get(cmd[0], "")
+        r = cowcheck.check(tempfile.mkdtemp())
+        assert r["fs"] == "zfs" and r["fs_issues"] and r["issues"] == r["fs_issues"]
+        d = tempfile.mkdtemp()
+        open(os.path.join(d, "t.ibd"), "wb").write(b"x" * 4096)
+        calls.update(findmnt="xfs /dev/sda2", filefrag="   0:        0..       0:      34816..     34816:      1:             last,shared,eof\n")
+        r = cowcheck.check(d)
+        assert r["shared_files"] == 1 and not r["fs_issues"] and "reflink" in r["issues"][0]
+        calls["filefrag"] = "   0:        0..       0:      34816..     34816:      1:             last,eof\n"
+        assert cowcheck.check(d)["issues"] == []
+    finally:
+        cowcheck._run = saved
+    run = {"summary": {"cow_issues": ["x share extents"]}}
+    assert any("copy-on-write" in t for t in evaluate.disturbances([run, run]))
+    assert not any("copy-on-write" in t for t in evaluate.disturbances([{"summary": {"cow_intended": ["ZFS"]}}] * 2))
+
+
 def test_round_values():
     from tuning_agent.knowledge import nice_number, roundness
     assert nice_number("innodb_io_capacity", 1072) == 1000 and nice_number("innodb_io_capacity", 1500) == 1500

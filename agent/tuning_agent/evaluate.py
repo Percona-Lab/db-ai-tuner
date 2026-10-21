@@ -659,6 +659,9 @@ def disturbances(runs):
         out.append(f"mysqld has {max(s['dbproc_swap_mb'] for s in sw):.0f} MB in swap and pages are read back during the window "
                    f"(up to {max(s.get('swap_in') or 0 for s in sw):.0f} pages/s in {len(sw)} of {len(ss)} runs"
                    + (f", connection threads waited on swap-in {max(share):.1f}% of their off-CPU time" if share else "") + ")")
+    cow = sorted({t for s in ss for t in (s.get("cow_issues") or [])})
+    if cow:  # first writes copy blocks: runs start slow and speed up (rising throughput, biased towards postponed writes)
+        out.append("copy-on-write under the data: " + "; ".join(cow))
     # storage latency moving run after run at a similar load (SSD garbage collection, cloud volume throttling / burst
     # credits): reads and writes apart, as either path alone can drift
     for k, what in (("disk_r_await_ms", "data reads"), ("disk_w_await_ms", "writes"), ("blk_flush_p99_ms", "device flushes (p99)")):

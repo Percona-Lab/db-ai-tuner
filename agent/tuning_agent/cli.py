@@ -813,6 +813,10 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
         pass
     if extra_inputs:
         inputs.update(extra_inputs)
+        if (extra_inputs.get("cow") or {}).get("issues"):
+            summary["cow_issues"] = extra_inputs["cow"]["issues"]
+        if (extra_inputs.get("cow") or {}).get("intended"):
+            summary["cow_intended"] = extra_inputs["cow"]["intended"]
         for k, v in (extra_inputs.get("probe") or {}).items():
             summary["probe_" + k] = v
         # storage tail latency of the data device (eBPF block histogram): read / write / flush p99, worst I/O, slow I/Os
@@ -1156,6 +1160,29 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
                     log(f"WARNING after reset: {var} is {now_vars.get(var)}, configured {m.get('value')}")
         except Exception:
             pass
+    cow = None
+    if prof.reset or not sess.get("runs"):
+        # copy-on-write under the data: a reflink / snapshot clone of the pristine copy makes every first write copy its
+        # block - runs start slow and speed up, favouring settings that postpone writes. Checked on the host itself.
+        try:
+            from . import cowcheck
+            cow = cowcheck.check(c.datadir())
+            if prof.copy_on_write == "intended" and cow["fs_issues"]:
+                # measuring a copy-on-write file system on purpose: a note on the run, not a warning or noise source
+                cow["intended"] = cow["fs_issues"]
+                cow["issues"] = [t for t in cow["issues"] if t not in cow["fs_issues"]]
+                if not sess.get("cow_noted"):
+                    log(f"note: copy-on-write file system ({cow['fs']}) intended by the profile: its cost is part of the measurement")
+                    sess["cow_noted"] = True
+                    c.state.set("session", sess)
+            if cow["issues"] and (sess.get("cow_warned") != cow["issues"]):
+                for t in cow["issues"]:
+                    log("WARNING copy-on-write data: " + t)
+                sess["cow_warned"] = cow["issues"]
+                c.state.set("session", sess)
+                c.event("environment", "copy-on-write under the data directory: " + "; ".join(cow["issues"]), cow)
+        except Exception as e:  # noqa - never fail a run because of the check
+            log(f"copy-on-write check failed: {e}")
     env_probe = {}
     # environment check: during calibration only (its baseline), and again when the previous run showed unusual steal.
     # Between runs it mostly measured its own noise; steal is measured passively all the time.
@@ -1255,6 +1282,8 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
             goal_value = metrics[prof.goal_metric] * prof.goal_scale
             goal_src = f"benchmark:{prof.goal_metric}" + (f" x{prof.goal_scale:g}" if prof.goal_scale != 1 else "")
     extra = {"bench": {**prof.describe(), "requirements": requirements, "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:]}, "probe": env_probe}
+    if cow is not None:
+        extra["cow"] = cow
     if profiler:
         extra["cpu_profile"] = _finish_profile(c, profiler, t_meas0)
     if offcpu:
@@ -2754,6 +2783,11 @@ GUIDE = """tuning-agent workflow (for people and coding agents)
 Rules of thumb
   * Change one thing at a time; measure each configuration for the same duration under the same load.
   * Reset the data set between runs if the benchmark grows/changes data; let caches warm up before measuring.
+  * Restore it with a FULL copy (rsync -a, cp --reflink=never, a reload) - never a reflink / snapshot clone (cp --reflink,
+    ZFS / LVM thin snapshots, cloud volume snapshots, container overlay): the first write to every block copies it, runs
+    start slow and speed up, and settings that postpone writes look better than they are. No copy-on-write under the
+    data (btrfs: chattr +C before loading). The agent checks the data files after each reset and warns.
+    More: https://github.com/Percona-Lab/db-ai-tuner/blob/main/docs/benchmarking.md
   * Re-measure the best and the baseline at the end: differences under the noise level (--noise-pct) are not real.
   * policy=safe never applies durability trade-offs (they are shown as advice); policy=benchmark may.
   * Pass --external key=value on measure stop to record benchmark-reported numbers (e.g. tps=, nopm=, latency=);

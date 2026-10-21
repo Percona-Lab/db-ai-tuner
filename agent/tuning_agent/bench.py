@@ -65,6 +65,10 @@ class Profile:
         self.season_min_hours = float(b.get("season_min_hours", str(min(1.0, self.season_hours))))
         self.season_slope = float(b.get("season_slope_pct_per_hour", "0.5"))  # steady: |trend| below this
         self.adaptive = b.get("adaptive_duration", "auto").lower() not in ("off", "false", "no", "0")
+        # copy_on_write = intended: the data lives on a copy-on-write file system on purpose (ZFS / btrfs in production) and
+        # its cost is part of what is measured - the agent records it as a note instead of warning / counting it as noise.
+        # A reflink / snapshot clone made by the data restore stays a harness artifact either way.
+        self.copy_on_write = b.get("copy_on_write", "avoid").strip().lower()
         self.max_duration = int(b["max_duration"]) if b.get("max_duration") else None
         self.base_duration = self.duration
         self.base_warmup = self.warmup
@@ -91,7 +95,7 @@ class Profile:
         return {"name": self.name, "profile": self.path, "reset": self.reset, "restart_before_run": self.restart_before_run,
                 "run": self.run, "warmup": self.warmup,
                 "duration": self.duration, "goal_metric": self.goal_metric, "metrics": list(self.metrics), "command": self.command(),
-                "data_state": self.data_state,
+                "data_state": self.data_state, "copy_on_write": self.copy_on_write,
                 "requires": self.requires}
 
     def window(self):
