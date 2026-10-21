@@ -61,7 +61,7 @@ def watchdog_scan():
     for e in envs:
         e = dict(e)
         silent = t - (e.get("last_seen") or 0)
-        if e.get("agent_state") == "stopped" and (e.get("agent_state_at") or 0) >= (e.get("last_seen") or 0):
+        if e.get("agent_state") in ("stopped", "shutdown") and (e.get("agent_state_at") or 0) >= (e.get("last_seen") or 0):
             continue  # stopped on purpose
         s = active.get(e["id"])
         if silent > 300 and (s or silent < 86400):
@@ -97,7 +97,7 @@ def watchdog_scan():
         last = max([r["started"] or 0 for r in runs] + [r["ended"] or 0 for r in runs] + [s["created"]])
         limit = max(3600, 3 * (typ_cycle or 0))
         silent = any(a["kind"] == "agent-silent" and a["env_id"] == env_id for a in alerts)  # the root cause is already reported
-        stopped = e["agent_state"] == "stopped" and (e["agent_state_at"] or 0) >= (e["last_seen"] or 0)
+        stopped = e["agent_state"] in ("stopped", "shutdown") and (e["agent_state_at"] or 0) >= (e["last_seen"] or 0)
         if act.get("source") != "agent" and not m and not silent and t - last > limit:
             alerts.append({"key": f"no-progress:{s['id']}", "kind": "no-progress", "severity": "medium" if stopped else "high",
                            "env_id": env_id, "session_id": s["id"],
@@ -185,8 +185,24 @@ def own_run(run_id, user_id):
 FLAVOR_NAMES = {"percona": "Percona Server", "mysql": "MySQL", "mariadb": "MariaDB", "pxc": "Percona XtraDB Cluster"}
 
 
+AUTO_ARCHIVE_S = 3 * 86400  # no contact for this long and no active session: archived automatically (back on the next report)
+
+
+def env_archived(e):
+    """(archived, how): 'manual' (archived by its owner, or the machine deleted by a study script), 'auto' (no contact
+    for AUTO_ARCHIVE_S and no active session: a deleted machine cannot say so), or (False, None)."""
+    if e["destroyed_at"]:
+        return True, "manual"
+    hold = e["archive_hold"] if "archive_hold" in e.keys() else None
+    if not hold and now() - (e["last_seen"] or e["created"] or 0) > AUTO_ARCHIVE_S \
+            and not store.q1("SELECT 1 FROM tsessions WHERE env_id=? AND status='active'", (e["id"],)):
+        return True, "auto"
+    return False, None
+
+
 def env_brief(e):
     f = store.uj(e["facts"], {}) or {}
+    archived, how = env_archived(e)
     hw, db = f.get("hardware", {}), f.get("db", {})
     return {
         "id": e["id"], "name": e["name"], "hostname": e["hostname"], "agent_version": e["agent_version"],
@@ -196,7 +212,8 @@ def env_brief(e):
         "cpus": hw.get("cpus"), "ram_bytes": hw.get("ram_bytes"), "disk": "HDD" if hw.get("disk_rotational") else "SSD",
         "data_bytes": db.get("data_bytes"), "cost_month": e["cost_month"] if "cost_month" in e.keys() else None,
         **{k: (e[k] if k in e.keys() else None) for k in ("cost_hourly", "provisioned_at", "destroyed_at", "plan", "agent_state", "agent_state_at")},
-        "cpu_model": hw.get("cpu_model"),
+        "cpu_model": hw.get("cpu_model"), "archived": archived, "archived_how": how,
+        "archived_at": e["destroyed_at"] if how == "manual" else (e["last_seen"] or e["created"] or 0) + AUTO_ARCHIVE_S if how == "auto" else None,
     }
 
 
@@ -513,6 +530,9 @@ def rename_environment(env_id: int, request: Request, body: dict = Body(...)):
         if f in body:
             c = body.get(f)
             store.ex(f"UPDATE environments SET {f}=? WHERE id=?", (float(c) if c not in (None, "") else None, env_id))
+    if "archived" in body:  # Archive / Unarchive: unarchiving also holds off the automatic archive until the agent reports again
+        store.ex("UPDATE environments SET destroyed_at=?, archive_hold=? WHERE id=?",
+                 (now() if body["archived"] else None, None if body["archived"] else 1, env_id))
     if "plan" in body:
         store.ex("UPDATE environments SET plan=? WHERE id=?", ((body.get("plan") or "")[:80] or None, env_id))
     return {"ok": True}
@@ -882,7 +902,7 @@ def agent_metrics(body: dict = Body(...), key=Depends(auth.agent_key)):
     c = store.conn()
     c.execute("BEGIN")
     c.executemany("INSERT OR REPLACE INTO metrics(env_id, ts, data) VALUES (?,?,?)", rows)
-    c.execute("UPDATE environments SET last_seen=?, agent_state='running' WHERE id=?", (now(), e["id"]))
+    c.execute("UPDATE environments SET last_seen=?, agent_state='running', archive_hold=NULL WHERE id=?", (now(), e["id"]))
     c.execute("COMMIT")
     return {"ok": True, "stored": len(rows)}
 
@@ -937,9 +957,11 @@ def session_activity(env, session_id):
 
 @app.post("/api/v1/agent/bye")
 def agent_bye(body: dict = Body(...), key=Depends(auth.agent_key)):
-    """The agent daemon was stopped on purpose (service stop): show 'agent stopped' instead of 'offline'."""
+    """The agent daemon was stopped on purpose: a service stop ('agent stopped') or the host shutting down ('host shut
+    down': a powered-off or deleted machine), instead of 'offline'."""
     e = agent_env(body.get("environment_id"), key)
-    store.ex("UPDATE environments SET agent_state='stopped', agent_state_at=? WHERE id=?", (now(), e["id"]))
+    store.ex("UPDATE environments SET agent_state=?, agent_state_at=? WHERE id=?",
+             ("shutdown" if body.get("host_shutdown") else "stopped", now(), e["id"]))
     return {"ok": True}
 
 

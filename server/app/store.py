@@ -100,6 +100,7 @@ MIGRATIONS = [
     ("environments", "provisioned_at", "REAL"),
     ("environments", "destroyed_at", "REAL"),
     ("environments", "plan", "TEXT"),
+    ("environments", "archive_hold", "INTEGER"),
     ("environments", "agent_state", "TEXT"),
     ("environments", "agent_state_at", "REAL"),
     ("hosts", "destroyed_at", "REAL"),

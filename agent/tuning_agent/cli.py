@@ -2992,7 +2992,11 @@ def cmd_daemon(a):
             time.sleep(0.5)
     try:  # stopped on purpose: tell the server, so the UI shows "agent stopped" rather than "offline"
         c.client.timeout = 5
-        c.client._call("POST", "/bye", {"environment_id": c.env_id()})  # one attempt: never delay the service stop
+        try:  # the whole host going down (power-off, deletion) rather than the service alone
+            st = subprocess.run(["systemctl", "is-system-running"], capture_output=True, text=True, timeout=2).stdout.strip()
+        except Exception:
+            st = ""
+        c.client._call("POST", "/bye", {"environment_id": c.env_id(), "host_shutdown": st == "stopping"})  # one attempt: never delay the stop
     except Exception:
         pass
 

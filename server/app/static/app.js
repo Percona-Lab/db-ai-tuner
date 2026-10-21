@@ -157,8 +157,9 @@ function activityLine(a) {
   return `<div style="font-size:12px;margin-top:3px"><span class="badge ${cls}" data-tip="${esc(tip)}" tabindex="0">${esc(a.phase)}</span> <span class="muted">${esc(a.detail || "")}${t}</span></div>`;
 }
 function envStatus(e) {
-  if (e.destroyed_at) return `<span class="badge plain" data-tip="Archived ${ago(e.destroyed_at)}: listed under All only. Its sessions and results are kept.">archived</span>`;
-  const stopped = e.agent_state === "stopped" && (e.agent_state_at || 0) >= (e.last_seen || 0);
+  if (e.archived) return `<span class="badge plain" data-tip="${e.archived_how === "auto" ? `No contact from the agent since ${ago(e.last_seen)} and no active session: archived automatically; back in the active list on the agent's next report.` : `Archived ${ago(e.archived_at)}.`} Listed under All; its sessions and results are kept." tabindex="0">archived</span>`;
+  const stopped = ["stopped", "shutdown"].includes(e.agent_state) && (e.agent_state_at || 0) >= (e.last_seen || 0);
+  if (stopped && e.agent_state === "shutdown") return `<span class="badge plain" data-tip="The host shut down ${ago(e.agent_state_at)} (powered off or deleted); the agent said goodbye on the way down. Archived automatically after 3 days without contact." tabindex="0">host shut down</span>`;
   if (e.online && !stopped) return '<span class="badge good">online</span>';
   if (stopped) return `<span class="badge plain" data-tip="The tuning-agent service was stopped on the host ${ago(e.agent_state_at)} (systemctl stop), not a loss of contact.">agent stopped</span>`;
   return `<span class="badge warn" data-tip="Last report from the agent ${ago(e.last_seen)}: host down, agent crashed or network problem.">offline · ${ago(e.last_seen)}</span>`;
@@ -171,11 +172,11 @@ async function envList() {
     <div class="card"><h3>No environment connected yet</h3><p>Install the agent on the database host to see it here.</p><a class="btn primary" href="#/connect">Connect an agent</a></div>`;
     return;
   }
-  const allEnvs = d.environments.slice().sort((a, b) => (!!a.destroyed_at - !!b.destroyed_at) || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+  const allEnvs = d.environments.slice().sort((a, b) => (!!a.archived - !!b.archived) || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
   let mode = "list", scope = "active";
   try { mode = localStorage.getItem("envView") || "list"; scope = localStorage.getItem("envScope") || "active"; } catch (e) { }
-  const nActive = allEnvs.filter(e => !e.destroyed_at).length;
-  let envs = scope === "all" ? allEnvs : allEnvs.filter(e => !e.destroyed_at);
+  const nActive = allEnvs.filter(e => !e.archived).length;
+  let envs = scope === "all" ? allEnvs : allEnvs.filter(e => !e.archived);
   $view.innerHTML = `<div class="row"><div><h1>Environments</h1><p class="sub">Database servers with a connected tuning-agent.</p></div><span class="spacer"></span>
     ${allEnvs.length > nActive ? `<div class="seg" role="group" aria-label="Show" id="scopeSeg"><button data-s="active">Active (${nActive})</button><button data-s="all">All (${allEnvs.length})</button></div>` : ""}
     <div class="seg" role="group" aria-label="View" id="viewSeg"><button data-v="list">List</button><button data-v="cards">Cards</button></div><a class="btn" href="#/connect">Connect another</a></div><div id="envs"></div>`;
@@ -207,14 +208,14 @@ async function envList() {
   box.parentElement.querySelectorAll("#viewSeg button").forEach(b => b.onclick = () => { mode = b.dataset.v; try { localStorage.setItem("envView", mode); } catch (e) { } draw(); });
   box.parentElement.querySelectorAll("#scopeSeg button").forEach(b => b.onclick = () => {
     scope = b.dataset.s; try { localStorage.setItem("envScope", scope); } catch (e) { }
-    envs = scope === "all" ? allEnvs : allEnvs.filter(e => !e.destroyed_at); draw();
+    envs = scope === "all" ? allEnvs : allEnvs.filter(e => !e.archived); draw();
   });
   draw();
   timers.push(setInterval(async () => {
     if (!document.getElementById("envs")) return;
     const d2 = await api("/api/environments"); const byId = Object.fromEntries(d2.environments.map(e => [e.id, e]));
     allEnvs.forEach((e, i) => { if (byId[e.id]) allEnvs[i] = byId[e.id]; });
-    envs = scope === "all" ? allEnvs : allEnvs.filter(e => !e.destroyed_at); draw();
+    envs = scope === "all" ? allEnvs : allEnvs.filter(e => !e.archived); draw();
   }, 15000));
 }
 
@@ -557,7 +558,7 @@ async function envPage(id) {
   const kv = db.key_variables || {};
   $view.innerHTML = `<div class="crumbs"><a href="#/">Environments</a> /</div>
   <div class="row"><h1>${esc(e.name)}</h1>${envStatus(e)}<span class="spacer"></span>
-  <button class="ghost owner" id="share">Share</button><button class="ghost" id="rename">Rename</button><button class="ghost" id="archive" data-tip="${e.destroyed_at ? "Back to the active list." : "Hide from the active list (for example when the machine is gone); sessions, runs and metrics are kept."}">${e.destroyed_at ? "Unarchive" : "Archive"}</button><button class="ghost danger" id="del">Delete</button></div>
+  <button class="ghost owner" id="share">Share</button><button class="ghost" id="rename">Rename</button><button class="ghost" id="archive" data-tip="${e.archived ? "Back to the active list." : "Hide from the active list (for example when the machine is gone); sessions, runs and metrics are kept. Environments without contact for 3 days and no active session are archived automatically."}">${e.archived ? "Unarchive" : "Archive"}</button><button class="ghost danger" id="del">Delete</button></div>
   <p class="sub">${esc(e.db_short || e.db)} · ${esc(hw.hostname || "")} · agent ${esc(e.agent_version || "")}</p>
   ${d.activity ? `<div class="card" style="margin-bottom:10px;padding:10px 14px"><span class="muted" style="font-size:12px">Now${d.activity.session_id ? `: session <a href="#/session/${d.activity.session_id}">#${d.activity.session_id} ${esc(d.activity.session_name || "")}</a>` : ""}</span>${activityLine(d.activity)}</div>` : ""}
   <div class="card"><div class="row" style="gap:6px 18px">
@@ -607,7 +608,7 @@ async function envPage(id) {
   document.getElementById("rename").onclick = async () => { const n = prompt("Environment name", e.name); if (n) { await api("/api/environments/" + id, { method: "PATCH", body: { name: n } }); envPage(id); } };
   const cj = document.getElementById("clientsJump"); if (cj) cj.onclick = ev => { ev.preventDefault(); document.getElementById("clientHosts").scrollIntoView({ behavior: "smooth" }); };
   document.getElementById("detailsToggle").onclick = ev => { ev.preventDefault(); const d = document.getElementById("envDetails"); d.hidden = !d.hidden; ev.target.textContent = d.hidden ? "Details ▸" : "Details ▾"; };
-  document.getElementById("archive").onclick = async () => { await api("/api/environments/" + id, { method: "PATCH", body: { destroyed_at: e.destroyed_at ? null : Date.now() / 1000 } }); envPage(id); };
+  document.getElementById("archive").onclick = async () => { await api("/api/environments/" + id, { method: "PATCH", body: { archived: !e.archived } }); envPage(id); };
   document.getElementById("del").onclick = async () => { if (confirm("Delete this environment with all sessions, runs and metrics? The agent will re-register it on its next report.")) { await api("/api/environments/" + id, { method: "DELETE" }); location.hash = "#/"; } };
   const sessionMarkers = [];
   d.sessions.forEach(x => { sessionMarkers.push({ t: x.created, label: `#${x.id} start` }); if (x.ended) sessionMarkers.push({ t: x.ended, label: `#${x.id} end`, end: true }); });
