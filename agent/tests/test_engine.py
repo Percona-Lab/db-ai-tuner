@@ -1260,6 +1260,20 @@ def test_numa_mysql_side():
         assert "NUMA" in (two.get("score_note") or "")
 
 
+def test_memory_measured_by_mysql():
+    from tuning_agent import collector
+    M = 2 ** 20
+    a = {"events": {"memory/innodb/buf_buf_pool": [21000 * M, 21000 * M], "memory/sql/THD::main_mem_root": [10 * M, 50 * M]}, "fg": 5 * M, "bg": 2 * M}
+    b = {"events": {"memory/innodb/buf_buf_pool": [21000 * M, 21000 * M], "memory/sql/THD::main_mem_root": [400 * M, 420 * M],
+                    "memory/performance_schema/x": [240 * M, 240 * M], "memory/innodb/os0event": [-5 * M, 3 * M]}, "fg": 380 * M, "bg": 2 * M}
+    w = collector.memory_window(a, b)
+    assert w["categories_mb"]["InnoDB buffer pool"] == 21000.0 and w["categories_mb"]["performance_schema"] == 240.0
+    assert w["total_mb"] == 21640.0 and w["growth_mb"] == 630.0 and w["growing"][0]["event"] == "memory/sql/THD::main_mem_root"
+    assert w["connections_mb"] == 380.0
+    d = engine.diagnose({"summary": dict(OLTP[0]), "inputs": {"memory_pfs": w}, "hw": HW, "variables": dict(VARS)})
+    assert any(x["type"] == "memory-growth" for x in d)
+
+
 def test_round_values():
     from tuning_agent.knowledge import nice_number, roundness
     assert nice_number("innodb_io_capacity", 1072) == 1000 and nice_number("innodb_io_capacity", 1500) == 1500
