@@ -37,6 +37,19 @@ set +x  # the API key stays out of the trace
 curl -fsSL https://50-116-44-237.sslip.io/install.sh | bash -s -- --api-key $KEY --name $NAME || { echo SETUPFAILED; exit 1; }
 set -x
 
+# swap of about 1x RAM, as on production hosts (Linode's default 512 MB turned memory pressure into an OOM kill in r1)
+RAMG=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo) / 1048576 ))
+if [ "$SWAP" = none ]; then
+  # the other production philosophy: a database host without swap (memory pressure ends in an OOM kill, never in
+  # swapping); the agent is told so and never adds swap
+  swapoff -a; sed -i '/\sswap\s/s/^/#/' /etc/fstab
+  grep -q '^swap' /etc/tuning-agent/agent.ini || echo "swap = none" >> /etc/tuning-agent/agent.ini
+  systemctl restart tuning-agent
+elif [ "$(awk '/SwapTotal/ {print $2}' /proc/meminfo)" -lt $(( RAMG * 1048576 * 9 / 10 )) ] && [ ! -f /swap.suite ]; then
+  fallocate -l ${RAMG}G /swap.suite && chmod 600 /swap.suite && mkswap -q /swap.suite && swapon /swap.suite && echo "/swap.suite none swap sw 0 0" >> /etc/fstab
+fi
+free -g | grep -i swap
+
 # ---------------------------------------------------------------------------------------------------- cell data + profile
 DB=$(hostname -I | awk '{print $1}')
 if [ -n "$CLI" ]; then
@@ -73,7 +86,10 @@ case $CELL in
   RW-1) sb_prepare 16 1000000
     sb_profile "RW-1 sysbench oltp_read_write, 16 x 1M rows (in memory), 16 threads, binary log on" oltp_read_write 16 1000000 16 "" 300 600 "$RESET" ;;
   RW-2) sb_prepare 32 6000000
-    sb_profile "RW-2 sysbench oltp_read_write, 32 x 6M rows (~46 GB, ~3x RAM), 64 threads" oltp_read_write 32 6000000 64 "" 900 600 "$RESET"
+    # aging data instead of a 46 GB restore per run (r1: ~50 min per run with a 30 min warm-up to reach steady state);
+    # sysbench read/write does not grow the data set, so back-to-back runs on seasoned data stay comparable
+    sb_profile "RW-2 sysbench oltp_read_write, 32 x 6M rows (~46 GB, ~3x RAM), 64 threads, seasoned data (no restore per run)" oltp_read_write 32 6000000 64 "" 300 600 "data_state = seasoned
+season_hours = 1"
     REQ="max_prepared_stmt_count = 1048576" ;;
   WI-3) sb_prepare 16 1000000
     sb_profile "WI-3 sysbench oltp_update_non_index, 16 x 1M rows (in memory), uniform, 64 threads: write-intensive in memory" oltp_update_non_index 16 1000000 64 "--rand-type=uniform" 600 600 "$RESET" ;;
@@ -91,7 +107,7 @@ case $CELL in
     printf '[bench]\nname = KV-1 BenchBase YCSB-A 50/50 read/update, zipfian, 30M rows (~35 GB, ~2x RAM), 64 terminals\n%s\nrun = %s/benchbase/bb_run.sh ycsba {warmup} {duration}\nwarmup = 300\nduration = 600\ntimeout = 2400\ngoal_metric = bb_tps\n\n[metrics]\nbb_tps = BBSUMMARY .* throughput_rps=([\\d.]+)\nbb_p99_ms = BBSUMMARY .* p99_ms=([\\d.]+)\n' "$RESET" $B > $P
     BASELINE_ARGS="--reserve-mem 4G" ;;
   AN-1) $GT tpch prepare -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D tpch --sf 10 -T 8 --analyze > $B/prep.log 2>&1
-    printf '[bench]\nname = AN-1 TPC-H SF10 (go-tpc), 22 queries, 1 stream, 300 s cap per query\nreset = %s/tpch_warm.sh\ndata_state = read-only\nrun = %s tpch run -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D tpch --sf 10 --count 22 --enable-query-tuning=false --conn-params max_execution_time=300000 --ignore-error\nwarmup = 0\nduration = 0\ntimeout = 7200\ngoal_metric = pass_seconds\n\n[metrics]\npass_seconds = sum:\\[Summary\\] Q\\d+: ([\\d.]+)s\ngeomean_seconds = geomean:\\[Summary\\] Q\\d+: ([\\d.]+)s\n' $B "$GT" > $P
+    printf '[bench]\nname = AN-1 TPC-H SF10 (go-tpc), 8 representative queries (Q1 Q6 scan / aggregate, Q3 Q5 Q9 joins, Q13 outer join, Q18 Q21 heavy), 1 stream, 300 s cap per query\nreset = %s/tpch_warm.sh\ndata_state = read-only\nrun = %s tpch run -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D tpch --sf 10 --queries q1,q3,q5,q6,q9,q13,q18,q21 --count 8 --enable-query-tuning=false --conn-params max_execution_time=300000 --ignore-error\nwarmup = 0\nduration = 0\ntimeout = 7200\ngoal_metric = pass_seconds\n\n[metrics]\npass_seconds = sum:\\[Summary\\] Q\\d+: ([\\d.]+)s\ngeomean_seconds = geomean:\\[Summary\\] Q\\d+: ([\\d.]+)s\n' $B "$GT" > $P
     GOAL=latency; MAX=10 ;;
   AN-2) $B/job/install.sh > $B/prep.log 2>&1 && $B/job/load.sh >> $B/prep.log 2>&1 || { echo SETUPFAILED: job; exit 1; }
     cp $B/job/job.ini $P; GOAL=latency; MAX=10 ;;
@@ -108,6 +124,13 @@ back_log = 4096"; BASELINE_ARGS="--max-connections $((TH + 100))" ;;
     sb_profile "HC-3 sysbench oltp_read_write, 16 x 4M rows (~15 GB, ~0.5x RAM), 4096 connections from a separate client (plain statements)" oltp_read_write 16 4000000 4096 "--db-ps-mode=disable" 600 600 "$RESET"
     REQ="max_connections = 4200
 back_log = 4096"; BASELINE_ARGS="--max-connections 4200" ;;
+  HC-6) [ -n "$CLI" ] || { echo SETUPFAILED: $CELL needs a client host; exit 1; }
+    # connect path over the network: DNS / auth / thread creation per connection (evidence for the name-resolution probe)
+    scp -i /root/.ssh/bench_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new $B/connstorm.lua root@$CLI:/root/connstorm.lua || { echo SETUPFAILED: connstorm; exit 1; }
+    sb_prepare 4 1000000
+    run=$(wrap "sysbench /root/connstorm.lua --mysql-host=$DB --mysql-user=sbtest --mysql-password=sbtest --mysql-db=sbtest --tables=4 --table-size=1000000 --threads=256 --time={total} --report-interval=10 --mysql-ignore-errors=all run")
+    printf "[bench]\nname = HC-6 connection storm: a new connection + 5 point selects per event, 256 threads from a separate client\ndata_state = read-only\nrun = %s\nwarmup = 120\nduration = 600\ntimeout = 1800\ngoal_metric = sysbench_qps\n\n$SBM" "$run" > $P
+    REQ="max_connections = 600"; BASELINE_ARGS="--max-connections 600" ;;
   *) echo "SETUPFAILED: unknown cell $CELL"; exit 1 ;;
 esac
 [ -n "$REQ" ] && printf '\n[requires]\n%s\n' "$REQ" >> $P

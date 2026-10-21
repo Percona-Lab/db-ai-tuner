@@ -1022,7 +1022,7 @@ def recommend(ctx):
     # Memory settings measured before the swap state changed are measured again after it (apply_history).
     swap_total = (s.get("swap_total_mb") or 0) * MiB
     own_swap = _swapfile_bytes(v.get("os:swapfile"))
-    if have_run and ctx.get("os_tuning") and ram >= 2 * GiB and swap_total < ram * 0.9 and "os:swapfile" in v:
+    if have_run and ctx.get("os_tuning") and not ctx.get("no_swap") and ram >= 2 * GiB and swap_total < ram * 0.9 and "os:swapfile" in v:
         free = int((ctx.get("hw") or {}).get("disk_free_bytes") or 0)
         size = (ram - (swap_total - own_swap)) // GiB * GiB
         if free:
@@ -1854,7 +1854,7 @@ def run_engine(ctx):
                 if any(c["variable"] == "os:swapfile" for c in it.get("changes") or []):
                     swap_free += _swapfile_bytes(next(c["proposed"] for c in it["changes"] if c["variable"] == "os:swapfile"))
                 if nb["needed"] > nb["ram"] + swap_free:
-                    if ctx.get("os_tuning") and "os:swapfile" in ctx["variables"] and not any(
+                    if ctx.get("os_tuning") and not ctx.get("no_swap") and "os:swapfile" in ctx["variables"] and not any(
                             c["variable"] == "os:swapfile" for c in it.get("changes") or []):
                         size = max(nb["needed"] - nb["ram"] - swap_free + GiB, int(nb["ram"]) // GiB * GiB)
                         it["changes"].append({"variable": "os:swapfile", "current": ctx["variables"].get("os:swapfile"), "proposed": fmt_size(size)})
@@ -1864,7 +1864,8 @@ def run_engine(ctx):
                     else:
                         it["confidence"] = 0
                         it["note"] = (f"Not run: needs {human_size(nb['needed'])}, more than {human_size(nb['ram'])} RAM plus "
-                                      f"{human_size(swap_free)} free swap - mysqld would be OOM-killed (swap needs OS tuning).")
+                                      f"{human_size(swap_free)} free swap - mysqld would be OOM-killed"
+                                      + (" (no swap by design on this host)." if ctx.get("no_swap") else " (swap needs OS tuning)."))
                         continue
                 it["safety"] = "trade-off"
                 it["tradeoffs"] = list(it.get("tradeoffs") or []) + [{

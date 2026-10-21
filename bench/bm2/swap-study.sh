@@ -4,7 +4,7 @@
 #  - cost of unused swap: same pool sizes below the limit, swap on vs off
 #  - benefit: does a pool beyond RAM with swap ever beat the best size without it?
 # Runs outside the tuner (OOM kills are an expected outcome). Results: /root/bench/swapstudy/results.jsonl
-# usage: swap-study.sh            (waits for nothing; run it when the host is free)
+# usage: swap-study.sh [dist:swap ...]   e.g. uniform:off uniform:on (default: special and uniform, swap off then on)
 set -u
 O=/root/bench/swapstudy; mkdir -p $O
 CNF=/etc/mysql/mysql.conf.d/zzz-swapstudy.cnf
@@ -27,11 +27,18 @@ fi
 log "data: $(mysql -N -e "select round(sum(data_length+index_length)/1073741824,1) from information_schema.tables where table_schema='swapstudy'") GB, RAM ${RAM_GB} GB, swappiness $(cat /proc/sys/vm/swappiness)"
 
 swap_mode() {  # off | on (a swap file of about 1x RAM; the host's own swap partition stays off during the study)
-  swapoff -a 2>/dev/null; rm -f $SWF
+  # mysqld first: swapoff has to bring every swapped page back into RAM, and with a large pool there is no room (the
+  # first version's "off" phase silently kept 30 GB of swap)
+  systemctl stop mysql
+  swapoff -a || { log "STUDYFAILED: swapoff"; exit 1; }
+  rm -f $SWF
   if [ "$1" = on ]; then
     fallocate -l ${RAM_GB}G $SWF && chmod 600 $SWF && mkswap -q $SWF && swapon $SWF || { log "STUDYFAILED: swap file"; exit 1; }
   fi
+  local tot; tot=$(awk '/SwapTotal/ {print $2}' /proc/meminfo)
+  if { [ "$1" = off ] && [ "$tot" -ne 0 ]; } || { [ "$1" = on ] && [ "$tot" -eq 0 ]; }; then log "STUDYFAILED: swap $1 not in effect ($tot kB)"; exit 1; fi
   log "swap $1: $(awk '/SwapTotal/ {print $2/1048576 " GB"}' /proc/meminfo)"
+  systemctl start mysql
 }
 
 point() {  # point <distribution> <swap> <bp GB>
@@ -68,8 +75,11 @@ PY
   [ "$oom" -gt 0 ] && return 1 || return 0
 }
 
-for dist in special uniform; do
-  for sw in off on; do
+# phases: arguments like "uniform:off uniform:on" (default: both distributions, swap off then on)
+PHASES="${*:-special:off special:on uniform:off uniform:on}"
+for ph in $PHASES; do
+  dist=${ph%%:*}; sw=${ph##*:}
+  {
     swap_mode $sw
     sizes="12 16 20 24 26 28 30"; [ $sw = on ] && sizes="$sizes 32 34 36"
     ooms=0
@@ -78,7 +88,7 @@ for dist in special uniform; do
       [ $rc -ne 0 ] && ooms=$((ooms + 1))
       [ $ooms -ge 2 ] && { log "$dist/$sw: stopping after 2 failures (OOM / no start)"; break; }
     done
-  done
+  }
 done
 # back to the host's own state
 swapoff $SWF 2>/dev/null; rm -f $SWF; swapon -a

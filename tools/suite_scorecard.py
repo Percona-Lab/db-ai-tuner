@@ -17,6 +17,8 @@ from tuning_agent import engine, evaluate  # noqa: E402
 from tuning_agent.knowledge import run_tradeoffs as tradeoffs_of_run, tradeoffs_in  # noqa: E402
 
 URL = "https://50-116-44-237.sslip.io"
+# control cells: little to gain - success is no invented improvement and no regression, not a gain
+CONTROLS = {"RO-1": "point selects in memory: the baseline already serves them; the tuner must not report gains it cannot repeat"}
 FLAGS = ("not_steady", "unsteady_verdict", "client_saturated", "goal_server_mismatch_pct", "unstable_within_run", "swap_hazard")
 
 
@@ -83,6 +85,11 @@ def cell_card(run, st):
         "hypotheses": hyp, "validation_only": validation, "verdicts": verdicts, "flags": {k: v for k, v in flags.items() if v},
         "measured_bottleneck": bd, "checker_failures": fails,
     })
+    if st["cell"].split(".")[0] in CONTROLS:
+        g = out.get("gain_safe_vs_start_pct")
+        out["control"] = {"expectation": CONTROLS[st["cell"].split(".")[0]],
+                          "ok": g is not None and abs(g) <= max(noise, 2.0) and not fails,
+                          "why": f"safe gain {g}% vs noise ±{noise}%" + (f", checker: {fails}" if fails else "")}
     return out
 
 
@@ -105,7 +112,15 @@ def main():
         delta = (f" (was {p.get('gain_safe_vs_start_pct')})" if p else "")
         print(f"{c['cell']:<6} {c['status']:<7} {c.get('session') or '':>5} {c.get('noise_pct') or '':>6} {c.get('gain_safe_vs_start_pct') or '':>7} "
               f"{c.get('gain_best_vs_start_pct') or '':>7} {c.get('gain_start_vs_defaults_pct') or '':>9} {c.get('runs_to_90pct') or '':>5} "
-              f"{c.get('validation_only', ''):>6} {len(c.get('checker_failures') or []):>7}  {c.get('hypotheses') or ''} {c.get('flags') or ''}{delta}")
+              f"{c.get('validation_only', ''):>6} {len(c.get('checker_failures') or []):>7}  {c.get('hypotheses') or ''} {c.get('flags') or ''}{delta}"
+              + (f"  CONTROL {'ok' if c['control']['ok'] else 'NOT ok'} ({c['control']['why']})" if c.get("control") else ""))
+    # repeat cells: the tuner's own variation on an identical cell
+    by = {c["cell"]: c for c in cards}
+    for c in cards:
+        if "." in c["cell"] and c["cell"].split(".")[0] in by:
+            a_, b_ = by[c["cell"].split(".")[0]], c
+            print(f"repeat {c['cell'].split('.')[0]}: safe gain {a_.get('gain_safe_vs_start_pct')} vs {b_.get('gain_safe_vs_start_pct')}, "
+                  f"best {a_.get('gain_best_vs_start_pct')} vs {b_.get('gain_best_vs_start_pct')}, runs {a_.get('runs')} vs {b_.get('runs')}")
 
 
 if __name__ == "__main__":

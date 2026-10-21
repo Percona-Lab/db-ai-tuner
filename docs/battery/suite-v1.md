@@ -51,7 +51,7 @@ Core cells run at every engine milestone. Extended cells run before a release, o
 | RO-3 | ext | sysbench oltp_read_only, uniform, 64 x 8M | 10x | 16 | tps | heavy random reads, low concurrency |
 | RO-4 | core | sysbench oltp_read_only, pareto (hot set), 64 x 8M | 10x | 64 | tps | large data but a hot set in memory: expected CPU-bound despite 10x |
 | RW-1 | core | sysbench oltp_read_write, 16 x 1M, binlog on | 0.25x | 16 | tps | commit path: redo / binlog fsync, group commit |
-| RW-2 | core | sysbench oltp_read_write, 32 x 4M | 3x | 64 | tps | flushing plus reads together |
+| RW-2 | core | sysbench oltp_read_write, 32 x 6M, seasoned data (no restore per run) | 3x | 64 | tps | flushing plus reads together |
 | RW-3 | core | HammerDB TPROC-C 80W | ≈0.5x | 16 | NEW_ORDER p99 | tail latency, CPU-bound OLTP |
 | RW-4 | core | HammerDB TPROC-C 800W, all warehouses | ≈5x | 64 | NOPM | I/O-bound OLTP, flush plus read |
 | WI-1 | core | Insert Benchmark l.i1, steady state | ≈2x | 8 | inserts/s | flush-bound ingest, secondary indexes, change buffer, purge |
@@ -59,7 +59,7 @@ Core cells run at every engine milestone. Extended cells run before a release, o
 | WI-3 | core | sysbench oltp_update_non_index, uniform, 16 x 1M | 0.25x | 64 | tps | data in memory but write-intensive: expected flush- and redo-bound |
 | KV-1 | core | BenchBase YCSB-A, zipfian | 2x | 64 | tps | skewed key-value reads and updates |
 | KV-2 | ext | BenchBase TATP | 0.25x | 64 | tps | many tiny transactions |
-| AN-1 | core | TPC-H SF10 (go-tpc), 22 queries | ≈1x | 1 | total time | scans, sorts, joins, read-ahead |
+| AN-1 | core | TPC-H SF10 (go-tpc), 8 representative queries (Q1 Q6 Q3 Q5 Q9 Q13 Q18 Q21) | ≈1x | 1 | total time | scans, sorts, joins, read-ahead |
 | AN-2 | core | Join Order Benchmark, 113 queries | 0.5x | 1 | total time | optimizer-bound queries |
 | AN-3 | ext | TPC-H SF30, 4 streams | ≈3x | 4 | total time | concurrent analytics on I/O |
 | MX-1 | core | CH-benCHmark 500W: 32 TPC-C + 1 analytical | ≈3x | 33 | NOPM and Q time | mixed OLTP plus analytics |
@@ -73,7 +73,7 @@ Core cells run at every engine milestone. Extended cells run before a release, o
 | HC-3 | core | sysbench oltp_read_write | 0.5x | 4096 | tps | write contention at extreme concurrency |
 | HC-4 | ext | sysbench oltp_read_only | 2x | 1024 | tps | I/O plus contention |
 | HC-5 | ext | BenchBase SmallBank | 0.25x | 1024 | tps | many small read-write transactions over the network |
-| HC-6 | ext | connection storm: new connection plus 5 point selects | 0.25x | 256 | tps | connect path: DNS, auth, thread creation |
+| HC-6 | core | connection storm: new connection plus 5 point selects | 0.25x | 256 | qps | connect path: DNS, auth, thread creation |
 | HC-7 | ext | HammerDB TPROC-C 1000W | ≈1.5x | 512 | NOPM | OLTP at high concurrency over the network |
 
 Before tuning, each HC cell also measures a concurrency ladder at the baseline configuration, without tuning:
@@ -127,3 +127,15 @@ web app shows a cell's history across engine builds as a study per suite version
   cell from a cell definition (profile plus data build), runs the session, collects the scorecard, and deletes the VMs.
 - Build the cells that are new: RO-3, RO-4, RW-2 at 3x, WI-2, WI-3, AN-3, HC-2/3 (4096 connections), HC-5, and the ladder.
 - Scorecard page in the web app, comparing suite runs.
+
+
+## Changes for r2 (2026-10-21, from r1)
+
+* **AN-1:** 8 representative TPC-H queries instead of 22 (84 min per run in r1, >20 h per cell).
+* **RW-2:** seasoned data instead of a 46 GB restore per run (~50 min per run with the warm-up steady state needed).
+* **HC-6 promoted to core:** the connect path (DNS, authentication, thread creation) over the network.
+* **Swap:** every suite VM gets swap of about 1x RAM (production-like; r1's OOM came from Linode's 512 MB default) -
+  except the **no-swap variants** `RO-4.ns` and `HC-2.ns`: swap off and `swap = none` for the agent (the other
+  production philosophy: the tuner never adds swap and sizes memory for RAM alone). Each pairs with its default cell.
+* **Repeat cells** `KV-1.2`, `WI-3.2`: the same cell twice in one run - the tuner's own variation on an identical cell.
+* **Control cell** RO-1: success is no invented improvement and no regression (scorecard `CONTROL ok`).

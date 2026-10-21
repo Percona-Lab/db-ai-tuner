@@ -1845,6 +1845,8 @@ def _engine_ctx(c, sess):
     bench_info = {k: b.get(k) for k in ("name", "run", "warmup", "duration", "goal_metric", "requires") if b.get(k) is not None}
     return {"bench": bench_info, "diagnosis_basis_run": basis, "goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
             "os_tuning": c.os_tuning_allowed() and sess.get("os_tuning", True), "os_facts": osf, "experience": experience,
+            # swap = none in agent.ini: no swap by design (a production philosophy) - never add it, size memory for RAM alone
+            "no_swap": str(c.cfg.get("swap", "allowed")).strip().lower() in ("none", "no", "off", "false"),
             "insights": insights, "param_impact": param_impact, "blocked": sorted(blocked), "client_reserve": _client_reserve(c),
             "failed": sess.get("failed_recs") or [],
             "scope": sess.get("scope") or ["knobs", "os"], "fs_device": _ap.fs_device,

@@ -1112,6 +1112,11 @@ def test_over_budget_beyond_swap_is_a_crash_not_a_tradeoff():
     assert ch["innodb_buffer_pool_size"] == "12G" and engine._swapfile_bytes(ch.get("os:swapfile")) >= 15 * GiB
     without = grow(False)
     assert without["confidence"] == 0 and "OOM-killed" in without["note"]
+    ctx_ns = {"goal": "tps", "policy": "benchmark", "hw": d["hw"], "variables": v, "summary": d["summary"], "inputs": d["inputs"],
+              "history": [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}], "noise_pct": 2.0,
+              "managed": {}, "os_tuning": True, "no_swap": True, "os_facts": {}, "flavor": "percona", "version": (8, 4, 11)}
+    ns = {i["id"]: i for i in engine.run_engine(ctx_ns)["items"]}
+    assert ns["bp-grow"]["confidence"] == 0 and "no swap by design" in ns["bp-grow"]["note"] and "best-practices-swap" not in ns
 
 
 def test_copy_on_write_check():

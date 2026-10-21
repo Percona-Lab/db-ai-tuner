@@ -29,9 +29,17 @@ CELLS = {  # cell -> (tier, class)
     "RO-1": ("core", "S"), "RO-2": ("core", "S"), "RO-4": ("core", "S"), "RW-1": ("core", "S"), "RW-2": ("core", "S"),
     "RW-3": ("core", "S"), "RW-4": ("core", "S"), "WI-1": ("core", "S"), "WI-3": ("core", "S"), "KV-1": ("core", "S"),
     "AN-1": ("core", "S"), "AN-2": ("core", "S"), "MX-1": ("core", "S"),
-    "HC-1": ("core", "L"), "HC-2": ("core", "L"), "HC-3": ("core", "L"),
+    "HC-1": ("core", "L"), "HC-2": ("core", "L"), "HC-3": ("core", "L"), "HC-6": ("core", "L"),
 }
-BENCH_FILES = ["session.sh", "queue-common.sh", "reset_datadir.sh", "tpch_warm.sh", "hdb_run.tcl", "hdb_build200.tcl", "stopall.sh"]
+# repeat cells: the same cell measured twice in one run (KV-1.2 = KV-1 again) - how much the tuner's own outcome varies
+REPEATS = ("KV-1.2", "WI-3.2")
+# no-swap variants (".ns"): the same cell on a host without swap by design - pairs with the default cell (swap ~1x RAM)
+NOSWAP = ("RO-4.ns", "HC-2.ns")
+
+
+def base_cell(cell_id):
+    return cell_id.split(".")[0]
+BENCH_FILES = ["session.sh", "queue-common.sh", "reset_datadir.sh", "tpch_warm.sh", "hdb_run.tcl", "hdb_build200.tcl", "stopall.sh", "connstorm.lua"]
 BENCH_DIRS = ["ibench", "benchbase", "job"]
 
 
@@ -127,7 +135,7 @@ def delete(st):
 
 def cell(run, cell_id):
     st = {"run": run, "cell": cell_id, "version": VERSION, "status": "starting", "started": time.time()}
-    tier, cls = CELLS[cell_id]
+    tier, cls = CELLS[base_cell(cell_id)]
     try:
         srv = create(st, "db", CLASSES[cls][0])
         cli = create(st, "cli", CLASSES[cls][1]) if CLASSES[cls][1] else None
@@ -182,8 +190,8 @@ def run_cell(st, srv, cli):
         name = f"suite-{cell_id.lower()}-{run}"
         st["status"] = "setup"
         log(st, "setup (data load) started")
-        smoke = "SMOKE=1 " if os.environ.get("SUITE_SMOKE") else ""
-        ssh(srv, f"cd /root/bench && ({smoke}setsid nohup ./suite/node.sh {VERSION} {cell_id} {name} {key} '{study}' {cip} > setup.log 2>&1 < /dev/null &)", check=True)
+        smoke = ("SMOKE=1 " if os.environ.get("SUITE_SMOKE") else "") + ("SWAP=none " if cell_id.endswith(".ns") else "")
+        ssh(srv, f"cd /root/bench && ({smoke}setsid nohup ./suite/node.sh {VERSION} {base_cell(cell_id)} {name} {key} '{study}' {cip} > setup.log 2>&1 < /dev/null &)", check=True)
         while True:
             time.sleep(120)
             r = ssh(srv, "grep -E '^(SETUPDONE|SETUPFAILED)' /root/bench/setup.log; grep -E 'QUEUEDONE|QUEUEFAILED' /root/bench/queue.log 2>/dev/null; "
@@ -222,7 +230,7 @@ def main():
     elif cmd == "resume-fg":
         resume(run, sys.argv[3])
     elif cmd == "launch":
-        cells = sys.argv[3:] or [c for c, (t, _) in CELLS.items() if t == "core"]
+        cells = sys.argv[3:] or [c for c, (t, _) in CELLS.items() if t == "core"] + list(REPEATS) + list(NOSWAP)
         d = os.path.join(OPS, "suite", run)
         os.makedirs(d, exist_ok=True)
         for c in cells:
