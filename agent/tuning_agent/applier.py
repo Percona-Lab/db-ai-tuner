@@ -1,5 +1,6 @@
 """Write the managed option file, apply dynamic changes, restart when needed, verify, roll back on failure."""
 import os
+import re
 import subprocess
 import time
 
@@ -168,6 +169,23 @@ class Applier:
             return True, ""
         return False, f"mysqld did not use the reserved huge pages ({used} of {total} in use); huge pages reverted"
 
+    def error_log_tail(self, n=40):
+        """mysqld's own error log (the reason a start failed is there, not in the systemd journal: e.g. huge-page
+        allocation 'errno 13'): warnings and errors among its last lines."""
+        try:
+            path = (self.db.variables().get("log_error") if self.db else None) or ""
+        except Exception:
+            path = ""
+        for p in [path] + ["/var/log/mysql/error.log", "/var/log/mysqld.log", "/var/lib/mysql/error.log"]:
+            if p and p.startswith("/") and os.path.exists(p):
+                try:
+                    lines = open(p, errors="replace").read().splitlines()[-400:]
+                except OSError:
+                    continue
+                keep = [l for l in lines if re.search(r"\[(ERROR|Warning)\]", l)]
+                return "\n".join(keep[-n:])
+        return ""
+
     def journal_tail(self):
         r = subprocess.run(["journalctl", "-u", self.service, "-n", "30", "--no-pager"], capture_output=True, text=True)
         return r.stdout[-3000:]
@@ -303,6 +321,10 @@ class Applier:
                 ok2, err2 = self.restart()
                 result["errors"].append("restart failed, previous configuration restored" + ("" if ok2 else f" (and restart after restore failed: {err2})"))
                 result["journal"] = tail
+                result["error_log"] = self.error_log_tail()
+                if "errno 13" in result["error_log"] and "large_page" in result["error_log"]:
+                    result["errors"].append("huge pages: mysqld was denied the huge-page mapping (errno 13) - an AppArmor / SELinux "
+                                            "profile for mysqld, or the memlock limit")
                 result["rolled_back"] = True
                 return result
             result["restarted"] = True

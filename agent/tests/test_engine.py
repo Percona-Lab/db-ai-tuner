@@ -1138,6 +1138,22 @@ def test_copy_on_write_check():
     assert not any("copy-on-write" in t for t in evaluate.disturbances([{"summary": {"cow_intended": ["ZFS"]}}] * 2))
 
 
+def test_buffer_pool_size_kept_exact_and_mismatch_unreliable():
+    # Scaleway: 32 instances turned a 45 GB pool into 48 GB (rounded to chunk x instances); the sweep's "win" was the
+    # larger pool. A chunk size dividing size / instances keeps it exact; a run whose server values differ is unreliable.
+    from tuning_agent.cli import _bp_companions
+    cur = {"innodb_buffer_pool_size": str(45 * GiB), "innodb_buffer_pool_instances": "8", "innodb_buffer_pool_chunk_size": str(128 * 1024 ** 2)}
+    comp = {c["variable"]: c["value"] for c in _bp_companions({"innodb_buffer_pool_instances": {"value": "32"}}, cur, "exp:1")}
+    assert comp == {"innodb_buffer_pool_chunk_size": "120M"}, comp
+    assert _bp_companions({"innodb_buffer_pool_size": {"value": "21G"}}, cur, "x") == []
+    odd = {c["variable"]: c["value"] for c in _bp_companions({"innodb_buffer_pool_size": {"value": str(int(22.8 * GiB))}}, cur, "x")}
+    assert odd["innodb_buffer_pool_chunk_size"] == "128M" and int(odd["innodb_buffer_pool_size"]) == 22 * GiB
+    run = {"seq": 5, "label": "exp#9 innodb_buffer_pool_instances=32", "managed": {"innodb_buffer_pool_instances": "32"}, "goal_value": 313000,
+           "summary": {"config_mismatch": [{"variable": "innodb_buffer_pool_size", "configured": "45G", "running": "51539607552"}]}}
+    v, ev = evaluate.verdict(run, [], "tps", {"noise_pct": 2.0})
+    assert v == "unreliable" and "51539607552" in ev["note"]
+
+
 def test_round_values():
     from tuning_agent.knowledge import nice_number, roundness
     assert nice_number("innodb_io_capacity", 1072) == 1000 and nice_number("innodb_io_capacity", 1500) == 1500

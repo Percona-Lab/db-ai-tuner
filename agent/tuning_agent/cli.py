@@ -353,6 +353,55 @@ def _order_pairs(changes, current=None):
     return out
 
 
+def _config_mismatches(c):
+    """Managed settings whose running value differs from the configured one: [{variable, configured, running}]."""
+    out = []
+    try:
+        now_vars = c.db.variables()
+        for var, m in (c.state.get("managed") or {}).items():
+            if ":" in var or var not in now_vars or var in KOPTIONS:
+                continue
+            if normalize(var, now_vars.get(var)) != normalize(var, m.get("value")):
+                out.append({"variable": var, "configured": m.get("value"), "running": now_vars.get(var)})
+                log(f"WARNING: {var} is {now_vars.get(var)}, configured {m.get('value')} - the run does not measure the configuration")
+    except Exception:
+        pass
+    return out
+
+
+def _bp_companions(vs, cur, source):
+    """Changes that keep the buffer pool at the intended size for the intended number of instances: a chunk size
+    dividing size / instances (MiB granularity, at most 128 MiB), and the size itself rounded down to whole MiB per
+    instance if needed. [] when the server would already keep the size exact."""
+    from .knowledge import parse_size
+    MiB_ = 1024 ** 2
+    def val(k, d):
+        if k in vs and vs[k].get("value") is not None:
+            return int(parse_size(str(vs[k]["value"])))
+        return int(float(cur.get(k) or d))
+    size, inst = val("innodb_buffer_pool_size", 128 * MiB_), max(1, val("innodb_buffer_pool_instances", 1))
+    chunk = val("innodb_buffer_pool_chunk_size", 128 * MiB_)
+    if size < 1024 ** 3:
+        inst = 1  # MySQL uses one instance below 1 GiB
+    if size % (chunk * inst) == 0:
+        return []
+    out = []
+    per = size // inst // MiB_  # MiB per instance
+    # chunks of 32-128 MiB (tiny chunks mean thousands of them); if none divides the size per instance, the size goes down
+    # to whole 128 MiB chunks per instance (at most instances x 128 MiB less) and says so
+    best = next((d for d in range(128, 31, -1) if per % d == 0), None)
+    if best is None:
+        per, best = per // 128 * 128, 128
+    if size != per * inst * MiB_:
+        size = per * inst * MiB_
+        out.append({"variable": "innodb_buffer_pool_size", "value": str(size), "source": source,
+                    "reason": f"companion: {per} MiB per instance ({inst} instances) so the size is exactly what is measured"})
+    out.append({"variable": "innodb_buffer_pool_chunk_size", "value": f"{best}M", "source": source,
+                "reason": f"companion: buffer pool size = {per} MiB x {inst} instances exactly (MySQL rounds the size up to a "
+                          f"multiple of chunk x instances: {chunk // MiB_} MiB chunks would change it)"})
+    return out
+
+
 def _apply_and_record(c, changes, source, reason_default="", restart=None):
     allow = c.cfg.get("allow_restart", "true").lower() == "true" if restart is None else restart
     defer = source in ("autotune", "rollback") or str(source).startswith("exp:")
@@ -369,6 +418,18 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
             if want > int(c.db.variables().get("innodb_io_capacity_max") or 0):
                 changes.append({"variable": "innodb_io_capacity_max", "value": str(want * 2), "source": source,
                                 "reason": "companion: InnoDB caps innodb_io_capacity at innodb_io_capacity_max"})
+        except Exception:
+            pass
+    # MySQL rounds innodb_buffer_pool_size up to a multiple of chunk_size x instances: 32 instances turned a 45 GB pool
+    # into 48 GB (Scaleway sweep: the "win" was the larger pool). Keep the intended size exact with a chunk size that
+    # divides it (45G / 32 = 1440M -> 120M chunks); a size no chunk can fit is rounded down by at most instances x 1 MiB.
+    vs = {ch["variable"]: ch for ch in changes}
+    if "innodb_buffer_pool_instances" in vs or "innodb_buffer_pool_size" in vs:
+        try:
+            cur = c.db.variables()
+            comp = _bp_companions(vs, cur, source)
+            if comp:
+                changes = [ch for ch in changes if ch["variable"] not in {x["variable"] for x in comp}] + comp
         except Exception:
             pass
     try:
@@ -815,6 +876,10 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
         inputs.update(extra_inputs)
         if (extra_inputs.get("cow") or {}).get("issues"):
             summary["cow_issues"] = extra_inputs["cow"]["issues"]
+        if extra_inputs.get("config_mismatch"):
+            summary["config_mismatch"] = extra_inputs["config_mismatch"]
+        if extra_inputs.get("config_mismatch_all"):
+            summary["config_mismatch_all"] = extra_inputs["config_mismatch_all"]
         if (extra_inputs.get("cow") or {}).get("intended"):
             summary["cow_intended"] = extra_inputs["cow"]["intended"]
         for k, v in (extra_inputs.get("probe") or {}).items():
@@ -1151,15 +1216,14 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
             raise ServerDown(f"reset command failed ({rc}): {out[-500:]}")
         c.db.connect(retries=30, delay=2)
         c.state.set("restart_pending", False)
-        try:  # a restart deferred to this reset: the configured values must be in effect now
-            now_vars = c.db.variables()
-            for var, m in (c.state.get("managed") or {}).items():
-                if ":" in var or var not in now_vars or var in KOPTIONS:
-                    continue
-                if normalize(var, now_vars.get(var)) != normalize(var, m.get("value")):
-                    log(f"WARNING after reset: {var} is {now_vars.get(var)}, configured {m.get('value')}")
-        except Exception:
-            pass
+
+    # the configuration the run is labelled with must be the one the server runs: a value MySQL silently adjusted
+    # (buffer pool rounded to chunk x instances: 45G -> 48G) makes the run measure something else - judged unreliable
+    mismatch = _config_mismatches(c)
+    # a mismatch every run shares (e.g. table_open_cache capped by the open-files limit) does not bias a comparison: only
+    # one new since the previous run does
+    before = {(x["variable"], str(x["running"])) for x in ((sess.get("runs") or [{}])[-1].get("summary") or {}).get("config_mismatch_all") or []}
+    mismatch_all, mismatch = mismatch, [x for x in mismatch if (x["variable"], str(x["running"])) not in before]
     cow = None
     if prof.reset or not sess.get("runs"):
         # copy-on-write under the data: a reflink / snapshot clone of the pristine copy makes every first write copy its
@@ -1284,6 +1348,10 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     extra = {"bench": {**prof.describe(), "requirements": requirements, "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:]}, "probe": env_probe}
     if cow is not None:
         extra["cow"] = cow
+    if mismatch:
+        extra["config_mismatch"] = mismatch
+    if mismatch_all:
+        extra["config_mismatch_all"] = mismatch_all
     if profiler:
         extra["cpu_profile"] = _finish_profile(c, profiler, t_meas0)
     if offcpu:

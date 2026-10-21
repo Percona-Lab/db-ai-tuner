@@ -99,6 +99,46 @@ OS_KB = {
 }
 
 
+APPARMOR_MYSQLD = "/etc/apparmor.d/usr.sbin.mysqld"
+APPARMOR_SAVED = "/var/lib/tuning-agent/usr.sbin.mysqld.orig"
+
+
+def apparmor_hugetlb(on):
+    """Ubuntu's mysqld AppArmor profile blocks InnoDB's huge-page buffer pool: the anonymous hugetlbfs mapping has no
+    path, AppArmor fails the name lookup ("disconnected path", errno 13) even in complain mode, InnoDB falls back to
+    normal memory while the reserved pages stay pinned, and mysqld cannot start (tuner-vbm2, Scaleway, 2026-10-21).
+    attach_disconnected added to the profile's flags (others kept) fixes it; the original profile comes back with
+    huge pages off. Returns a note when it changed something."""
+    if not os.path.exists(APPARMOR_MYSQLD) or not shutil.which("apparmor_parser"):
+        return None
+    if not on:
+        if os.path.exists(APPARMOR_SAVED):
+            shutil.copy(APPARMOR_SAVED, APPARMOR_MYSQLD)
+            os.remove(APPARMOR_SAVED)
+            subprocess.run(["apparmor_parser", "-r", APPARMOR_MYSQLD], capture_output=True)
+            return "AppArmor profile for mysqld restored"
+        return None
+    text = open(APPARMOR_MYSQLD).read()
+    m = re.search(r"^(\s*/usr/sbin/mysqld)(\s+flags=\(([^)]*)\))?(\s*\{)", text, re.M)
+    if not m:
+        return None
+    flags = [f.strip() for f in (m.group(3) or "").split(",") if f.strip()]
+    if "attach_disconnected" in flags:
+        return None
+    os.makedirs(os.path.dirname(APPARMOR_SAVED), exist_ok=True)
+    if not os.path.exists(APPARMOR_SAVED):
+        shutil.copy(APPARMOR_MYSQLD, APPARMOR_SAVED)
+    new = text[:m.start()] + f"{m.group(1)} flags=({','.join(flags + ['attach_disconnected'])}){m.group(4)}" + text[m.end():]
+    with open(APPARMOR_MYSQLD, "w") as f:
+        f.write(new)
+    r = subprocess.run(["apparmor_parser", "-r", APPARMOR_MYSQLD], capture_output=True, text=True)
+    if r.returncode != 0:
+        shutil.copy(APPARMOR_SAVED, APPARMOR_MYSQLD)
+        subprocess.run(["apparmor_parser", "-r", APPARMOR_MYSQLD], capture_output=True)
+        return f"AppArmor profile for mysqld could not be adjusted for huge pages: {r.stderr.strip()[:200]}"
+    return "AppArmor profile for mysqld: attach_disconnected added (huge-page buffer pool; restored with huge pages off)"
+
+
 def parse_bytes(v):
     m = re.match(r"^\s*(\d+(?:\.\d+)?)\s*([kmgt]?)i?b?\s*$", str(v), re.I)
     if not m:
@@ -293,6 +333,7 @@ class OSApplier:
             want = int(value)
             if want == 0:
                 _write("/proc/sys/vm/nr_hugepages", 0)
+                apparmor_hugetlb(False)
                 return True
             # reserve with mysqld stopped and memory compacted, otherwise fragmentation leaves us short
             self.log("stopping mysqld to reserve huge pages ...")
@@ -318,6 +359,9 @@ class OSApplier:
                 subprocess.run(["systemctl", "start", self.service], capture_output=True)
                 raise RuntimeError(f"only {got} of {want} huge pages could be reserved (not enough contiguous memory); "
                                    "huge pages not enabled")
+            note = apparmor_hugetlb(True)
+            if note:
+                self.log(note)
             return True
         if name == "os:malloc":
             alloc = str(value).partition(":")[0]

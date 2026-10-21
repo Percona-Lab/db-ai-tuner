@@ -394,6 +394,11 @@ def verdict(run, history, goal, noise):
         return "unreliable", {"steal": st, "note": f"UNRELIABLE: hypervisor CPU steal averaged {max(st['avg_pct'], st['client_avg_pct'] or 0):.1f}% "
                                                    "during the run (noisy neighbours on a shared host). The result is kept for reference "
                                                    "but excluded from comparisons."}
+    mm = (run.get("summary") or {}).get("config_mismatch")
+    if mm:
+        return "unreliable", {"config_mismatch": mm, "note": "UNRELIABLE: the server did not run the configuration this run is labelled "
+                              "with (" + "; ".join(f"{x['variable']} {x['running']} instead of {x['configured']}" for x in mm[:3])
+                              + "). The result is kept for reference but excluded from comparisons."}
     if goal != "latency":
         dev = goal_server_check(run, (noise or {}).get("goal_server_ratio"))
         if dev is not None and abs(dev) > max(3.0, float((noise or {}).get("noise_pct") or 0)):
