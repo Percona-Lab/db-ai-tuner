@@ -1288,6 +1288,34 @@ def test_evidence_weight_by_server_closeness():
     assert same > family > other > score({}), (same, family, other)
 
 
+def test_cluster_and_myrocks():
+    # Galera flow control (measured paused time) -> applier threads; MyRocks block cache misses -> a larger cache;
+    # durability trade-offs say what they mean in a cluster; MyRocks memory in the budget and the baseline split
+    from tuning_agent import memory, baseline
+    inputs = dict(OLTP[1], status_rates={"wsrep_flow_control_paused_ns": 0.3e9, "rocksdb_block_cache_data_miss": 900.0,
+                                         "rocksdb_block_cache_data_hit": 9000.0})
+    vars_ = dict(VARS, wsrep_applier_threads="4", rocksdb_block_cache_size=str(2 * GiB), rocksdb_db_write_buffer_size=str(GiB))
+    ctx = {"goal": "tps", "policy": "benchmark", "os_tuning": False, "os_facts": {}, "hw": HW, "flavor": "pxc", "version": (8, 4, 3),
+           "variables": vars_, "summary": OLTP[0], "inputs": inputs, "history": [{"seq": 1, "label": "baseline", "verdict": "reference",
+           "managed": {}, "changes": []}], "noise_pct": 2.0, "managed": {}, "cluster": {"type": "galera", "size": 3},
+           "engines": {"data": {"rocksdb": 40 * GiB, "innodb": 5 * GiB}, "primary": "rocksdb"}}
+    res = engine.run_engine(ctx)
+    ids = {i["id"]: i for i in res["items"]}
+    types = {d["type"] for d in res["diagnosis"]}
+    assert "flow-control" in types and "rocksdb-cache" in types
+    assert ids["sweep-applier-threads"]["sweep"]["values"][0] == "8"
+    assert ids["rocksdb-cache-grow"]["changes"][0]["proposed"] == "4G"
+    commit = [i for i in res["items"] if any(c["variable"] == "innodb_flush_log_at_trx_commit" for c in i["changes"])]
+    assert all("galera cluster of 3 nodes" in i["rationale"] for i in commit)
+    b = memory.budget(vars_, HW)
+    assert any(x["name"] == "MyRocks block cache" for x in b["items"])
+    items, _ = baseline.generate(dict(HW, ram_bytes=32 * GiB), dict(VARS, rocksdb_block_cache_size="536870912"), "percona", (8, 4, 3),
+                                 {"engines": {"data": {"rocksdb": 30 * GiB, "innodb": 10 * GiB}}})
+    got = {i["variable"]: i.get("proposed", i.get("value", i.get("new"))) for i in items}
+    from tuning_agent.knowledge import parse_size
+    assert parse_size(got["rocksdb_block_cache_size"]) > parse_size(got["innodb_buffer_pool_size"])  # 75% of the data is MyRocks
+
+
 def test_round_values():
     from tuning_agent.knowledge import nice_number, roundness
     assert nice_number("innodb_io_capacity", 1072) == 1000 and nice_number("innodb_io_capacity", 1500) == 1500

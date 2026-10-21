@@ -135,10 +135,17 @@ class Ctx:
                 "innodb_flush_log_at_trx_commit", "sync_binlog", "log_bin", "innodb_flush_method", "innodb_io_capacity",
                 "max_connections", "performance_schema", "thread_handling", "innodb_dedicated_server", "binlog_format",
                 "transaction_isolation", "character_set_server", "innodb_page_size", "gtid_mode", "innodb_adaptive_hash_index"]
+        try:
+            st = self.db.status()
+        except Exception:
+            st = {}
+        eng = self.db.engines()
         return {
             "hardware": self.hw(),
             "db": {"flavor": flavor, "version": ver, "version_comment": comment, "version_tuple": vt,
                    "datadir": self.datadir(), "data_bytes": data_bytes, "tables": tables,
+                   # clustering (Galera / Group Replication) and storage engines add settings and change trade-offs
+                   "cluster": mysqldb.cluster_of(v, st), "engines": eng, "primary_engine": primary_engine(eng),
                    "key_variables": {k: v[k] for k in keys if k in v}},
             "os": ostune.facts(self.datadir(), hostinfo.device_for_path(self.datadir()), Applier(self.cfg, self.state, self.db).service),
             "agent": {"version": __version__, "cnf_path": Applier(self.cfg, self.state, self.db).cnf_path,
@@ -587,6 +594,10 @@ def cmd_baseline(a):
     mo = _measured_overhead(c)
     if mo:
         opts["measured_overhead_bytes"] = mo
+    try:
+        opts["engines"] = c.db.engines()  # memory split between InnoDB and MyRocks by the data each holds
+    except Exception:
+        pass
     items, calc = baseline.generate(hw, v, flavor, vt, opts)
     for it in items:
         it["current"] = v.get(it["variable"])
@@ -609,6 +620,27 @@ def cmd_baseline(a):
     emit(out, "\n".join(text))
     if a.apply and out["applied"].get("rolled_back"):
         raise Fail("baseline apply failed and was rolled back")
+
+
+def _cluster_ctx(c):
+    try:
+        return mysqldb.cluster_of(c.variables, c.db.status())
+    except Exception:
+        return {}
+
+
+def _engines_ctx(c):
+    try:
+        e = c.db.engines()
+        return dict(e, primary=primary_engine(e))
+    except Exception:
+        return {}
+
+
+def primary_engine(eng):
+    """The storage engine holding most of the data (innodb when there is none yet)."""
+    d = (eng or {}).get("data") or {}
+    return max(d, key=d.get) if d and max(d.values()) > 0 else "innodb"
 
 
 def _ntp_synchronized():
@@ -1850,7 +1882,8 @@ def _engine_ctx(c, sess):
         conns = (last.get("summary") or {}).get("threads_connected_avg")
         q = (f"/experience?cpus={os.cpu_count()}&exclude_session={sess['id']}" + (f"&workload={wl}" if wl else "")
              + (f"&conns={int(conns)}" if conns else "") + f"&numa_nodes={(c.hw() or {}).get('numa_nodes') or 1}"
-             + f"&flavor={flavor}&version={ver}")
+             + f"&flavor={flavor}&version={ver}&cluster={(_cluster_ctx(c) or {}).get('type') or 'standalone'}"
+             + f"&engine={(_engines_ctx(c) or {}).get('primary') or 'innodb'}")
         ex = c.client.get(q)
         experience = ex.get("experience", {})
         insights = ex.get("insights") or []
@@ -1879,6 +1912,7 @@ def _engine_ctx(c, sess):
             # swap = none in agent.ini: no swap by design (a production philosophy) - never add it, size memory for RAM alone
             "no_swap": str(c.cfg.get("swap", "allowed")).strip().lower() in ("none", "no", "off", "false"),
             "insights": insights, "param_impact": param_impact, "blocked": sorted(blocked), "client_reserve": _client_reserve(c),
+            "cluster": _cluster_ctx(c), "engines": _engines_ctx(c),
             "failed": sess.get("failed_recs") or [],
             "scope": sess.get("scope") or ["knobs", "os"], "fs_device": _ap.fs_device,
             "variables": c.all_settings(), "summary": last.get("summary"), "inputs": last.get("inputs"),

@@ -54,6 +54,8 @@ MECHANISMS = {
     "os-hugepages": (("cpu", "memory"), "Fewer TLB misses."),
     "os-governor": (("cpu",), "Full clock speed."),
     "os-numa": (("numa", "cpu", "memory"), "No cross-node page migration."),
+    "sweep-applier-threads": (("flow-control",), "Write sets applied in parallel: applier queues drain, flow control pauses less."),
+    "rocksdb-cache-grow": (("rocksdb-cache", "io-read", "memory"), "More MyRocks blocks cached: fewer reads from SST files."),
     "os-zone-reclaim-off": (("numa", "memory", "swap"), "A full node allocates from other nodes instead of reclaiming / swapping."),
     "numa-interleave": (("numa", "memory", "io-read"), "Buffer pool spread over all nodes: no node runs out first."),
     "numa-interleave-all": (("numa", "memory"), "All of mysqld's memory spread over all nodes."),

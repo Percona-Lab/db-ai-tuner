@@ -85,6 +85,10 @@ def budget(variables, hw, reserve_bytes=0, active_per_cpu=2, measured=None):
     add("Per-query buffers of active connections", active * per_q,
         f"{active} active (2 x {cpus} CPUs, at most max_connections) x (" + " + ".join(PER_QUERY) + "), an upper bound")
     add("Execution memory of active statements", active * COST["active_exec"], f"{active} active x ~{COST['active_exec'] // MiB} MiB")
+    # MyRocks shares the same memory: its block cache and memtables (only when the engine is loaded)
+    if "rocksdb_block_cache_size" in v:
+        add("MyRocks block cache", _n(v.get("rocksdb_block_cache_size")), "rocksdb_block_cache_size")
+        add("MyRocks memtables", _n(v.get("rocksdb_db_write_buffer_size")) or 0, "rocksdb_db_write_buffer_size (0 = unlimited: not counted)")
     add("mysqld fixed overhead", COST["mysqld_fixed"], "code, data dictionary, background threads")
     os_res = max(GiB, int(ram * 0.10))
     total = sum(i["bytes"] for i in items)
@@ -99,7 +103,7 @@ def budget(variables, hw, reserve_bytes=0, active_per_cpu=2, measured=None):
 
 MEMORY_VARS = {"innodb_buffer_pool_size", "innodb_log_buffer_size", "key_buffer_size", "tmp_table_size", "max_heap_table_size",
                "temptable_max_ram", "performance_schema", "table_open_cache", "table_definition_cache", "max_prepared_stmt_count",
-               "max_connections", *PER_QUERY}
+               "max_connections", "rocksdb_block_cache_size", "rocksdb_db_write_buffer_size", *PER_QUERY}
 
 
 def text(b):

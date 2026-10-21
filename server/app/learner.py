@@ -167,6 +167,8 @@ def digest(sid):
             "conditions": {"workload": wl, "cpu_class": _cpu_class(hw.get("cpus")), "concurrency_class": _conc_class(conns),
                            "numa": ("multi-node" if int(hw.get("numa_nodes") or 1) > 1 else "uniform"),
                            "series": _series((facts.get("db") or {}).get("flavor"), (facts.get("db") or {}).get("version")),
+                           "cluster": ((facts.get("db") or {}).get("cluster") or {}).get("type") or "standalone",
+                           "engine": (facts.get("db") or {}).get("primary_engine") or "innodb",
                            "cpus": hw.get("cpus"), "ram_gb": round((hw.get("ram_bytes") or 0) / 2 ** 30), "disk": hw.get("disk_model") or hw.get("disk")},
             "noise_pct": (cal or {}).get("noise_pct"), "baseline_time_breakdown": base_bd, "runs": out_runs}
 
@@ -576,7 +578,7 @@ def revalidate(c=None):
 
 
 # ------------------------------------------------------------------------------------------------ for agents and admins
-def matching(workload=None, cpu_class=None, concurrency_class=None, numa=None, series=None):
+def matching(workload=None, cpu_class=None, concurrency_class=None, numa=None, series=None, cluster=None, engine=None):
     """Live insights whose conditions match (unset conditions match anything). NUMA: results from multi-node hosts are
     not served to uniform ones and back (memory placement changes what a setting does)."""
     out = []
@@ -589,6 +591,11 @@ def matching(workload=None, cpu_class=None, concurrency_class=None, numa=None, s
         if concurrency_class and cond.get("concurrency_class") and cond["concurrency_class"] != concurrency_class:
             continue
         if numa and cond.get("numa") and cond["numa"] != numa:
+            continue
+        # a Galera / Group Replication node and a standalone server, MyRocks and InnoDB data: different settings matter
+        if cluster and cond.get("cluster") and cond["cluster"] != cluster:
+            continue
+        if engine and cond.get("engine") and cond["engine"] != engine:
             continue
         # how close the insight's server was: the same variant and release series counts fully, the same variant in
         # another series (or not recorded: insights before 2026-10-21) 0.6, another variant 0.3

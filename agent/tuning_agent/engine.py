@@ -343,6 +343,18 @@ def diagnose(ctx):
         add("client-bound", "high", f"The benchmark/application client is saturated ({s['client_cpu_busy']:.0f}% CPU): measured throughput "
             "reflects the client, not the database. Use a bigger client host or fewer client-side cycles before tuning the server.",
             {"client_cpu_busy": s.get("client_cpu_busy")})
+    # Galera flow control (measured paused time) and MyRocks block-cache misses: clustering / engine bottlenecks
+    rates_ = inp.get("status_rates") or {}
+    paused = (rates_.get("wsrep_flow_control_paused_ns") or 0) / 1e9 * 100
+    if (ctx.get("cluster") or {}).get("type") == "galera" and paused > float(ctx.get("noise_pct") or 2.0):
+        add("flow-control", "high" if paused > 20 else "medium", f"Galera flow control paused writes {paused:.1f}% of the time: an applier "
+            "queue on some node fills up and the whole cluster waits.", {"flow_control_paused_pct": round(paused, 2)})
+    rmiss = rates_.get("rocksdb_block_cache_data_miss") or rates_.get("rocksdb_block_cache_miss") or 0
+    rhit = rates_.get("rocksdb_block_cache_data_hit") or rates_.get("rocksdb_block_cache_hit") or 0
+    if rmiss > 0 and ((ctx.get("engines") or {}).get("data") or {}).get("rocksdb"):
+        add("rocksdb-cache", "medium" if rmiss / max(rhit + rmiss, 1) > 0.05 else "low",
+            f"MyRocks block cache: {rmiss:.0f} misses/s ({100 * rmiss / max(rhit + rmiss, 1):.1f}% of lookups).",
+            {"rocksdb_block_cache_miss_per_s": round(rmiss, 1)})
     # memory MySQL keeps allocating during the window (its own accounting): a leak or an unbounded cache is a memory risk
     # before it is an OOM kill; the buffer pool is allocated in full at start-up and does not count here
     mp = (inp.get("memory_pfs") or {})
@@ -1140,6 +1152,33 @@ def recommend(ctx):
         sweep("sweep-thread-concurrency", "Sweep InnoDB thread concurrency", "innodb_thread_concurrency", [str(cpus * 2), str(cpus * 4), "0"],
               f"{s.get('threads_running_avg', 0):.0f} running threads on {cpus} CPUs: measure admission limits.",
               {"threads_running_avg": s.get("threads_running_avg"), "cpus": cpus})
+
+    # ---------------- clustering and other storage engines ---------------------------
+    rates_ = inp.get("status_rates") or {}
+    cl = ctx.get("cluster") or {}
+    if have_run and cl.get("type") == "galera":
+        # flow control: the cluster paused writes because an applier queue somewhere filled up - measured time, not a guess
+        paused = (rates_.get("wsrep_flow_control_paused_ns") or 0) / 1e9 * 100
+        tvar = "wsrep_applier_threads" if "wsrep_applier_threads" in v else "wsrep_slave_threads"
+        if paused > float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0) and tvar in v:
+            cur = max(1, _int(v, tvar, 1))
+            sweep("sweep-applier-threads", "Sweep Galera applier threads", tvar, [str(cur * 2), str(cur * 4), str(max(cur * 4, cpus))],
+                  f"Writes were paused by flow control {paused:.1f}% of the time: an applier queue fills up and the cluster waits for it. "
+                  f"More applier threads ({tvar} = {cur}) apply write sets in parallel where they do not conflict.",
+                  {"flow_control_paused_pct": round(paused, 2), tvar: cur}, impact=3)
+    eng = ctx.get("engines") or {}
+    rocks = ((eng.get("data") or {}).get("rocksdb")) or 0
+    if have_run and rocks and "rocksdb_block_cache_size" in v:
+        hit = (rates_.get("rocksdb_block_cache_data_hit") or rates_.get("rocksdb_block_cache_hit") or 0)
+        miss = (rates_.get("rocksdb_block_cache_data_miss") or rates_.get("rocksdb_block_cache_miss") or 0)
+        bc = _int(v, "rocksdb_block_cache_size")
+        if miss > 0 and hit + miss > 0 and bc < rocks:
+            new = bp_round(v, min(rocks, bc * 2)) if bc else GiB
+            b.add("rocksdb-cache-grow", "Grow the MyRocks block cache", [("rocksdb_block_cache_size", fmt_size(new))],
+                  f"MyRocks holds {human_size(rocks)} and its {human_size(bc)} block cache misses {miss:.0f} times/s "
+                  f"({100 * miss / (hit + miss):.1f}% of lookups): more cached blocks, fewer reads. The memory budget limits the size.",
+                  {"rocksdb_data": human_size(rocks), "rocksdb_block_cache_size": human_size(bc), "block_cache_miss_per_s": round(miss, 1)},
+                  impact=2, confidence=2)
 
     # ---------------- filesystem experiments (opt-in scope) --------------------------
     if have_run and "filesystem" in (ctx.get("scope") or []) and ctx.get("fs_device") and v.get("os:datadir_fs") not in (None, "rootfs"):
@@ -1988,6 +2027,15 @@ def run_engine(ctx):
         # priority only for returning to measured configurations; everything else - the best-practice bundle included -
         # ranks by the evidence for what it acts on
         it["score"] = 100 if it.get("priority") and not it.get("no_mechanism") and not it.get("practice") else sc
+    # durability trade-offs in a synchronous cluster: a committed transaction is on other nodes too, so one node crashing
+    # loses nothing - only all of them crashing together does. Still a trade-off (the policy decides), but the meaning differs
+    cl_ = ctx.get("cluster") or {}
+    if cl_.get("type") in ("galera", "group-replication"):
+        for it in items:
+            if any(c["variable"] in ("innodb_flush_log_at_trx_commit", "sync_binlog", "innodb_doublewrite") for c in it.get("changes") or []):
+                it["rationale"] = (it.get("rationale") or "") + (
+                    f" In this {cl_['type']} cluster{' of ' + str(cl_['size']) + ' nodes' if cl_.get('size') else ''} a committed transaction "
+                    "is also on other nodes: one node crashing loses nothing; all nodes crashing together (power loss) can.")
     # NUMA: a latch handed between threads on different nodes moves its cache line across the interconnect - measured
     # spinning costs more there, so the changes that act on it rank higher (with the measured share, not by default)
     nodes_ = int((ctx.get("os_facts") or {}).get("os:numa_nodes") or 1)

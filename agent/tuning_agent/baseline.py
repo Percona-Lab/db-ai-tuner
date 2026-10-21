@@ -42,6 +42,15 @@ def generate(hw, variables, flavor, version, opts=None):
         overhead = measured
     bp = min(int(ram * 0.75), int((ram - reserve - overhead) / (1 + memory.COST["bp_control"])))
     bp = max(bp, 128 * MiB)
+    # MyRocks holding data shares the memory: its block cache gets the RocksDB share of the data (at least 256 MiB each)
+    data = ((opts.get("engines") or {}).get("data")) or {}
+    rocks, inno = data.get("rocksdb", 0), data.get("innodb", 0)
+    if rocks and "rocksdb_block_cache_size" in variables and rocks + inno:
+        share = rocks / (rocks + inno)
+        cache = max(256 * MiB, int(bp * share) // MiB * MiB)
+        bp = max(256 * MiB, bp - cache)
+        add("rocksdb_block_cache_size", fmt_size(cache), f"MyRocks holds {100 * share:.0f}% of the data ({human_size(rocks)}): its block cache gets "
+            "that share of the memory the buffer pool would otherwise use.")
     instances = 1
     from . import numa
     topo = numa.topology()

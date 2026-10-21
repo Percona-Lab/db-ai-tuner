@@ -167,6 +167,17 @@ class DB:
             return {}
         return {"events": ev, "fg": max(0, acc.get(0, 0)), "bg": max(0, acc.get(1, 0))}
 
+    def engines(self):
+        """Data per storage engine (bytes, user schemas) and the engines the server offers: {"data": {...}, "available": [...]}."""
+        try:
+            data = {str(r[0]).lower(): int(r[1] or 0) for r in self.rows(
+                "SELECT ENGINE, SUM(DATA_LENGTH + INDEX_LENGTH) FROM information_schema.TABLES WHERE ENGINE IS NOT NULL AND TABLE_SCHEMA NOT IN "
+                "('mysql', 'sys', 'information_schema', 'performance_schema') GROUP BY ENGINE")}
+            avail = [str(r[0]).lower() for r in self.rows("SELECT ENGINE FROM information_schema.ENGINES WHERE SUPPORT IN ('YES', 'DEFAULT')")]
+        except pymysql.MySQLError:
+            return {}
+        return {"data": data, "available": avail}
+
     def file_io(self):
         """{event: [reads, read_ps, writes, write_ps, misc, misc_ps]} - file I/O time split by operation (misc = fsync, open...)."""
         try:
@@ -235,6 +246,23 @@ def flavor_of(variables):
     m = re.match(r"(\d+)\.(\d+)\.(\d+)", ver)
     vt = tuple(int(x) for x in m.groups()) if m else (0, 0, 0)
     return flavor, vt, ver, comment
+
+
+def cluster_of(variables, status=None):
+    """Replication topology that adds its own settings and changes what durability trade-offs mean:
+    {"type": "galera" | "group-replication" | None, "size": nodes, "replica": bool}."""
+    v, st = variables or {}, status or {}
+    out = {"type": None, "size": None, "replica": False}
+    if str(v.get("wsrep_on", "")).upper() in ("ON", "1") and v.get("wsrep_provider") not in (None, "", "none"):
+        out["type"] = "galera"
+        try:
+            out["size"] = int(st.get("wsrep_cluster_size") or 0) or None
+        except ValueError:
+            pass
+    elif str(st.get("group_replication_primary_member", "") or v.get("group_replication_group_name", "")).strip():
+        out["type"] = "group-replication"
+    out["replica"] = bool(str(v.get("read_only", "")).upper() in ("ON", "1") and (st.get("Replica_running") or st.get("Slave_running")) in ("ON",))
+    return out
 
 
 def parse_innodb_status(text):

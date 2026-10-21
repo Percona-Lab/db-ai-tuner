@@ -1047,7 +1047,7 @@ def server_series(flavor, version):
 
 @app.get("/api/v1/agent/experience")
 def agent_experience(workload: str = None, cpus: int = None, conns: int = None, exclude_session: int = None, numa_nodes: int = None,
-                     flavor: str = None, version: str = None, key=Depends(auth.agent_key)):
+                     flavor: str = None, version: str = None, cluster: str = None, engine: str = None, key=Depends(auth.agent_key)):
     """Outcomes of each recommendation in this account's earlier sessions with a similar workload, CPU class and concurrency,
     in tiers of server closeness: the same variant and release series, the same variant in other series, other variants."""
     rows = store.q(
@@ -1080,7 +1080,7 @@ def agent_experience(workload: str = None, cpus: int = None, conns: int = None, 
             e["mean_delta_pct"] = round(sum(x) / len(x), 2) if x else None
     try:  # learnings (learning.db) that hold in these conditions: leads and priors, never a replacement for evidence
         insights = learner.matching(workload, cpu_class(cpus) if cpus else None, conc_class(conns) if conns else None,
-                                    ("multi-node" if numa_nodes > 1 else "uniform") if numa_nodes else None, series)
+                                    ("multi-node" if numa_nodes > 1 else "uniform") if numa_nodes else None, series, cluster, engine)
         params = learner.param_impact(workload, cpu_class(cpus) if cpus else None, series=series)
     except Exception:
         insights, params = [], {}

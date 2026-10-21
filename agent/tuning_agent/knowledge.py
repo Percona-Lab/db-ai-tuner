@@ -314,6 +314,17 @@ KB["innodb_deadlock_detect"] = dict(kind="bool", dynamic=True, risk="low", cat="
                                     desc="Deadlock detection.")
 KB["optimizer_switch"] = dict(kind="flags", dynamic=True, risk="none", cat="optimizer",
                               desc="Optimizer feature flags (the agent only changes individual flags).")
+# MyRocks (Percona Server's RocksDB engine) and Galera (Percona XtraDB Cluster, MariaDB Galera): their own settings
+KB["rocksdb_block_cache_size"] = dict(kind="size", dynamic=True, risk="none", cat="memory",
+                                      desc="MyRocks block cache: uncompressed data / index blocks in memory (the RocksDB counterpart of the buffer pool).")
+KB["rocksdb_db_write_buffer_size"] = dict(kind="size", dynamic=False, risk="none", cat="memory",
+                                          desc="MyRocks: memory for all memtables (writes buffered before flushing to SST files); 0 = unlimited.")
+KB["rocksdb_max_background_jobs"] = dict(kind="int", dynamic=True, risk="none", cat="io",
+                                         desc="MyRocks: background flush and compaction threads.")
+KB["wsrep_applier_threads"] = dict(kind="int", dynamic=True, risk="none", cat="replication",
+                                   desc="Galera: threads applying replicated write sets (wsrep_slave_threads before 8.0.26).")
+KB["wsrep_slave_threads"] = dict(kind="int", dynamic=True, risk="none", cat="replication",
+                                 desc="Galera: threads applying replicated write sets (older name of wsrep_applier_threads).")
 KB["innodb_numa_interleave"] = dict(kind="bool", dynamic=False, risk="none", cat="memory",
                                     desc="Interleave buffer pool allocation across NUMA nodes.")
 KB["large_pages"] = dict(kind="bool", dynamic=False, risk="low", cat="memory",
