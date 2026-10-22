@@ -667,7 +667,7 @@ def cmd_session(a):
                                         "agent_version": __version__, "allow_stale_agent": bool(getattr(a, "allow_stale_agent", False)),
                                         "agent_time": time.time(), "ntp_synchronized": _ntp_synchronized(),
                                         "noise_pct": a.noise_pct, "notes": a.notes, "workload": a.workload, "os_tuning": os_tuning,
-                                        "study": a.study})
+                                        "study": a.study, "planner": bool(getattr(a, "planner", False))})
         if r.get("warning"):
             log("WARNING: " + r["warning"])
         warn = _maintenance_tasks(c)
@@ -3309,6 +3309,8 @@ def main(argv=None):
     s.add_argument("--allow-stale-agent", action="store_true", help="kept for older scripts: a build mismatch is only a warning now")
     s.add_argument("--study", help="study (name or id) this session belongs to; created if it does not exist. Studies compare "
                                    "sessions across environments (hardware scaling, minimum hardware for a target)")
+    s.add_argument("--planner", action="store_true", help="an AI planner chooses each next step (the rules still check it); "
+                                                         "this session only, whatever the account's AI mode")
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_session)
 

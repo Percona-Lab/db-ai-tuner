@@ -120,6 +120,7 @@ MIGRATIONS = [
     ("tsessions", "agent_version", "TEXT"),
     ("users", "llm_planner_model", "TEXT"),
     ("users", "llm_critic_model", "TEXT"),
+    ("tsessions", "planner", "INTEGER DEFAULT 0"),
 ]
 
 
