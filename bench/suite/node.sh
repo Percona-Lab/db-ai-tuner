@@ -84,9 +84,16 @@ sb_prepare() {  # tables rows
   mysql -e "CREATE DATABASE IF NOT EXISTS sbtest"
   eval "$(wrap "$SBC --tables=$1 --table-size=$2 --threads=16 oltp_read_write prepare")" > $B/prep.log 2>&1 || { echo SETUPFAILED: prepare; exit 1; }
 }
+sb_modern() {  # sysbench with --thread-init-timeout (1.1) where the benchmark runs: Ubuntu's 1.0.20 rejects the option
+  local X="$(wrap 'sysbench --help 2>&1 | grep -q thread-init-timeout')"
+  eval "$X" && return 0
+  local BUILD='export DEBIAN_FRONTEND=noninteractive; apt-get install -yq make automake libtool pkg-config libaio-dev libmysqlclient-dev libssl-dev git >/dev/null && rm -rf /root/sysbench-src && git clone -q --depth 1 https://github.com/akopytov/sysbench /root/sysbench-src && cd /root/sysbench-src && ./autogen.sh >/dev/null && ./configure --quiet >/dev/null && make -j$(nproc) >/dev/null && make install >/dev/null'
+  eval "$(wrap "$BUILD")" >> $B/prep.log 2>&1 && eval "$X" || { echo SETUPFAILED: sysbench 1.1 build; exit 1; }
+}
 sb_profile() {  # name test tables rows threads extra warmup duration reset-line
-  # thousands of threads need longer than sysbench's 30 s to connect (r1 HC-2: the thread-pool run aborted at start-up)
-  local init=""; [ "$5" -ge 1024 ] && init="--thread-init-timeout=600"
+  # thousands of threads need longer than sysbench's 30 s to connect (r1 HC-2: the thread-pool run aborted at start-up);
+  # the option exists from sysbench 1.1 (r2 HC cells: "invalid option" with Ubuntu's 1.0.20)
+  local init=""; [ "$5" -ge 1024 ] && { sb_modern; init="--thread-init-timeout=600"; }
   local run; run=$(wrap "$SBC --tables=$3 --table-size=$4 --threads=$5 $6 $init --time={total} --report-interval=10 --mysql-ignore-errors=all $2 run")
   printf "[bench]\nname = %s\n%s\nrun = %s\nwarmup = %s\nduration = %s\ntimeout = %s\n\n$SBM" "$1" "$9" "$run" "$7" "$8" $(( $7 + $8 + 1200 )) > $P
 }
