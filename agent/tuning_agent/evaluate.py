@@ -617,6 +617,13 @@ def state_flags(s):
 
 
 def verdict(run, history, goal, noise):
+    """The run's verdict and its details; every verdict - reference and repeat runs included - carries what the run's
+    own samples say about its state (session 231: a 60 s warm-up was flagged on the first baseline only)."""
+    v, d = _run_verdict(run, history, goal, noise)
+    return v, dict(state_flags(run.get("summary")), **(d or {}))
+
+
+def _run_verdict(run, history, goal, noise):
     if run.get("superseded"):
         return "superseded", dict(state_flags(run.get("summary")), note=run["superseded"])
     st = steal_check(run.get("summary"), (noise or {}).get("noise_pct"))

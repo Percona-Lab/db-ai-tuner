@@ -185,3 +185,4 @@ button.star:hover { color: var(--s4); }
 .advice .acts { display: inline-flex; gap: 4px; margin-left: auto; }
 .advice .acts button { padding: 2px 8px; font-size: 12px; }
 .fbform[hidden] { display: none; }
+.badge.wrap { white-space: normal; max-width: 100%; align-items: baseline; }
