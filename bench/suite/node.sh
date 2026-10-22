@@ -171,8 +171,13 @@ max_connect_errors = 1000000000"; BASELINE_ARGS="--max-connections 4200" ;;
     # connect path over the network: DNS / auth / thread creation per connection (evidence for the name-resolution probe)
     scp -i /root/.ssh/bench_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new $B/connstorm.lua root@$CLI:/root/connstorm.lua || { echo SETUPFAILED: connstorm; exit 1; }
     sb_prepare 4 1000000
-    run=$(wrap "sysbench /root/connstorm.lua --mysql-host=$DB --mysql-user=sbtest --mysql-password=sbtest --mysql-db=sbtest --tables=4 --table-size=1000000 --threads=256 --time={total} --report-interval=10 --mysql-ignore-errors=all run")
-    printf "[bench]\nname = HC-6 connection storm: a new connection + 5 point selects per event, 256 threads from a separate client\ndata_state = read-only\nrun = %s\nwarmup = 120\nduration = 600\ntimeout = 1800\ngoal_metric = sysbench_qps\n\n$SBM" "$run" > $P
+    # the storm without TLS: the handshakes made the client the bottleneck (r2: 100% CPU on 16 vCPUs) and the test is about
+    # the server's connect path. caching_sha2_password lets a plain connection in only once the password is cached, so
+    # each run first logs in once over TLS (the cache is emptied by every restart), then storms without it
+    eval "$(wrap 'export DEBIAN_FRONTEND=noninteractive; command -v mysql >/dev/null || apt-get install -yq mysql-client-core-8.0 >/dev/null')" || { echo SETUPFAILED: mysql client on the client host; exit 1; }
+    NOSSL=$(eval "$(wrap 'sysbench --help 2>&1')" | grep -q 'mysql-ssl=STRING' && echo "--mysql-ssl=DISABLED" || echo "--mysql-ssl=off")
+    run=$(wrap "mysql -h $DB -u sbtest -psbtest --ssl-mode=REQUIRED -e 'SELECT 1' sbtest >/dev/null 2>&1; sysbench /root/connstorm.lua --mysql-host=$DB --mysql-user=sbtest --mysql-password=sbtest --mysql-db=sbtest $NOSSL --tables=4 --table-size=1000000 --threads=256 --time={total} --report-interval=10 --mysql-ignore-errors=all run")
+    printf "[bench]\nname = HC-6 connection storm: a new connection (no TLS) + 5 point selects per event, 256 threads from a separate client\ndata_state = read-only\nrun = %s\nwarmup = 120\nduration = 600\ntimeout = 1800\ngoal_metric = sysbench_qps\n\n$SBM" "$run" > $P
     REQ="max_connections = 600
 max_connect_errors = 1000000000"; BASELINE_ARGS="--max-connections 600" ;;
   TB-1) stroppy_install  # tpcb/tx has no --warmup: one run of warm-up + window; the goal is the server-side tps in the window
