@@ -77,3 +77,59 @@ Fixes below are in agent / server builds from 2026-10-22. Each line gives the ev
 - **LLM analysis cache:** add storage latency, CPU busy, NUMA and share bucket to the signature.
 - **Canary:** 30 s windows are too short for steady-state checks (3 samples); sample faster or lengthen the windows.
 - **Calibration:** 4-5 runs, or pool CV across sessions of the same build and benchmark.
+
+## Planner pilot (offline, 60 decisions)
+
+The labelled set holds 286 decision points from the three decision audits (`ops/dbench/labels.json`). Each point was
+rebuilt from the stored runs with `tools/dbench/build.py`. The pilot used 60 of them, stratified by audit class:
+15 OK, 12 R, 18 V, 12 S and 3 G.
+
+The planners got the evidence packet only. A blind judge saw each decision's evidence and the distinct options,
+anonymised and shuffled. It graded each option 2 (good), 1 (acceptable) or 0 (poor), and named the best one. The judge
+was a Claude model, so the Opus result may carry some self-preference. A second-vendor judge on a sample is still to do.
+
+| Decision maker | Mean grade | Good | Poor | Judged best | Cost / decision |
+|---|---|---|---|---|---|
+| Old rules (what ran) | 0.32 | 3% | 72% | 2% | – |
+| Current rules (after the review fixes) | 1.35 | 53% | 18% | 48% | – |
+| Opus 5.5 planner + GPT-5.6 Sol reviewer | 1.90 | 90% | 0% | 80% | $0.19 |
+| Gemini 4 Argon planner | 1.82 | 83% | 2% | 68% | $0.08 |
+| Kimi K3 planner + DeepSeek V4 Flash reviewer | 1.57 | 66% | 9% | 62% | $0.047 |
+
+Strict matching with the auditors' picks (22-32% for every decision maker) understates the differences. Where the old
+pick was "fine", the expert pick is that old pick, so a different good choice counts as a miss.
+
+How Kimi + DeepSeek differ from Opus + GPT:
+- Same final step in 31 of 58 decisions.
+- They stop half as often: 7 times against 15.
+- They choose trade-offs earlier (binlog-off, ps-off).
+- They repeat refuted ideas: tcmalloc after jemalloc was refuted twice, and huge pages under 11.7% noise.
+- DeepSeek V4 Flash revised 3 plans. GPT-5.6 Sol revised 12.
+
+15 of 60 Opus answers named a lighter performance_schema as a candidate id. Since 87cde05 the candidate ids are a
+schema enum, and other steps must be given as concrete changes.
+
+### More combinations (same 60 decisions, same prompt; new choices graded blind on the same scale)
+
+| Planner + reviewer | Mean grade | Good | Poor | Cost / decision |
+|---|---|---|---|---|
+| Opus 5.5 + GPT-5.6 Sol | 1.90 | 90% | 0% | $0.19 |
+| GPT-5.6 Sol + Sonnet 5.5 | 1.83 | 87% | 3% | $0.15 |
+| Gemini 4 Argon alone | 1.82 | 83% | 2% | $0.084 |
+| Gemini 4 Argon + GPT-5.6 Sol | 1.82 | 83% | 2% | $0.16 |
+| Sonnet 5.5 + GPT-5.6 Sol | 1.75 | 78% | 3% | $0.13 |
+| Kimi K3 + DeepSeek V4 Flash | 1.57 | 66% | 9% | $0.047 |
+| Current rules | 1.35 | 53% | 18% | – |
+
+Paired differences per decision, bootstrap 95% CI:
+- Opus+Sol vs Sol+Sonnet: +0.07 (-0.05..+0.20).
+- Opus+Sol vs Argon alone: +0.08 (-0.03..+0.22).
+- Opus+Sol vs Sonnet+Sol: +0.15 (+0.03..+0.28).
+- Opus+Sol vs Kimi+DeepSeek: +0.33 (+0.14..+0.53).
+- Opus+Sol vs the current rules: +0.55 (+0.35..+0.77).
+
+On 60 decisions the top three cannot be told apart. Argon alone costs less than half as much as the other two. The judge
+is a Claude model and Argon is not, so self-preference would not favour it.
+
+A reviewer did not improve Argon. Sol revised 12 of its plans and 7 revisions were taken, but they only swapped choices
+of equal grade.
