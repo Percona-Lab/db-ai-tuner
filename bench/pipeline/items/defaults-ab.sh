@@ -16,6 +16,7 @@ for w in "oltp_update_index uniform write" "oltp_read_only special read"; do
   set -- $w
   P=/root/bench/pipe-defaults-$3.ini
   sb_profile $P "sysbench $1 16 x 10M (~37 GB, > RAM), 64 threads, $2 ($(hostname))" $1 16 10000000 64 $2 600 600
+export -f post
   STUDY="pipeline: 8.0 vs 8.4 defaults $(date -u +%F)" POST=post run_session $P "defaults 8.0 vs 8.4, $3 ($(hostname))" tps 4
 done
 echo PIPEOK

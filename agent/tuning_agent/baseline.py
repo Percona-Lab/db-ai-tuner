@@ -22,7 +22,9 @@ def generate(hw, variables, flavor, version, opts=None):
     max_conn = int(opts.get("max_connections") or max(151, min(1000, cpus * 50)))
     # OS reserve, plus memory for a co-located client when one is declared (--reserve-mem): added, not instead
     client = int(opts.get("reserve_bytes") or 0)
-    reserve = max(GiB, int(ram * 0.10)) + client
+    # the OS reserve: 10% of RAM, or what the host measurably uses outside mysqld when more (a 24 GB pool on a 30 GB host
+    # with 6.6 GB held by the kernel swapped and was OOM-killed at startup: tuner-vbm-amd, 2026-10-21/22)
+    reserve = max(GiB, int(ram * 0.10), int(opts.get("host_other_bytes") or 0)) + client
     out = []
 
     def add(var, value, reason):

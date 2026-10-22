@@ -598,6 +598,7 @@ def cmd_baseline(a):
         opts["engines"] = c.db.engines()  # memory split between InnoDB and MyRocks by the data each holds
     except Exception:
         pass
+    opts["host_other_bytes"] = _host_other_now()
     items, calc = baseline.generate(hw, v, flavor, vt, opts)
     for it in items:
         it["current"] = v.get(it["variable"])
@@ -1181,6 +1182,22 @@ def _maybe_offcpu(c, sess, warmup_s, cpu_secs, in_window=False):
     sess.setdefault("offcpu_configs", []).append(key)
     c.state.set("session", sess)
     return o
+
+
+def _host_other_now():
+    """Memory the host uses outside mysqld right now: RAM minus available minus mysqld's resident memory (memory.
+    host_other_bytes, live). Kernel or driver allocations no counter names land here (tuner-vbm-amd: ~6.6 GB of 30 GB)."""
+    try:
+        mi = hostinfo.meminfo()
+        pid = hostinfo.mysqld_pid()
+        rss = 0
+        if pid:
+            for line in open(f"/proc/{pid}/status"):
+                if line.startswith("VmRSS:"):
+                    rss = int(line.split()[1]) * 1024
+        return max(0, mi.get("MemTotal", 0) - mi.get("MemAvailable", 0) - rss) or None
+    except (OSError, ValueError):
+        return None
 
 
 def _observe(r, prev):

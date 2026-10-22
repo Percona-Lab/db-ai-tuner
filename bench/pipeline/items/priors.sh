@@ -42,5 +42,6 @@ case $G in
       try $1 "prior: group commit no-delay count" binlog_group_commit_sync_delay=500 binlog_group_commit_sync_no_delay_count=64
     } ;;
 esac
+export -f post
 STUDY="pipeline: documentation priors $(date -u +%F)" POST=post run_session $P "priors $G ($(hostname))" tps 4
 echo PIPEOK

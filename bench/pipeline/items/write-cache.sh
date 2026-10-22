@@ -13,6 +13,7 @@ echo "data drive $dev: write cache $(cat /sys/block/$dev/queue/write_cache); hdp
 now=$(cat /sys/block/$dev/queue/write_cache)
 other=$([ "$now" = "write back" ] && echo OFF || echo ON)
 post() { REPEATS=3 try $1 "drive write cache switched ($now -> $other)" os:disk_write_cache=$other; }
+export -f post; export now other
 STUDY="pipeline: drive write cache $(date -u +%F)" PRE_APPLY="disable_log_bin=ON" POST=post run_session $P "write-cache A/B ($(hostname))" tps 4
 echo "data drive $dev after: $(cat /sys/block/$dev/queue/write_cache)"
 echo PIPEOK

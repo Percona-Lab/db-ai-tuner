@@ -23,8 +23,9 @@ case $F in
     # older percona-release builds do not know the newest repositories: update the tool first
     curl -fsSLO https://repo.percona.com/apt/percona-release_latest.generic_all.deb && apt-get install -yq ./percona-release_latest.generic_all.deb
     percona-release setup -y $R
-    ls /etc/apt/sources.list.d/ | grep -q "${R}" || percona-release enable-only $R release
-    ls /etc/apt/sources.list.d/ | grep -q "${R}" || { echo "COMPAT FAIL: percona repository $R not enabled"; exit 1; }
+    # a disabled repository stays as <name>.list.bak: only an active .list counts
+    percona-release enable-only $R release
+    ls /etc/apt/sources.list.d/ | grep -q "${R}-release\.list$" || { echo "COMPAT FAIL: percona repository $R not enabled"; exit 1; }
     apt-get update -q
     debconf-set-selections <<< "percona-server-server percona-server-server/root-pass password"
     debconf-set-selections <<< "percona-server-server percona-server-server/re-root-pass password"

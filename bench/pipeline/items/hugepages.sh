@@ -11,5 +11,6 @@ post() {
   local bp=$(cur innodb_buffer_pool_size); local pages=$(( bp / 2097152 + bp / 2097152 / 20 + 64 ))
   REPEATS=3 try $1 "large pages for a $(( bp / 1073741824 )) GB buffer pool" large_pages=ON os:hugepages=$pages
 }
+export -f post
 STUDY="pipeline: huge pages $(date -u +%F)" POST=post run_session $P "huge pages ($(hostname))" tps 4
 echo PIPEOK

@@ -8,7 +8,9 @@ SB() { echo "--mysql-user=sbtest --mysql-password=sbtest --mysql-socket=$(mysql 
 
 ensure_ps84() {  # the standard server: Percona Server 8.4 with debug symbols (CPU / off-CPU profiles need them)
   mysql -N -e "SELECT CONCAT(@@version, ' ', @@version_comment)" 2>/dev/null | grep -q "^8\.4\..*Percona Server" && return
-  step bash /root/bench/bm2/prep84.sh ps-84-lts
+  # from another variant: the full replace (purges MySQL / MariaDB packages that would break a plain install), then symbols
+  step bash /root/bench/pipeline/install_variant.sh percona 8.4
+  DEBIAN_FRONTEND=noninteractive apt-get install -yq percona-server-dbg >/dev/null || echo "percona-server-dbg not installed (profiles less detailed)"
   rm -f /var/lib/mysql_base.dataset
 }
 
@@ -33,7 +35,7 @@ sb_profile() {  # sb_profile <file> <name> <test> <tables> <rows> <threads> <ran
   cat > $f <<INI
 [bench]
 name = $name
-run = sysbench $test --tables=$t --table-size=$r --threads=$th --rand-type=$rnd $(SB) --time={total} --report-interval=10 --mysql-ignore-errors=all $* run
+run = ulimit -n 1048576; sysbench $test --tables=$t --table-size=$r --threads=$th --rand-type=$rnd $(SB) --time={total} --report-interval=10 --mysql-ignore-errors=all $* run
 warmup = $wu
 duration = $du
 timeout = $(( (wu + du) * 3 + 600 ))
@@ -51,6 +53,7 @@ INI
 }
 
 cur() { mysql -N -e "SELECT @@GLOBAL.$1"; }
+# items hand a post() function to session.sh (POST=post): a child process, so the functions it calls must be exported
 try() {  # try <profile> <why> <var=value>...: a queued experiment (2 runs) against the current configuration, then back
   local p=$1 why=$2; shift 2
   declare -A base; local a=()
@@ -81,3 +84,5 @@ second_disk() {  # second_disk: mount the box's second (non-system) drive at /di
   fi
   echo $d
 }
+
+export -f try cur SB

@@ -10,5 +10,6 @@ dataset 16 10000000
 P=/root/bench/pipe-update-disk.ini
 sb_profile $P "sysbench oltp_update_index 16 x 10M (~37 GB, > RAM), 64 threads, uniform: write / flush-bound ($(hostname))" oltp_update_index 16 10000000 64 uniform 600 600
 post() { REPEATS=3 try $1 "doublewrite buffer on the second drive /dev/$d" innodb_doublewrite_dir=/disk2/dblwr; }
+export -f post; export d
 STUDY="pipeline: second drive $(date -u +%F)" POST=post run_session $P "second drive ($(hostname))" tps 6
 echo PIPEOK
