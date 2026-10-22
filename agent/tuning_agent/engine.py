@@ -2021,7 +2021,8 @@ def run_engine(ctx):
     from . import memory as _mem
     hw_ = ctx.get("hw") or {}
     if hw_.get("ram_bytes"):
-        cur_b = _mem.budget(ctx["variables"], hw_, ctx.get("client_reserve") or 0)
+        other_ = _mem.host_other_bytes(ctx.get("summary"), hw_.get("ram_bytes"))
+        cur_b = _mem.budget(ctx["variables"], hw_, ctx.get("client_reserve") or 0, host_other=other_)
         # the model checked against the run: mysqld's measured memory (resident + swapped) above what the model says for the
         # current configuration is an error of the model on this host and workload - carried into every projection
         sm_ = ctx.get("summary") or {}
@@ -2031,7 +2032,7 @@ def run_engine(ctx):
             ch = {c["variable"]: c.get("proposed") for c in it.get("changes") or [] if c["variable"] in _mem.MEMORY_VARS and not c.get("unset")}
             if not ch or it["kind"] not in ("config",):
                 continue
-            nb = _mem.budget(dict(ctx["variables"], **ch), hw_, ctx.get("client_reserve") or 0)
+            nb = _mem.budget(dict(ctx["variables"], **ch), hw_, ctx.get("client_reserve") or 0, host_other=other_)
             if offset:
                 nb["needed"] += offset
                 nb["mysqld_bytes"] += offset

@@ -1501,6 +1501,20 @@ def test_group_commit_efficiency_achieved_vs_possible():
     assert "group-commit-delay" not in it_off and "log-writer-threads-on" in it_off, list(it_off)
     assert "InnoDB redo group commit" in it_off["log-writer-threads-on"]["rationale"]
 
+
+def test_memory_budget_reserves_what_the_host_uses_outside_mysqld():
+    # swap study 2026-10-21, tuner-vbm-amd: 30 GB RAM, ~6.6 GB held by the kernel outside every named counter; a 24 GB buffer
+    # pool (25.4 GB resident) was OOM-killed at startup. 22 GB passes the 10% reserve, but leaves no margin next to the 6.6 GB
+    from tuning_agent import memory
+    GB = 2 ** 30
+    hw = {"ram_bytes": 30 * GB, "cpus": 12}
+    v = {"innodb_buffer_pool_size": str(22 * GB), "max_connections": "100"}
+    other = memory.host_other_bytes({"mem_available_mb": 23.5 * 1024, "dbproc_rss_mb": 0.66 * 1024}, hw["ram_bytes"])
+    assert 5.5 * GB < other < 6.2 * GB, other / GB
+    assert not memory.budget(v, hw)["over_budget"]                       # the old 10% reserve let it through
+    assert memory.budget(v, hw, host_other=other)["over_budget"]          # with the measured usage it does not fit
+    assert memory.budget(v, hw, host_other=1 * GB)["os_reserve"] == int(3 * GB)  # small usage: the 10% floor stays
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

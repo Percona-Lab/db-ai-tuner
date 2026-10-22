@@ -910,7 +910,8 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     inputs["agent_version"] = __version__  # which engine build measured and judged this run
     try:  # memory budget of the configuration as measured, with mysqld's measured memory next to the model
         from . import memory
-        mb = memory.budget(c.variables, c.hw(), _client_reserve(c), measured=((summary.get("dbproc_pss_mb") or 0) + (summary.get("dbproc_swap_mb") or 0)) * 2 ** 20 or None)
+        mb = memory.budget(c.variables, c.hw(), _client_reserve(c), measured=((summary.get("dbproc_pss_mb") or 0) + (summary.get("dbproc_swap_mb") or 0)) * 2 ** 20 or None,
+                           host_other=memory.host_other_bytes(summary, (c.hw() or {}).get("ram_bytes")))
         summary["memory_budget"] = {"needed": mb["needed"], "ram": mb["ram"], "headroom": mb["headroom"], "over_budget": mb["over_budget"],
                                     "mysqld_model": mb["mysqld_bytes"], "mysqld_measured": mb.get("measured_mysqld_bytes"),
                                     "active_connections": mb["active_connections"], "text": memory.text(mb)}

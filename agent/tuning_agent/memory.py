@@ -47,7 +47,17 @@ def _n(v, d=0):
             return d
 
 
-def budget(variables, hw, reserve_bytes=0, active_per_cpu=2, measured=None):
+def host_other_bytes(summary, ram):
+    """Memory the host uses outside mysqld, measured in a run: RAM minus what the kernel calls available minus mysqld's
+    resident memory (page cache counts as available). Kernel or driver allocations no counter names show up here
+    (tuner-vbm-amd: ~6.6 GB of 30 GB, so a 24 GB buffer pool was OOM-killed at startup with a budget that allowed it)."""
+    s = summary or {}
+    if not ram or s.get("mem_available_mb") is None or s.get("dbproc_rss_mb") is None:
+        return None
+    return max(0, int(ram - (s["mem_available_mb"] + s["dbproc_rss_mb"]) * 2 ** 20))
+
+
+def budget(variables, hw, reserve_bytes=0, active_per_cpu=2, measured=None, host_other=None):
     """{"items": [{name, bytes, basis}], "total", "ram", "headroom", "over_budget", "active_connections", ...}"""
     v = variables or {}
     ram = int((hw or {}).get("ram_bytes") or 0)
@@ -90,7 +100,9 @@ def budget(variables, hw, reserve_bytes=0, active_per_cpu=2, measured=None):
         add("MyRocks block cache", _n(v.get("rocksdb_block_cache_size")), "rocksdb_block_cache_size")
         add("MyRocks memtables", _n(v.get("rocksdb_db_write_buffer_size")) or 0, "rocksdb_db_write_buffer_size (0 = unlimited: not counted)")
     add("mysqld fixed overhead", COST["mysqld_fixed"], "code, data dictionary, background threads")
-    os_res = max(GiB, int(ram * 0.10))
+    # the OS reserve: 10% of RAM, or what the host measurably uses outside mysqld when that is more (a co-located
+    # client is in that measurement and in reserve_bytes: counted once)
+    os_res = max(GiB, int(ram * 0.10), int((host_other or 0) - int(reserve_bytes or 0)))
     total = sum(i["bytes"] for i in items)
     need = total + os_res + int(reserve_bytes or 0)
     out = {"items": items, "mysqld_bytes": total, "os_reserve": os_res, "client_reserve": int(reserve_bytes or 0), "ram": ram,
