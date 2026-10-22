@@ -415,7 +415,7 @@ def stats(hours=24):
 
 
 # ------------------------------------------------------------------------------------------------- planner
-PLAN_PROMPT_VERSION = "1"
+PLAN_PROMPT_VERSION = "2"
 PLAN_SYSTEM = """You are the planner of an automated MySQL / Percona Server / MariaDB tuner, acting as a senior performance
 engineer. At each step you choose the single next measured run, or decide to stop. Every run costs 20-40 minutes of a
 real server, so choose the experiment with the highest expected CONFIRMED gain of the goal per run.
@@ -433,6 +433,8 @@ How to decide:
    relevance (0-4: share of measured time it acts on), note, hypothesis, track_record and experience (results of the same
    change in comparable sessions; large losses there are strong evidence against it). You may propose new changes when no
    candidate acts on the dominant component; use only variables in current_variables / os_settings / available_pseudo_variables.
+   choice.candidate_id is either a listed candidate id or empty; anything else goes into choice.changes as variable/value
+   pairs (e.g. {"variable": "ps:profile", "value": "lite"}).
 4. Learn from this session: "configurations" (mean goal per configuration over all its runs) beats single-run verdicts;
    do not repeat refuted mechanisms; an outcome "moved" means the targeted time shrank but the goal did not follow, so
    that component no longer limits the goal.
@@ -528,6 +530,16 @@ def _call(user_id, env_id, session_id, model, system, schema, name, payload, pur
     return content, dict(usage, latency_s=round(time.time() - t0, 2))
 
 
+def _with_ids(schema, ids, path):
+    """A copy of the schema whose field at `path` only accepts the listed ids (or empty)."""
+    out = json.loads(json.dumps(schema))
+    node = out
+    for k in path:
+        node = node[k]
+    node["enum"] = [""] + list(ids)
+    return out
+
+
 def plan(user_id, env_id, session_id, packet, model=None, critic_model=None, effort="high", purpose="plan"):
     """The planner's decision for the next step, reviewed by a second model when critic_model is set. When the critic
     revises, the result carries both and takes the critic's step only for a stop or a candidate the planner listed as an
@@ -540,14 +552,20 @@ def plan(user_id, env_id, session_id, packet, model=None, critic_model=None, eff
         return {"enabled": False, "reason": why}
     model = model or st.get("planner_model") or PLAN_MODEL
     payload = json.dumps(packet, sort_keys=True, default=str)
+    # candidate ids as an enum: a step that is not a listed candidate must be given as concrete changes (pilot: 15 of 60
+    # Opus answers named a lighter performance_schema "ps-lite" as an id instead of ps:profile=lite as a change)
+    ids = sorted({c.get("id") for c in packet.get("candidates") or [] if c.get("id")})
+    plan_schema, critic_schema = _with_ids(PLAN_SCHEMA, ids, ("properties", "choice", "properties", "candidate_id")), \
+        _with_ids(CRITIC_SCHEMA, ids, ("properties", "candidate_id"))
+    plan_schema = _with_ids(plan_schema, ids, ("properties", "alternatives", "items", "properties", "candidate_id"))
     try:
-        p, u = _call(user_id, env_id, session_id, model, PLAN_SYSTEM, PLAN_SCHEMA, "next_step", payload, purpose, effort)
+        p, u = _call(user_id, env_id, session_id, model, PLAN_SYSTEM, plan_schema, "next_step", payload, purpose, effort)
     except Exception as e:
         return {"enabled": True, "error": str(e)[:300]}
     out = {"enabled": True, "model": model, "plan": p, "usage": u}
     if critic_model:
         try:
-            c, cu = _call(user_id, env_id, session_id, critic_model, CRITIC_SYSTEM, CRITIC_SCHEMA, "plan_review",
+            c, cu = _call(user_id, env_id, session_id, critic_model, CRITIC_SYSTEM, critic_schema, "plan_review",
                           json.dumps({"packet": packet, "plan": p}, sort_keys=True, default=str), purpose + "-critic", effort)
             out.update(critic=c, critic_model=critic_model, critic_usage=cu)
             if c.get("verdict") == "revise":

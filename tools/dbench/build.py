@@ -79,8 +79,32 @@ def context_at(d, upto):
     return {"goal": s["goal"] or "tps", "policy": s["policy"] or "safe", "os_tuning": True, "os_facts": {}, "hw": hw, "flavor": flavor,
             "version": ver, "variables": variables, "summary": summ, "inputs": inp, "history": hist, "noise_pct": float(noise),
             "noise": None, "hypotheses": hyps, "hypothesis_experience": {}, "experience": {}, "insights": [], "param_impact": {},
-            "blocked": [], "failed": [], "scope": ["knobs", "os"], "managed": hist[-1]["managed"],
+            "blocked": [], "failed": [], "scope": ["knobs", "os"], "managed": dict(hist[-1]["managed"]),
             "bench": {k: b.get(k) for k in ("name", "run", "warmup", "duration", "goal_metric") if b.get(k) is not None}}
+
+
+UNDO = ("revert", "rollback", "drop-unearned")
+
+
+def settle(ctx, rounds=4):
+    """Like the agent: a revert / rollback / drop of an unearned change is applied first and the engine asked again, so
+    the decision is the one made on the configuration then in effect."""
+    res = engine.run_engine(ctx)
+    for _ in range(rounds):
+        nxt = res.get("next") or ""
+        if not nxt.startswith(UNDO):
+            break
+        it = next(i for i in res["items"] if i["id"] == nxt)
+        for c in it.get("changes") or []:
+            v, new = c["variable"], c.get("proposed")
+            if new in (None, "(default)", "DEFAULT"):
+                ctx["managed"].pop(v, None)
+            else:
+                ctx["managed"][v] = new
+                ctx["variables"][v] = new
+        ctx.setdefault("failed", []).append(nxt)  # not proposed again in this rebuilt decision
+        res = engine.run_engine(ctx)
+    return res
 
 
 def main():
@@ -99,7 +123,7 @@ def main():
             d = session_data(lb["session"])
             try:
                 ctx = context_at(d, lb["after_run_seq"])
-                res = engine.run_engine(ctx)
+                res = settle(ctx)
             except Exception as e:  # a decision the current engine cannot rebuild is reported, not silently dropped
                 print(f"session {lb['session']} after run {lb['after_run_seq']}: {type(e).__name__}: {e}", file=sys.stderr)
                 continue

@@ -74,6 +74,11 @@ def check(plan, ctx, res):
     cid = (ch.get("candidate_id") or "").strip()
     items = {i["id"]: i for i in res["items"]}
     done = set(ctx.get("failed") or [])
+    if cid and cid not in items and "=" in cid and not ch.get("changes"):
+        # a setting written where a candidate id belongs ("ps:profile=lite"): read it as the change it names
+        var, _, val = cid.partition("=")
+        ch = dict(ch, candidate_id="", changes=[{"variable": var.strip(), "value": val.split()[0].strip() if val.strip() else ""}])
+        cid = ""
     if cid:
         it = items.get(cid)
         if not it:
