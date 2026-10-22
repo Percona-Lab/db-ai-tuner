@@ -89,6 +89,12 @@ case $CELL in
     REQ="max_prepared_stmt_count = 1048576" ;;
   RW-1) sb_prepare 16 1000000
     sb_profile "RW-1 sysbench oltp_read_write, 16 x 1M rows (in memory), 16 threads, binary log on" oltp_read_write 16 1000000 16 "" 300 600 "$RESET" ;;
+  CC-1|CC-2|CC-3)  # concurrency ladder (2026-10-22): the same in-memory read-write load at 0.5x / 2x / 16x the server's vCPUs
+    K=${CELL#CC-}; HALVES=(0 1 4 32); NAMES=(- low medium high)   # threads per vCPU, in halves: 0.5x / 2x / 16x
+    TH=$(( $(nproc) * ${HALVES[$K]} / 2 )); CLS=${NAMES[$K]}; RATIO=(- 0.5x 2x 16x)
+    sb_prepare 16 1000000
+    sb_profile "$CELL sysbench oltp_read_write, 16 x 1M rows (in memory), $TH threads ($CLS concurrency, ${RATIO[$K]} the vCPUs), binary log on" oltp_read_write 16 1000000 $TH "" 300 600 "$RESET"
+    REQ="max_connections = $(( TH + 100 ))" ;;
   RW-2) sb_prepare 32 6000000
     # aging data instead of a 46 GB restore per run (r1: ~50 min per run with a 30 min warm-up to reach steady state);
     # sysbench read/write does not grow the data set, so back-to-back runs on seasoned data stay comparable

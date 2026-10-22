@@ -29,6 +29,7 @@ CELLS = {  # cell -> (tier, class)
     "RO-1": ("core", "S"), "RO-2": ("core", "S"), "RO-4": ("core", "S"), "RW-1": ("core", "S"), "RW-2": ("core", "S"),
     "RW-3": ("core", "S"), "RW-4": ("core", "S"), "WI-1": ("core", "S"), "WI-3": ("core", "S"), "KV-1": ("core", "S"),
     "AN-1": ("core", "S"), "AN-2": ("core", "S"), "MX-1": ("core", "S"), "TB-1": ("core", "S"), "DS-1": ("core", "S"),
+    "CC-1": ("core", "S"), "CC-2": ("core", "S"), "CC-3": ("core", "S"),  # concurrency ladder: 0.5x / 2x / 16x vCPUs
     "HC-1": ("core", "L"), "HC-2": ("core", "L"), "HC-3": ("core", "L"), "HC-6": ("core", "L"),
 }
 # repeat cells: the same cell measured twice in one run (KV-1.2 = KV-1 again) - how much the tuner's own outcome varies

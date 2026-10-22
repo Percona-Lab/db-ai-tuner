@@ -63,6 +63,7 @@ Core cells run at every engine milestone. Extended cells run before a release, o
 | AN-2 | core | Join Order Benchmark, 113 queries | 0.5x | 1 | total time | optimizer-bound queries |
 | AN-3 | ext | TPC-H SF30, 4 streams | ≈3x | 4 | total time | concurrent analytics on I/O |
 | MX-1 | core | CH-benCHmark 500W: 32 TPC-C + 1 analytical | ≈3x | 33 | NOPM and Q time | mixed OLTP plus analytics |
+| CC-1 / CC-2 / CC-3 | core | sysbench oltp_read_write, 16 x 1M, binlog on: concurrency ladder | 0.25x | 0.5x / 2x / 16x vCPUs (4 / 16 / 128 on class S) | tps | the same load at low, medium and high concurrency: which settings matter only once contention appears |
 | TB-1 | core | TPC-B (stroppy tpcb/tx) scale 100: 100 branches, 1000 tellers, 10M accounts, read committed | ≈0.15x | 64 | tps (server-side, in the window) | one short update-heavy transaction per commit: row locks on the few branch / teller rows, commit path, redo, history inserts |
 | DS-1 | core | TPC-DS SF1 (stroppy), 99 queries, 1 stream, 60 s cap per query | ≈0.2x | 1 | total time | optimizer on a wide query mix: joins, subqueries, temporary tables, sorts, window functions (in memory: CPU, not I/O) |
 
@@ -141,3 +142,32 @@ web app shows a cell's history across engine builds as a study per suite version
   production philosophy: the tuner never adds swap and sizes memory for RAM alone). Each pairs with its default cell.
 * **Repeat cells** `KV-1.2`, `WI-3.2`: the same cell twice in one run - the tuner's own variation on an identical cell.
 * **Control cell** RO-1: success is no invented improvement and no regression (scorecard `CONTROL ok`).
+
+
+## Concurrency classes (2026-10-22)
+
+OLTP concurrency is described relative to the server's vCPUs, because contention depends on connections per CPU, not
+on the count. The learner and the experience prior use the same classes (`conc_class` in server/app/main.py):
+
+| Class | Nominal | Range | What it represents |
+|---|---|---|---|
+| low | 0.5x vCPUs | up to 1x | CPU left for background work (flushing, purge) and a co-located client |
+| medium | 2x | up to 6x | some waiting and contention, not much |
+| high | 16x | up to 64x | contention exposed: latches, locks, scheduling, thread pool |
+| extreme | thousands of connections | beyond 64x | thread handling: connection scaling, memory per connection, scheduler |
+
+Cells by class (class S = 8 vCPUs, class L server = 16 vCPUs): low - CC-1, WI-1 (8, 1x); medium - CC-2, RW-1, RW-3
+(16), MX-1 (33); high - CC-3 (128), and the 64-connection cells RO-1/2/4, RW-2/4, WI-3, KV-1, TB-1 (8x, between the
+nominal medium and high points, kept for comparability with r1), HC-1 (1024 on 16 = 64x), HC-6 (256 on 16 = 16x);
+extreme - HC-2 and HC-3 (4096). From r3 the 64-connection cells move to the nominal points.
+
+### Minimum hardware for the extreme cells (HC-2, HC-3: 4096 connections, in-memory sysbench)
+
+* Server: 16 vCPUs and 32 GB RAM at least - each connection costs about 1 MiB of thread stack plus its session
+  buffers (4096 connections: several GB before any query buffer), and fewer CPUs measure only the scheduler.
+* A separate client host with 8 vCPUs or more: 4096 sysbench threads saturate a co-located client and take CPU from
+  the server.
+* Limits on both hosts: `ulimit -n` 65535 or more; server `max_connections` >= 4196, `back_log` = 4096,
+  `net.core.somaxconn` >= 4096, `net.ipv4.tcp_max_syn_backlog` >= 4096; enough local ports on the client
+  (`net.ipv4.ip_local_port_range`).
+* Same data centre, private network: the round trip is part of every statement.
