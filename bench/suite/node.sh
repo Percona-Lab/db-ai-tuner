@@ -152,19 +152,24 @@ season_hours = 1"
     TH=$([ $CELL = HC-1 ] && echo 1024 || echo 4096); sb_prepare 16 2000000
     sb_profile "$CELL sysbench oltp_point_select, 16 x 2M rows (~8 GB, in memory), $TH connections from a separate client (plain statements)" oltp_point_select 16 2000000 $TH "--rand-type=uniform --db-ps-mode=disable" 300 600 "data_state = read-only"
     REQ="max_connections = $((TH + 100))
-back_log = 4096"; BASELINE_ARGS="--max-connections $((TH + 100))" ;;
+back_log = 4096
+# thousands of connection attempts from one client host: the default 100 errors blocked it (r2 HC cells)
+max_connect_errors = 1000000000"; BASELINE_ARGS="--max-connections $((TH + 100))" ;;
   HC-3) [ -n "$CLI" ] || { echo SETUPFAILED: $CELL needs a client host; exit 1; }
     sb_prepare 16 4000000
     sb_profile "HC-3 sysbench oltp_read_write, 16 x 4M rows (~15 GB, ~0.5x RAM), 4096 connections from a separate client (plain statements)" oltp_read_write 16 4000000 4096 "--db-ps-mode=disable" 600 600 "$RESET"
     REQ="max_connections = 4200
-back_log = 4096"; BASELINE_ARGS="--max-connections 4200" ;;
+back_log = 4096
+# thousands of connection attempts from one client host: the default 100 errors blocked it (r2 HC cells)
+max_connect_errors = 1000000000"; BASELINE_ARGS="--max-connections 4200" ;;
   HC-6) [ -n "$CLI" ] || { echo SETUPFAILED: $CELL needs a client host; exit 1; }
     # connect path over the network: DNS / auth / thread creation per connection (evidence for the name-resolution probe)
     scp -i /root/.ssh/bench_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new $B/connstorm.lua root@$CLI:/root/connstorm.lua || { echo SETUPFAILED: connstorm; exit 1; }
     sb_prepare 4 1000000
     run=$(wrap "sysbench /root/connstorm.lua --mysql-host=$DB --mysql-user=sbtest --mysql-password=sbtest --mysql-db=sbtest --tables=4 --table-size=1000000 --threads=256 --time={total} --report-interval=10 --mysql-ignore-errors=all run")
     printf "[bench]\nname = HC-6 connection storm: a new connection + 5 point selects per event, 256 threads from a separate client\ndata_state = read-only\nrun = %s\nwarmup = 120\nduration = 600\ntimeout = 1800\ngoal_metric = sysbench_qps\n\n$SBM" "$run" > $P
-    REQ="max_connections = 600"; BASELINE_ARGS="--max-connections 600" ;;
+    REQ="max_connections = 600
+max_connect_errors = 1000000000"; BASELINE_ARGS="--max-connections 600" ;;
   TB-1) stroppy_install  # tpcb/tx has no --warmup: one run of warm-up + window; the goal is the server-side tps in the window
     mysql -e "CREATE DATABASE IF NOT EXISTS tpcb"
     ST="/usr/local/bin/stroppy run tpcb/tx --scale-factor 100 -d mysql -D 'url=tpcc:tpcc@tcp(127.0.0.1:3306)/tpcb'"
@@ -194,4 +199,6 @@ run_session $P "$STUDY: $CELL $(sed -n 's/^name = //p' $P | cut -d' ' -f2- | cut
 echo QUEUEDONE
 Q
 chmod +x $B/queue.sh; cd $B && (setsid nohup ./queue.sh > queue.log 2>&1 < /dev/null &)
+# a client host blocked by earlier failed attempts stays blocked until the host cache is cleared (r2 HC cells)
+[ -n "$CLI" ] && mysql -e "TRUNCATE TABLE performance_schema.host_cache" 2>/dev/null
 echo SETUPDONE
