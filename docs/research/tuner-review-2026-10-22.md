@@ -133,3 +133,23 @@ is a Claude model and Argon is not, so self-preference would not favour it.
 
 A reviewer did not improve Argon. Sol revised 12 of its plans and 7 revisions were taken, but they only swapped choices
 of equal grade.
+
+### All planners and pairs, both judges (same 60 decisions)
+
+Grades are mean / good / poor. A failed answer counts as the rules' choice, which is what the agent falls back to.
+GLM-5.3, Qwen 3.8 Max and GPT-6 Astra ran on the planner prompt after 87cde05 (candidate ids constrained); the others
+ran on the earlier prompt.
+
+| Planner (+ reviewer) | Claude judge | GPT-5.6 Sol judge | Average | Cost / decision | Failed answers |
+|---|---|---|---|---|---|
+| GPT-5.6 Sol + Sonnet 5.5 review | 1.83 / 87% / 3% | 1.80 / 82% / 2% | 1.82 | $0.149 | 0 |
+| Opus 5.5 | 1.87 / 90% / 3% | 1.75 / 82% / 7% | 1.81 | $0.117 | 0 |
+| Opus 5.5 + GPT-5.6 Sol review | 1.90 / 90% / 0% | 1.65 / 75% / 10% | 1.77 | $0.191 | 0 |
+| Sonnet 5.5 | 1.82 / 83% / 2% | 1.68 / 73% / 5% | 1.75 | $0.053 | 0 |
+| Gemini 4 Argon | 1.82 / 83% / 2% | 1.65 / 70% / 5% | 1.73 | $0.084 | 0 |
+| GPT-5.6 Sol | 1.72 / 77% / 5% | 1.72 / 77% / 5% | 1.72 | $0.075 | 0 |
+| Kimi K3 | 1.60 / 67% / 7% | 1.63 / 70% / 7% | 1.62 | $0.047 | 2 |
+| GPT-6 Astra | 1.77 / 82% / 5% | 1.45 / 63% / 18% | 1.61 | $0.262 | 0 |
+| Qwen 3.8 Max (median 284 s per answer) | 1.53 / 68% / 15% | 1.48 / 67% / 18% | 1.51 | $0.087 | 3 |
+| GLM-5.3 | 1.58 / 72% / 13% | 1.27 / 52% / 25% | 1.42 | $0.020 | 2 |
+| Current rules | 1.35 | 1.42 | 1.39 | – | – |
