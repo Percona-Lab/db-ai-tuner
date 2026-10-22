@@ -53,6 +53,13 @@
   function hideTip() { tip().hidden = true; }
 
   /* opts: {title, ts:[], series:[{name, values, unit}], window:[t0,t1], height, unit, min0} */
+  // linked cross-hair: every time-series chart on the page follows the one under the pointer (same moment in time)
+  let linked = [];
+  function syncAll(src, t) {
+    linked = linked.filter(c => c.svg.isConnected);
+    linked.forEach(c => { if (c !== src) (t == null ? c.hide() : c.show(t)); });
+  }
+
   function lineChart(container, opts) {
     const wrap = document.createElement("div");
     wrap.className = "chart";
@@ -121,24 +128,58 @@
     });
     const cross = el("line", { y1: m.t, y2: H - m.b, stroke: "var(--axis)", "stroke-width": 1, visibility: "hidden" }, svg);
     const dots = series.map((s, i) => el("circle", { r: 4, fill: SLOTS[i], stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" }, svg));
-    const hit = el("rect", { x: m.l, y: 0, width: W - m.l - m.r, height: H, fill: "transparent" }, svg);
-    hit.addEventListener("mousemove", ev => {
-      const r = svg.getBoundingClientRect();
-      const px = (ev.clientX - r.left) * W / r.width;
-      const t = x0 + (px - m.l) / (W - m.l - m.r) * (x1 - x0);
-      let k = 0, best = Infinity;
-      ts.forEach((tt, j) => { const dd = Math.abs(tt - t); if (dd < best) { best = dd; k = j; } });
+    // value label for the linked cross-hair (when another chart is under the pointer): this chart's values at that moment
+    const vlab = el("text", { y: m.t + 10, "font-size": 11, "font-weight": 600, visibility: "hidden", "paint-order": "stroke", stroke: "var(--surface)", "stroke-width": 3 }, svg);
+    const hit = el("rect", { x: m.l, y: 0, width: W - m.l - m.r, height: H, fill: "transparent", style: "touch-action:pan-y" }, svg);
+    const fmtV = v => (v != null && Math.abs(v) >= 99 && Math.abs(v) <= 100 ? v.toFixed(3) : fmtNum(v));
+    const nearest = t => { let k = 0, best = Infinity; ts.forEach((tt, j) => { const dd = Math.abs(tt - t); if (dd < best) { best = dd; k = j; } }); return k; };
+    const place = k => {
       cross.setAttribute("x1", X(ts[k])); cross.setAttribute("x2", X(ts[k])); cross.setAttribute("visibility", "visible");
-      let html = `<div class="t">${hhmm(ts[k], true)}</div>`;
       series.forEach((s, i) => {
         const v = s.values[k];
         if (v != null) { dots[i].setAttribute("cx", X(ts[k])); dots[i].setAttribute("cy", Y(v)); dots[i].setAttribute("visibility", "visible"); }
         else dots[i].setAttribute("visibility", "hidden");
-        html += `<div><i style="background:${SLOTS[i]}"></i>${s.name}<b>${v != null && Math.abs(v) >= 99 && Math.abs(v) <= 100 ? v.toFixed(3) : fmtNum(v)}${opts.unit && opts.unit.length <= 3 ? " " + opts.unit : ""}</b></div>`;
+      });
+    };
+    const hide = () => { cross.setAttribute("visibility", "hidden"); vlab.setAttribute("visibility", "hidden"); dots.forEach(d => d.setAttribute("visibility", "hidden")); };
+    const me = {
+      svg,
+      show(t) {  // driven by another chart: same moment, values written next to the line
+        if (t < x0 - 30 || t > x1 + 30) { hide(); return; }
+        const k = nearest(t);
+        place(k);
+        while (vlab.firstChild) vlab.removeChild(vlab.firstChild);
+        series.forEach((s, i) => {
+          if (s.values[k] == null) return;
+          const sp = el("tspan", { fill: SLOTS[i] }, vlab);
+          sp.textContent = (vlab.childNodes.length > 1 ? " · " : "") + fmtV(s.values[k]);
+        });
+        const x = X(ts[k]), right = x > (m.l + W - m.r) / 2;
+        vlab.setAttribute("x", right ? x - 5 : x + 5);
+        vlab.setAttribute("text-anchor", right ? "end" : "start");
+        vlab.setAttribute("visibility", vlab.childNodes.length ? "visible" : "hidden");
+      },
+      hide,
+    };
+    linked.push(me);
+    const move = ev => {
+      const r = svg.getBoundingClientRect();
+      const px = (ev.clientX - r.left) * W / r.width;
+      const t = x0 + (px - m.l) / (W - m.l - m.r) * (x1 - x0);
+      const k = nearest(t);
+      vlab.setAttribute("visibility", "hidden");
+      place(k);
+      let html = `<div class="t">${hhmm(ts[k], true)}</div>`;
+      series.forEach((s, i) => {
+        const v = s.values[k];
+        html += `<div><i style="background:${SLOTS[i]}"></i>${s.name}<b>${fmtV(v)}${opts.unit && opts.unit.length <= 3 ? " " + opts.unit : ""}</b></div>`;
       });
       showTip(html, ev.clientX, ev.clientY);
-    });
-    hit.addEventListener("mouseleave", () => { cross.setAttribute("visibility", "hidden"); dots.forEach(d => d.setAttribute("visibility", "hidden")); hideTip(); });
+      syncAll(me, ts[k]);
+    };
+    hit.addEventListener("pointermove", move);
+    hit.addEventListener("pointerdown", move);
+    hit.addEventListener("pointerleave", () => { hide(); hideTip(); syncAll(me, null); });
   }
 
   /* opts: {title, bars:[{label, value, sub, highlight, href}], unit, lowerBetter, ref} */
