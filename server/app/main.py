@@ -221,6 +221,16 @@ RUN_LIST_FIELDS = ("id", "session_id", "seq", "label", "notes", "status", "start
                    "delta_pct", "delta_vs_first_pct", "verdict", "abort_reason")
 
 
+_BOOL = {"on": "1", "true": "1", "yes": "1", "off": "0", "false": "0", "no": "0"}
+
+
+def at_compiled_default(cfg, meta):
+    """Variables whose value in effect equals the server's compiled default, wherever the value came from (an option file
+    may pin a setting at its default): they are not changes, and pages list them apart."""
+    norm = lambda v: _BOOL.get(str(v).strip().lower(), str(v).strip().lower())
+    return {k for k, m in (meta or {}).items() if isinstance(m, dict) and m.get("default") is not None and k in cfg and norm(cfg[k]) == norm(m["default"])}
+
+
 def run_brief(r):
     d = {k: r[k] for k in RUN_LIST_FIELDS}
     d["summary"] = store.uj(r["summary"], {})
@@ -464,7 +474,14 @@ def environment(env_id: int, request: Request):
     else:  # outside sessions: e.g. data loading reported by a setup script, if recent
         a = store.uj(e.get("activity")) if e.get("activity") else None
         activity = dict(a, at=e["activity_at"], source="agent") if a and e.get("activity_at") and now() - e["activity_at"] < 6 * 3600 and a.get("phase") != "idle" else None
-    return {"environment": env_brief(e), "facts": store.uj(e["facts"], {}), "sessions": sessions, "events": events, "hosts": hosts,
+    facts = store.uj(e["facts"], {})
+    managed = (facts.get("agent") or {}).get("managed") or {}
+    if managed:  # agent settings pinned at the compiled default, from the latest run's configuration and its defaults
+        lr = store.q1("SELECT r.config, r.config_meta FROM runs r JOIN tsessions s ON s.id=r.session_id WHERE s.env_id=? AND r.config_meta IS NOT NULL "
+                      "ORDER BY r.id DESC LIMIT 1", (env_id,))
+        if lr:
+            facts["agent"]["at_default"] = sorted(at_compiled_default(store.uj(lr["config"], {}), store.uj(lr["config_meta"], {}) or {}) & set(managed))
+    return {"environment": env_brief(e), "facts": facts, "sessions": sessions, "events": events, "hosts": hosts,
             "activity": activity, "steal": steal_profile(env_id)}
 
 
@@ -834,6 +851,7 @@ def run_detail(run_id: int, request: Request, vs: int = None):
         "session": {**{k: s[k] for k in ("id", "name", "goal", "policy", "noise_pct", "env_id", "status", "goal_metric")},
                     "calibration": store.uj(s.get("calibration"))},
         "evaluation": store.uj(r["evaluation"], {}),
+        "at_default": sorted(at_compiled_default(cfg, store.uj(r["config_meta"], {}) or {}) & set(store.uj(r["managed"], {}) or {})),
         "recommendations": recs, "runs": siblings, "feedback": _feedback_view(_feedback("f.run_id=?", (run_id,)), u),
         "starred": bool(store.q1("SELECT 1 FROM stars WHERE user_id=? AND run_id=?", (u["id"], run_id))),
         "environment": {"id": s["env_id"], "name": (store.q1("SELECT name FROM environments WHERE id=?", (s["env_id"],)) or {"name": ""})["name"]},
@@ -959,7 +977,8 @@ def agent_feedback(sid: int, key=Depends(auth.agent_key), items: str = ""):
 def run_config(run_id: int, request: Request):
     u = auth.current_user(request)
     r = own_run(run_id, u["id"])
-    return {"config": store.uj(r["config"], {}), "managed": store.uj(r["managed"], {}), "meta": store.uj(r["config_meta"], {}) or {}}
+    cfg, meta = store.uj(r["config"], {}), store.uj(r["config_meta"], {}) or {}
+    return {"config": cfg, "managed": store.uj(r["managed"], {}), "meta": meta, "at_default": sorted(at_compiled_default(cfg, meta))}
 
 
 @app.get("/api/runs/{run_id}/metrics")

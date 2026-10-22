@@ -612,7 +612,7 @@ async function envPage(id) {
      return `<tr><td><b>${esc(h.name)}</b></td><td>${h.destroyed_at ? `<span class="badge plain" data-tip="Machine deleted ${ago(h.destroyed_at)}; its metrics stay with the runs.">decommissioned</span>` : h.online ? '<span class="badge good">online</span>' : `<span class="badge warn">offline · ${ago(h.last_seen)}</span>`}</td>
        <td>${hw.cpus || "?"} CPU · ${bytes(hw.ram_bytes)}</td><td class="num">${o.rtt_avg_ms != null ? num(o.rtt_avg_ms) + " ms" : "–"}</td>
        <td class="num">${num(o.net_conn_per_s)}</td><td class="num">${num(o.net_time_wait)}</td><td class="num">${o.cpu_busy != null ? Math.round(o.cpu_busy) + "%" : "–"}</td></tr>`; }).join("")}</tbody></table></div>` : ""}
-  <div class="card" style="margin-top:10px"><details><summary style="margin:0">Current agent-applied configuration (${Object.keys((f.agent || {}).managed || {}).length} settings)${info("The settings the tuning-agent currently enforces on this server: MySQL variables written to its own option file (shown below) and operating-system settings. Everything not listed is the server default or comes from your own option files. As of the agent's last report.")}</summary>${Object.keys((f.agent || {}).managed || {}).length ? `<p class="muted" style="margin:0 0 6px">${esc((f.agent || {}).cnf_path || "")} · restarts ${(f.agent || {}).allow_restart === false ? "disabled" : "allowed"}</p>${configBlocks(f.agent.managed)}` : '<span class="muted">None yet: <code>tuning-agent baseline --apply</code> writes the first set.</span>'}</details></div>
+  <div class="card" style="margin-top:10px"><details><summary style="margin:0">Current agent-applied configuration (${Object.keys((f.agent || {}).managed || {}).length - ((f.agent || {}).at_default || []).length} changed from compiled defaults)${info("The settings the tuning-agent currently enforces on this server: MySQL variables written to its own option file (shown below) and operating-system settings. Everything not listed is the server default or comes from your own option files. As of the agent's last report.")}</summary>${Object.keys((f.agent || {}).managed || {}).length ? `<p class="muted" style="margin:0 0 6px">${esc((f.agent || {}).cnf_path || "")} · restarts ${(f.agent || {}).allow_restart === false ? "disabled" : "allowed"}</p>${configBlocks(Object.fromEntries(Object.entries(f.agent.managed).filter(([k]) => !(f.agent.at_default || []).includes(k))))}${(f.agent.at_default || []).length ? `<p class="muted" style="font-size:12.5px;margin:6px 0 0">Also written at their compiled default (no change on this server): ${f.agent.at_default.map(k => `<code>${esc(k)}</code>`).join(" ")}</p>` : ""}` : '<span class="muted">None yet: <code>tuning-agent baseline --apply</code> writes the first set.</span>'}</details></div>
   <div class="row"><h2>Live metrics</h2><span class="spacer"></span><select id="range" style="width:auto"><option value="900">15 min</option><option value="3600" selected>1 hour</option><option value="21600">6 hours</option><option value="86400">24 hours</option></select></div>
   <div id="live"></div>
   <h2>Tuning sessions</h2><div class="card tablewrap"><table data-opt="Goal|Policy|Runs|First run|Best|Started"><thead><tr><th>#</th><th>Session</th><th>Goal</th><th>Policy</th><th>Status</th><th class="num">Runs</th><th class="num">First run</th><th class="num">Best</th><th class="num">Best gain</th><th>Started</th></tr></thead><tbody id="sess"></tbody></table></div>
@@ -1063,11 +1063,12 @@ async function renderKeySettings(el, runId) {
   const c = await api(`/api/runs/${runId}/config`);
   const meta = c.meta || {};
   if (!Object.keys(meta).length) { el.innerHTML = ""; return; }
+  const atDef = new Set(c.at_default || []);
   const rows = KEY_VARS.filter(k => k in c.config && !/^(os|rg):/.test(k)).map(k => {
-    const m = meta[k] || {}, def = isDefault(m);
-    return `<tr><td class="mono">${esc(k)}</td><td class="mono ${def ? "" : "diff-new"}">${esc(val(k, c.config[k]))}</td><td class="mono muted">${m.default != null ? esc(val(k, m.default)) : ""}</td><td>${def ? '<span class="muted">compiled default</span>' : esc(sourceText(m))}</td></tr>`;
+    const m = meta[k] || {}, def = isDefault(m) || atDef.has(k);
+    return `<tr><td class="mono">${esc(k)}</td><td class="mono ${def ? "" : "diff-new"}">${esc(val(k, c.config[k]))}</td><td class="mono muted">${m.default != null ? esc(val(k, m.default)) : ""}</td><td>${isDefault(m) ? '<span class="muted">compiled default</span>' : def ? `<span class="muted">compiled default (also set in ${esc(sourceText(m))})</span>` : esc(sourceText(m))}</td></tr>`;
   }).join("");
-  const nonDef = Object.entries(meta).filter(([k, m]) => !isDefault(m) && !KEY_VARS.includes(k)).length;
+  const nonDef = Object.entries(meta).filter(([k, m]) => !isDefault(m) && !atDef.has(k) && !KEY_VARS.includes(k)).length;
   const osKeys = Object.keys(c.config).filter(k => /^(os|rg):/.test(k)).sort();
   const managedNow = c.managed || {};
   const osTable = osKeys.length ? `<h3>Operating system &amp; runtime settings of this run${info("Values in effect on the database host while this run was measured. Highlighted = set by the tuning-agent; the rest are the host's own values.")}</h3>
@@ -1209,14 +1210,14 @@ async function runPage(id, tab) {
     else if (name === "config") {
       const c = await api(`/api/runs/${id}/config`);
       const managed = c.managed || {}, meta = c.meta || {};
-      const hasMeta = Object.keys(meta).length > 0;
+      const hasMeta = Object.keys(meta).length > 0, atDefC = new Set(c.at_default || []);
       tabEl.innerHTML = `<div class="row"><input id="flt" placeholder="filter variables" style="max-width:300px">${hasMeta ? '<label style="margin:0;display:flex;gap:6px;align-items:center;width:auto"><input type="checkbox" id="nondef" style="width:auto"> only non-default</label>' : ""}<span class="muted">${Object.keys(c.config).length} variables at measurement start; <b>bold</b> = managed by the agent</span></div>
         <div class="card tablewrap" style="margin-top:10px"><table><thead><tr><th>Variable</th><th>Value</th>${hasMeta ? "<th>Compiled default</th><th>Source</th>" : ""}</tr></thead><tbody id="cfg"></tbody></table></div>`;
       const draw = () => {
         const q = document.getElementById("flt").value.toLowerCase(), nd = hasMeta && document.getElementById("nondef").checked;
-        document.getElementById("cfg").innerHTML = Object.entries(c.config).filter(([k]) => k.includes(q) && (!nd || !isDefault(meta[k]))).map(([k, v]) => {
+        document.getElementById("cfg").innerHTML = Object.entries(c.config).filter(([k]) => k.includes(q) && (!nd || !(isDefault(meta[k]) || atDefC.has(k)))).map(([k, v]) => {
           const m = meta[k] || {};
-          return `<tr><td class="mono">${managed[k] != null ? "<b>" + esc(k) + "</b>" : esc(k)}</td><td class="mono" style="word-break:break-all">${esc(val(k, v))}</td>${hasMeta ? `<td class="mono muted" style="word-break:break-all">${m.default != null ? esc(val(k, m.default)) : ""}</td><td>${isDefault(m) ? '<span class="muted">compiled default</span>' : esc(sourceText(m))}</td>` : ""}</tr>`;
+          return `<tr><td class="mono">${managed[k] != null ? "<b>" + esc(k) + "</b>" : esc(k)}</td><td class="mono" style="word-break:break-all">${esc(val(k, v))}</td>${hasMeta ? `<td class="mono muted" style="word-break:break-all">${m.default != null ? esc(val(k, m.default)) : ""}</td><td>${isDefault(m) ? '<span class="muted">compiled default</span>' : atDefC.has(k) ? `<span class="muted">compiled default (also set in ${esc(sourceText(m))})</span>` : esc(sourceText(m))}</td>` : ""}</tr>`;
         }).join("");
       };
       document.getElementById("flt").oninput = draw; if (hasMeta) document.getElementById("nondef").onchange = draw; draw();
@@ -1271,7 +1272,10 @@ function renderDiff(el, r) {
    <div class="card tablewrap"><table><thead><tr><th>Variable</th><th>Run #${prev.seq}</th><th>This run</th><th>Source</th><th>Reason</th></tr></thead><tbody>${r.diff.map(diffRow).join("")}</tbody></table></div>`;
   const managed = r.managed || {};
   const reqs = ((r.inputs || {}).bench || {}).requirements || [];
-  if (Object.keys(managed).length) h += `<h3>Agent-applied configuration during this run${info("The settings the tuning-agent enforced while this run was measured: its MySQL option file plus operating-system settings. Everything else was the server default or came from other option files (see Key settings).")}</h3>${configBlocks(managed, reqs)}`;
+  const pinned = (r.at_default || []).filter(k => k in managed);
+  const changedManaged = Object.fromEntries(Object.entries(managed).filter(([k]) => !pinned.includes(k)));
+  if (Object.keys(managed).length) h += `<h3>Agent-applied configuration during this run${info("The settings the tuning-agent enforced while this run was measured that differ from the server's compiled defaults: its MySQL option file plus operating-system settings. Everything else was the server default or came from other option files (see Key settings).")}</h3>${configBlocks(changedManaged, reqs)}`
+    + (pinned.length ? `<p class="muted" style="font-size:12.5px;margin:6px 0 0">Also written at their compiled default (no change on this server): ${pinned.map(k => `<code>${esc(k)}</code>`).join(" ")}${info("The agent's option file pins these at the value this server version uses anyway. Pinning keeps the configuration the same when the same file is used on another release series, where some defaults differ (e.g. MySQL 8.0 vs 8.4).")}</p>` : "");
   else if (reqs.length) h += `<h3>Benchmark prerequisites${info(REQ_TIP)}</h3><div class="card">${reqTable(reqs)}</div>`;
   el.innerHTML = h;
 }
