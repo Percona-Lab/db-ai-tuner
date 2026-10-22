@@ -295,7 +295,17 @@ def diagnose(ctx):
     hll = s.get("history_list_length_max") or 0
     hll_ev = (((s.get("steady_state") or {}).get("evidence") or {}).get("history_list_length") or [None, None])
     growing = hll_ev[0] is not None and hll_ev[1] is not None and hll_ev[1] > hll_ev[0] * 1.05
-    if hll >= 5_000_000 or (hll >= 1_000_000 and growing):
+    unb = next((u for u in s.get("unbounded_growth") or [] if u["metric"] == "history_list_length"), None)
+    pt_ = (ctx.get("variables") or {}).get("innodb_purge_threads", "?")
+    if unb:
+        # growing at an undiminished rate: not a backlog that settles but a configuration that cannot keep up
+        add("purge", "high",
+            f"Purge cannot keep up: the undo history list grows without slowing down ({unb['start']:,} -> {unb['end']:,} in the window, "
+            f"~{unb['per_hour']:,} per hour) with {pt_} purge thread(s). Unsustainable: left running, "
+            "undo and version chains grow until reads slow down and the undo tablespaces fill. More purge threads, or a purge lag "
+            "bound that slows writers to what purge can keep up with, act on it.",
+            {"history_list_length_max": hll, "unbounded_growth": unb, "innodb_purge_threads": pt_})
+    elif hll >= 5_000_000 or (hll >= 1_000_000 and growing):
         add("purge", "high" if hll >= 5_000_000 and growing else "medium",
             f"Purge is falling behind: the undo history list reached {hll:,.0f} entries"
             + (f" and grew {hll_ev[0]:,.0f} -> {hll_ev[1]:,.0f} within the window" if growing else "")
@@ -1328,11 +1338,19 @@ def recommend(ctx):
         pt = _int(v, "innodb_purge_threads", 4)
         # a large backlog is a strong signal (O4: 1.68 M with 1 purge thread never got to run at impact 1): more threads first
         vals = [str(pt * 2), "8", "1"] if hll_max > 300000 else [x for x in ("1", "8") if x != str(pt)] + [str(pt * 2)]
+        unb_h = any(u["metric"] == "history_list_length" for u in s.get("unbounded_growth") or [])
+        if unb_h:  # purge cannot keep up: more threads only (fewer cannot help), up to the CPUs available
+            vals = [str(x) for x in sorted({min(pt * 2, 32), min(max(4, pt * 4), 32), min(int(hw.get("cpus") or 8), 32)}) if x > pt]
         sweep("sweep-purge-threads", "Sweep purge threads", "innodb_purge_threads", vals,
               f"Undo history reached {hll_max:,.0f} entries with {pt} purge thread(s). More purge threads help large I/O-bound boxes "
               "and hurt small CPU-bound ones: the direction depends on the machine, so it is measured.",
-              {"history_list_length_max": hll_max}, impact=3 if hll_max > 1000000 else 2 if hll_max > 300000 else 1,
+              {"history_list_length_max": hll_max}, impact=3 if hll_max > 1000000 or unb_h else 2 if hll_max > 300000 else 1,
               lead="Published results disagree between large and small machines; unverified here.")
+        if unb_h and b.items and b.items[-1]["id"] == "sweep-purge-threads":
+            # an unsustainable configuration: fixing it comes before tuning it (the time breakdown cannot show purge)
+            b.items[-1]["score_prior"] = b.items[-1].get("score_prior", 0) + 6
+            b.items[-1]["rationale"] = ("Purge cannot keep up: the history list grows without slowing down, so this configuration is "
+                                        "unsustainable. " + b.items[-1]["rationale"])
     if have_run and ck >= 75 and _on(v, "innodb_flush_sync"):
         b.add("flush-sync-off", "Respect io_capacity_max during sync flushing", [("innodb_flush_sync", "OFF")],
               f"Checkpoint age reached {ck:.0f}%: InnoDB then flushes as fast as it can, ignoring io_capacity_max and starving reads. "

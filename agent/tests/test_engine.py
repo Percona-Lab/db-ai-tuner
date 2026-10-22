@@ -1589,6 +1589,28 @@ def test_decision_rules_from_the_audit():
     nx = {i["id"]: i for i in b["items"]}.get(b["next"]) or {}
     assert nx.get("safety") == "trade-off", (b["next"], nx.get("safety"))
 
+
+def test_unbounded_growth_vs_settling():
+    """Run 3178 (session 226): history list grew linearly 0 -> 4.1 M through warm-up and window with 1 purge thread; the
+    settling check called it 'settled 6 min into the window' and calibration was repeated with a 1200 s warm-up."""
+    from tuning_agent import collector, evaluate
+    def mk(f, n=60, t0=600):
+        return [{"ts": t0 + 10 * i, "db": {"history_list_length": f(t0 + 10 * i), "checkpoint_age_pct": 30 - 20 * 0.99 ** (t0 + 10 * i)}} for i in range(n)]
+    lin = mk(lambda t: 1000.0 * t)                      # +1000/s, never slowing
+    tail = mk(lambda t: 1000.0 * t, n=12, t0=480)
+    u = collector.unbounded_growth(lin, tail)
+    assert u and u[0]["metric"] == "history_list_length" and 900 <= u[0]["rate_per_s"] <= 1100, u
+    sig = collector.warmup_signals(lin, 600, tail, {"history_list_length"}) or {}
+    assert "history_list_length" not in [x["metric"] for x in sig.get("settling") or []]
+    settle = mk(lambda t: 3e6 * (1 - 0.99 ** (t - 400)))  # saturating: settles
+    assert not collector.unbounded_growth(settle, mk(lambda t: 3e6 * (1 - 0.99 ** (t - 400)), n=12, t0=480))
+    runs = [{"summary": {"steady_state": {"steady": False, "growing": ["history list length 3,338,285.4 -> 3,865,001.7"]},
+                         "unbounded_growth": u}} for _ in range(3)]
+    wc = evaluate.warmup_check(runs, 600)
+    assert wc["adequate"] and wc.get("unbounded") and "Not a warm-up problem" in wc["text"], wc
+    v, d = evaluate.verdict({"superseded": "x", "summary": runs[0]["summary"]}, [], "tps", {})
+    assert v == "superseded" and d.get("not_steady") and d.get("unbounded"), d
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

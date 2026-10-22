@@ -401,6 +401,46 @@ def steady_state(samples):
 
 
 
+# deferred work that can grow without bound: (key, label, minimum rise over the window, minimum rise relative to its start)
+UNBOUNDED_KEYS = (("history_list_length", "history list length", 50000, 0.10), ("ibuf_size", "change buffer pages", 5000, 0.10))
+
+
+def _slope(pts):
+    """Least-squares growth per second of [(ts, value)]."""
+    n = len(pts)
+    if n < 3:
+        return None
+    mt, mv = sum(t for t, _ in pts) / n, sum(v for _, v in pts) / n
+    d = sum((t - mt) ** 2 for t, _ in pts)
+    return sum((t - mt) * (v - mv) for t, v in pts) / d if d else None
+
+
+def unbounded_growth(samples, tail=None):
+    """Deferred work that keeps growing at an undiminished rate through the window (and the end of the warm-up): not a
+    state that a longer warm-up would settle, but a configuration that cannot keep up - e.g. purge falling behind the
+    undo records many writers generate. A curve that flattens (checkpoint age, dirty pages) is settling instead."""
+    out = []
+    for key, label, absmin, rel in UNBOUNDED_KEYS:
+        pts = [(s.get("ts") or 0, s["db"][key]) for s in samples if (s.get("db") or {}).get(key) is not None]
+        if len(pts) < 12:
+            continue
+        n = len(pts) // 3
+        first, last = _slope(pts[:n]), _slope(pts[-n:])
+        rise = pts[-1][1] - pts[0][1]
+        if first is None or last is None or last <= 0 or rise < absmin or rise < rel * max(pts[0][1], 1):
+            continue
+        tp = [(s.get("ts") or 0, s["db"][key]) for s in (tail or []) if (s.get("db") or {}).get(key) is not None]
+        before = _slope(tp) if len(tp) >= 3 else None
+        ref = max(x for x in (first, before) if x is not None)
+        if last < 0.5 * ref:  # slowing down clearly: settling, not unbounded
+            continue
+        out.append({"metric": key, "label": label, "start": round(pts[0][1]), "end": round(pts[-1][1]),
+                    "rate_per_s": round(last, 1), "rate_first_third_per_s": round(first, 1),
+                    "rate_warmup_tail_per_s": round(before, 1) if before is not None else None,
+                    "per_hour": round(last * 3600)})
+    return out
+
+
 # state that a warm-up has to bring to its working level before measuring: (key, label, minimum absolute change,
 # minimum change relative to the settled level). Each one moving at the start of the window and settling only inside it
 # means the first part of the window measured a different state (redo / dirty pages not yet at their equilibrium: less
@@ -411,7 +451,7 @@ WARMUP_SIGNALS = (("checkpoint_age_pct", "checkpoint age %", 3.0, 0.15), ("bp_di
                   ("tps", "throughput", 0.0, 0.05), ("avg_latency_ms", "average latency", 0.0, 0.10))
 
 
-def warmup_signals(samples, warmup_s=None, tail=None):
+def warmup_signals(samples, warmup_s=None, tail=None, skip=()):
     """Was the warm-up long enough? For each state metric: its level in the first minute of the window vs the level it
     settled at (the last third), and how far into the window it got there. A metric still moving at the end is the
     steady-state check's (not steady); this one catches state that settles only inside the window - the window then
@@ -423,6 +463,8 @@ def warmup_signals(samples, warmup_s=None, tail=None):
     t0 = samples[0].get("ts") or 0
     out, differs = [], []
     for key, label, absmin, rel in WARMUP_SIGNALS:
+        if key in skip:  # growing without bound: no warm-up settles it (unbounded_growth reports it)
+            continue
         tv = [s["db"][key] for s in (tail or []) if (s.get("db") or {}).get(key) is not None]
         wv = [s["db"][key] for s in samples if (s.get("db") or {}).get(key) is not None]
         if len(tv) >= 3 and len(wv) >= 9:
@@ -528,7 +570,8 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None):
         "within_se_pct": batch_se_pct("db", "tps") or batch_se_pct("db", "qps"),
         "rows_changed_per_s": avg("db", "rows_changed"),
         "steady_state": steady_state(samples),
-        "warmup_signals": warmup_signals(samples, warmup_s, warmup_tail),
+        "unbounded_growth": unbounded_growth(samples, warmup_tail) or None,
+        "warmup_signals": warmup_signals(samples, warmup_s, warmup_tail, {x["metric"] for x in unbounded_growth(samples, warmup_tail)}),
         "qps": db_rates.get("qps"),
         "handler_commits": db_rates.get("handler_commits"),
         "statements_per_s": db_rates.get("statements"),

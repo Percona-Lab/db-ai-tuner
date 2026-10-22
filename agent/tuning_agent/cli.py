@@ -1685,9 +1685,9 @@ def _noise_plan(c, prof, runs, n):
     wu = evaluate.warmup_check(runs, int(prof.warmup) if str(prof.warmup).isdigit() else None)
     if wu:
         cal["warmup"] = wu
-        if wu.get("adequate") and wu.get("settling_runs"):
+        if wu.get("adequate") and (wu.get("settling_runs") or wu.get("unbounded")):
             log(f"   WARNING: {wu['text']}")
-            c.event("warmup", wu["text"], wu)
+            c.event("unsustainable" if wu.get("unbounded") else "warmup", wu["text"], wu)
         if not wu["adequate"]:
             log(f"   WARNING: {wu['text']}")
             c.event("warmup", wu["text"], wu)

@@ -79,7 +79,9 @@ def context(ctx, res, meta=None):
                  # what settings can act on: flushing/redo/commit settings need writes, read-path settings need disk reads
                  "writes_active": _activity(s)["writes"], "disk_reads_active": _activity(s)["reads"],
                  "redo_mbs": s.get("redo_mbs"), "page_reads_from_disk_per_s": s.get("bp_disk_reads"),
-                 "new_connections_per_s": s.get("net_conn_per_s")},
+                 "new_connections_per_s": s.get("net_conn_per_s"),
+                 # deferred work growing at an undiminished rate: the configuration cannot keep up (fix before tuning)
+                 "unbounded_growth": s.get("unbounded_growth")},
         "benchmark": (ctx.get("bench") or {}),
         "hardware": {"cpus": hw.get("cpus"), "ram_gib": round((hw.get("ram_bytes") or 0) / 2 ** 30, 1),
                      "disk": "HDD" if hw.get("disk_rotational") else "SSD", "filesystem": hw.get("filesystem")},

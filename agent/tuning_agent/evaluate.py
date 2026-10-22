@@ -216,6 +216,19 @@ def warmup_check(runs, warmup):
         return None
     bad = [x for x in sts if not x.get("steady")]
     out = {"steady_runs": len(sts) - len(bad), "runs": len(sts), "warmup_s": warmup}
+    unb = [u for r in runs for u in ((r.get("summary") or {}).get("unbounded_growth") or [])]
+    unb_labels = {u["label"] for u in unb}
+    only_unbounded = bool(bad) and all(any(g.startswith(lb) for lb in unb_labels) for x in bad for g in x.get("growing") or [])
+    if len(bad) * 2 > len(sts) and only_unbounded:
+        # growing at an undiminished rate through the warm-up and the window: a longer warm-up only measures a larger
+        # backlog (session 226: history list +1,000/s with 1 purge thread at ~850 running threads, recalibrated to 1200 s)
+        u = max(unb, key=lambda x: x["rate_per_s"])
+        out.update(adequate=True, unbounded=unb[:3], text=(
+            f"Not a warm-up problem: {u['label']} grows without slowing down ({u['start']:,} -> {u['end']:,} in the window, "
+            f"~{u['per_hour']:,} per hour) in {len(bad)} of {len(sts)} calibration runs. The starting configuration cannot keep up "
+            "with this load and would fail if left running; a longer warm-up only measures a larger backlog. "
+            "Fixing it (purge threads / purge lag) comes first."))
+        return out
     if len(bad) * 2 > len(sts):  # most calibration runs still accumulate deferred work
         grow = sorted({g.split(" ")[0] + " " + g.split(" ")[1] for x in bad for g in x.get("growing") or []})
         out.update(adequate=False, growing=[g for x in bad[:1] for g in x.get("growing") or []],
@@ -451,9 +464,24 @@ def swap_cost(s, noise_pct=None):
     return share is None or share >= float(noise_pct or DEFAULT_GOAL_NOISE)
 
 
+def state_flags(s):
+    """What the run's own samples say about the state it measured (kept even when the run is superseded or unreliable,
+    so the run list still shows it): deferred work still growing at the end, state that settled only inside the window,
+    and deferred work growing without bound (a configuration that cannot keep up)."""
+    out = {}
+    st = (s or {}).get("steady_state") or {}
+    if st and not st.get("steady"):
+        out["not_steady"] = st.get("growing")
+    if (s or {}).get("warmup_signals"):
+        out["warmup_short"] = s["warmup_signals"]
+    if (s or {}).get("unbounded_growth"):
+        out["unbounded"] = s["unbounded_growth"]
+    return out
+
+
 def verdict(run, history, goal, noise):
     if run.get("superseded"):
-        return "superseded", {"note": run["superseded"]}
+        return "superseded", dict(state_flags(run.get("summary")), note=run["superseded"])
     st = steal_check(run.get("summary"), (noise or {}).get("noise_pct"))
     if st and st["level"] == "invalid":
         return "unreliable", {"steal": st, "note": f"UNRELIABLE: hypervisor CPU steal averaged {max(st['avg_pct'], st['client_avg_pct'] or 0):.1f}% "
@@ -689,11 +717,10 @@ def _verdict(run, history, goal, noise):
             elif ch < -thr:
                 worse.append(label)
     details["efficiency_better"], details["efficiency_worse"] = better, worse
-    st = s.get("steady_state") or {}
-    if st and not st.get("steady"):  # deferred work still accumulating at the end of the window: result may be optimistic
-        details["not_steady"] = st.get("growing")
-    if s.get("warmup_signals"):  # state settled only inside the window: a warning about the warm-up, not about this change
-        details["warmup_short"] = s["warmup_signals"]
+    # not steady: deferred work still accumulating at the end of the window, the result may be optimistic; warm-up short:
+    # state settled only inside the window (a warning about the warm-up, not about this change); unbounded: deferred work
+    # growing at an undiminished rate - the configuration cannot keep up
+    details.update(state_flags(s))
     if s.get("tput_dip_samples"):  # the average hides stalls inside the window
         details["unstable_within_run"] = {k: s.get(k) for k in ("tput_dip_samples", "tput_dip_longest_samples", "tput_samples",
                                                                 "tput_min_vs_median_pct", "blk_write_max_ms", "blk_flush_max_ms",
