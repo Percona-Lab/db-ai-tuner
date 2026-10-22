@@ -1,0 +1,342 @@
+{
+ "note": "Study pipeline for the Vultr bare-metal boxes, highest priority first. run.py gives each idle box the first pending item it may run; a group item waits for all its hosts (they are held for it). Items without a script are listed for planning only.",
+ "items": [
+  {
+   "id": "repeat3",
+   "script": "repeat3.sh",
+   "args": [],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": true,
+   "est_hours": 7,
+   "question": "Run-to-run vs host-to-host noise; do 3 independent sessions on identical hosts converge to the same configuration? (also the Percona 8.4 reference for the variants)"
+  },
+  {
+   "id": "commit-gc-nvme",
+   "script": "commit-gc.sh",
+   "args": [],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Group commit analysis on NVMe, binlog off and on: diagnosis, batch vs waiting vs in flight, write-ahead sweep, delay sizing"
+  },
+  {
+   "id": "std-percona-8.4",
+   "script": "std-bench.sh",
+   "args": [
+    "percona",
+    "8.4"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 13,
+   "question": "Standard benchmark (sysbench oltp_read_write 20 GB, 1024 connections, binlog off, 10+10 min, 25 runs) on percona 8.4"
+  },
+  {
+   "id": "std-mysql-8.4",
+   "script": "std-bench.sh",
+   "args": [
+    "mysql",
+    "8.4"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 13,
+   "question": "Standard benchmark (sysbench oltp_read_write 20 GB, 1024 connections, binlog off, 10+10 min, 25 runs) on mysql 8.4"
+  },
+  {
+   "id": "std-mariadb-11.4",
+   "script": "std-bench.sh",
+   "args": [
+    "mariadb",
+    "11.4"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 13,
+   "question": "Standard benchmark (sysbench oltp_read_write 20 GB, 1024 connections, binlog off, 10+10 min, 25 runs) on mariadb 11.4"
+  },
+  {
+   "id": "std-percona-9.7",
+   "script": "std-bench.sh",
+   "args": [
+    "percona",
+    "9.7"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 13,
+   "question": "Standard benchmark (sysbench oltp_read_write 20 GB, 1024 connections, binlog off, 10+10 min, 25 runs) on percona 9.7"
+  },
+  {
+   "id": "std-mysql-9.7",
+   "script": "std-bench.sh",
+   "args": [
+    "mysql",
+    "9.7"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 13,
+   "question": "Standard benchmark (sysbench oltp_read_write 20 GB, 1024 connections, binlog off, 10+10 min, 25 runs) on mysql 9.7"
+  },
+  {
+   "id": "std-mariadb-11.8",
+   "script": "std-bench.sh",
+   "args": [
+    "mariadb",
+    "11.8"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 13,
+   "question": "Standard benchmark (sysbench oltp_read_write 20 GB, 1024 connections, binlog off, 10+10 min, 25 runs) on mariadb 11.8"
+  },
+  {
+   "id": "commit-gc-sata",
+   "script": "commit-gc.sh",
+   "args": [],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "The same on SATA (datacenter SSDs, slower flushes)"
+  },
+  {
+   "id": "write-cache-sata",
+   "script": "write-cache.sh",
+   "args": [],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Drive write cache as a measured trade-off: switchable on these drives? cost / gain on a commit-bound load"
+  },
+  {
+   "id": "write-cache-nvme",
+   "script": "write-cache.sh",
+   "args": [],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "The same on NVMe (power-loss protected drives usually expose no volatile cache)"
+  },
+  {
+   "id": "warmup-short",
+   "script": "warmup-short.sh",
+   "args": [],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 4,
+   "question": "Warm-up check on real data: deliberately short warm-up must produce the warning and suggestion, verdicts unchanged"
+  },
+  {
+   "id": "second-device-nvme",
+   "script": "second-device.sh",
+   "args": [],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 5,
+   "question": "Doublewrite buffer on the second NVMe drive: gain with repeats (candidate rule)"
+  },
+  {
+   "id": "second-device-sata",
+   "script": "second-device.sh",
+   "args": [],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 5,
+   "question": "Doublewrite buffer on the second SATA drive (earlier +6% single measurement)"
+  },
+  {
+   "id": "defaults-ab",
+   "script": "defaults-ab.sh",
+   "args": [],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 8,
+   "question": "Which 8.0 -> 8.4 default changes matter, per workload (write-heavy / read-heavy)"
+  },
+  {
+   "id": "priors-write",
+   "script": "priors.sh",
+   "args": [
+    "write"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Measure documentation priors: flushing / purge / spin / redo parameters"
+  },
+  {
+   "id": "priors-read",
+   "script": "priors.sh",
+   "args": [
+    "read"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 6,
+   "question": "Measure documentation priors: LRU, AHI partitions, table cache instances, read-ahead"
+  },
+  {
+   "id": "priors-binlog",
+   "script": "priors.sh",
+   "args": [
+    "binlog"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 5,
+   "question": "Measure documentation priors: binary log row image, compression, cache, group commit"
+  },
+  {
+   "id": "swap-write-sata",
+   "script": "swap-write.sh",
+   "args": [],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Swap study with writes (oltp_read_write) on SATA"
+  },
+  {
+   "id": "swap-write-nvme",
+   "script": "swap-write.sh",
+   "args": [],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Swap study with writes on NVMe"
+  },
+  {
+   "id": "hugepages",
+   "script": "hugepages.sh",
+   "args": [],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Huge pages through the agent after the AppArmor fix: does it start, and does it gain on a TLB-sensitive load?"
+  },
+  {
+   "id": "priors-analytics",
+   "script": null,
+   "args": [],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 8,
+   "question": "TODO (script): TPC-H priors - temptable_max_ram, internal tmp engine, optimizer search depth (needs the TPC-H data set)"
+  },
+  {
+   "id": "filesystem",
+   "script": null,
+   "args": [],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "TODO (script): ext4 vs xfs on the second drive through the filesystem scope"
+  },
+  {
+   "id": "soak-24h",
+   "script": null,
+   "args": [],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 26,
+   "question": "TODO (script): 24 h of the tuned vs the default configuration on seasoned data (does the gain hold as data ages?)"
+  }
+ ]
+}

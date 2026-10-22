@@ -4,9 +4,10 @@
 #  - cost of unused swap: same pool sizes below the limit, swap on vs off
 #  - benefit: does a pool beyond RAM with swap ever beat the best size without it?
 # Runs outside the tuner (OOM kills are an expected outcome). Results: /root/bench/swapstudy/results.jsonl
-# usage: swap-study.sh [dist:swap ...]   e.g. uniform:off uniform:on (default: special and uniform, swap off then on)
+# usage: [SB_TEST=oltp_read_write] [OUT=dir] swap-study.sh [dist:swap ...]   e.g. uniform:off uniform:on (default: special and uniform, swap off then on)
 set -u
-O=/root/bench/swapstudy; mkdir -p $O
+O=${OUT:-/root/bench/swapstudy}; mkdir -p $O
+TEST=${SB_TEST:-oltp_read_only}   # sysbench test of the measured runs (the data is the same for all oltp_* tests)
 CNF=/etc/mysql/mysql.conf.d/zzz-swapstudy.cnf
 SWF=/swapstudy.img
 SB="--mysql-user=sbtest --mysql-password=sbtest --mysql-socket=/var/run/mysqld/mysqld.sock --mysql-db=swapstudy"
@@ -50,7 +51,7 @@ point() {  # point <distribution> <swap> <bp GB>
     echo "{\"dist\":\"$dist\",\"swap\":\"$sw\",\"bp_gb\":$bp,\"outcome\":\"start failed\"}" >> $O/results.jsonl; log "$dist/$sw/${bp}G: mysqld did not start"; return 2
   fi
   vmstat -n 10 > $O/vmstat-$dist-$sw-$bp.log & local vm=$!
-  sysbench oltp_read_only $SB --tables=16 --table-size=$ROWS --threads=64 --rand-type=$dist --time=900 --report-interval=10 \
+  sysbench $TEST $SB --tables=16 --table-size=$ROWS --threads=64 --rand-type=$dist --time=900 --report-interval=10 \
     --mysql-ignore-errors=all run > $O/sb-$dist-$sw-$bp.log 2>&1
   local rss=$(ps -o rss= -C mysqld | head -1); local swp=$(awk '/VmSwap/ {print $2}' /proc/$(pidof mysqld | cut -d' ' -f1)/status 2>/dev/null)
   kill $vm 2>/dev/null
