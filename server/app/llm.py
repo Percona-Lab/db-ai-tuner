@@ -84,13 +84,30 @@ def service_key():
     return decrypt(r["llm_key_enc"]) if r and r["llm_key_enc"] else None
 
 
-def _request(method, url, key, body=None, timeout=120):
+_pool = None
+DEADLINE_S = 240  # wall clock for one model call: OpenRouter keeps slow requests alive, so socket timeouts never fire
+
+
+def _request(method, url, key, body=None, timeout=120, deadline=None):
     req = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None, method=method)
     req.add_header("Authorization", "Bearer " + key)
     req.add_header("Content-Type", "application/json")
     req.add_header("X-Title", "AI DB Tuner")
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())
+
+    def go():
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    if not deadline:
+        return go()
+    global _pool
+    if _pool is None:
+        import concurrent.futures
+        _pool = concurrent.futures.ThreadPoolExecutor(8, thread_name_prefix="llm")
+    import concurrent.futures
+    try:
+        return _pool.submit(go).result(timeout=deadline)
+    except concurrent.futures.TimeoutError:
+        raise TimeoutError(f"no answer within {deadline} s") from None
 
 
 def verify_key(key):
@@ -194,7 +211,7 @@ def suggest(user_id, env_id, session_id, context, force=False, trigger="routine"
             "response_format": {"type": "json_schema", "json_schema": {"name": "knob_suggestions", "strict": True, "schema": SCHEMA}}}
     t0 = time.time()
     try:
-        d = _request("POST", OPENROUTER + "/chat/completions", key, body)
+        d = _request("POST", OPENROUTER + "/chat/completions", key, body, deadline=DEADLINE_S)
         content = json.loads(d["choices"][0]["message"]["content"])
         usage = d.get("usage") or {}
         status, err = "ok", None
@@ -275,7 +292,7 @@ def analyze(user_id, env_id, session_id, context, signature):
             "response_format": {"type": "json_schema", "json_schema": {"name": "bottleneck_analysis", "strict": True, "schema": ANALYZE_SCHEMA}}}
     t0 = time.time()
     try:
-        d = _request("POST", OPENROUTER + "/chat/completions", key, body)
+        d = _request("POST", OPENROUTER + "/chat/completions", key, body, deadline=DEADLINE_S)
         content = json.loads(d["choices"][0]["message"]["content"])
         usage = d.get("usage") or {}
         status, err = "ok", None
@@ -311,7 +328,7 @@ def replay(user_id, call_id, model=None, context=None, patch=None):
             "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": payload}],
             "response_format": {"type": "json_schema", "json_schema": {"name": "knob_suggestions", "strict": True, "schema": SCHEMA}}}
     t0 = time.time()
-    d = _request("POST", OPENROUTER + "/chat/completions", key, body)
+    d = _request("POST", OPENROUTER + "/chat/completions", key, body, deadline=DEADLINE_S)
     content = json.loads(d["choices"][0]["message"]["content"])
     usage = d.get("usage") or {}
     store.ex("INSERT INTO llm_calls(user_id, env_id, session_id, ts, model, prompt_hash, status, cached, latency_s, prompt_tokens, "
@@ -516,7 +533,7 @@ def _call(user_id, env_id, session_id, model, system, schema, name, payload, pur
         body["reasoning"] = {"effort": effort}
     t0 = time.time()
     try:
-        d = _request("POST", OPENROUTER + "/chat/completions", service_key(), body, timeout=600)
+        d = _request("POST", OPENROUTER + "/chat/completions", service_key(), body, timeout=600, deadline=DEADLINE_S)
         content = json.loads(d["choices"][0]["message"]["content"])
         usage, status, err = d.get("usage") or {}, "ok", None
     except Exception as e:  # noqa

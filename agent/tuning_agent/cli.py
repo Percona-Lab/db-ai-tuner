@@ -2060,7 +2060,7 @@ def _recommend(c, sess, llm=False):
         except Exception:
             meta = {}
         try:
-            r = c.client.post("/llm/suggest", {"session_id": sess["id"], "trigger": why, "force": bool(llm),
+            r = c.client.post_ai("/llm/suggest", {"session_id": sess["id"], "trigger": why, "force": bool(llm),
                                                 "context": llmassist.context(ctx, res, meta)})
         except Exception as e:  # LLM help is optional
             r = {"enabled": False, "reason": str(e)}
@@ -2077,7 +2077,7 @@ def _recommend(c, sess, llm=False):
             if comp["name"] in analyzed:
                 continue
             try:
-                ra = c.client.post("/llm/analyze", {"session_id": sess["id"], "context": llmassist.analysis_context(ctx, res, comp),
+                ra = c.client.post_ai("/llm/analyze", {"session_id": sess["id"], "context": llmassist.analysis_context(ctx, res, comp),
                                                      "signature": llmassist.signature(ctx, res, comp)})
             except Exception as e:  # optional
                 ra = {"enabled": False, "reason": str(e)}
@@ -2187,7 +2187,7 @@ def _plan(c, sess, ctx, res):
         # people's views of earlier runs and advice: an opinion to weigh, not a measurement
         pk["human_feedback"] = fb
     try:
-        r = c.client.post("/llm/plan", {"session_id": sess["id"], "packet": pk})
+        r = c.client.post_ai("/llm/plan", {"session_id": sess["id"], "packet": pk})
     except Exception as e:  # optional: without a plan the engine's own choice stands
         r = {"enabled": False, "reason": str(e)[:200]}
     if not r.get("enabled"):
