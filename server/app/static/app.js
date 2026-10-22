@@ -1066,7 +1066,7 @@ async function renderKeySettings(el, runId) {
   const atDef = new Set(c.at_default || []);
   const rows = KEY_VARS.filter(k => k in c.config && !/^(os|rg):/.test(k)).map(k => {
     const m = meta[k] || {}, def = isDefault(m) || atDef.has(k);
-    return `<tr><td class="mono">${esc(k)}</td><td class="mono ${def ? "" : "diff-new"}">${esc(val(k, c.config[k]))}</td><td class="mono muted">${m.default != null ? esc(val(k, m.default)) : ""}</td><td>${isDefault(m) ? '<span class="muted">compiled default</span>' : def ? `<span class="muted">compiled default (also set in ${esc(sourceText(m))})</span>` : esc(sourceText(m))}</td></tr>`;
+    return `<tr><td class="mono">${esc(k)}</td><td class="mono ${def ? "" : "diff-new"}">${esc(val(k, c.config[k]))}</td><td class="mono muted">${m.default != null ? esc(val(k, m.default)) : ""}</td><td>${isDefault(m) ? '<span class="muted">compiled default</span>' : def ? `<span class="muted" data-tip="${esc("Same value as the compiled default; also written in " + sourceText(m))}" tabindex="0">compiled default (pinned)</span>` : esc(sourceText(m))}</td></tr>`;
   }).join("");
   const nonDef = Object.entries(meta).filter(([k, m]) => !isDefault(m) && !atDef.has(k) && !KEY_VARS.includes(k)).length;
   const osKeys = Object.keys(c.config).filter(k => /^(os|rg):/.test(k)).sort();
@@ -1217,7 +1217,7 @@ async function runPage(id, tab) {
         const q = document.getElementById("flt").value.toLowerCase(), nd = hasMeta && document.getElementById("nondef").checked;
         document.getElementById("cfg").innerHTML = Object.entries(c.config).filter(([k]) => k.includes(q) && (!nd || !(isDefault(meta[k]) || atDefC.has(k)))).map(([k, v]) => {
           const m = meta[k] || {};
-          return `<tr><td class="mono">${managed[k] != null ? "<b>" + esc(k) + "</b>" : esc(k)}</td><td class="mono" style="word-break:break-all">${esc(val(k, v))}</td>${hasMeta ? `<td class="mono muted" style="word-break:break-all">${m.default != null ? esc(val(k, m.default)) : ""}</td><td>${isDefault(m) ? '<span class="muted">compiled default</span>' : atDefC.has(k) ? `<span class="muted">compiled default (also set in ${esc(sourceText(m))})</span>` : esc(sourceText(m))}</td>` : ""}</tr>`;
+          return `<tr><td class="mono">${managed[k] != null ? "<b>" + esc(k) + "</b>" : esc(k)}</td><td class="mono" style="word-break:break-all">${esc(val(k, v))}</td>${hasMeta ? `<td class="mono muted" style="word-break:break-all">${m.default != null ? esc(val(k, m.default)) : ""}</td><td>${isDefault(m) ? '<span class="muted">compiled default</span>' : atDefC.has(k) ? `<span class="muted" data-tip="${esc("Same value as the compiled default; also written in " + sourceText(m))}" tabindex="0">compiled default (pinned)</span>` : esc(sourceText(m))}</td>` : ""}</tr>`;
         }).join("");
       };
       document.getElementById("flt").oninput = draw; if (hasMeta) document.getElementById("nondef").onchange = draw; draw();
