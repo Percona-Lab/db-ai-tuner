@@ -230,6 +230,14 @@ def _pct(vals, p):
     return round(v[min(len(v) - 1, int(p * (len(v) - 1) + 0.5))], 1)
 
 
+def _ai_stats(hours):
+    try:
+        from . import llm
+        return llm.stats(hours)
+    except Exception as e:  # the AI section must never take the status page down
+        return {"error": str(e)[:200]}
+
+
 def report(hours=24):
     c = _db()
     since = time.time() - hours * 3600
@@ -272,7 +280,7 @@ def report(hours=24):
     return {"ok": not warn, "warnings": warn, "uptime_s": round(time.time() - STARTED), "now": time.time(), "last": last,
             "requests_last_hour": {"count": len(allms), "p50_ms": _pct(allms, 0.5), "p95_ms": _pct(allms, 0.95),
                                    "p99_ms": _pct(allms, 0.99), "errors": sum(1 for r in rq if r[3] >= 500)},
-            "slowest_routes": slow[:12], "watchdog": wds, "alerts": alerts, "series": [{"ts": ts, **d} for ts, d in samples]}
+            "slowest_routes": slow[:12], "watchdog": wds, "ai": _ai_stats(hours), "alerts": alerts, "series": [{"ts": ts, **d} for ts, d in samples]}
 
 
 SERIES = [("CPU busy %", ["cpu_busy", "cpu_iowait", "cpu_steal"], "%"), ("Load (1 min)", ["load1"], ""),
@@ -300,9 +308,109 @@ def _spark(series, keys, w=320, h=56):
     return f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" role="img">{"".join(paths)}</svg>'
 
 
+def _bars(series, stacks, w=520, h=90, line=None):
+    """Stacked bars per time bucket (stacks: [(key, color)]), with an optional line (key, color) on its own scale."""
+    if not series:
+        return f'<svg width="{w}" height="{h}"></svg>'
+    n = len(series)
+    hi = max(sum(b.get(k) or 0 for k, _ in stacks) for b in series) or 1
+    bw = (w - 2) / n
+    out = []
+    for i, b in enumerate(series):
+        y = h - 1
+        tip = time.strftime("%m-%d %H:%M", time.gmtime(b["ts"])) + " UTC: " + ", ".join(f"{k.split('/')[-1]} {b.get(k) or 0:.3g}" for k, _ in stacks)
+        for k, col in stacks:
+            v = b.get(k) or 0
+            if v:
+                bh = v / hi * (h - 6)
+                y -= bh
+                out.append(f'<rect x="{1 + i * bw:.1f}" y="{y:.1f}" width="{max(bw - 1, 1):.1f}" height="{bh:.1f}" fill="{col}"><title>{tip}</title></rect>')
+    if line:
+        k, col = line
+        lv = [b.get(k) or 0 for b in series]
+        lh = max(lv) or 1
+        pts = " ".join(f"{1 + (i + 0.5) * bw:.1f},{h - 2 - v / lh * (h - 8):.1f}" for i, v in enumerate(lv))
+        out.append(f'<polyline fill="none" stroke="{col}" stroke-width="1.6" points="{pts}"/>')
+    return f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" preserveAspectRatio="none" role="img">{"".join(out)}</svg>'
+
+
+def _ai_section(a, h_):
+    if not a:
+        return ""
+    t, p = a["totals"], a["previous"]
+    fmt = lambda v, d=0: "–" if v is None else f"{v:,.{d}f}"
+    money = lambda v: "–" if v is None else (f"${v:,.2f}" if v >= 1 else f"${v:,.3f}")
+
+    def trend(cur, old, money_=False):
+        if not old:
+            return '<span class="u"> new</span>' if cur else ""
+        d = 100.0 * (cur - old) / old
+        return f'<span class="u" title="previous {a["hours"]} h: {money(old) if money_ else fmt(old)}"> {"▲" if d > 0 else "▼" if d < 0 else "="} {abs(d):.0f}%</span>'
+    st = a.get("settings") or {}
+    ex = a["experiments"]
+    key = a.get("key") or {}
+    if key.get("error"):
+        keyv = '<span class="bad">unreachable</span>'
+    elif key:
+        keyv = (f'{money(key.get("usage_monthly"))}<span class="u"> this month</span>' if key.get("usage_monthly") is not None else money(key.get("usage")))
+        if key.get("limit") is not None:
+            keyv += f'<span class="u"> · {money(key.get("limit_remaining"))} of {money(key.get("limit"))} left</span>'
+    else:
+        keyv = "–"
+    tiles = [
+        ("Live calls", f'{fmt(t["live"])}{trend(t["live"], p["live"])}', "Calls sent to OpenRouter in the period; the arrow compares with the period before."),
+        ("Cached answers", f'{fmt(t["cached"])}<span class="u"> · {fmt(t["cache_hit_pct"], 0)}% of calls</span>', "Answers reused from an earlier call with the same context or the same conditions: no cost."),
+        ("Cost", f'{money(t["cost"])}{trend(t["cost"], p["cost"], True)}', "Cost reported by OpenRouter for the live calls in the period."),
+        ("Cost per live call", money(t["cost_per_live_call"]), ""),
+        ("Tokens in / out", f'{fmt(t["tokens_in"])} / {fmt(t["tokens_out"])}', ""),
+        ("Latency p50 / p95", f'{fmt(t["latency_p50_s"], 1)} / {fmt(t["latency_p95_s"], 1)}<span class="u"> s</span>', "Live calls only."),
+        ("Errors", f'<span class="{"bad" if t["errors"] else ""}">{fmt(t["errors"])}</span>', ""),
+        ("AI experiments", f'{fmt(ex["tried"])} run<span class="u"> · {fmt(ex["improved"])} improved'
+                           + (f' · {money(ex["cost_per_improvement"])} per improvement' if ex["cost_per_improvement"] else "") + "</span>",
+         "Measured runs of changes the model proposed (ideas and bottleneck analyses) in the period, and how many improved the goal. Verdicts: "
+         + ", ".join(f"{k} {v}" for k, v in sorted(ex["verdicts"].items(), key=lambda x: -x[1]))),
+        ("OpenRouter key", keyv, "Usage and limit of the service key as OpenRouter reports them (refreshed every 10 min)."),
+    ]
+    info = lambda tip: ' <span class="i" title="%s">ⓘ</span>' % h_.escape(tip) if tip else ""
+    tl = "".join(f'<div class="t"><div class="k">{h_.escape(k)}{info(tip)}</div><div class="v">{v}</div></div>' for k, v, tip in tiles)
+    mcol = ["#e08a1e", "#8e44ad", "#16a085", "#d35400", "#2c3e50", "#b7950b"]
+    mstack = [("cost:" + m["model"], mcol[i % len(mcol)]) for i, m in enumerate(a["by_model"])]
+    mleg = " ".join(f'<i style=background:{c}></i>{h_.escape(k[5:].split("/")[-1])}' for k, c in mstack)
+    unit = "hour" if a["bucket_s"] == 3600 else "day" if a["bucket_s"] == 86400 else "6 h"
+    charts = (f'<div class="g2"><div class="t"><div class="k">Calls per {unit}</div>{_bars(a["series"], [("live", "#2f6fdb"), ("cached", "#9bbcf0"), ("errors", "#c0392b")])}'
+              f'<div class="lg"><i style=background:#2f6fdb></i>live <i style=background:#9bbcf0></i>cached <i style=background:#c0392b></i>errors</div></div>'
+              f'<div class="t"><div class="k">Cost per {unit} by model (bars) and cumulative (line)</div>{_bars(a["series"], mstack, line=("cum_cost", "#6b6b70"))}'
+              f'<div class="lg">{mleg} <i style=background:#6b6b70></i>cumulative {money(t["cost"])}</div></div></div>')
+
+    def table(rows, first, label):
+        if not rows:
+            return ""
+        name = lambda v: f'<span title="{h_.escape(str(v))}">{h_.escape(str(v).split("/")[-1])}</span>'
+        body = "".join(f'<tr><td class=n>{name(r[first])}</td><td>{fmt(r["live"])}</td><td>{fmt(r["cached"])}</td><td class=x>{fmt(r["errors"])}</td>'
+                       f'<td class=x>{fmt(r["tokens_in"])}</td><td class=x>{fmt(r["tokens_out"])}</td><td>{money(r["cost"])}</td><td>{money(r["cost_per_live_call"])}</td>'
+                       f'<td class=x>{fmt(r["latency_p50_s"], 1)} / {fmt(r["latency_p95_s"], 1)}</td></tr>' for r in rows)
+        return (f'<div class="w"><table><tr><th class=n>{label}</th><th>live</th><th>cached</th><th class=x>errors</th><th class=x>tokens in</th><th class=x>tokens out</th>'
+                f'<th>cost</th><th>per call</th><th class=x>latency p50 / p95 s</th></tr>{body}</table></div>')
+    sess = "".join(f'<tr><td class=m><a href="/#/sessions/{s["session_id"]}">#{s["session_id"]}</a> {h_.escape(s.get("name") or "")}</td>'
+                   f'<td class=m>{h_.escape(s.get("env") or "")}</td><td>{fmt(s["calls"])}</td><td>{fmt(s["cached"])}</td><td>{money(s["cost"])}</td></tr>'
+                   for s in a["top_sessions"])
+    sess_t = (f'<h3>Sessions with the highest AI cost</h3><div class="w"><table><tr><th class=m>session</th><th class=m>environment</th>'
+              f'<th>calls</th><th>cached</th><th>cost</th></tr>{sess}</table></div>') if sess else ""
+    return (f'<h2>AI model use (OpenRouter)</h2><p class="sub" style="margin:0 0 8px">default model {h_.escape(st.get("model") or "–")} · mode '
+            f'{h_.escape(st.get("mode") or "–")}</p><div class="g">{tl}</div>{charts}'
+            f'<h3>By model</h3>{table(a["by_model"], "model", "model")}<h3>By purpose</h3>{table(a["by_purpose"], "purpose", "purpose")}{sess_t}')
+
+
 def html(hours=24):
     import html as h_
     r = report(hours)
+    try:
+        ai = _ai_section(r["ai"], h_) if "error" not in r["ai"] else ""
+    except Exception as e:
+        ai = None
+        r["ai"] = {"error": f"{type(e).__name__}: {e}"[:200]}
+    if not ai and "error" in r["ai"]:
+        ai = f'<h2>AI model use (OpenRouter)</h2><p class="bad">unavailable: {h_.escape(r["ai"]["error"])}</p>'
     last, rq = r["last"], r["requests_last_hour"]
     fmt = lambda v: "–" if v is None else (f"{v:,.1f}" if isinstance(v, float) else f"{v:,}")
     tiles = "".join(
@@ -335,12 +443,16 @@ h1{{font-size:20px;margin:0 0 4px}}.sub{{color:var(--mut);margin:0 0 14px}}.ok{{
 .lg{{font-size:11px;color:var(--mut)}}.lg i{{display:inline-block;width:9px;height:9px;border-radius:2px;margin:0 3px 0 6px}}
 table{{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:8px;font-size:13px}}
 td,th{{padding:5px 8px;border-bottom:1px solid var(--line);text-align:right}}td.m,th.m{{text-align:left;font-family:ui-monospace,monospace;word-break:break-all}}
-.w{{overflow-x:auto}}h2{{font-size:15px;margin:18px 0 8px}}</style></head><body>
+.w{{overflow-x:auto}}h2{{font-size:15px;margin:18px 0 8px}}h3{{font-size:13px;margin:12px 0 6px;color:var(--mut)}}
+.g2{{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px;margin-top:10px}}.g2 svg{{width:100%;height:90px}}.i{{cursor:help;color:var(--mut)}}
+a{{color:#2f6fdb}}td.n,th.n{{text-align:left;font-family:ui-monospace,monospace;white-space:nowrap}}
+@media (max-width:640px){{.x{{display:none}}}}</style></head><body>
 <h1>Tuner server status</h1><p class="sub">{state} · up {up // 3600} h {up % 3600 // 60} min · last {hours} h, sampled every {INTERVAL} s ·
 requests last hour: {rq['count']} · p50 {fmt(rq['p50_ms'])} ms · p95 {fmt(rq['p95_ms'])} ms · p99 {fmt(rq['p99_ms'])} ms · 5xx {rq['errors']}
-· <a href="/status.json">JSON</a> · <a href="?h=1">1 h</a> <a href="?h=24">24 h</a> <a href="?h=168">7 d</a></p>
+· <a href="/status.json">JSON</a> · <a href="?h=1">1 h</a> <a href="?h=24">24 h</a> <a href="?h=168">7 d</a> <a href="?h=720">30 d</a></p>
 <h2>Stall watchdog</h2><p class="sub" style="margin:0 0 8px">{wd_line}</p>
 <div class="w"><table><tr><th class=m>state</th><th class=m>severity</th><th class=m>alert</th><th>since</th></tr>{arows}</table></div>
+{ai}
 <h2>Host</h2><div class="g">{tiles}</div>
 <h2>Slowest endpoints, last hour</h2><div class="w"><table><tr><th class=m>endpoint</th><th>requests</th><th>p50 ms</th><th>p95 ms</th><th>max ms</th><th>5xx</th></tr>{rows}</table></div>
 </body></html>"""

@@ -116,13 +116,13 @@ def server_status(request: Request, h: int = 24):
         return RedirectResponse("/#/login", status_code=303)
     if u.get("share") or not u.get("is_admin"):
         return HTMLResponse("<p>The status page is for administrators.</p>", status_code=403)
-    return HTMLResponse(status.html(max(1, min(int(h), 168))), headers={"Cache-Control": "no-cache"})
+    return HTMLResponse(status.html(max(1, min(int(h), 720))), headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/status.json")
 def server_status_json(request: Request, h: int = 24):
     auth.require_admin(request)
-    return status.report(max(1, min(int(h), 168)))
+    return status.report(max(1, min(int(h), 720)))
 
 
 async def _share_guard(request: Request, call_next):

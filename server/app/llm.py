@@ -326,3 +326,88 @@ def usage_summary(user_id):
     tries, wins = gate(user_id, None)
     return {"calls": r["calls"] or 0, "cached": r["cached"] or 0, "tokens": r["tokens"] or 0, "cost_usd": round(r["cost"] or 0, 4),
             "experiments": tries, "improvements": wins}
+
+
+_key_cache = {"t": 0, "data": None}
+
+
+def key_status():
+    """The service key's usage and limit as OpenRouter reports them; cached 10 minutes (a status page render must not wait on it)."""
+    if time.time() - _key_cache["t"] < 600:
+        return _key_cache["data"]
+    k = service_key()
+    data = None
+    if k:
+        try:
+            d = _request("GET", OPENROUTER + "/key", k, timeout=5).get("data") or {}
+            data = {f: d.get(f) for f in ("usage", "usage_daily", "usage_weekly", "usage_monthly", "limit", "limit_remaining", "is_free_tier")}
+        except Exception as e:
+            data = {"error": str(e)[:120]}
+    _key_cache.update(t=time.time(), data=data)
+    return data
+
+
+def stats(hours=24):
+    """AI model use over the last `hours` (and the period before it, for trends): per model and purpose, a time series of
+    live / cached calls and cost, latency, the sessions that cost most, and what the experiments it proposed achieved."""
+    now = time.time()
+    since, prev = now - hours * 3600, now - 2 * hours * 3600
+    bucket = 3600 if hours <= 48 else 86400 if hours > 24 * 14 else 6 * 3600
+    rows = store.q("SELECT c.ts, c.model, COALESCE(c.purpose, 'suggest') purpose, c.status, c.cached, c.latency_s, c.prompt_tokens, "
+                   "c.completion_tokens, c.cost, c.session_id, c.user_id FROM llm_calls c WHERE c.ts >= ? ORDER BY c.ts", (prev,))
+    cur = [r for r in rows if r["ts"] >= since]
+    old = [r for r in rows if r["ts"] < since]
+
+    def tot(rs):
+        live = [r for r in rs if not r["cached"]]
+        lat = sorted(r["latency_s"] for r in live if r["latency_s"] is not None)
+        q = lambda p: round(lat[min(len(lat) - 1, int(p * (len(lat) - 1) + 0.5))], 1) if lat else None
+        return {"calls": len(rs), "live": len(live), "cached": len(rs) - len(live), "errors": sum(1 for r in rs if r["status"] != "ok"),
+                "cost": round(sum(r["cost"] or 0 for r in live), 4), "tokens_in": sum(r["prompt_tokens"] or 0 for r in live),
+                "tokens_out": sum(r["completion_tokens"] or 0 for r in live), "latency_p50_s": q(0.5), "latency_p95_s": q(0.95),
+                "cache_hit_pct": round(100.0 * (len(rs) - len(live)) / len(rs), 1) if rs else None,
+                "cost_per_live_call": round(sum(r["cost"] or 0 for r in live) / len(live), 4) if live else None}
+
+    def group(key):
+        g = {}
+        for r in cur:
+            g.setdefault(r[key], []).append(r)
+        out = [dict(tot(v), **{key: k, "last_used": max(r["ts"] for r in v)}) for k, v in g.items()]
+        return sorted(out, key=lambda x: -x["cost"])
+
+    t0 = int(since // bucket * bucket)
+    series = {t: {"ts": t, "live": 0, "cached": 0, "errors": 0, "cost": 0.0} for t in range(t0, int(now) + 1, bucket)}
+    for r in cur:
+        b = series.setdefault(int(r["ts"] // bucket * bucket), {"ts": int(r["ts"] // bucket * bucket), "live": 0, "cached": 0, "errors": 0, "cost": 0.0})
+        b["cached" if r["cached"] else "live"] += 1
+        b["errors"] += r["status"] != "ok"
+        b["cost"] += 0 if r["cached"] else (r["cost"] or 0)
+        if not r["cached"] and r["cost"]:
+            b["cost:" + r["model"]] = b.get("cost:" + r["model"], 0) + r["cost"]
+    ser, cum = [], 0.0
+    for t in sorted(series):
+        cum += series[t]["cost"]
+        ser.append({k: (round(v, 4) if isinstance(v, float) else v) for k, v in series[t].items()} | {"cum_cost": round(cum, 4)})
+    sess = {}
+    for r in cur:
+        if r["session_id"]:
+            s = sess.setdefault(r["session_id"], {"session_id": r["session_id"], "calls": 0, "cached": 0, "cost": 0.0})
+            s["calls"] += 1
+            s["cached"] += bool(r["cached"])
+            s["cost"] += 0 if r["cached"] else (r["cost"] or 0)
+    top = sorted(sess.values(), key=lambda s: -s["cost"])[:8]
+    for s in top:
+        s["cost"] = round(s["cost"], 4)
+        n = store.q1("SELECT s.name, e.name env FROM tsessions s JOIN environments e ON e.id=s.env_id WHERE s.id=?", (s["session_id"],))
+        s.update(name=n["name"] if n else None, env=n["env"] if n else None)
+    # what the AI-sourced experiments measured in the period (ideas and bottleneck analyses both carry rec:llm-* ids)
+    ex = store.q("SELECT verdict, COUNT(*) n FROM runs WHERE status='done' AND started >= ? AND changes LIKE '%rec:llm-%' GROUP BY verdict", (since,))
+    exp = {r["verdict"] or "-": r["n"] for r in ex}
+    tried = sum(exp.values())
+    wins = exp.get("improved", 0) + exp.get("efficiency-gain", 0)
+    cur_t = tot(cur)
+    return {"hours": hours, "bucket_s": bucket, "settings": settings(), "totals": cur_t, "previous": tot(old),
+            "by_model": group("model"), "by_purpose": group("purpose"), "series": ser, "top_sessions": top,
+            "experiments": {"tried": tried, "improved": wins, "verdicts": exp,
+                            "cost_per_improvement": round(cur_t["cost"] / wins, 3) if wins else None},
+            "key": key_status()}
