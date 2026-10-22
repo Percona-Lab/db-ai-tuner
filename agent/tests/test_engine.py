@@ -1611,6 +1611,28 @@ def test_unbounded_growth_vs_settling():
     v, d = evaluate.verdict({"superseded": "x", "summary": runs[0]["summary"]}, [], "tps", {})
     assert v == "superseded" and d.get("not_steady") and d.get("unbounded"), d
 
+
+def test_season_check_noise_aware():
+    """Seasoning stop: a fixed 0.5%/h bar over one hour (4+ iterations) almost never passed on a flat but noisy workload;
+    the check follows the measured noise of a run, needs evidence of flatness, and stops a flattening curve once little
+    change is left - but never calls a real ongoing drift steady."""
+    import random
+    from tuning_agent import evaluate
+    series = lambda rnd, f, cv, hours: [(h / 12, f(h / 12) * (1 + rnd.gauss(0, cv))) for h in range(1, int(hours * 12) + 1)]
+    def first_stop(pts):
+        for i in range(evaluate.SEASON_MIN_POINTS, len(pts) + 1):
+            if pts[i - 1][0] >= 1.0 and evaluate.season_check(pts[:i], 2.0, 10 / 60)["stop"]:
+                return pts[i - 1][0]
+        return None
+    def stops(f, cv, seeds=12):
+        return [first_stop(series(random.Random(s), f, cv, 12)) for s in range(seeds)]
+    flat = stops(lambda t: 1000.0, 0.02)                         # flat, 2% scatter per 5-minute sample
+    assert all(h is not None and h <= 7 for h in flat), flat
+    sat = stops(lambda t: 1000.0 * (1.3 - 0.3 * 2.718 ** (-t)), 0.01)  # +30% approaching its level, tau 1 h
+    assert all(h is not None and 2.5 <= h <= 6 for h in sat), sat
+    dec = stops(lambda t: 1000.0 * (1 - 0.03 * t), 0.01)         # aging data: -3%/h, never steady
+    assert sum(h is not None for h in dec) <= 1, dec
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

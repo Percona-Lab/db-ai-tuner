@@ -1624,18 +1624,26 @@ def _set_calibration(c, sess, cal):
     c.event("calibrate", f"noise calibrated from runs {cal['runs']}: goal CV {cal['goal_cv_pct']}% -> threshold ±{cal['noise_pct']}%", cal)
 
 
+SEASON_SAMPLE_S = 300
+
+
 def _season(c, prof):
-    """data_state = seasoned: run the benchmark repeatedly (unmeasured) until throughput stops trending - the data set
-    has reached a steady state, so a series of tuning runs will not move it much - or until season_hours.
-    Throughput per iteration = server-side transactions (Com_commit + Com_rollback) per second."""
+    """data_state = seasoned: run the benchmark (unmeasured) until its throughput stops trending - the data set has
+    reached a steady state, so a series of tuning runs will not move it much - or until season_hours. One continuous run
+    sampled every 5 minutes when the profile can set its length (repeated iterations otherwise); evaluate.season_check
+    decides from the measured noise. Throughput = server-side transactions (Com_commit + Com_rollback) per second."""
     t0 = time.time()
     limit, need = prof.season_hours * 3600, prof.season_min_hours * 3600
-    log(f"== seasoning the data set: benchmark iterations until throughput is steady (|trend| < {prof.season_slope}%/h "
-        f"over the last hour, at least {prof.season_min_hours:g} h, at most {prof.season_hours:g} h)")
+    run_h = ((int(prof.warmup) if str(prof.warmup).isdigit() else 0) + prof.duration) / 3600
+    span_h = max(1.0, 4 * run_h)  # drift has to stay small between re-checks of the current configuration (~4 runs)
+    continuous = prof.can_resize()
+    log(f"== seasoning the data set: {'one continuous benchmark run' if continuous else 'benchmark iterations'}, throughput every "
+        f"{SEASON_SAMPLE_S // 60} min, until the trend is within what {span_h:.1f} h between re-checks tolerate given the measured "
+        f"noise (at least {prof.season_min_hours:g} h, at most {prof.season_hours:g} h)")
     pts = []  # (hours since start, tps)
     logdir = os.path.join(c.state.dir, "bench")
     os.makedirs(logdir, exist_ok=True)
-    steady = False
+    chk = {}
     if prof.reset:
         log("   note: the profile also has a reset command; seasoning runs once, before any reset")
 
@@ -1643,32 +1651,45 @@ def _season(c, prof):
         st = c.db.status()
         return sum(float(st.get(k) or 0) for k in ("Com_commit", "Com_rollback")), time.time()
 
-    while time.time() - t0 < limit:
-        c.activity("seasoning", f"steady-state pre-run, {(time.time() - t0) / 3600:.1f} of max {prof.season_hours:g} h", None)
+    while time.time() - t0 < limit and not chk.get("stop"):
+        left = limit - (time.time() - t0)
+        r = bench.Running(prof.command(total_s=int(left) + 60) if continuous else prof.command(), os.path.join(logdir, "season.log"))
         a, ta = commits()
-        r = bench.Running(prof.command(), os.path.join(logdir, "season.log"))
+        first = True
         while r.alive() and time.time() - t0 < limit:
             time.sleep(5)
+            if time.time() - ta < SEASON_SAMPLE_S:
+                continue
+            b, tb = commits()
+            if not (first and not continuous):  # an iteration's first sample holds its ramp-up
+                pts.append(((tb - t0) / 3600, (b - a) / max(tb - ta, 1)))
+            first, a, ta = False, b, tb
+            h = pts[-1][0] if pts else 0
+            c.activity("seasoning", f"steady-state pre-run, {h:.1f} of max {prof.season_hours:g} h"
+                       + (f", trend {chk['trend_pct_per_hour']:+.2f}%/h (allowed {chk['allowed_pct_per_hour']:.2f})" if chk.get("trend_pct_per_hour") is not None else ""), None)
+            if pts and time.time() - t0 >= need:
+                chk = evaluate.season_check(pts, span_h, prof.duration / 3600)
+                if pts and len(pts) % 6 == 0 or chk.get("stop"):
+                    log(f"   {h:5.2f} h: {pts[-1][1]:.1f} tps" + (f"; trend {chk['trend_pct_per_hour']:+.2f}%/h +/-{chk['trend_se_pct']:.2f}, "
+                        f"noise {chk['noise_pct']:.2f}%, allowed {chk['allowed_pct_per_hour']:.2f}%/h" if "trend_pct_per_hour" in chk else ""))
+                if chk.get("stop"):
+                    break
         if r.alive():
             r.kill()
-        b, tb = commits()
-        tps = (b - a) / max(tb - ta, 1)
-        pts.append(((tb - t0) / 3600, tps))
-        log(f"   {(tb - t0) / 3600:5.2f} h: {tps:.1f} tps")
-        last = [p for p in pts if p[0] >= pts[-1][0] - 1.0]
-        if pts[-1][0] >= max(need, 1.0) and len(last) >= 4:
-            slope = evaluate.trend_pct([p[1] for p in last], [p[0] for p in last])
-            if slope is not None and abs(slope) < prof.season_slope:
-                steady = True
-                break
-    slope = evaluate.trend_pct([p[1] for p in pts[-8:]], [p[0] for p in pts[-8:]]) if len(pts) >= 3 else None
-    res = {"hours": round((time.time() - t0) / 3600, 2), "iterations": len(pts), "steady": steady,
+    steady = bool(chk.get("stop"))
+    slope = chk.get("trend_pct_per_hour")
+    if slope is None and len(pts) >= 3:
+        slope = evaluate.trend_pct([p[1] for p in pts[-12:]], [p[0] for p in pts[-12:]])
+    res = {"hours": round((time.time() - t0) / 3600, 2), "iterations": len(pts), "samples": len(pts), "continuous": continuous,
+           "steady": steady, "stop_reason": chk.get("reason") if steady else "time limit", "check": chk, "span_h": round(span_h, 2),
            "trend_pct_per_hour": round(slope, 2) if slope is not None else None, "series": [[round(h, 3), round(v, 2)] for h, v in pts]}
     sess = c.session()
     sess["seasoning"] = res
     c.state.set("session", sess)
-    txt = (f"Data set seasoned for {res['hours']} h ({len(pts)} benchmark iterations): "
-           + ("throughput steady" if steady else "still trending at the time limit") + (f", trend {slope:+.2f}%/h" if slope is not None else ""))
+    txt = (f"Data set seasoned for {res['hours']} h ({len(pts)} throughput samples): "
+           + (f"steady - {chk.get('text')}" if steady else "still trending at the time limit")
+           + (f"; trend {slope:+.2f}%/h" if slope is not None and not steady else "")
+           + (f"; noise {chk['noise_pct']:.2f}%, allowed trend {chk['allowed_pct_per_hour']:.2f}%/h" if chk.get("noise_pct") is not None else ""))
     log("   " + txt)
     c.event("season", txt, res)
     return res

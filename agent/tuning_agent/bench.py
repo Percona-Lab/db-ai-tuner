@@ -82,10 +82,14 @@ class Profile:
         """Run length can follow a duration change: fixed-length measurement and a run command that uses it."""
         return self.duration > 0 and str(self.warmup).isdigit() and any(p in self.run for p in self.PLACEHOLDERS)
 
-    def command(self):
+    def command(self, total_s=None):
+        """The run command; total_s: one continuous run of that length instead (no separate warm-up), for seasoning."""
         w = int(self.warmup) if str(self.warmup).isdigit() else 0
-        vals = {"duration": self.duration, "warmup": w, "total": w + self.duration + 30,
-                "duration_min": max(1, -(-self.duration // 60)), "warmup_min": -(-w // 60), "total_min": -(-(w + self.duration + 30) // 60)}
+        d = self.duration
+        if total_s:
+            w, d = 0, int(total_s)
+        vals = {"duration": d, "warmup": w, "total": w + d + 30,
+                "duration_min": max(1, -(-d // 60)), "warmup_min": -(-w // 60), "total_min": -(-(w + d + 30) // 60)}
         cmd = self.run
         for k, v in vals.items():
             cmd = cmd.replace("{" + k + "}", str(v))

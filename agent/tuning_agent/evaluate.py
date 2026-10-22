@@ -250,6 +250,143 @@ def warmup_check(runs, warmup):
     return out
 
 
+SEASON_SKIP_H = 0.25      # ramp-up of the seasoning run: not part of the trend
+SEASON_MIN_POINTS = 8     # samples in the window before any stop decision
+SEASON_MAX_TOL = 5.0      # %/h: never call a data set steady that drifts faster than this
+
+
+def _fit(pts):
+    """Least-squares line through [(h, v)]: (slope per h, mean, residual sd, standard error of the slope)."""
+    n = len(pts)
+    mh, mv = sum(h for h, _ in pts) / n, sum(v for _, v in pts) / n
+    sxx = sum((h - mh) ** 2 for h, _ in pts)
+    if not sxx or not mv or n < 3:
+        return None
+    b = sum((h - mh) * (v - mv) for h, v in pts) / sxx
+    sd = (sum((v - (mv + b * (h - mh))) ** 2 for h, v in pts) / (n - 2)) ** 0.5
+    return b, mv, sd, sd / sxx ** 0.5
+
+
+def _quad(pts):
+    """Least-squares parabola through [(h, v)]: (a, b, c, standard error of c, residual sd) or None."""
+    n = len(pts)
+    if n < 12:
+        return None
+    S = [sum(h ** k for h, _ in pts) for k in range(5)]
+    T = [sum(v * h ** k for h, v in pts) for k in range(3)]
+    M = [[S[0], S[1], S[2]], [S[1], S[2], S[3]], [S[2], S[3], S[4]]]
+    det = lambda m: (m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+                     + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]))
+    D = det(M)
+    if not D:
+        return None
+    col = lambda k: [[T[r] if cc == k else M[r][cc] for cc in range(3)] for r in range(3)]
+    a, b, c = (det(col(k)) / D for k in range(3))
+    sd = (sum((v - (a + b * h + c * h * h)) ** 2 for h, v in pts) / (n - 3)) ** 0.5
+    inv22 = (M[0][0] * M[1][1] - M[0][1] * M[1][0]) / D  # (M^-1)[2][2]
+    return a, b, c, sd * max(inv22, 0) ** 0.5, sd
+
+
+def _expfit(pts, end):
+    """Fit v = A + B exp(-t / tau) over a grid of time constants (linear least squares in A, B for each). Returns
+    (best (sse, tau, A, B), upper bound of the change still to come as % of the current level, from the time constants
+    the data cannot rule out: SSE within the 95% profile bound) or None."""
+    n = len(pts)
+    if n < 12:
+        return None
+    fits = []
+    for k in range(48):
+        tau = 0.1 * 1.15 ** k  # 0.1 .. ~70 h
+        xs = [2.718281828 ** (-h / tau) for h, _ in pts]
+        mx, mv = sum(xs) / n, sum(v for _, v in pts) / n
+        sxx = sum((x - mx) ** 2 for x in xs)
+        if sxx < 1e-12:
+            continue
+        B = sum((x - mx) * (v - mv) for x, (_, v) in zip(xs, pts)) / sxx
+        A = mv - B * mx
+        sse = sum((v - A - B * x) ** 2 for x, (_, v) in zip(xs, pts))
+        fits.append((sse, tau, A, B))
+    if not fits:
+        return None
+    best = min(fits)
+    ok = [f for f in fits if f[0] <= best[0] * (1 + 3.84 / max(n - 3, 1))]
+    lvl = best[2] + best[3] * 2.718281828 ** (-end / best[1])
+    if not lvl:
+        return None
+    rest = max(abs(f[3] * 2.718281828 ** (-end / f[1])) for f in ok) / abs(lvl) * 100
+    return best, rest
+
+
+def season_check(pts, span_h, run_h=None, floor_pct_h=0.5):
+    """Is the seasoned data set steady enough to start tuning? `pts`: [(hours since start, throughput)] samples of one
+    continuous benchmark run (or of repeated iterations); `span_h`: hours between re-checks of the current configuration
+    (~4 runs), the span over which drift has to stay small compared with the noise.
+
+    A fixed bar (|trend| < 0.5%/h over one hour, from 4+ iterations) never passed: 25-minute iterations gave 2-3 points
+    per hour, and with 2% scatter the one-hour trend estimate is +/-2.9%/h, so a flat workload passed ~14% of the checks.
+    Here the noise is measured (scatter around the trend), the allowed trend follows from it - drift over span_h within
+    half a noise threshold (2.5 x the noise of a run of run_h, from the samples' scatter): 1.25 x noise / span_h, at
+    least floor_pct_h - and the stop needs evidence:
+      flat       - trend + 1.65 SE below the allowed trend (last 2 h);
+      plateau    - the mean of the window's second half equals the first half's within the allowed trend (+ 1.65 SE);
+      flattening - still moving, but approaching a level (A + B exp(-t / tau)) and the change still to come - upper bound
+                   over the time constants the data allows - fits within the allowed drift over span_h."""
+    use = [p for p in pts if p[0] >= SEASON_SKIP_H]
+    if len(use) < SEASON_MIN_POINTS:
+        return {"stop": False, "reason": "too few samples"}
+    end = use[-1][0]
+    # the window grows with the seasoning (half of it, 2-6 h): a noisy but flat workload needs more samples to show that
+    # it is flat; a curve that still bends is caught by the flattening check on the same window
+    L = max(2.0, min(6.0, 0.5 * (end - SEASON_SKIP_H)))
+    win = [p for p in use if p[0] >= end - L]
+    if len(win) < SEASON_MIN_POINTS:
+        win = use[-SEASON_MIN_POINTS:]
+    f = _fit(win)
+    if not f:
+        return {"stop": False, "reason": "no trend fit"}
+    b, m, sd, se = f
+    q = _quad(win)
+    if q and q[4] < sd:  # scatter around a bending curve: the bend is not noise
+        sd = q[4]
+    slope, se_pct, noise = 100 * b / m, 100 * se / m, 100 * sd / m
+    # what matters is a tuning run's noise: a run averages run_h / sample_h samples
+    gaps = sorted(win[k + 1][0] - win[k][0] for k in range(len(win) - 1))
+    sample_h = gaps[len(gaps) // 2] if gaps else None
+    run_noise = noise * (sample_h / run_h) ** 0.5 if run_h and sample_h and run_h > sample_h else noise
+    tol = min(SEASON_MAX_TOL, max(floor_pct_h, 1.25 * run_noise / max(span_h, 0.5)))
+    out = {"stop": False, "trend_pct_per_hour": round(slope, 2), "trend_se_pct": round(se_pct, 2), "noise_pct": round(noise, 2),
+           "run_noise_pct": round(run_noise, 2),
+           "allowed_pct_per_hour": round(tol, 2), "window_h": round(win[-1][0] - win[0][0], 2), "samples": len(win)}
+    if abs(slope) + 1.645 * se_pct < tol:
+        return dict(out, stop=True, reason="flat", text=f"trend {slope:+.2f}%/h (+/-{se_pct:.2f}) within the allowed {tol:.2f}%/h")
+    recent = [p for p in use if p[0] >= end - 2.0]
+    fr = _fit(recent) if len(recent) >= SEASON_MIN_POINTS and len(recent) < len(win) else None
+    if fr:  # the last 2 h alone: a long window still holds the earlier climb
+        s2, se2 = 100 * fr[0] / fr[1], 100 * fr[3] / fr[1]
+        if abs(s2) + 1.645 * se2 < tol:
+            return dict(out, stop=True, reason="flat", trend_pct_per_hour=round(s2, 2), trend_se_pct=round(se2, 2),
+                        text=f"trend over the last 2 h {s2:+.2f}%/h (+/-{se2:.2f}) within the allowed {tol:.2f}%/h")
+    half = L / 2
+    last = [v for h, v in use if h > end - half]
+    prev = [v for h, v in use if end - L < h <= end - half]
+    if len(last) >= 4 and len(prev) >= 4:
+        ml, mp = sum(last) / len(last), sum(prev) / len(prev)
+        d = 100 * (ml - mp) / mp / half  # per hour
+        se_d = noise * (1 / len(last) + 1 / len(prev)) ** 0.5 / half
+        out["half_change_pct_per_hour"] = round(d, 2)
+        if abs(d) + 1.645 * se_d < tol:
+            return dict(out, stop=True, reason="plateau", text=f"last {half:.1f} h {d * half:+.2f}% vs the {half:.1f} h before, within the allowed {tol:.2f}%/h")
+    ef = _expfit(use, end)
+    if ef:
+        # still moving, but approaching a level: the change still to come, upper bound over the time constants the data
+        # allows, has to fit within the drift allowed between re-checks (a straight trend has no level: never passes)
+        (sse, tau, A, B), rest = ef
+        out.update(remaining_pct=round(rest, 2), time_constant_h=round(tau, 2))
+        if rest < tol * span_h:
+            return dict(out, stop=True, reason="flattening", text=f"approaching a level: at most about {rest:.2f}% still to come, within the allowed drift")
+    return out
+
+
 def noise_plan(runs, cal, duration, max_duration=None, target=NOISE_TARGET):
     """Split the calibrated run-to-run noise into a within-run part (what each run's own 10 s samples predict for its
     length: batch-means standard error) and a between-run part (shifts from run to run: data state, restarts,
