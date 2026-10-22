@@ -60,7 +60,9 @@ if [ -n "$CLI" ]; then
 fi
 
 # ---------------------------------------------------------------------------------------------------- cell data + profile
-DB=$(hostname -I | tr ' ' '\n' | grep -m1 '^192\.168\.' || hostname -I | awk '{print $1}')  # the private address when there is one
+# the private address when the client has one too (the runner falls back to public addresses when the region runs out)
+case "$CLI" in 192.168.*) DB=$(hostname -I | tr ' ' '\n' | grep -m1 '^192\.168\.' || hostname -I | awk '{print $1}') ;;
+  *) DB=$(hostname -I | tr ' ' '\n' | grep -v '^192\.168\.' | grep -m1 '\.' || hostname -I | awk '{print $1}') ;; esac
 if [ -n "$CLI" ]; then
   SSHC="ssh -i /root/.ssh/bench_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new root@$CLI"
   SBC="sysbench --mysql-host=$DB --mysql-user=sbtest --mysql-password=sbtest --mysql-db=sbtest"
@@ -74,7 +76,8 @@ RESET="reset = $B/reset_datadir.sh"
 SBM='[metrics]\nsysbench_tps = transactions:\\s+\\d+\\s+\\(([\\d.]+) per sec\nsysbench_qps = queries:\\s+\\d+\\s+\\(([\\d.]+) per sec\nsysbench_p95_ms = 95th percentile:\\s+([\\d.]+)\n'
 GOAL=tps; MAX=16; BASELINE_ARGS=""; REQ=""
 stroppy_install() {  # stroppy (TPC-B / TPC-DS cells): one static binary, pinned release
-  curl -fsSL https://github.com/stroppy-io/stroppy/releases/download/v6.2.0/stroppy_linux_amd64.tar.gz | tar xz -C /usr/local/bin stroppy \
+  # the archive stores the binary as ./stroppy (r2 TB-1 / DS-1: "tar: stroppy: Not found in archive")
+  curl -fsSL https://github.com/stroppy-io/stroppy/releases/download/v6.2.0/stroppy_linux_amd64.tar.gz | tar xz -C /usr/local/bin ./stroppy \
     || { echo SETUPFAILED: stroppy; exit 1; }
 }
 sb_prepare() {  # tables rows
@@ -105,7 +108,10 @@ case $CELL in
     TH=$(( $(nproc) * ${HALVES[$K]} / 2 )); CLS=${NAMES[$K]}; RATIO=(- 0.5x 2x 16x)
     sb_prepare 16 1000000
     sb_profile "$CELL sysbench oltp_read_write, 16 x 1M rows (in memory), $TH threads ($CLS concurrency, ${RATIO[$K]} the vCPUs), binary log on" oltp_read_write 16 1000000 $TH "" 300 600 "$RESET"
-    REQ="max_connections = $(( TH + 100 ))" ;;
+    # sysbench prepares ~9 statements per table per connection: 16 tables x 128 connections passed the default 16382
+    # (r2 CC-3: "Can't create more than max_prepared_stmt_count statements")
+    REQ="max_connections = $(( TH + 100 ))
+max_prepared_stmt_count = 1048576" ;;
   RW-2) sb_prepare 32 6000000
     # aging data instead of a 46 GB restore per run (r1: ~50 min per run with a 30 min warm-up to reach steady state);
     # sysbench read/write does not grow the data set, so back-to-back runs on seasoned data stay comparable

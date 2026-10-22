@@ -75,14 +75,21 @@ def ssh(alias, cmd, timeout=600, check=False):
     return r
 
 
-def create(st, role, typ):
+def create(st, role, typ, private=False):
+    """A VM for the cell. private: a private address for server-client traffic (only pairs need one; r2: every VM took
+    one and the region's limit of 30 left the HC pairs without). When the region has none left, public networking."""
     label = f"suite-{VERSION}-{st['cell'].lower()}-{role}-{st['run']}"[:60]
     key = open(os.path.join(OPS, "keys", "at_key.pub")).read().strip()
-    d = linode("POST", "/linode/instances", {"type": typ, "region": REGION, "image": "linode/ubuntu24.04", "label": label,
-                                              "tags": ["aituner", f"suite-{VERSION}"], "authorized_keys": [key],
-                                              "root_pass": secrets.token_urlsafe(24), "booted": True,
-                                              # client-server cells talk over the private network, as the protocol says
-                                              "private_ip": True})
+    spec = {"type": typ, "region": REGION, "image": "linode/ubuntu24.04", "label": label,
+            "tags": ["aituner", f"suite-{VERSION}"], "authorized_keys": [key],
+            "root_pass": secrets.token_urlsafe(24), "booted": True, "private_ip": bool(private)}
+    try:
+        d = linode("POST", "/linode/instances", spec)
+    except RuntimeError as e:
+        if not private or "private IPv4" not in str(e):
+            raise
+        log(st, f"no private address left in {REGION}: {role} on the public network")
+        d = linode("POST", "/linode/instances", dict(spec, private_ip=False))
     alias = f"su-{st['cell'].lower()}-{role}"
     pub = next((ip for ip in d["ipv4"] if not ip.startswith("192.168.")), d["ipv4"][0])
     d["ipv4"] = [pub] + [ip for ip in d["ipv4"] if ip != pub]
@@ -144,8 +151,9 @@ def cell(run, cell_id):
     st = {"run": run, "cell": cell_id, "version": VERSION, "status": "starting", "started": time.time()}
     tier, cls = CELLS[base_cell(cell_id)]
     try:
-        srv = create(st, "db", CLASSES[cls][0])
-        cli = create(st, "cli", CLASSES[cls][1]) if CLASSES[cls][1] else None
+        pair = bool(CLASSES[cls][1])
+        srv = create(st, "db", CLASSES[cls][0], private=pair)
+        cli = create(st, "cli", CLASSES[cls][1], private=pair and bool(st["vms"][0].get("private_ip"))) if pair else None
         run_cell(st, srv, cli)
     except Exception as e:  # noqa - the VMs stay for inspection
         st["status"] = "failed"
@@ -158,6 +166,10 @@ def resume(run, cell_id):
     """Run a failed cell again on the VMs it kept (scripts copied again, setup and session from the start)."""
     st = json.load(open(os.path.join(OPS, "suite", run, cell_id + ".json")))
     vms = {v["role"]: v["alias"] for v in st.get("vms", [])}
+    tier, cls = CELLS[base_cell(cell_id)]
+    if CLASSES[cls][1] and "cli" not in vms:  # the client was never created (r2 HC cells: private address limit)
+        vms["cli"] = create(st, "cli", CLASSES[cls][1], private=bool(st["vms"][0].get("private_ip")))
+        save(st)
     st.pop("error", None)
     st.pop("session", None)
     st["status"] = "starting"
