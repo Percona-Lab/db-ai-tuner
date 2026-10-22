@@ -758,6 +758,28 @@ function meanNoise(noise, n1, n2) {
   // noise threshold for two means of n1 and n2 runs (the calibrated threshold is for one run vs one run)
   return noise * Math.sqrt((1 / Math.max(n1, 1) + 1 / Math.max(n2, 1)) / 2);
 }
+function runRanges(seqs) {
+  const out = []; let a = null, p = null;
+  seqs.forEach(x => { if (a === null) { a = p = x; } else if (x === p + 1) { p = x; } else { out.push(a === p ? `#${a}` : `#${a}–#${p}`); a = p = x; } });
+  if (a !== null) out.push(a === p ? `#${a}` : `#${a}–#${p}`);
+  return out.join(", ");
+}
+function benchCard(list) {
+  if (!list.length) return "";
+  const one = b => {
+    const ph = b.phases || {}, wu = ph.warmup_s ?? (/^\d+$/.test(String(b.warmup)) ? +b.warmup : null), ms = ph.measured_s ?? b.duration;
+    const phases = wu != null ? `warm-up ${wu} s, then measured ${ms ? ms + " s" : "until the benchmark finishes"}` : `measured ${ms ? ms + " s" : "until the benchmark finishes"} (no fixed warm-up)`;
+    const scripts = Object.entries(b.scripts || {});
+    return `<div style="margin-bottom:10px"><b>${esc(b.name || "")}</b>${list.length > 1 ? ` <span class="muted">runs ${runRanges(b.runs)}</span>` : ""}
+      <div class="kv" style="margin-top:6px"><div>Command as run</div><div><pre style="margin:0">${esc(b.command || b.run || "")}</pre></div>
+      <div>Phases${info("The benchmark runs once per measurement: the warm-up part is not measured; the measured window follows it. The agent samples metrics only inside the window.")}</div><div>${esc(phases)}</div>
+      ${b.reset ? `<div>Reset before each run</div><div class="mono">${esc(b.reset)}</div>` : ""}
+      ${b.profile ? `<div>Profile</div><div class="mono">${esc(b.profile)}</div>` : ""}</div>
+      ${b.profile_text ? `<details style="margin-top:6px"><summary>Profile file</summary><pre>${esc(b.profile_text)}</pre></details>` : ""}
+      ${scripts.map(([p, t]) => `<details><summary>Script ${esc(p)}</summary><pre>${esc(t)}</pre></details>`).join("")}</div>`;
+  };
+  return `<h2>Benchmark${info("What each run executed, as recorded by the agent: the command with the warm-up and run length filled in, the reset command, the profile file and the scripts the commands call. Runs with a different specification (for example after the agent lengthened the warm-up) are listed separately.")}</h2><div class="card">${list.map(one).join("")}</div>`;
+}
 async function sessionPage(id) {
   setNav("envs");
   const d = await api("/api/sessions/" + id);
@@ -816,6 +838,7 @@ async function sessionPage(id) {
    ${cfgTile("Best safe", bestSafe, firstCfg, lower, s.goal, false, s)}
    ${bestTrade ? cfgTile("Best with trade-offs", bestTrade, firstCfg, lower, s.goal, true, s) : ""}</div>
   <div class="card" style="margin-top:14px" id="bars"></div>
+  ${benchCard(d.benchmarks || [])}
   <h2>Runs</h2><div class="card tablewrap"><table class="runs" data-opt="TPS|Avg ms|CPU ms/trx|IOs/trx|Time"><thead><tr><th>#</th><th>Run</th><th>Changes</th><th class="num">${goalUnit(s.goal, s) === "ms" ? "Avg ms" : "Goal"}</th><th class="num">Δ parent${info("Change of the goal vs the mean of the parent configuration (the configuration this run was changed from). Coloured only beyond the noise threshold.")}</th><th class="num">vs start${info("Change vs the calibrated starting configuration. Bold: the best configuration known at that point of the session (it took the lead by beating the previous best beyond the noise threshold). Changes shown struck through were rolled back afterwards; ↩ marks settings undone before the run.")}</th><th>Verdict</th>
    <th class="num">TPS</th><th class="num">Avg ms</th><th class="num">CPU ms/trx</th><th class="num">IOs/trx</th><th class="num">Time</th></tr></thead><tbody id="runs"></tbody></table></div>
   <h2>Experiments${info("Your own experiments: try a set of settings, or sweep one variable over several values (e.g. buffer pool 1G, 2G, 3G). They run before the tuner's own ideas, each value measured from the same parent configuration with the session's benchmark. The best value is kept only if it beats the parent beyond the noise threshold.")}</h2><div class="card" id="exps"></div>

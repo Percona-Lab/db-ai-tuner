@@ -622,7 +622,26 @@ def session(sid: int, request: Request):
         s["calibration"]["data_state"] = data_state_derived(sid, s["calibration"])
     st = store.q1("SELECT id, name, kind FROM studies WHERE id=?", (s.get("study_id"),)) if s.get("study_id") else None
     return {"session": s, "environment": env_brief(e), "runs": runs, "recommendations": recs, "events": events, "cost": session_costs(s, e),
-            "study": dict(st) if st else None, "requirements": session_requirements(sid)}
+            "study": dict(st) if st else None, "requirements": session_requirements(sid), "benchmarks": session_benchmarks(sid)}
+
+
+def session_benchmarks(sid):
+    """The benchmark(s) a session ran, as recorded by the runs: command as executed, reset, phases, profile file and the
+    scripts it calls (agents from 2026-10-22; older runs give command / reset / phases). Runs with the same specification
+    are grouped, so a mid-session change (e.g. a lengthened warm-up) shows as a second entry with its runs."""
+    out, by = [], {}
+    for r in store.q("SELECT seq, json_extract(inputs, '$.bench') b FROM runs WHERE session_id=? AND inputs IS NOT NULL ORDER BY seq", (sid,)):
+        b = store.uj(r["b"]) if r["b"] else None
+        if not b:
+            continue
+        key = b.get("spec_sha") or json.dumps([b.get("command") or b.get("run"), b.get("reset"), b.get("warmup"), b.get("duration")])
+        if key not in by:
+            spec = {k: b.get(k) for k in ("name", "profile", "command", "run", "reset", "warmup", "duration", "phases", "goal_metric",
+                                          "data_state", "requires", "profile_text", "scripts", "spec_sha", "restart_before_run")}
+            by[key] = dict(spec, runs=[])
+            out.append(by[key])
+        by[key]["runs"].append(r["seq"])
+    return out
 
 
 _nb_cache = {}

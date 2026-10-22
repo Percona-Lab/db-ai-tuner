@@ -98,6 +98,38 @@ class Profile:
                 "data_state": self.data_state, "copy_on_write": self.copy_on_write,
                 "requires": self.requires}
 
+    def spec(self):
+        """What actually ran, for the record: describe() plus the profile file as written, the contents of scripts the
+        run and reset commands name (text files up to 32 KiB each, 96 KiB in all) and a fingerprint of all of it, so a
+        session shows which benchmark - and which version of it - each run used."""
+        import hashlib
+        import json
+        out = self.describe()
+        try:
+            out["profile_text"] = open(self.path).read()[:32768] if self.path else None
+        except OSError:
+            out["profile_text"] = None
+        scripts, total = {}, 0
+        for cmd in (self.command(), self.reset or ""):
+            for tok in re.findall(r"(?:^|[\s=;&|(])((?:/|\./)[\w./-]+\.(?:sh|tcl|lua|py|sql|ini|cnf|js))", cmd):
+                path = tok if tok.startswith("/") else os.path.join(os.path.dirname(self.path or "."), tok[2:])
+                if path in scripts or not os.path.isfile(path):
+                    continue
+                try:
+                    text = open(path, errors="replace").read(32768)
+                except OSError:
+                    continue
+                if total + len(text) > 98304:
+                    break
+                scripts[path] = text
+                total += len(text)
+        out["scripts"] = scripts
+        out["phases"] = {"warmup_s": int(self.warmup) if str(self.warmup).isdigit() else None,
+                         "measured_s": self.duration or None, "window": self.window()}
+        out["spec_sha"] = hashlib.sha256(json.dumps({k: out.get(k) for k in ("command", "reset", "profile_text", "scripts")},
+                                                    sort_keys=True).encode()).hexdigest()[:12]
+        return out
+
     def window(self):
         """(start, end) seconds of the measured window from the benchmark's own start (warm-up, then duration)."""
         try:

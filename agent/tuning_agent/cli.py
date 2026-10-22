@@ -1425,7 +1425,7 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         else:
             goal_value = metrics[prof.goal_metric] * prof.goal_scale
             goal_src = f"benchmark:{prof.goal_metric}" + (f" x{prof.goal_scale:g}" if prof.goal_scale != 1 else "")
-    extra = {"bench": {**prof.describe(), "requirements": requirements, "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:],
+    extra = {"bench": {**prof.spec(), "requirements": requirements, "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:],
                        "window_start_delay_s": m.get("window_start_delay_s"), "warmup_s": waited}, "probe": env_probe}
     if cow is not None:
         extra["cow"] = cow
