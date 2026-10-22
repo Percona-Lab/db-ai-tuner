@@ -1071,10 +1071,19 @@ def cpu_class(n):
     return "1-2" if n <= 2 else "3-8" if n <= 8 else "9-32" if n <= 32 else "33+"
 
 
-def conc_class(n):
-    """Client concurrency class: contention effects (latches, thread pool, spin settings) change with it."""
-    n = int(n or 0)
-    return "1-16" if n <= 16 else "17-128" if n <= 128 else "129+"
+CONC_CLASSES = ("low", "medium", "high", "extreme")
+
+
+def conc_class(n, cpus=None):
+    """Client concurrency relative to the server's vCPUs - contention effects (latches, thread pool, spin settings,
+    scheduling) depend on connections per CPU, not on the count: low ~0.5x (CPU left for background work and the client),
+    medium ~2x (some waiting), high ~16x (contention exposed), extreme beyond 64x (thread handling: thousands of
+    connections). Class boundaries sit between those points. None when either number is unknown."""
+    n, c = int(float(n or 0)), int(cpus or 0)
+    if not n or not c:
+        return None
+    r = n / c
+    return "low" if r <= 1 else "medium" if r <= 6 else "high" if r <= 64 else "extreme"
 
 
 def server_series(flavor, version):
@@ -1104,7 +1113,7 @@ def agent_experience(workload: str = None, cpus: int = None, conns: int = None, 
         if exclude_session and r["session_id"] == exclude_session:
             continue
         similar = (not (workload and r["wl"] and r["wl"] != workload) and not (cpus and r["cpus"] and cpu_class(r["cpus"]) != cpu_class(cpus))
-                   and not (conns and r["conns"] and conc_class(r["conns"]) != conc_class(conns)))
+                   and not (conns and r["conns"] and conc_class(r["conns"], r["cpus"]) != conc_class(conns, cpus)))
         _experience_add(wide, r)  # every workload and machine size: a weaker prior when similar sessions are few
         _hypothesis_add(hyp_wide, r)
         if not similar:
@@ -1120,12 +1129,12 @@ def agent_experience(workload: str = None, cpus: int = None, conns: int = None, 
             x = e.pop("deltas")
             e["mean_delta_pct"] = round(sum(x) / len(x), 2) if x else None
     try:  # learnings (learning.db) that hold in these conditions: leads and priors, never a replacement for evidence
-        insights = learner.matching(workload, cpu_class(cpus) if cpus else None, conc_class(conns) if conns else None,
+        insights = learner.matching(workload, cpu_class(cpus) if cpus else None, conc_class(conns, cpus),
                                     ("multi-node" if numa_nodes > 1 else "uniform") if numa_nodes else None, series, cluster, engine)
         params = learner.param_impact(workload, cpu_class(cpus) if cpus else None, series=series)
     except Exception:
         insights, params = [], {}
-    return {"workload": workload, "cpu_class": cpu_class(cpus) if cpus else None, "concurrency_class": conc_class(conns) if conns else None,
+    return {"workload": workload, "cpu_class": cpu_class(cpus) if cpus else None, "concurrency_class": conc_class(conns, cpus),
             "series": series, "experience": out, "experience_family": family, "experience_other_variant": other, "experience_all": wide,
             "hypotheses": list(hyp.values()), "hypotheses_all": list(hyp_wide.values()),
             "insights": insights, "parameters": params}
@@ -1143,7 +1152,7 @@ def learning_data():
     ctx, hyp = {}, {}
     sessions = {}
     for r in rows:
-        key = (r["wl"] or "-", cpu_class(r["cpus"]) if r["cpus"] else "-", conc_class(r["conns"]) if r["conns"] else "-")
+        key = (r["wl"] or "-", cpu_class(r["cpus"]) if r["cpus"] else "-", conc_class(r["conns"], r["cpus"]) or "-")
         d = ctx.setdefault(key, {})
         before = {k: v["n"] for k, v in d.items()}
         _experience_add(d, r)

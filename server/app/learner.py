@@ -124,9 +124,15 @@ def _cpu_class(n):  # the same classes as the experience endpoint (main.cpu_clas
     return None if not n else "1-2" if n <= 2 else "3-8" if n <= 8 else "9-32" if n <= 32 else "33+"
 
 
-def _conc_class(n):  # main.conc_class
-    n = int(float(n or 0))
-    return None if not n else "1-16" if n <= 16 else "17-128" if n <= 128 else "129+"
+CONC_CLASSES = ("low", "medium", "high", "extreme")
+
+
+def _conc_class(n, cpus=None):  # main.conc_class: connections per vCPU
+    n, c = int(float(n or 0)), int(cpus or 0)
+    if not n or not c:
+        return None
+    r = n / c
+    return "low" if r <= 1 else "medium" if r <= 6 else "high" if r <= 64 else "extreme"
 
 
 def digest(sid):
@@ -164,7 +170,7 @@ def digest(sid):
     return {"session": sid, "name": s["name"] if own else None, "workload_text": s["workload"] if own else None, "goal": s["goal"],
             "policy": s["policy"],
             "agent_version": s["agent_version"] if "agent_version" in s.keys() else None,
-            "conditions": {"workload": wl, "cpu_class": _cpu_class(hw.get("cpus")), "concurrency_class": _conc_class(conns),
+            "conditions": {"workload": wl, "cpu_class": _cpu_class(hw.get("cpus")), "concurrency_class": _conc_class(conns, hw.get("cpus")),
                            "numa": ("multi-node" if int(hw.get("numa_nodes") or 1) > 1 else "uniform"),
                            "series": _series((facts.get("db") or {}).get("flavor"), (facts.get("db") or {}).get("version")),
                            "cluster": ((facts.get("db") or {}).get("cluster") or {}).get("type") or "standalone",
@@ -208,7 +214,7 @@ SCHEMA_OUT = {
                 "conditions": {"type": "object", "additionalProperties": False,
                                "required": ["workload", "cpu_class", "concurrency_class", "components"],
                                "properties": {"workload": {"type": "string"}, "cpu_class": {"type": "string"},
-                                              "concurrency_class": {"type": "string"},
+                                              "concurrency_class": {"type": "string", "enum": ["low", "medium", "high", "extreme", "any"]},
                                               "components": {"type": "array", "items": {"type": "string"}}}},
                 "runs": {"type": "array", "items": {"type": "integer"}},
                 "same_as": {"type": "integer"}}}},
@@ -277,7 +283,8 @@ def validate(settings, direction, cond):
             continue
         if cond.get("cpu_class") and r["cpus"] and _cpu_class(r["cpus"]) != cond["cpu_class"]:
             continue
-        if cond.get("concurrency_class") and r["conns"] and _conc_class(r["conns"]) != cond["concurrency_class"]:
+        # classes from before 2026-10-22 were absolute counts ("1-16"): they match any concurrency until re-learned
+        if cond.get("concurrency_class") in CONC_CLASSES and r["conns"] and _conc_class(r["conns"], r["cpus"]) != cond["concurrency_class"]:
             continue
         ev = _uj(r["evaluation"], {}) or {}
         if any(ev.get(k) for k in FLAWED):
@@ -588,7 +595,7 @@ def matching(workload=None, cpu_class=None, concurrency_class=None, numa=None, s
             continue
         if cpu_class and cond.get("cpu_class") and cond["cpu_class"] != cpu_class:
             continue
-        if concurrency_class and cond.get("concurrency_class") and cond["concurrency_class"] != concurrency_class:
+        if concurrency_class and cond.get("concurrency_class") in CONC_CLASSES and cond["concurrency_class"] != concurrency_class:
             continue
         if numa and cond.get("numa") and cond["numa"] != numa:
             continue

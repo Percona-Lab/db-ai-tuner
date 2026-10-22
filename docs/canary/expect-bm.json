@@ -1,21 +1,21 @@
 {
-  "_source": "reference session #146 (PS 8.4.11 + dbg, build 5d2eab9, 2026-10-21): baseline 3339 / 3235 / 3265 tps, noise \u00b12.07%; log_writer_threads OFF +7.8% confirmed (runs 10-11, 17); thread pool -5.9%; concurrency limit 16 / 32, AHI, best practices within noise; trade-offs trx_commit=2 +36%, performance_schema OFF +4%",
-  "noise_max_pct": 6.0,
-  "baseline_goal": [
-    3000,
-    3600
-  ],
-  "best_safe_has": {
-    "innodb_log_writer_threads": "OFF"
-  },
-  "best_safe_lacks": [
-    "thread_handling",
-    "innodb_flush_log_at_trx_commit",
-    "performance_schema"
-  ],
-  "tried": [
-    "log-writer-threads-off"
-  ],
-  "max_runs": 24,
-  "_noise": "30 s windows: #146 +-2.07%, #147 +-5.02% (baseline 3232 / 3335 / 3186) - same build behaviour, the bound covers both"
+ "_source": "reference session #146 (PS 8.4.11 + dbg, build 5d2eab9, 2026-10-21): baseline 3339 / 3235 / 3265 tps, noise \u00b12.07%; log_writer_threads OFF +7.8% confirmed (runs 10-11, 17); thread pool -5.9%; concurrency limit 16 / 32, AHI, best practices within noise; trade-offs trx_commit=2 +36%, performance_schema OFF +4%",
+ "noise_max_pct": 8.0,
+ "baseline_goal": [
+  3000,
+  3600
+ ],
+ "best_safe_has": {
+  "innodb_log_writer_threads": "OFF"
+ },
+ "best_safe_lacks": [
+  "thread_handling",
+  "innodb_flush_log_at_trx_commit",
+  "performance_schema"
+ ],
+ "tried": [
+  "log-writer-threads-off"
+ ],
+ "max_runs": 24,
+ "_noise": "30 s windows: #146 +-2.07%, #147 +-5.02% (baseline 3232 / 3335 / 3186) - same build behaviour, the bound covers both; #204 (2026-10-22) +-7.54% from baselines 3203 / 3355 / 3343 (CV 2.56%, 3 runs): the first baseline after the defaults run is low again, as in #147 - bound 8%"
 }

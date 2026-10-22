@@ -51,7 +51,7 @@ Contention-related changes (thread pool, spin settings, `innodb_thread_concurren
 threads, CPU / IRQ affinity, allocators) may behave differently on high-core servers with hundreds or thousands of
 connections. Conclusions from the 2026-10-18 review (e.g. "thread pool consistently harmful") hold for that range only.
 
-Done: the experience prior now matches workload, CPU class **and** concurrency class (1-16 / 17-128 / 129+ connections);
+Done: the experience prior now matches workload, CPU class **and** concurrency class (connections per vCPU since 2026-10-22: low up to 1x, medium up to 6x, high up to 64x, extreme beyond - nominal points 0.5x / 2x / 16x / thousands of connections);
 evidence from other classes counts half and never demotes a change to the end of the queue.
 
 To do in Battery 2: run the contention-sensitive workloads (O2/O3-style sysbench, HammerDB high VU) on the 16+ core
