@@ -186,3 +186,4 @@ button.star:hover { color: var(--s4); }
 .advice .acts button { padding: 2px 8px; font-size: 12px; }
 .fbform[hidden] { display: none; }
 .badge.wrap { white-space: normal; max-width: 100%; align-items: baseline; }
+.unsafe, .unsafe td, tr.unsafe td { color: var(--crit); }

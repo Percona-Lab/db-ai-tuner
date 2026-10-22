@@ -612,7 +612,7 @@ async function envPage(id) {
      return `<tr><td><b>${esc(h.name)}</b></td><td>${h.destroyed_at ? `<span class="badge plain" data-tip="Machine deleted ${ago(h.destroyed_at)}; its metrics stay with the runs.">decommissioned</span>` : h.online ? '<span class="badge good">online</span>' : `<span class="badge warn">offline · ${ago(h.last_seen)}</span>`}</td>
        <td>${hw.cpus || "?"} CPU · ${bytes(hw.ram_bytes)}</td><td class="num">${o.rtt_avg_ms != null ? num(o.rtt_avg_ms) + " ms" : "–"}</td>
        <td class="num">${num(o.net_conn_per_s)}</td><td class="num">${num(o.net_time_wait)}</td><td class="num">${o.cpu_busy != null ? Math.round(o.cpu_busy) + "%" : "–"}</td></tr>`; }).join("")}</tbody></table></div>` : ""}
-  <div class="card" style="margin-top:10px"><details><summary style="margin:0">Current agent-applied configuration (${Object.keys((f.agent || {}).managed || {}).length - ((f.agent || {}).at_default || []).length} changed from compiled defaults)${info("The settings the tuning-agent currently enforces on this server: MySQL variables written to its own option file (shown below) and operating-system settings. Everything not listed is the server default or comes from your own option files. As of the agent's last report.")}</summary>${Object.keys((f.agent || {}).managed || {}).length ? `<p class="muted" style="margin:0 0 6px">${esc((f.agent || {}).cnf_path || "")} · restarts ${(f.agent || {}).allow_restart === false ? "disabled" : "allowed"}</p>${configBlocks(Object.fromEntries(Object.entries(f.agent.managed).filter(([k]) => !(f.agent.at_default || []).includes(k))))}${(f.agent.at_default || []).length ? `<p class="muted" style="font-size:12.5px;margin:6px 0 0">Also written at their compiled default (no change on this server): ${f.agent.at_default.map(k => `<code>${esc(k)}</code>`).join(" ")}</p>` : ""}` : '<span class="muted">None yet: <code>tuning-agent baseline --apply</code> writes the first set.</span>'}</details></div>
+  <div class="card" style="margin-top:10px"><details><summary style="margin:0">Current agent-applied configuration (${Object.keys((f.agent || {}).managed || {}).length - ((f.agent || {}).at_default || []).length} changed from compiled defaults)${info("The settings the tuning-agent currently enforces on this server: MySQL variables written to its own option file (shown below) and operating-system settings. Everything not listed is the server default or comes from your own option files. As of the agent's last report.")}</summary>${Object.keys((f.agent || {}).managed || {}).length ? `<p class="muted" style="margin:0 0 6px">${esc((f.agent || {}).cnf_path || "")} · restarts ${(f.agent || {}).allow_restart === false ? "disabled" : "allowed"}</p>${configBlocks(Object.fromEntries(Object.entries(f.agent.managed).filter(([k]) => !(f.agent.at_default || []).includes(k))), null, unsafeMap(f.agent.tradeoffs))}${(f.agent.at_default || []).length ? `<p class="muted" style="font-size:12.5px;margin:6px 0 0">Also written at their compiled default (no change on this server): ${f.agent.at_default.map(k => `<code>${esc(k)}</code>`).join(" ")}</p>` : ""}` : '<span class="muted">None yet: <code>tuning-agent baseline --apply</code> writes the first set.</span>'}</details></div>
   <div class="row"><h2>Live metrics</h2><span class="spacer"></span><select id="range" style="width:auto"><option value="900">15 min</option><option value="3600" selected>1 hour</option><option value="21600">6 hours</option><option value="86400">24 hours</option></select></div>
   <div id="live"></div>
   <h2>Tuning sessions</h2><div class="card tablewrap"><table data-opt="Goal|Policy|Runs|First run|Best|Started"><thead><tr><th>#</th><th>Session</th><th>Goal</th><th>Policy</th><th>Status</th><th class="num">Runs</th><th class="num">First run</th><th class="num">Best</th><th class="num">Best gain</th><th>Started</th></tr></thead><tbody id="sess"></tbody></table></div>
@@ -978,14 +978,15 @@ function bestConfigHtml(title, run, c, start) {
   const others = Object.keys(cfg).filter(k => !/^(os|rg):/.test(k) && !(k in managed) && meta[k] && meta[k].default != null && !isDef(k) && !NOT_TUNING.test(k)).sort();
   const os = Object.keys(managed).filter(k => /^(os|rg):/.test(k)).sort();
   const sc = (start && start.config) || {};
-  const row = (k, v, d) => `<tr><td class="mono">${esc(k)}</td><td class="mono"><b>${esc(val(k, v))}</b></td><td class="mono muted">${d != null ? esc(val(k, d)) : "–"}</td></tr>`;
+  const unsafe = unsafeMap(run.tradeoffs);
+  const row = (k, v, d, key) => `<tr${unsafe[key || k] ? ` class="unsafe" data-tip="${esc(unsafe[key || k])}" tabindex="0"` : ""}><td class="mono">${esc(k)}</td><td class="mono"><b>${esc(val(k, v))}</b></td><td class="mono muted">${d != null ? esc(val(k, d)) : "–"}</td></tr>`;
   const tbl = (head, rows) => `<div class="tablewrap"><table><thead><tr><th>Setting</th><th>Value</th><th>${head}</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-  const myCnf = cnfBlock(Object.fromEntries(mine.map(k => [k, managed[k]])));
+  const myCnf = cnfBlock(Object.fromEntries(mine.map(k => [k, managed[k]])), unsafe);
   return `<h3 style="margin:0 0 4px">${esc(title)} <span class="muted" style="font-weight:400">· run <a href="#/run/${run.id}">#${run.seq} ${esc(run.label)}</a></span>${tradeBadge(run.tradeoffs_added || [])}</h3>
-    <h4 style="margin:8px 0 4px">MySQL: set by the tuner (${mine.length})</h4>
+    <h4 style="margin:8px 0 4px">MySQL: set by the tuner (${mine.length})${Object.keys(unsafe).length ? ` <span class="unsafe" style="font-weight:400;font-size:12.5px">red = not production-safe</span>` : ""}</h4>
     ${mine.length ? tbl("Compiled default", mine.map(k => row(k, cfg[k] != null ? cfg[k] : managed[k], (meta[k] || {}).default)).join("")) : '<p class="muted" style="margin:0">Nothing differs from the compiled defaults.</p>'}
     ${myCnf ? `<details style="margin-top:6px"><summary style="cursor:pointer">Option file (copy into my.cnf)</summary><pre><code>${myCnf}</code></pre></details>` : ""}
-    ${os.length ? `<h4 style="margin:10px 0 4px">Operating system (${os.length})</h4>${tbl("Host at session start", os.map(k => row(k.replace(/^os:/, ""), managed[k], sc[k])).join(""))}` : ""}
+    ${os.length ? `<h4 style="margin:10px 0 4px">Operating system (${os.length})</h4>${tbl("Host at session start", os.map(k => row(k.replace(/^os:/, ""), managed[k], sc[k], k)).join(""))}` : ""}
     ${others.length ? `<details style="margin-top:8px"><summary style="cursor:pointer">Other non-default MySQL settings on this server, not set by the tuner (${others.length})${info("From the server's own option files or the benchmark prerequisites (e.g. max_connections for many client threads). Paths, ports, identities and certificates are left out.")}</summary>${tbl("Compiled default", others.map(k => row(k, cfg[k], meta[k].default)).join(""))}</details>` : ""}`;
 }
 
@@ -1070,10 +1071,16 @@ function waitsTable(inp, r) {
     <div class="card">${bar}${rowNote}<div class="tablewrap"><table><thead><tr><th>Event</th><th>Class</th><th class="num">% of wait time</th><th class="num">threads waiting</th><th class="num">count</th><th class="num">avg µs</th></tr></thead><tbody>` +
     inp.top_waits.slice(0, 15).map(w => `<tr><td class="mono" style="word-break:break-all">${esc(w.event.replace(/^wait\//, ""))}</td><td>${esc(NESTING.has(w.class) ? "row access (contains the waits)" : (WAIT_CLASS_NAMES[w.class] || w.class || ""))}</td><td class="num">${NESTING.has(w.class) ? "–" : (w.time_s != null ? (100 * w.time_s / tot).toFixed(1) : (w.pct != null ? w.pct : "–"))}</td><td class="num">${dur ? num(w.time_s / dur) : "–"}</td><td class="num">${num(w.count)}</td><td class="num">${w.avg_us != null ? num(w.avg_us) : num(w.time_s * 1e6 / Math.max(w.count, 1))}</td></tr>`).join("") + "</tbody></table></div></div>";
 }
-function cnfBlock(managed) {
-  // MySQL option file only: can be copied into my.cnf as is
+function unsafeMap(tradeoffs) {  // variable -> what it gives up, for the settings a run's trade-offs name
+  const m = {};
+  (tradeoffs || []).forEach(t => { if (t.variable && t.variable !== "memory") m[t.variable] = `Not production-safe (${t.category}): ${t.lost}`; });
+  return m;
+}
+function cnfBlock(managed, unsafe) {
+  // MySQL option file only: can be copied into my.cnf as is; trade-off settings in red with what they give up
   const my = Object.entries(managed || {}).filter(([k]) => !/^(os|rg|client):/.test(k));
-  return my.length ? `[mysqld]\n${my.map(([k, v]) => esc(k) + (v === "" ? "" : " = " + esc(v))).join("\n")}` : "";
+  const line = (k, v) => esc(k) + (v === "" ? "" : " = " + esc(v));
+  return my.length ? `[mysqld]\n${my.map(([k, v]) => unsafe && unsafe[k] ? `<span class="unsafe" data-tip="${esc(unsafe[k])}" tabindex="0">${line(k, v)}</span>` : line(k, v)).join("\n")}` : "";
 }
 function otherChanges(managed) {
   const e = Object.entries(managed || {});
@@ -1088,11 +1095,11 @@ function reqTable(reqs) {
   return `<table class="kvt"><tbody>${reqs.map(q => `<tr><td class="mono">${esc(q.variable)}</td><td class="mono">${q.raised ? `${esc(q.server)} → ` : ""}${esc(q.required)}${/^\d+$/.test(q.required) ? '<span class="muted"> min</span>' : ""}</td><td>${q.error ? `<span class="badge warn" data-tip="${esc(q.error)}">not set</span>` : q.raised ? '<span class="muted">raised before the run</span>' : '<span class="muted">already met</span>'}</td></tr>`).join("")}</tbody></table>`;
 }
 const REQ_TIP = "Settings the benchmark needs just to run (for example max_connections for 1024 client threads, or max_prepared_stmt_count for 64 threads × 32 tables of prepared statements). Declared in the benchmark profile, applied before every run including the server-defaults run (numbers are minimums), and never changed by the tuner, so they are not part of the tuning result.";
-function configBlocks(managed, reqs) {
+function configBlocks(managed, reqs, unsafe) {
   // side by side: the copyable option file, and everything that is not MySQL configuration
-  const my = cnfBlock(managed), other = otherChanges(managed);
+  const my = cnfBlock(managed, unsafe), other = otherChanges(managed);
   reqs = reqs || [];
-  const right = other.map(([h, rows, name]) => `<h4 style="margin:0 0 4px">${h}</h4><table class="kvt"><tbody>${rows.map(([k, v]) => `<tr><td class="mono">${esc(name(k))}</td><td class="mono">${esc(v)}</td></tr>`).join("")}</tbody></table>`).join('<div style="height:10px"></div>');
+  const right = other.map(([h, rows, name]) => `<h4 style="margin:0 0 4px">${h}</h4><table class="kvt"><tbody>${rows.map(([k, v]) => `<tr${unsafe && unsafe[k] ? ` class="unsafe" data-tip="${esc(unsafe[k])}" tabindex="0"` : ""}><td class="mono">${esc(name(k))}</td><td class="mono">${esc(v)}</td></tr>`).join("")}</tbody></table>`).join('<div style="height:10px"></div>');
   const reqBox = reqs.length ? `<div class="card" style="padding:10px 12px;margin-top:10px"><h4 style="margin:0 0 4px">Benchmark prerequisites${info(REQ_TIP)}</h4>${reqTable(reqs)}</div>` : "";
   if (!other.length && !reqs.length) return `<pre><code>${my}</code></pre>`;
   if (!other.length) return `<div class="cfgsplit"><div><div class="muted" style="margin-bottom:4px">MySQL option file${info("Can be copied into a my.cnf [mysqld] section as is.")}</div><pre style="margin:0"><code>${my || "# no MySQL settings"}</code></pre></div><div>${reqBox.replace('margin-top:10px', 'margin-top:22px')}</div></div>`;
@@ -1314,7 +1321,7 @@ function renderDiff(el, r) {
   const reqs = ((r.inputs || {}).bench || {}).requirements || [];
   const pinned = (r.at_default || []).filter(k => k in managed);
   const changedManaged = Object.fromEntries(Object.entries(managed).filter(([k]) => !pinned.includes(k)));
-  if (Object.keys(managed).length) h += `<h3>Agent-applied configuration during this run${info("The settings the tuning-agent enforced while this run was measured that differ from the server's compiled defaults: its MySQL option file plus operating-system settings. Everything else was the server default or came from other option files (see Key settings).")}</h3>${configBlocks(changedManaged, reqs)}`
+  if (Object.keys(managed).length) h += `<h3>Agent-applied configuration during this run${info("The settings the tuning-agent enforced while this run was measured that differ from the server's compiled defaults: its MySQL option file plus operating-system settings. Everything else was the server default or came from other option files (see Key settings).")}</h3>${configBlocks(changedManaged, reqs, unsafeMap(r.tradeoffs))}`
     + (pinned.length ? `<p class="muted" style="font-size:12.5px;margin:6px 0 0">Also written at their compiled default (no change on this server): ${pinned.map(k => `<code>${esc(k)}</code>`).join(" ")}${info("The agent's option file pins these at the value this server version uses anyway. Pinning keeps the configuration the same when the same file is used on another release series, where some defaults differ (e.g. MySQL 8.0 vs 8.4).")}</p>` : "");
   else if (reqs.length) h += `<h3>Benchmark prerequisites${info(REQ_TIP)}</h3><div class="card">${reqTable(reqs)}</div>`;
   el.innerHTML = h;

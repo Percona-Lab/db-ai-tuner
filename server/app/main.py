@@ -492,10 +492,11 @@ def environment(env_id: int, request: Request):
     facts = store.uj(e["facts"], {})
     managed = (facts.get("agent") or {}).get("managed") or {}
     if managed:  # agent settings pinned at the compiled default, from the latest run's configuration and its defaults
-        lr = store.q1("SELECT r.config, r.config_meta FROM runs r JOIN tsessions s ON s.id=r.session_id WHERE s.env_id=? AND r.config_meta IS NOT NULL "
+        lr = store.q1("SELECT r.config, r.config_meta, r.tradeoffs FROM runs r JOIN tsessions s ON s.id=r.session_id WHERE s.env_id=? AND r.config_meta IS NOT NULL "
                       "ORDER BY r.id DESC LIMIT 1", (env_id,))
         if lr:
             facts["agent"]["at_default"] = sorted(at_compiled_default(store.uj(lr["config"], {}), store.uj(lr["config_meta"], {}) or {}) & set(managed))
+            facts["agent"]["tradeoffs"] = [t for t in store.uj(lr["tradeoffs"], []) or [] if t.get("variable") in managed]
     return {"environment": env_brief(e), "facts": facts, "sessions": sessions, "events": events, "hosts": hosts,
             "activity": activity, "steal": steal_profile(env_id)}
 
