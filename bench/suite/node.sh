@@ -80,9 +80,13 @@ stroppy_install() {  # stroppy (TPC-B / TPC-DS cells): one static binary, pinned
   curl -fsSL https://github.com/stroppy-io/stroppy/releases/download/v6.2.0/stroppy_linux_amd64.tar.gz | tar xz -C /usr/local/bin ./stroppy \
     || { echo SETUPFAILED: stroppy; exit 1; }
 }
+sb_ssl() {  # sysbench 1.1 connects without TLS unless told; MySQL 8.4's caching_sha2_password then refuses a remote
+  # client (r2 HC cells: "Authentication requires secure connection"). 1.0.20 used TLS by default, as r1 did.
+  eval "$(wrap 'sysbench --help 2>&1')" | grep -q 'mysql-ssl=STRING' && echo "--mysql-ssl=PREFERRED"
+}
 sb_prepare() {  # tables rows
   mysql -e "CREATE DATABASE IF NOT EXISTS sbtest"
-  eval "$(wrap "$SBC --tables=$1 --table-size=$2 --threads=16 oltp_read_write prepare")" > $B/prep.log 2>&1 || { echo SETUPFAILED: prepare; exit 1; }
+  eval "$(wrap "$SBC $(sb_ssl) --tables=$1 --table-size=$2 --threads=16 oltp_read_write prepare")" > $B/prep.log 2>&1 || { echo SETUPFAILED: prepare; exit 1; }
 }
 sb_modern() {  # sysbench with --thread-init-timeout (1.1) where the benchmark runs: Ubuntu's 1.0.20 rejects the option
   local X="$(wrap 'sysbench --help 2>&1 | grep -q thread-init-timeout')"
@@ -94,6 +98,7 @@ sb_profile() {  # name test tables rows threads extra warmup duration reset-line
   # thousands of threads need longer than sysbench's 30 s to connect (r1 HC-2: the thread-pool run aborted at start-up);
   # the option exists from sysbench 1.1 (r2 HC cells: "invalid option" with Ubuntu's 1.0.20)
   local init=""; [ "$5" -ge 1024 ] && { sb_modern; init="--thread-init-timeout=600"; }
+  init="$init $(sb_ssl)"
   local run; run=$(wrap "$SBC --tables=$3 --table-size=$4 --threads=$5 $6 $init --time={total} --report-interval=10 --mysql-ignore-errors=all $2 run")
   printf "[bench]\nname = %s\n%s\nrun = %s\nwarmup = %s\nduration = %s\ntimeout = %s\n\n$SBM" "$1" "$9" "$run" "$7" "$8" $(( $7 + $8 + 1200 )) > $P
 }
