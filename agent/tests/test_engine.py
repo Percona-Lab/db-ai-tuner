@@ -1633,6 +1633,19 @@ def test_season_check_noise_aware():
     dec = stops(lambda t: 1000.0 * (1 - 0.03 * t), 0.01)         # aging data: -3%/h, never steady
     assert sum(h is not None for h in dec) <= 1, dec
 
+
+def test_start_tradeoffs_are_not_the_tuners():
+    """Session 226: the standard benchmark runs without a binary log (disable_log_bin=ON from the start), so every run
+    carried that trade-off and none counted as production-safe; only trade-offs added beyond the start count."""
+    from tuning_agent.knowledge import added_tradeoffs, start_tradeoffs
+    runs = [{"seq": 1, "managed": {"disable_log_bin": "ON"}},
+            {"seq": 2, "managed": {"disable_log_bin": "ON", "innodb_buffer_pool_size": "8G"}},
+            {"seq": 3, "managed": {"disable_log_bin": "ON", "innodb_flush_log_at_trx_commit": "2"}}]
+    start = start_tradeoffs(runs)
+    assert [t["variable"] for t in start] == ["disable_log_bin"], start
+    assert not added_tradeoffs(runs[1], start)
+    assert [t["variable"] for t in added_tradeoffs(runs[2], start)] == ["innodb_flush_log_at_trx_commit"]
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

@@ -537,6 +537,19 @@ def run_tradeoffs(run):
     return out
 
 
+def start_tradeoffs(runs):
+    """What the session's starting configuration already gives up (the first run's; e.g. a benchmark defined without a
+    binary log). Every run inherits these: they say the benchmark setup is not production-safe, not what the tuner did."""
+    first = min((r for r in runs or [] if r.get("managed") is not None), key=lambda r: r.get("seq") or 0, default=None)
+    return [t for t in run_tradeoffs(first) if t.get("category") != "memory"] if first else []
+
+
+def added_tradeoffs(run, start):
+    """The trade-offs of a run beyond those of the starting configuration: what the tuner's changes gave up."""
+    have = {(t.get("variable"), str(t.get("value"))) for t in start or []}
+    return [t for t in run_tradeoffs(run) if (t.get("variable"), str(t.get("value"))) not in have]
+
+
 def response_shape(variable):
     """saturating | optimum | binary | choice | tradeoff | None (unknown) - from the parameter catalog."""
     if str(variable).startswith("optimizer_switch:"):

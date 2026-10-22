@@ -16,7 +16,12 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "agent"))
 from tuning_agent import engine, evaluate  # noqa: E402
-from tuning_agent.knowledge import run_tradeoffs as tradeoffs_of_run, tradeoffs_in  # noqa: E402
+from tuning_agent.knowledge import added_tradeoffs, start_tradeoffs, tradeoffs_in  # noqa: E402
+
+
+def tradeoffs_of_run(r, _cache={}):
+    """Trade-offs the tuner added (beyond the starting configuration's)."""
+    return added_tradeoffs(r, _cache.get("start", []))
 
 URL = "https://50-116-44-237.sslip.io"
 SKIP = ("server defaults", "baseline", "re-check", "best safe", "best with")
@@ -103,6 +108,7 @@ def main():
     check(not unconf, f"improvements confirmed by a repeat (unconfirmed: {unconf})")
 
     # 4) the reported best safe configuration is earned and carries no change that was neutral on its own
+    tradeoffs_of_run.__defaults__[0]["start"] = start_tradeoffs(hist)
     safe = [r for r in hist if not tradeoffs_of_run(r)]
     best = engine.best_config(safe, s["goal"], float(noise.get("noise_pct") or 2.0))
     rep = (s.get("summary") or {}).get("best_safe")  # older agents stored only the overall best (may include trade-offs)

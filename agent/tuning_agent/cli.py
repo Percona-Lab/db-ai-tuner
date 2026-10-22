@@ -16,7 +16,7 @@ import urllib.parse
 import uuid
 
 from . import __version__, baseline, bench, bottleneck, clientrole, collector, engine, evaluate, hostinfo, llmassist, mechanisms, mysqldb, ostune, planner
-from .knowledge import run_tradeoffs, tradeoffs_in
+from .knowledge import added_tradeoffs, run_tradeoffs, start_tradeoffs, tradeoffs_in
 from .applier import Applier
 from .knowledge import OPTIONS as KOPTIONS
 from .client import APIError, Client
@@ -1065,11 +1065,16 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
 def _update_best(sess):
     noise = float((sess.get("noise") or {}).get("noise_pct") or sess.get("noise_pct") or 2.0)
     runs = sess["runs"]
-    for key, sel in (("best", runs), ("best_safe", [r for r in runs if not run_tradeoffs(r)])):
+    # trade-offs of the starting configuration (the benchmark's own setup, e.g. no binary log) are not the tuner's:
+    # "best safe" = no trade-off beyond them (session 226: disable_log_bin from the benchmark made every run a trade-off)
+    start = start_tradeoffs(runs)
+    sess["start_tradeoffs"] = start
+    for key, sel in (("best", runs), ("best_safe", [r for r in runs if not added_tradeoffs(r, start)])):
         b = engine.best_config(sel, sess["goal"], noise)
         if b:
             sess[key] = {"seq": b["seqs"][-1], "runs": b["seqs"], "label": b["label"], "goal_value": round(b["mean"], 4),
-                         "mean_of_runs": b["n"], "tradeoffs": run_tradeoffs(next((r for r in sel if r["seq"] == b["seqs"][-1]), {"managed": b["managed"]}))}
+                         "mean_of_runs": b["n"], "tradeoffs": added_tradeoffs(next((r for r in sel if r["seq"] == b["seqs"][-1]), {"managed": b["managed"]}), start),
+                         **({"start_tradeoffs": start} if start else {})}
 
 
 def _fmt_run(run, diagnosis, goal):
@@ -2687,7 +2692,7 @@ def _safe_wins_in_tradeoff_phase(sess, best_safe):
     safe_cfg = next((r.get("managed") or {} for r in sess["runs"] if r["seq"] == best_safe["seq"]), {})
     out, seen = [], set()
     for r in sess["runs"]:
-        if r.get("verdict") != "improved" or (r.get("evaluation") or {}).get("confirmed") is False or not run_tradeoffs(r):
+        if r.get("verdict") != "improved" or (r.get("evaluation") or {}).get("confirmed") is False or not added_tradeoffs(r, start_tradeoffs(sess["runs"])):
             continue
         own = [x for x in r.get("changes") or [] if str(x.get("source", "")).startswith("rec:")
                and not str(x["source"])[4:].startswith(("revert", "rollback"))]
