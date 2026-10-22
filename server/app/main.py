@@ -374,6 +374,10 @@ def put_llm_settings(request: Request, body: dict = Body(...)):
         store.ex("UPDATE users SET llm_model=? WHERE id=?", (body["model"][:120], tid))
     if body.get("mode"):
         store.ex("UPDATE users SET llm_mode=? WHERE id=?", (body["mode"], tid))
+    if body.get("planner_model"):
+        store.ex("UPDATE users SET llm_planner_model=? WHERE id=?", (body["planner_model"][:120], tid))
+    if "critic_model" in body:  # empty: no review by a second model
+        store.ex("UPDATE users SET llm_critic_model=? WHERE id=?", ((body.get("critic_model") or "")[:120] or None, tid))
     return get_llm_settings(request)
 
 
@@ -613,6 +617,9 @@ def session(sid: int, request: Request):
     s["calibration"] = store.uj(s.get("calibration"))
     e = own_env(s["env_id"], u["id"])
     runs = [run_brief(r) for r in store.q("SELECT * FROM runs WHERE session_id=? ORDER BY seq, id", (sid,))]
+    stars = set() if u.get("share") else {x["run_id"] for x in store.q("SELECT run_id FROM stars WHERE user_id=? AND run_id IN (SELECT id FROM runs WHERE session_id=?)", (u["id"], sid))}
+    for r in runs:
+        r["starred"] = r["id"] in stars
     recs = [store.row(r, ("items", "diagnosis", "workload", "llm")) for r in store.q("SELECT * FROM recommendations WHERE session_id=? ORDER BY id DESC", (sid,))]
     events = [store.row(r, ("data",)) for r in store.q("SELECT * FROM events WHERE session_id=? ORDER BY ts DESC LIMIT 200", (sid,))]
     s["activity"] = session_activity(e, sid) if s.get("status") == "active" else None
@@ -622,7 +629,8 @@ def session(sid: int, request: Request):
         s["calibration"]["data_state"] = data_state_derived(sid, s["calibration"])
     st = store.q1("SELECT id, name, kind FROM studies WHERE id=?", (s.get("study_id"),)) if s.get("study_id") else None
     return {"session": s, "environment": env_brief(e), "runs": runs, "recommendations": recs, "events": events, "cost": session_costs(s, e),
-            "study": dict(st) if st else None, "requirements": session_requirements(sid), "benchmarks": session_benchmarks(sid)}
+            "study": dict(st) if st else None, "requirements": session_requirements(sid), "benchmarks": session_benchmarks(sid),
+            "feedback": _feedback_view(_feedback("f.session_id=?", (sid,)), u)}
 
 
 def session_benchmarks(sid):
@@ -826,10 +834,125 @@ def run_detail(run_id: int, request: Request, vs: int = None):
         "session": {**{k: s[k] for k in ("id", "name", "goal", "policy", "noise_pct", "env_id", "status", "goal_metric")},
                     "calibration": store.uj(s.get("calibration"))},
         "evaluation": store.uj(r["evaluation"], {}),
-        "recommendations": recs, "runs": siblings,
+        "recommendations": recs, "runs": siblings, "feedback": _feedback_view(_feedback("f.run_id=?", (run_id,)), u),
+        "starred": bool(store.q1("SELECT 1 FROM stars WHERE user_id=? AND run_id=?", (u["id"], run_id))),
         "environment": {"id": s["env_id"], "name": (store.q1("SELECT name FROM environments WHERE id=?", (s["env_id"],)) or {"name": ""})["name"]},
     })
     return out
+
+
+FEEDBACK_VERDICTS = ("reasonable", "questionable", "not-reasonable", "agree", "disagree")
+
+
+def _item_of_run(r):
+    """The recommendation item a run tried (from its changes' source rec:<id>), if any."""
+    for c in store.uj(r.get("changes"), []) or []:
+        src = str(c.get("source") or "")
+        if src.startswith("rec:"):
+            return src[4:]
+    return None
+
+
+def _feedback(where, args):
+    rows = store.q("SELECT f.*, u.email, r.seq run_seq, r.label run_label FROM feedback f JOIN users u ON u.id=f.user_id "
+                   "LEFT JOIN runs r ON r.id=f.run_id WHERE " + where + " ORDER BY f.created", args)
+    return [dict(x) for x in rows]
+
+
+def _feedback_view(rows, u):
+    """Shared (read-only) views see the feedback without who wrote it."""
+    return [dict(f, email=None, user_id=None) for f in rows] if u.get("share") else rows
+
+
+@app.post("/api/runs/{run_id}/feedback")
+def add_feedback(run_id: int, request: Request, body: dict = Body(...)):
+    """A person's view of a run (was this a reasonable thing to try?) or of a model's advice in a recommendation. It is an
+    opinion the planner and the learner take into account, not a verdict: measurements still decide."""
+    u = auth.current_user(request)
+    r = own_run(run_id, u["id"])
+    verdict = str(body.get("verdict") or "")
+    if verdict not in FEEDBACK_VERDICTS:
+        raise HTTPException(400, "verdict must be one of " + ", ".join(FEEDBACK_VERDICTS))
+    about = str(body.get("about") or "run")[:80]
+    rec_id = body.get("rec_id")
+    if rec_id is not None and not store.q1("SELECT 1 FROM recommendations WHERE id=? AND session_id=?", (int(rec_id), r["session_id"])):
+        raise HTTPException(400, "recommendation not in this session")
+    alt, comment = str(body.get("alternative") or "").strip()[:1000], str(body.get("comment") or "").strip()[:2000]
+    if not alt and not comment and verdict in ("questionable", "not-reasonable", "disagree"):
+        raise HTTPException(400, "say why, or what you would do instead")
+    fid = store.ex("INSERT INTO feedback(user_id, session_id, run_id, rec_id, item_id, about, verdict, alternative, comment, created) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                   (u["id"], r["session_id"], run_id, rec_id, _item_of_run(r) if about == "run" else str(body.get("item_id") or "")[:120] or None,
+                    about, verdict, alt or None, comment or None, now()))
+    store.ex("INSERT INTO events(env_id, session_id, ts, type, message) VALUES (?,?,?,?,?)",
+             (r["_env"], r["session_id"], now(), "feedback", f"{u['email']}: run #{r['seq']} {about}: {verdict}" + (f" - {comment[:120]}" if comment else "")))
+    return {"id": fid, "feedback": _feedback("f.run_id=?", (run_id,))}
+
+
+@app.put("/api/runs/{run_id}/star")
+def star_run(run_id: int, request: Request):
+    u = auth.current_user(request)
+    own_run(run_id, u["id"])
+    store.ex("INSERT OR IGNORE INTO stars(user_id, run_id, created) VALUES (?,?,?)", (u["id"], run_id, now()))
+    return {"starred": True}
+
+
+@app.delete("/api/runs/{run_id}/star")
+def unstar_run(run_id: int, request: Request):
+    u = auth.current_user(request)
+    store.ex("DELETE FROM stars WHERE user_id=? AND run_id=?", (u["id"], run_id))
+    return {"starred": False}
+
+
+@app.get("/api/notes")
+def notes(request: Request, scope: str = "mine"):
+    """Runs a person starred or gave feedback on, newest first: the list to come back to. scope=all (administrators):
+    everyone's feedback on the account's runs."""
+    u = auth.current_user(request)
+    every = scope == "all" and u.get("is_admin")
+    fb = store.q("SELECT f.*, u.email FROM feedback f JOIN users u ON u.id=f.user_id JOIN tsessions s ON s.id=f.session_id "
+                 "JOIN environments e ON e.id=s.env_id WHERE e.user_id=?" + ("" if every else " AND f.user_id=?") + " ORDER BY f.created DESC",
+                 (u["id"],) if every else (u["id"], u["id"]))
+    st = {r["run_id"]: r["created"] for r in store.q("SELECT run_id, created FROM stars WHERE user_id=?", (u["id"],))}
+    by_run = {}
+    for f in fb:
+        if f["run_id"]:
+            by_run.setdefault(f["run_id"], []).append(dict(f))
+    ids = set(by_run) | set(st)
+    out = []
+    for rid in ids:
+        r = store.q1("SELECT r.*, s.name session_name, s.id sid, e.name env_name, e.id eid FROM runs r JOIN tsessions s ON s.id=r.session_id "
+                     "JOIN environments e ON e.id=s.env_id WHERE r.id=? AND e.user_id=?", (rid, u["id"]))
+        if not r:
+            continue
+        b = run_brief(r)
+        last = max([f["created"] for f in by_run.get(rid, [])] + [st.get(rid) or 0])
+        out.append({**b, "session": {"id": r["sid"], "name": r["session_name"]}, "environment": {"id": r["eid"], "name": r["env_name"]},
+                    "starred": rid in st, "feedback": by_run.get(rid, []), "last_note": last})
+    out.sort(key=lambda x: -x["last_note"])
+    return {"runs": out, "scope": "all" if every else "mine"}
+
+
+@app.delete("/api/feedback/{fid}")
+def delete_feedback(fid: int, request: Request):
+    u = auth.current_user(request)
+    f = store.q1("SELECT * FROM feedback WHERE id=?", (fid,))
+    if not f or (f["user_id"] != u["id"] and not u.get("is_admin")):
+        raise HTTPException(404, "feedback not found")
+    store.ex("DELETE FROM feedback WHERE id=?", (fid,))
+    return {"ok": True}
+
+
+@app.get("/api/v1/agent/sessions/{sid}/feedback")
+def agent_feedback(sid: int, key=Depends(auth.agent_key), items: str = ""):
+    """People's feedback for the planner: on this session's runs and advice, and on the same ideas in the account's other
+    sessions (by recommendation item id)."""
+    s = agent_session(sid, key)
+    here = _feedback("f.session_id=?", (s["id"],))
+    ids = [i for i in items.split(",") if i][:60]
+    other = _feedback("f.session_id<>? AND f.item_id IN (%s) AND f.session_id IN (SELECT t.id FROM tsessions t JOIN environments e ON e.id=t.env_id "
+                      "WHERE e.user_id=?)" % ",".join("?" * len(ids)), (s["id"], *ids, key["user_id"])) if ids else []
+    keep = ("run_seq", "run_label", "about", "item_id", "verdict", "alternative", "comment", "created", "session_id")
+    return {"session": [{k: f.get(k) for k in keep} for f in here], "other_sessions": [{k: f.get(k) for k in keep} for f in other[-40:]]}
 
 
 @app.get("/api/runs/{run_id}/config")
@@ -1382,6 +1505,23 @@ def agent_llm_suggest(body: dict = Body(...), key=Depends(auth.agent_key)):
         store.ex("INSERT INTO events(env_id, session_id, ts, type, message) VALUES (?,?,?,?,?)",
                  (s["env_id"], s["id"], now(), "llm", f"{res.get('model')}: {len(res.get('suggestions') or [])} suggestion(s)"
                   + (" (cached)" if res.get("cached") else "")))
+    return res
+
+
+@app.post("/api/v1/agent/llm/plan")
+def agent_llm_plan(body: dict = Body(...), key=Depends(auth.agent_key)):
+    """Planner mode: a model chooses the next step from the agent's evidence packet; a second model reviews it when set."""
+    s = agent_session(body.get("session_id"), key)
+    st = llm.settings()
+    if st.get("mode") != "planner" and not body.get("force"):
+        return {"enabled": False, "reason": "planner mode is off (account settings)"}
+    res = llm.plan(key["user_id"], s["env_id"], s["id"], body.get("packet") or {}, model=st.get("planner_model"), critic_model=st.get("critic_model"))
+    if res.get("enabled") and not res.get("error"):
+        p = res.get("plan") or {}
+        ch = (p.get("choice") or {})
+        what = "stop" if p.get("action") == "stop" else (ch.get("candidate_id") or ", ".join(f"{c['variable']}={c['value']}" for c in ch.get("changes") or []))
+        store.ex("INSERT INTO events(env_id, session_id, ts, type, message) VALUES (?,?,?,?,?)",
+                 (s["env_id"], s["id"], now(), "llm", f"planner {res.get('model')}: {what}" + (f"; reviewer {res.get('critic_model')}: {(res.get('critic') or {}).get('verdict')}" if res.get("critic") else "")))
     return res
 
 

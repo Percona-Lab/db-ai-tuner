@@ -17,7 +17,7 @@ from . import store
 
 OPENROUTER = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "anthropic/claude-sonnet-5.5"
-MODES = ("off", "when-needed", "always")
+MODES = ("off", "when-needed", "always", "planner")
 MAX_CALLS_PER_SESSION = 3
 MAX_ANALYSES_PER_SESSION = 6
 # the service key belongs to the operator: a budget per (non-admin) account and day for calls it pays for. Sessions are
@@ -66,7 +66,7 @@ def decrypt(s):
 
 def _service_row():
     """The service's AI settings live on the admin account (set up with the service); users need no key of their own."""
-    return store.q1("SELECT id, llm_key_enc, llm_model, llm_mode FROM users WHERE is_admin=1 "
+    return store.q1("SELECT id, llm_key_enc, llm_model, llm_mode, llm_planner_model, llm_critic_model FROM users WHERE is_admin=1 "
                     "ORDER BY (llm_key_enc IS NULL), id LIMIT 1")
 
 
@@ -74,8 +74,9 @@ def settings(user_id=None):
     """Service-wide AI settings (the same for every user)."""
     r = _service_row()
     if not r:
-        return {"configured": False, "model": DEFAULT_MODEL, "mode": "off"}
-    return {"configured": bool(r["llm_key_enc"]), "model": r["llm_model"] or DEFAULT_MODEL, "mode": r["llm_mode"] or "when-needed"}
+        return {"configured": False, "model": DEFAULT_MODEL, "mode": "off", "planner_model": PLAN_MODEL, "critic_model": None}
+    return {"configured": bool(r["llm_key_enc"]), "model": r["llm_model"] or DEFAULT_MODEL, "mode": r["llm_mode"] or "when-needed",
+            "planner_model": r["llm_planner_model"] or PLAN_MODEL, "critic_model": r["llm_critic_model"] or None}
 
 
 def service_key():
@@ -411,3 +412,149 @@ def stats(hours=24):
             "experiments": {"tried": tried, "improved": wins, "verdicts": exp,
                             "cost_per_improvement": round(cur_t["cost"] / wins, 3) if wins else None},
             "key": key_status()}
+
+
+# ------------------------------------------------------------------------------------------------- planner
+PLAN_PROMPT_VERSION = "1"
+PLAN_SYSTEM = """You are the planner of an automated MySQL / Percona Server / MariaDB tuner, acting as a senior performance
+engineer. At each step you choose the single next measured run, or decide to stop. Every run costs 20-40 minutes of a
+real server, so choose the experiment with the highest expected CONFIRMED gain of the goal per run.
+
+How to decide:
+1. Diagnose from measured time, not from counters crossing thresholds. "time_breakdown" is average database threads per
+   state (shares of database time) built from CPU and off-CPU profiles, waits and eBPF probes; "profiles" and "summary"
+   add detail. Name the dominant component(s) and the kind of limit: CPU-bound (on which code path), commit / fsync-bound,
+   read-I/O-bound, flush-bound (dirty pages, free-page waits, checkpoint age), lock-bound (row locks, mutexes),
+   queueing / over-subscription (run-queue wait, threads running >> CPUs), or client / network-bound.
+2. Consider only changes whose physical mechanism acts on a component with measured time, and estimate the achievable
+   effect: a change removes at most part of the component it acts on (a 6% component cannot yield +15%). A choice whose
+   plausible effect is below noise_pct cannot be confirmed: do not pick it while a better-founded choice exists.
+3. Prefer "candidates" (pre-validated for this server: they exist, fit memory, respect policy). Read each candidate's
+   relevance (0-4: share of measured time it acts on), note, hypothesis, track_record and experience (results of the same
+   change in comparable sessions; large losses there are strong evidence against it). You may propose new changes when no
+   candidate acts on the dominant component; use only variables in current_variables / os_settings / available_pseudo_variables.
+4. Learn from this session: "configurations" (mean goal per configuration over all its runs) beats single-run verdicts;
+   do not repeat refuted mechanisms; an outcome "moved" means the targeted time shrank but the goal did not follow, so
+   that component no longer limits the goal.
+5. Policy: under "safe" only changes without trade-offs may run (trade-offs are advice). Under "benchmark" trade-offs may
+   run, and when the evidence for a trade-off is stronger than for the remaining safe ideas, run it now rather than last.
+6. Stop when no remaining idea can plausibly beat the noise on a component with measured time, or when the limit is
+   outside the server's configuration (e.g. commits wait on slow fsyncs and group commit already batches every waiting
+   commit; the CPU is saturated by the work itself; the client is the bottleneck). Then say in stop_advice what would help
+   instead (hardware, a durability trade-off, schema / application changes).
+7. Make a falsifiable prediction: the expected goal change range in %, and which measured component or metric should
+   move, in which direction, by about how much.
+"engine" shows what the rule engine would do; agree with it when it is right, overrule it when the evidence says so."""
+
+PLAN_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "required": ["diagnosis", "limit_kind", "action", "choice", "title", "mechanism", "risk", "prediction", "confidence",
+                 "why_above_noise", "alternatives", "stop_advice", "rationale"],
+    "properties": {
+        "diagnosis": {"type": "string"},
+        "limit_kind": {"type": "string", "enum": ["cpu", "commit", "read-io", "flush", "locks", "queueing", "client-network", "memory", "mixed", "unclear"]},
+        "action": {"type": "string", "enum": ["run", "stop"]},
+        "choice": {"type": "object", "additionalProperties": False, "required": ["candidate_id", "changes", "sweep_values"],
+                   "properties": {"candidate_id": {"type": "string"},
+                                  "changes": {"type": "array", "maxItems": 4, "items": {
+                                      "type": "object", "additionalProperties": False, "required": ["variable", "value"],
+                                      "properties": {"variable": {"type": "string"}, "value": {"type": "string"}}}},
+                                  "sweep_values": {"type": "array", "maxItems": 5, "items": {"type": "string"}}}},
+        "title": {"type": "string"}, "mechanism": {"type": "string"},
+        "risk": {"type": "string", "enum": ["none", "low", "durability", "replication", "observability", "semantics"]},
+        "prediction": {"type": "object", "additionalProperties": False,
+                       "required": ["goal_delta_pct_low", "goal_delta_pct_high", "metric", "metric_direction", "metric_change_pct"],
+                       "properties": {"goal_delta_pct_low": {"type": "number"}, "goal_delta_pct_high": {"type": "number"},
+                                      "metric": {"type": "string"}, "metric_direction": {"type": "string", "enum": ["down", "up", "none"]},
+                                      "metric_change_pct": {"type": "number"}}},
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        "why_above_noise": {"type": "string"},
+        "alternatives": {"type": "array", "maxItems": 4, "items": {
+            "type": "object", "additionalProperties": False, "required": ["candidate_id", "why_not_now"],
+            "properties": {"candidate_id": {"type": "string"}, "why_not_now": {"type": "string"}}}},
+        "stop_advice": {"type": "string"}, "rationale": {"type": "string"}},
+}
+
+CRITIC_SYSTEM = """You review the next step another engineer (the planner) chose for an automated MySQL-family tuner, with the
+same evidence ("packet") in front of you. Check the plan against these failure patterns, which cost most runs so far:
+- below the noise: the change acts on a component too small (or not measured at all) for its effect to beat noise_pct;
+- no mechanism: the change cannot act here (feature off, nothing to read ahead, no waits of that kind, limit >= connections);
+- should stop: the limit is outside the server configuration, or several runs in a row found nothing and the rest is small;
+- ranking: a candidate with stronger measured evidence, a better track record, or (benchmark policy) an evidence-backed
+  trade-off was passed over; a change that lost heavily in comparable sessions was chosen anyway;
+- repeat: the same mechanism was already refuted, or its component already "moved".
+Accept a reasonable plan; when you revise, give the step you would take instead (a candidate id or concrete changes, or stop)."""
+
+CRITIC_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["verdict", "issues", "action", "candidate_id", "changes", "reason"],
+    "properties": {"verdict": {"type": "string", "enum": ["accept", "revise"]},
+                   "issues": {"type": "array", "maxItems": 5, "items": {"type": "string"}},
+                   "action": {"type": "string", "enum": ["run", "stop"]},
+                   "candidate_id": {"type": "string"},
+                   "changes": {"type": "array", "maxItems": 4, "items": {
+                       "type": "object", "additionalProperties": False, "required": ["variable", "value"],
+                       "properties": {"variable": {"type": "string"}, "value": {"type": "string"}}}},
+                   "reason": {"type": "string"}},
+}
+PLAN_MODEL = "anthropic/claude-opus-5.5"
+
+
+def _call(user_id, env_id, session_id, model, system, schema, name, payload, purpose, effort=None):
+    """One structured call, logged in llm_calls (cost, tokens, latency) with its purpose; cached by model + prompt + payload."""
+    h = f"{purpose}:" + hashlib.sha256(f"{model}|{PLAN_PROMPT_VERSION}|{system}|{payload}".encode()).hexdigest()
+    hit = store.q1("SELECT response FROM llm_calls WHERE user_id=? AND prompt_hash=? AND status='ok' AND cached=0 ORDER BY id DESC LIMIT 1", (user_id, h))
+    if hit:
+        store.ex("INSERT INTO llm_calls(user_id, env_id, session_id, ts, model, prompt_hash, status, cached, response, purpose) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                 (user_id, env_id, session_id, time.time(), model, h, "ok", 1, hit["response"], purpose))
+        return json.loads(hit["response"]), {"cached": True}
+    body = {"model": model, "usage": {"include": True},
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": payload}],
+            "response_format": {"type": "json_schema", "json_schema": {"name": name, "strict": True, "schema": schema}}}
+    if effort:
+        body["reasoning"] = {"effort": effort}
+    t0 = time.time()
+    try:
+        d = _request("POST", OPENROUTER + "/chat/completions", service_key(), body, timeout=600)
+        content = json.loads(d["choices"][0]["message"]["content"])
+        usage, status, err = d.get("usage") or {}, "ok", None
+    except Exception as e:  # noqa
+        content, usage, status, err = None, {}, "error", str(e)[:500]
+    store.ex("INSERT INTO llm_calls(user_id, env_id, session_id, ts, model, prompt_hash, status, cached, latency_s, prompt_tokens, "
+             "completion_tokens, cost, response, error, context, purpose) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             (user_id, env_id, session_id, time.time(), model, h, status, 0, round(time.time() - t0, 2), usage.get("prompt_tokens"),
+              usage.get("completion_tokens"), usage.get("cost"), json.dumps(content) if content else None, err, payload, purpose))
+    if status != "ok":
+        raise RuntimeError(err)
+    return content, dict(usage, latency_s=round(time.time() - t0, 2))
+
+
+def plan(user_id, env_id, session_id, packet, model=None, critic_model=None, effort="high", purpose="plan"):
+    """The planner's decision for the next step, reviewed by a second model when critic_model is set. When the critic
+    revises, the result carries both and takes the critic's step only for a stop or a candidate the planner listed as an
+    alternative or the engine picked (a change of mind backed by the evidence both saw); otherwise the planner's step stands."""
+    st = settings(user_id)
+    if not st.get("configured"):
+        return {"enabled": False, "reason": "LLM assistance is not configured"}
+    why = budget_left(user_id)
+    if why:
+        return {"enabled": False, "reason": why}
+    model = model or st.get("planner_model") or PLAN_MODEL
+    payload = json.dumps(packet, sort_keys=True, default=str)
+    try:
+        p, u = _call(user_id, env_id, session_id, model, PLAN_SYSTEM, PLAN_SCHEMA, "next_step", payload, purpose, effort)
+    except Exception as e:
+        return {"enabled": True, "error": str(e)[:300]}
+    out = {"enabled": True, "model": model, "plan": p, "usage": u}
+    if critic_model:
+        try:
+            c, cu = _call(user_id, env_id, session_id, critic_model, CRITIC_SYSTEM, CRITIC_SCHEMA, "plan_review",
+                          json.dumps({"packet": packet, "plan": p}, sort_keys=True, default=str), purpose + "-critic", effort)
+            out.update(critic=c, critic_model=critic_model, critic_usage=cu)
+            if c.get("verdict") == "revise":
+                ok_ids = {a.get("candidate_id") for a in p.get("alternatives") or []} | {(packet.get("engine") or {}).get("next")}
+                if c.get("action") == "stop" or (c.get("candidate_id") and c["candidate_id"] in ok_ids):
+                    out["final"] = {"action": c["action"], "choice": {"candidate_id": c.get("candidate_id") or "", "changes": c.get("changes") or [],
+                                                                      "sweep_values": []}, "by": "critic", "reason": c.get("reason")}
+        except Exception as e:
+            out["critic_error"] = str(e)[:300]
+    return out

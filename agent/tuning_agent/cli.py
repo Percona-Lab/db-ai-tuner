@@ -12,9 +12,10 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.parse
 import uuid
 
-from . import __version__, baseline, bench, bottleneck, clientrole, collector, engine, evaluate, hostinfo, llmassist, mechanisms, mysqldb, ostune
+from . import __version__, baseline, bench, bottleneck, clientrole, collector, engine, evaluate, hostinfo, llmassist, mechanisms, mysqldb, ostune, planner
 from .knowledge import run_tradeoffs, tradeoffs_in
 from .applier import Applier
 from .knowledge import OPTIONS as KOPTIONS
@@ -867,7 +868,14 @@ def _assess_hypothesis(c, sess, seq, verdict, evaluation, summary, inputs):
         out["outcome"] = "moved"  # the mechanism worked, but that part of the time was not what limited the goal
     else:
         out["outcome"] = "refuted"
-    sess.setdefault("hypotheses", []).append({k: out.get(k) for k in ("id", "run", "kind", "target", "tags", "outcome")})
+    pr = h.get("prediction") or {}
+    gd = evaluation.get("goal_delta_pct")
+    if pr and gd is not None and pr.get("goal_delta_pct_low") is not None:
+        # the planner's prediction against the measurement: its track record is what makes its next choices credible
+        lo, hi = float(pr["goal_delta_pct_low"]), float(pr["goal_delta_pct_high"])
+        out["prediction_check"] = {"predicted": [lo, hi], "measured": gd, "within": lo - 0.5 <= gd <= hi + 0.5,
+                                   "direction_right": (gd > 0) == ((lo + hi) / 2 > 0) if abs(gd) >= 0.5 else abs((lo + hi) / 2) < 2}
+    sess.setdefault("hypotheses", []).append({k: out.get(k) for k in ("id", "run", "kind", "target", "tags", "outcome", "prediction_check")})
     log(f"   hypothesis ({h.get('id')}): {out['outcome']}" + (f", targeted time per unit {change:+.0f}%" if change is not None else ""))
     return out
 
@@ -2106,7 +2114,10 @@ def _recommend(c, sess, llm=False):
         elif sg in fresh:
             rejected += rj
     if res.get("llm") and "model" in res["llm"]:
-        res["llm"].update(accepted=len([s for s in keep if s in fresh]), rejected=rejected, pending=len([s for s in keep if s not in fresh]))
+        res["llm"].update(accepted=len([s for s in keep if s in fresh]), rejected=rejected, pending=len([s for s in keep if s not in fresh]),
+                          # every suggestion as the model gave it, for people to review next to what ran
+                          suggestions=[{k: sg.get(k) for k in ("title", "changes", "mechanism", "expected_effect", "risk", "rationale", "sweep_values")}
+                                       for sg in fresh if not sg.get("_analysis")])
     sess["llm_pending"] = keep
     if extra:
         for it in extra:
@@ -2125,6 +2136,8 @@ def _recommend(c, sess, llm=False):
             nxt = next((i for i in res["items"] if i["kind"] in ("config", "revert") and i["confidence"] > 0 and i["id"] not in done_ids
                         and (i.get("safety") == "safe" or ctx.get("policy") == "benchmark")), None)
             res["next"] = nxt["id"] if nxt else None
+    if ctx.get("summary"):
+        _plan(c, sess, ctx, res)
     res.pop("_ctx", None)
     run_id = sess["runs"][-1]["id"] if sess["runs"] else None
     r = c.client.post("/recommendations", {"session_id": sess["id"], "run_id": run_id, "goal": sess["goal"], "policy": sess["policy"],
@@ -2134,6 +2147,62 @@ def _recommend(c, sess, llm=False):
     sess["last_recommendation"] = {"id": r.get("recommendation_id"), "items": res["items"], "next": res["next"]}
     c.state.set("session", sess)
     return res
+
+
+def _plan(c, sess, ctx, res):
+    """Planner mode (account setting): a model chooses the next step from the evidence, a second model may review it, and
+    planner.check keeps what may run. Everything the models said is stored with the recommendation for people to review."""
+    ids = [i["id"] for i in res["items"] if i["kind"] in ("config", "revert", "advice")][:40]
+    try:
+        fb = c.client.get(f"/sessions/{sess['id']}/feedback?items=" + urllib.parse.quote(",".join(ids)))
+    except Exception:
+        fb = {}
+    try:
+        meta = c.db.variables_meta()
+    except Exception:
+        meta = {}
+    pk = planner.packet(ctx, res, meta)
+    if fb.get("session") or fb.get("other_sessions"):
+        # people's views of earlier runs and advice: an opinion to weigh, not a measurement
+        pk["human_feedback"] = fb
+    try:
+        r = c.client.post("/llm/plan", {"session_id": sess["id"], "packet": pk})
+    except Exception as e:  # optional: without a plan the engine's own choice stands
+        r = {"enabled": False, "reason": str(e)[:200]}
+    if not r.get("enabled"):
+        return
+    rec = {k: r.get(k) for k in ("model", "plan", "critic", "critic_model", "final", "error", "critic_error") if r.get(k) is not None}
+    rec["engine_next"] = res.get("next")
+    if r.get("error") or not r.get("plan"):
+        res.setdefault("llm", {})["planner"] = rec
+        return
+    p = dict(r["plan"], _model=r.get("model"))
+    if r.get("final"):
+        p.update(action=r["final"]["action"], choice=r["final"]["choice"])
+    nxt, added, why = planner.check(p, ctx, res)
+    rec.update(applied=nxt, rejected=why)
+    if why is None:
+        for it in added:
+            res["items"].append(it)
+        if p["action"] == "stop":
+            res["next"] = None
+            res["stop_reason"] = f"Planner ({r.get('model')}): {p.get('diagnosis', '')[:300]} {p.get('stop_advice', '')[:400]}".strip()
+        else:
+            res["next"] = nxt
+            it = next((i for i in res["items"] if i["id"] == nxt), None)
+            if it is not None:
+                it["planner"] = {"model": r.get("model"), "prediction": p.get("prediction"), "confidence": p.get("confidence"),
+                                 "why_above_noise": p.get("why_above_noise")}
+                h = it.get("hypothesis") or {}
+                it["hypothesis"] = dict(h, kind=h.get("kind") or "planner", text=(h.get("text") or "") + f" Planner: {p.get('rationale', '')[:500]}",
+                                        prediction=p.get("prediction"))
+        res["planner_decided"] = True
+        log(f"   planner {r.get('model')}: " + ("stop" if p["action"] == "stop" else nxt)
+            + (f" (engine: {rec['engine_next']})" if rec["engine_next"] != nxt else "")
+            + (f"; reviewer {r.get('critic_model')}: {(r.get('critic') or {}).get('verdict')}" if r.get("critic") else ""))
+    else:
+        log(f"   planner {r.get('model')} choice not used ({why}); keeping {res.get('next')}")
+    res.setdefault("llm", {})["planner"] = rec
 
 
 def cmd_recommend(a):
@@ -2740,7 +2809,7 @@ def _autotune(a):
         if in_tradeoff_budget and targeted and item.get("safety") == "safe":
             sess["tradeoff_overrides"] = sess.get("tradeoff_overrides", 0) + 1
             c.state.set("session", sess)
-        if in_tradeoff_budget and not targeted and (not item or item.get("safety") == "safe" and item["kind"] != "revert"):
+        if in_tradeoff_budget and not targeted and not res.get("planner_decided") and (not item or item.get("safety") == "safe" and item["kind"] != "revert"):
             tried = {r["label"].split(" ")[0] for r in sess["runs"]}
             trade = next((i for i in res["items"] if i.get("safety") == "trade-off" and i["kind"] == "config" and i.get("confidence", 0) > 0
                           and i["id"] not in tried and i["id"] not in blocked), None)
@@ -2751,7 +2820,7 @@ def _autotune(a):
             log("== " + res["stop_reason"])
             c.event("stop", res["stop_reason"], {"runs": measured})
             trade = next((i for i in res["items"] if i.get("safety") == "trade-off" and i["kind"] == "config" and i.get("confidence", 0) > 0
-                          and i["id"] not in {r["label"].split(" ")[0] for r in sess["runs"]}), None) if a.tradeoffs else None
+                          and i["id"] not in {r["label"].split(" ")[0] for r in sess["runs"]}), None) if a.tradeoffs and not res.get("planner_decided") else None
             if trade:
                 log(f"== safe ideas exhausted: switching to trade-off experiments ({trade['id']})")
                 item, nxt = trade, trade["id"]

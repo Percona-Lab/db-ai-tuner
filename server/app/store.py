@@ -62,6 +62,13 @@ CREATE TABLE IF NOT EXISTS studies (
   target REAL, workload TEXT, notes TEXT, created REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS metrics (
   env_id INTEGER NOT NULL, ts REAL NOT NULL, data TEXT NOT NULL, PRIMARY KEY (env_id, ts)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS feedback (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, session_id INTEGER NOT NULL, run_id INTEGER, rec_id INTEGER, item_id TEXT,
+  about TEXT NOT NULL DEFAULT 'run', verdict TEXT NOT NULL, alternative TEXT, comment TEXT, created REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS feedback_session ON feedback(session_id);
+CREATE INDEX IF NOT EXISTS feedback_item ON feedback(item_id);
+CREATE TABLE IF NOT EXISTS stars (
+  user_id INTEGER NOT NULL, run_id INTEGER NOT NULL, created REAL NOT NULL, PRIMARY KEY (user_id, run_id)) WITHOUT ROWID;
 """
 
 _local = threading.local()
@@ -111,6 +118,8 @@ MIGRATIONS = [
     ("llm_calls", "signature", "TEXT"),
     ("users", "is_admin", "INTEGER DEFAULT 0"),
     ("tsessions", "agent_version", "TEXT"),
+    ("users", "llm_planner_model", "TEXT"),
+    ("users", "llm_critic_model", "TEXT"),
 ]
 
 

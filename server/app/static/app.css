@@ -168,3 +168,20 @@ details.fullval summary { cursor: pointer; font-family: var(--font, inherit); }
 .foot a { color: var(--ink-2); }
 .swatch { display: inline-block; width: 12px; height: 10px; border-radius: 2px; margin: 0 4px 0 2px; vertical-align: -1px; border: 1px solid var(--border); }
 .swatch.warm { background: var(--warmup); } .swatch.win { background: var(--window); }
+/* stars, feedback, model advice */
+button.star { background: none; border: none; padding: 0 4px; font-size: 16px; line-height: 1; color: var(--muted); }
+button.star.on { color: var(--s4); }
+button.star:hover { color: var(--s4); }
+.fbmark { display: inline-block; font-size: 11.5px; padding: 0 6px; border-radius: 9px; margin-left: 4px; background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
+.fbmark.bad { background: color-mix(in srgb, var(--crit) 16%, transparent); color: var(--crit); }
+.fbmark.warn { background: color-mix(in srgb, var(--warn) 22%, transparent); }
+.fbmark.good { background: color-mix(in srgb, var(--good) 14%, transparent); color: var(--good-text); }
+.fb { border-left: 3px solid var(--grid); padding: 4px 10px; margin: 6px 0; }
+.fb.bad { border-color: var(--crit); } .fb.warn { border-color: var(--warn); } .fb.good { border-color: var(--good); }
+.fbform { display: grid; gap: 8px; margin-top: 8px; }
+.fbform .seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width: fit-content; max-width: 100%; }
+.advice { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 8px 0; background: var(--surface-2); }
+.advice .h { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.advice .acts { display: inline-flex; gap: 4px; margin-left: auto; }
+.advice .acts button { padding: 2px 8px; font-size: 12px; }
+.fbform[hidden] { display: none; }

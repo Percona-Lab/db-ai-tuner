@@ -73,7 +73,7 @@ function setNav(active) {
   }
   document.body.classList.remove("ro");
   nav.innerHTML = `<a href="#/" class="${active === "envs" ? "on" : ""}">Environments</a><a href="#/studies" class="${active === "studies" ? "on" : ""}">Studies</a><a href="#/connect" class="${active === "connect" ? "on" : ""}">Connect agent</a>` +
-    `<a href="#/parameters" class="${active === "parameters" ? "on" : ""}">Parameters</a><a href="#/policies" class="${active === "policies" ? "on" : ""}">Policies</a>${ME.is_admin ? `<a href="#/learning" class="${active === "learning" ? "on" : ""}">Learning</a><a href="/status">Status</a>` : ""}<a href="#/account" class="${active === "account" ? "on" : ""}">Account</a><span class="right">${esc(ME.email)}</span><a href="#" id="logout">Log out</a>`;
+    `<a href="#/parameters" class="${active === "parameters" ? "on" : ""}">Parameters</a><a href="#/policies" class="${active === "policies" ? "on" : ""}">Policies</a><a href="#/notes" class="${active === "notes" ? "on" : ""}" title="Runs you starred or gave feedback on">★ Starred</a>${ME.is_admin ? `<a href="#/learning" class="${active === "learning" ? "on" : ""}">Learning</a><a href="/status">Status</a>` : ""}<a href="#/account" class="${active === "account" ? "on" : ""}">Account</a><span class="right">${esc(ME.email)}</span><a href="#" id="logout">Log out</a>`;
   document.getElementById("logout").onclick = async e => { e.preventDefault(); await api("/api/auth/logout", { method: "POST", body: {} }); ME = null; location.hash = "#/"; };
 }
 
@@ -935,13 +935,15 @@ async function sessionPage(id) {
     const costOf = x => d.cost && d.cost.per_run ? d.cost.per_run[x.id] : null;
     const tr = document.createElement("tr"); tr.className = "click"; tr.onclick = () => location.hash = "#/run/" + r.id;
     const ev = r.evaluation || {};
-    tr.innerHTML = `<td>${r.seq}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${r.status !== "done" ? " " + statusBadge(r.status, r.abort_reason) : ""}${tradeBadge(r.tradeoffs)}</td><td class="chg">${ch}</td>
+    const rfb = (d.feedback || []).filter(f => f.run_id === r.id);
+    tr.innerHTML = `<td style="white-space:nowrap">${r.seq}${ME && !ME.share ? starBtn(r.id, r.starred) : ""}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${r.status !== "done" ? " " + statusBadge(r.status, r.abort_reason) : ""}${tradeBadge(r.tradeoffs)}${fbMark(rfb)}</td><td class="chg">${ch}</td>
      <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaClsN(ev.goal_delta_pct, noiseP)}">${pct(ev.goal_delta_pct)}</td><td class="num ${deltaClsN(r.goal_value != null ? vsRef(r.goal_value) : null, noiseP)}">${r.goal_value != null && vsRef(r.goal_value) != null ? (bestAt[r.id] ? `<b data-tip="Best configuration known at this point">${pct(vsRef(r.goal_value))}</b>` : pct(vsRef(r.goal_value))) : "–"}</td>
      <td>${verdictBadge(r.verdict)}${ev.not_steady ? ` <span class="badge warn" data-tip="Not in steady state: deferred work was still accumulating at the end of the measured window (${esc(ev.not_steady.join("; "))}). Flushing, purge or change-buffer merges postponed past the window are never paid for, so the result can be optimistic; such improvements do not count as the best configuration." tabindex="0">not steady</span>` : ""}${ev.drift ? ' <span class="badge warn">drift</span>' : ""}${ev.warmup_short ? ` <span class="badge plain" data-tip="${esc(ev.warmup_short.text + " A warning about the warm-up, not about this run's result: the verdict is unchanged.")}" tabindex="0">warm-up?</span>` : ""}${ev.unstable_within_run ? ` <span class="badge warn" data-tip="Throughput fell below half its median in ${ev.unstable_within_run.tput_dip_samples} of ${ev.unstable_within_run.tput_samples} samples inside the window (longest stall ${ev.unstable_within_run.tput_dip_longest_samples} samples, worst sample ${ev.unstable_within_run.tput_min_vs_median_pct}% of the median)${ev.unstable_within_run.blk_write_max_ms != null ? `; slowest write I/O ${ev.unstable_within_run.blk_write_max_ms} ms` : ""}. The average hides these stalls." tabindex="0">stalls</span>` : ""}${ev.swap_hazard ? ` <span class="badge warn" data-tip="mysqld memory (${ev.swap_hazard.dbproc_swap_mb} MB in swap) was read back from swap during the window. A thread waiting for a swap-in while holding a latch or lock stalls everything queued behind it, so configurations without swap-ins are preferred as the best." tabindex="0">swap-in</span>` : ""}${ev.environment_shift && !["reference", "repeat", "unreliable", "superseded"].includes(r.verdict) ? ` <span class="badge warn" data-tip="The quick CPU / storage benchmark run before this run differed from the calibration runs beyond its normal variation (${esc(kvText(ev.environment_shift))} %). The machine itself may have changed (noisy neighbour, throttling), so this run's comparison is less trustworthy; autotune measures such runs again.">env shift</span>` : ""}${ev.steal && ev.steal.level === "flag" ? ` <span class="badge warn" data-tip="Hypervisor CPU steal ${ev.steal.avg_pct}% average, ${ev.steal.peak_pct}% peak${ev.steal.client_avg_pct ? `, client ${ev.steal.client_avg_pct}%` : ""} , estimated effect on the result ${ev.steal.est_impact_pct != null ? ev.steal.est_impact_pct : ev.steal.avg_pct}% (flagged from a quarter of the noise threshold, ${ev.steal.flag_at_pct || 0.25}%, or a 5% peak; normally close to 0 on these hosts): differences near the noise threshold may come from neighbours.">steal</span>` : ""}</td>
      <td class="num">${num(sm.tps)}</td><td class="num">${num(sm.avg_latency_ms)}</td><td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td><td class="num" style="white-space:nowrap">${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}${costOf(r) != null ? `<div class="muted" style="font-size:11px" data-tip="Machine cost of this run: wall time since the previous run ended (data reset, warm-up, measurement) × $${(d.cost.rate_hourly).toFixed(4)}/hour">$${costOf(r).toFixed(costOf(r) < 0.1 ? 3 : 2)}</div>` : ""}</td>`;
     tb.appendChild(tr);
   });
-  renderRecs(document.getElementById("recs"), d.recommendations[0], runs);
+  wireStars(tb);
+  renderRecs(document.getElementById("recs"), d.recommendations[0], runs, d.feedback);
   renderExperiments(document.getElementById("exps"), s);
   renderEvents(document.getElementById("events"), null, false, { session: id });
   document.getElementById("savenotes").onclick = async () => { await api("/api/sessions/" + id, { method: "PATCH", body: { notes: document.getElementById("notes").value } }); document.getElementById("saved").textContent = "Saved."; };
@@ -1109,7 +1111,7 @@ async function renderExperiments(el, sess) {
   el.querySelectorAll("[data-cancel]").forEach(b => b.onclick = async () => { await api(`/api/experiments/${b.dataset.cancel}`, { method: "DELETE" }); renderExperiments(el, sess); });
 }
 
-function renderRecs(el, rec, runs) {
+function renderRecs(el, rec, runs, feedback) {
   if (!rec) { el.innerHTML = '<span class="muted">No recommendations yet: run <code>tuning-agent recommend</code> after a measured run.</span>'; return; }
   const run = runs && runs.find(r => r.id === rec.run_id);
   let h = `<div class="muted" style="margin-bottom:6px">Generated ${fmtTime(rec.created)}${run ? ` from run #${run.seq} <a href="#/run/${run.id}">${esc(run.label)}</a>` : " without a measured run"} · goal ${esc(rec.goal)} · policy ${esc(rec.policy)}${rec.next ? ` · suggested next: <code>${esc(rec.next)}</code>` : ""}</div>`;
@@ -1123,8 +1125,10 @@ function renderRecs(el, rec, runs) {
   const items = rec.items || [];
   const safe = items.filter(i => (i.safety || "safe") !== "trade-off"), trade = items.filter(i => i.safety === "trade-off");
   const section = (title, list, note) => list.length ? `<h3>${title}${note ? info(note) : ""}</h3>` + list.map(recItem).join("") : "";
+  h += adviceHtml(rec);
   h += section("Production-safe", safe) + section("Trade-offs (benchmark only)", trade, "These give up durability, replication, observability or semantics. Results with them are not production-equivalent; they are reported separately.");
   el.innerHTML = h;
+  wireAdvice(el, feedback);
   return;
   function recItem(it) {
     return `<div class="rec"><div class="h"><b>${it.rank}. ${esc(it.title)}</b><span class="id">${esc(it.id)}</span>${it.source === "llm" ? `<span class="badge info">LLM</span>` : ""}${it.kind === "advice" ? '<span class="badge plain">advice only</span>' : it.kind === "revert" ? '<span class="badge warn">revert</span>' : ""}
@@ -1159,7 +1163,7 @@ async function runPage(id, tab) {
     return `<div class="tile"><div class="k">${k}</div><div class="v">${num(v)}<span style="font-size:13px;color:var(--ink-2)"> ${unit}</span></div>${d}</div>`;
   };
   $view.innerHTML = `<div class="crumbs"><a href="#/">Environments</a> / <a href="#/env/${s.env_id}">${esc(r.environment.name)}</a> / <a href="#/session/${s.id}">#${s.id} ${esc(s.name)}</a> /</div>
-  <div class="row"><h1>Run #${r.seq} · ${esc(r.label)}</h1>${statusBadge(r.status)}${verdictBadge(r.verdict)}<span class="spacer"></span>
+  <div class="row"><h1>Run #${r.seq} · ${esc(r.label)}</h1>${ME && !ME.share ? starBtn(r.id, r.starred) : ""}${statusBadge(r.status)}${verdictBadge(r.verdict)}${fbMark(r.feedback)}<span class="spacer"></span>
    <label style="margin:0">Compare with</label><select id="vs" style="width:auto"><option value="">previous run</option>${r.runs.filter(x => x.id !== r.id).map(x => `<option value="${x.id}" ${String(x.id) === vs ? "selected" : ""}>#${x.seq} ${esc(x.label)}</option>`).join("")}</select></div>
   <p class="sub">${fmtTime(r.started)} – ${r.ended ? fmtTime(r.ended) : "measuring…"} (${dur(sm.duration_s)}) · goal ${goalName(s.goal)} = <b>${num(r.goal_value)} ${goalUnit(s.goal, s)}</b>${r.goal_source ? ` <span class="muted">(${esc(r.goal_source)})</span>` : ""}
    ${r.delta_pct != null ? ` · <span class="${deltaCls(r.delta_pct)}">${pct(r.delta_pct)}</span> vs previous, <span class="${deltaCls(r.delta_vs_first_pct)}">${pct(r.delta_vs_first_pct)}</span> vs first` : ""}${prev ? ` · compared with run #${prev.seq} ${esc(prev.label)}` : ""}</p>
@@ -1171,7 +1175,11 @@ async function runPage(id, tab) {
    ${tile("mysqld CPU / trx", sm.mysqld_cpu_ms_per_trx, "ms", ps.mysqld_cpu_ms_per_trx, -1, "mysqld_cpu_ms_per_trx")}${tile("Disk IOs / trx", sm.disk_ios_per_trx, "", ps.disk_ios_per_trx, -1, "disk_ios_per_trx")}
    ${tile("Redo written", sm.redo_mbs, "MiB/s", ps.redo_mbs, 0)}${tile("Ckpt age max", sm.checkpoint_age_pct_max, "%", ps.checkpoint_age_pct_max, -1, "x")}${tile("Threads running", sm.threads_running_avg, "avg", ps.threads_running_avg, 0)}${tile("TPS variation", sm.tps_cv_pct, "% CV", ps.tps_cv_pct, -1, "x")}</div>
   ${Object.keys(r.external || {}).length ? `<h3>Benchmark-reported values</h3><div class="row">${Object.entries(r.external).map(([k, v]) => `<span class="badge plain">${esc(k)} = ${esc(v)}</span>`).join("")}</div>` : ""}
+  <div class="card" id="fbsec" style="margin:12px 0"></div>
   <div class="tabs" id="tabs"></div><div id="tab"></div>`;
+  wireStars($view);
+  const fbRefresh = async () => { const r2 = await api(`/api/runs/${id}`); r.feedback = r2.feedback; feedbackSection(document.getElementById("fbsec"), r, (r.feedback || []).filter(f => f.about === "run"), fbRefresh); };
+  feedbackSection(document.getElementById("fbsec"), r, (r.feedback || []).filter(f => f.about === "run"), fbRefresh);
   document.getElementById("vs").onchange = e => { location.hash = "#/run/" + id + (e.target.value ? "?vs=" + e.target.value : ""); };
   const tabs = [["changes", "Configuration"], ["graphs", "Graphs"], ["inputs", "Diagnosis & inputs"], ...((r.inputs || {}).cpu_profile ? [["cpu", "CPU profile"]] : []), ["recs", "Recommendations"], ["config", "Full configuration"]];
   const tabsEl = document.getElementById("tabs"), tabEl = document.getElementById("tab");
@@ -1197,7 +1205,7 @@ async function runPage(id, tab) {
     }
     else if (name === "inputs") renderInputs(tabEl, r);
     else if (name === "cpu") renderCpuProfile(tabEl, r.inputs.cpu_profile);
-    else if (name === "recs") { tabEl.innerHTML = ""; if (!r.recommendations.length) tabEl.innerHTML = '<p class="muted">No recommendation was generated from this run.</p>'; r.recommendations.forEach(rec => { const c = document.createElement("div"); c.className = "card"; c.style.marginBottom = "12px"; tabEl.appendChild(c); renderRecs(c, rec); }); }
+    else if (name === "recs") { tabEl.innerHTML = ""; if (!r.recommendations.length) tabEl.innerHTML = '<p class="muted">No recommendation was generated from this run.</p>'; r.recommendations.forEach(rec => { const c = document.createElement("div"); c.className = "card"; c.style.marginBottom = "12px"; tabEl.appendChild(c); renderRecs(c, rec, null, r.feedback); }); }
     else if (name === "config") {
       const c = await api(`/api/runs/${id}/config`);
       const managed = c.managed || {}, meta = c.meta || {};
@@ -1402,6 +1410,7 @@ async function route() {
     if (parts[0] === "account") return await accountPage();
     if (parts[0] === "policies") return await policiesPage();
     if (parts[0] === "learning") return await learningPage();
+    if (parts[0] === "notes") return await notesPage();
     if (parts[0] === "parameters") return await parametersPage();
     if (parts[0] === "env") return await envPage(+parts[1]);
     if (parts[0] === "studies") return await studiesPage();
@@ -1417,3 +1426,106 @@ window.addEventListener("hashchange", route);
 let resizeT;
 window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (/^#\/(env|run)/.test(location.hash)) route(); }, 400); });
 loadMe().then(route);
+
+// ------------------------------------------------------------------ stars, people's feedback, model advice
+const FB_VERDICT = { reasonable: ["good", "reasonable to try"], questionable: ["warn", "questionable"], "not-reasonable": ["bad", "not reasonable"],
+  agree: ["good", "agree"], disagree: ["bad", "disagree"] };
+function starBtn(runId, on) {
+  return `<button class="star ${on ? "on" : ""}" data-star="${runId}" aria-pressed="${on ? "true" : "false"}" title="${on ? "Starred: click to remove" : "Star this run to find it later"}">${on ? "★" : "☆"}</button>`;
+}
+function wireStars(root) {
+  root.querySelectorAll("[data-star]").forEach(b => b.onclick = async e => {
+    e.stopPropagation(); e.preventDefault();
+    const on = b.classList.contains("on");
+    await api(`/api/runs/${b.dataset.star}/star`, { method: on ? "DELETE" : "PUT" });
+    b.classList.toggle("on", !on); b.textContent = on ? "☆" : "★"; b.setAttribute("aria-pressed", String(!on));
+    b.title = on ? "Star this run to find it later" : "Starred: click to remove";
+  });
+}
+function fbMark(list) {  // compact marker for run lists: count, coloured by the most critical view
+  if (!list || !list.length) return "";
+  const rank = { "not-reasonable": 3, disagree: 3, questionable: 2, reasonable: 1, agree: 1 };
+  const worst = list.reduce((a, f) => (rank[f.verdict] || 0) > (rank[a.verdict] || 0) ? f : a, list[0]);
+  const tip = list.map(f => `${(FB_VERDICT[f.verdict] || ["", f.verdict])[1]}${f.about && f.about !== "run" ? " (" + f.about.replace(/^advice:/, "advice: ") + ")" : ""}${f.email ? " · " + f.email : ""}${f.comment ? ": " + f.comment : ""}${f.alternative ? " · instead: " + f.alternative : ""}`).join("\n");
+  return `<span class="fbmark ${(FB_VERDICT[worst.verdict] || [""])[0]}" data-tip="${esc(tip)}" tabindex="0">💬 ${list.length}</span>`;
+}
+function fbEntry(f) {
+  const [cls, txt] = FB_VERDICT[f.verdict] || ["", f.verdict];
+  return `<div class="fb ${cls}"><b>${esc(txt)}</b>${f.about && f.about !== "run" ? ` <span class="muted">on ${esc(f.about.replace(/^advice:/, "advice of "))}</span>` : ""}
+    <span class="muted">· ${f.email ? esc(f.email) + " · " : ""}${fmtTime(f.created)}</span>${f.mine !== false && f.id && ME && !ME.share ? ` <button class="ghost" data-fbdel="${f.id}" style="padding:0 6px;font-size:12px">delete</button>` : ""}
+    ${f.comment ? `<div>${esc(f.comment)}</div>` : ""}${f.alternative ? `<div><span class="muted">Instead:</span> ${esc(f.alternative)}</div>` : ""}</div>`;
+}
+function feedbackSection(el, run, list, onChange) {
+  const ro = ME && ME.share;
+  el.innerHTML = `<h3>Expert feedback${info("Your view of this run: was it a reasonable thing to try at that point? It is shown to the AI planner and the learner as a person's opinion next to the measurements, not as a verdict.")}</h3>
+    <div id="fblist">${list.length ? list.map(fbEntry).join("") : '<p class="muted" style="margin:4px 0">No feedback yet.</p>'}</div>
+    ${ro ? "" : `<button id="fbopen">Add feedback</button><form class="fbform" id="fbform" hidden>
+      <div class="seg" role="radiogroup">${["reasonable", "questionable", "not-reasonable"].map((v, i) => `<button type="button" data-v="${v}" class="${i === 0 ? "on" : ""}">${FB_VERDICT[v][1]}</button>`).join("")}</div>
+      <textarea name="comment" rows="2" placeholder="Why (what in the data makes it reasonable or not)"></textarea>
+      <input name="alternative" placeholder="What you would have tried instead (optional)">
+      <div class="row"><button class="primary" type="submit">Save</button><button type="button" class="ghost" id="fbcancel">Cancel</button><span class="err" id="fberr"></span></div></form>`}`;
+  el.querySelectorAll("[data-fbdel]").forEach(b => b.onclick = async () => { if (confirm("Delete this feedback?")) { await api(`/api/feedback/${b.dataset.fbdel}`, { method: "DELETE" }); onChange(); } });
+  if (ro) return;
+  const form = el.querySelector("#fbform");
+  let verdict = "reasonable";
+  el.querySelector("#fbopen").onclick = () => { form.hidden = false; el.querySelector("#fbopen").hidden = true; };
+  el.querySelector("#fbcancel").onclick = () => { form.hidden = true; el.querySelector("#fbopen").hidden = false; };
+  form.querySelectorAll("[data-v]").forEach(b => b.onclick = () => { verdict = b.dataset.v; form.querySelectorAll("[data-v]").forEach(x => x.classList.toggle("on", x === b)); });
+  form.onsubmit = async e => {
+    e.preventDefault();
+    try { await api(`/api/runs/${run.id}/feedback`, { method: "POST", body: { verdict, comment: form.comment.value, alternative: form.alternative.value } }); onChange(); }
+    catch (err) { el.querySelector("#fberr").textContent = err.message; }
+  };
+}
+function adviceHtml(rec) {  // what each model advised for this decision, with agree / disagree for people to review it
+  const L = rec.llm || {}, out = [];
+  const choice = c => !c ? "–" : c.candidate_id ? `<code>${esc(c.candidate_id)}</code>` : (c.changes || []).map(x => `<code>${esc(x.variable)}=${esc(x.value)}</code>`).join(" ") || "–";
+  const acts = about => rec.run_id && ME && !ME.share ? `<span class="acts"><button data-adv="${esc(about)}" data-v="agree" data-rec="${rec.id}" data-run="${rec.run_id}">agree</button><button data-adv="${esc(about)}" data-v="disagree" data-rec="${rec.id}" data-run="${rec.run_id}">disagree</button></span>` : "";
+  const P = L.planner;
+  if (P && P.plan) {
+    const p = P.plan, pr = p.prediction || {};
+    out.push(`<div class="advice"><div class="h"><b>Planner</b> <span class="muted">${esc(P.model || "")}</span> → ${p.action === "stop" ? "<b>stop</b>" : choice(p.choice)}
+      ${P.rejected ? ` <span class="badge warn" data-tip="${esc(P.rejected)}" tabindex="0">not used</span>` : P.applied !== undefined ? (P.applied === P.engine_next ? ' <span class="badge plain">same as the rules</span>' : ` <span class="badge info" data-tip="The rules would have run ${esc(P.engine_next || "nothing")}" tabindex="0">overruled the rules</span>`) : ""}${acts("advice:planner")}</div>
+      <div>${esc(p.diagnosis)}</div>${p.action !== "stop" ? `<div class="muted" style="font-size:12.5px">Predicts ${pr.goal_delta_pct_low}% to ${pr.goal_delta_pct_high}% on the goal; ${esc(pr.metric)} ${esc(pr.metric_direction)} ~${pr.metric_change_pct}% · confidence ${esc(p.confidence)}${info("Why above the noise: " + (p.why_above_noise || "") + " · Rationale: " + (p.rationale || "") + ((p.alternatives || []).length ? " · Not now: " + p.alternatives.map(a => a.candidate_id + " (" + a.why_not_now + ")").join("; ") : ""))}</div>` : `<div class="muted">${esc(p.stop_advice)}</div>`}</div>`);
+    if (P.critic) out.push(`<div class="advice"><div class="h"><b>Reviewer</b> <span class="muted">${esc(P.critic_model || "")}</span> → <b>${esc(P.critic.verdict)}</b>${P.critic.verdict === "revise" ? " to " + (P.critic.action === "stop" ? "<b>stop</b>" : choice(P.critic)) : ""}${P.final ? ' <span class="badge info">taken</span>' : ""}${acts("advice:reviewer")}</div>
+      ${(P.critic.issues || []).length ? `<div style="font-size:12.5px">${P.critic.issues.map(esc).join("<br>")}</div>` : ""}${P.critic.reason ? `<div class="muted" style="font-size:12.5px">${esc(P.critic.reason)}</div>` : ""}</div>`);
+  } else if (P && P.error) out.push(`<p class="muted" style="font-size:12.5px">Planner error: ${esc(P.error)}</p>`);
+  (L.suggestions || []).forEach((sg, n) => out.push(`<div class="advice"><div class="h"><b>Idea</b> <span class="muted">${esc(L.model || "")}</span> ${esc(sg.title || "")}: ${(sg.changes || []).map(x => `<code>${esc(x.variable)}=${esc(x.value)}</code>`).join(" ")}
+    <span class="muted">${esc(sg.expected_effect || "")}${sg.risk && sg.risk !== "none" && sg.risk !== "low" ? " · " + esc(sg.risk) : ""}</span>${acts("advice:idea:" + (sg.title || n))}</div><div style="font-size:12.5px">${esc(sg.rationale || "")}${sg.mechanism ? `<span class="muted"> Mechanism: ${esc(sg.mechanism)}</span>` : ""}</div></div>`));
+  return out.length ? `<h3>Model advice${info("What each AI model advised at this decision, stored as given. Agree / disagree records your view for the planner and for comparing models.")}</h3>` + out.join("") : "";
+}
+function wireAdvice(root, feedback) {
+  root.querySelectorAll("[data-adv]").forEach(b => {
+    const mine = (feedback || []).find(f => f.rec_id === +b.dataset.rec && f.about === b.dataset.adv);
+    if (mine && mine.verdict === b.dataset.v) b.classList.add("primary");
+    b.onclick = async () => {
+      const comment = b.dataset.v === "disagree" ? prompt("Why, or what would you do instead?") : "";
+      if (comment === null) return;
+      try {
+        await api(`/api/runs/${b.dataset.run}/feedback`, { method: "POST", body: { verdict: b.dataset.v, about: b.dataset.adv, rec_id: +b.dataset.rec, comment } });
+        b.parentElement.querySelectorAll("button").forEach(x => x.classList.toggle("primary", x === b));
+      } catch (err) { alert(err.message); }
+    };
+  });
+}
+async function notesPage() {
+  setNav("notes");
+  const filter = new URLSearchParams(location.hash.split("?")[1] || "").get("f") || "all";
+  const scope = new URLSearchParams(location.hash.split("?")[1] || "").get("scope") || "mine";
+  const d = await api("/api/notes?scope=" + scope);
+  const runs = d.runs.filter(r => filter === "all" || (filter === "starred" ? r.starred : r.feedback.length));
+  const link = (f, sc) => `#/notes?f=${f}&scope=${sc}`;
+  $view.innerHTML = `<h1>Starred &amp; feedback</h1>
+  <p class="sub">Runs you starred or commented on, newest first.</p>
+  <div class="row"><div class="seg">${[["all", "All"], ["starred", "Starred"], ["feedback", "With feedback"]].map(([k, t]) => `<button data-f="${k}" class="${filter === k ? "on" : ""}">${t}</button>`).join("")}</div>
+   ${ME.is_admin ? `<div class="seg">${[["mine", "Mine"], ["all", "Everyone's feedback"]].map(([k, t]) => `<button data-sc="${k}" class="${scope === k ? "on" : ""}">${t}</button>`).join("")}</div>` : ""}</div>
+  <div class="card tablewrap" style="margin-top:10px"><table data-opt="Environment|Goal|Δ parent"><thead><tr><th></th><th>Run</th><th>Session</th><th>Environment</th><th>Verdict</th><th class="num">Goal</th><th class="num">Δ parent</th><th>Feedback</th><th>Last note</th></tr></thead><tbody>
+  ${runs.length ? runs.map(r => `<tr class="click" data-href="#/run/${r.id}"><td>${starBtn(r.id, r.starred)}</td><td><a href="#/run/${r.id}">#${r.seq} ${esc(r.label)}</a></td><td><a href="#/session/${r.session.id}">#${r.session.id} ${esc(r.session.name || "")}</a></td><td>${esc(r.environment.name)}</td>
+    <td>${verdictBadge(r.verdict)}</td><td class="num">${num(r.goal_value)}</td><td class="num">${pct((r.evaluation || {}).goal_delta_pct)}</td>
+    <td>${fbMark(r.feedback)}${r.feedback.length ? ` <span class="muted" style="font-size:12.5px">${esc(((r.feedback[0].comment || r.feedback[0].alternative || "")).slice(0, 80))}</span>` : ""}</td><td style="white-space:nowrap">${fmtTime(r.last_note)}</td></tr>`).join("")
+    : `<tr><td colspan="9" class="muted">Nothing here yet: star a run (☆ in a session's run list or on a run page) or add feedback on a run page.</td></tr>`}</tbody></table></div>`;
+  $view.querySelectorAll("[data-f]").forEach(b => b.onclick = () => location.hash = link(b.dataset.f, scope));
+  $view.querySelectorAll("[data-sc]").forEach(b => b.onclick = () => location.hash = link(filter, b.dataset.sc));
+  $view.querySelectorAll("tr[data-href]").forEach(tr => tr.onclick = () => location.hash = tr.dataset.href);
+  wireStars($view);
+}
