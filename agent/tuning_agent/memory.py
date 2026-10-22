@@ -20,6 +20,8 @@ absurdly small settings; ignoring it gives configurations that swap or get OOM-k
 Total plus the OS reserve (and a co-located client's reserve) must fit in RAM. Per-entry costs are estimates (see
 COST); measured mysqld memory from runs (PSS + swap) is reported next to the model so the estimates can be checked.
 """
+import math
+
 KiB, MiB, GiB = 1024, 1024 ** 2, 1024 ** 3
 
 COST = {  # memory per entry / per connection (bytes), measured with tools/memprobe on tuner-vbm (PS 9.7, 2026-10-20)
@@ -54,16 +56,29 @@ def host_other_bytes(summary, ram):
     s = summary or {}
     if not ram or s.get("mem_available_mb") is None or s.get("dbproc_rss_mb") is None:
         return None
-    return max(0, int(ram - (s["mem_available_mb"] + s["dbproc_rss_mb"]) * 2 ** 20))
+    # the huge-page pool is neither available nor in mysqld's RSS: it is the hugepages configuration (the buffer pool in
+    # it), not other usage (lab 206: 24 GiB of "OS" on a 31 GiB host with a hugepage buffer pool)
+    return max(0, int(ram - (s["mem_available_mb"] + s["dbproc_rss_mb"] + (s.get("hugepages_total_mb") or 0)) * 2 ** 20))
 
 
-def budget(variables, hw, reserve_bytes=0, active_per_cpu=2, measured=None, host_other=None):
+def active_from(summary):
+    """Connections that run at once, as measured (peak running threads, with a margin); None without a run. The model's
+    2 x CPUs made one TPC-H stream look like 16 sessions with per-query buffers (r1 AN-1: the buffer pool increase that
+    was the session's only win became a memory trade-off)."""
+    s = summary or {}
+    peak = s.get("threads_running_max") or (1.5 * s["threads_running_avg"] if s.get("threads_running_avg") else None)
+    return max(1, int(math.ceil(1.25 * peak))) if peak else None
+
+
+def budget(variables, hw, reserve_bytes=0, active_per_cpu=2, measured=None, host_other=None, active_measured=None):
     """{"items": [{name, bytes, basis}], "total", "ram", "headroom", "over_budget", "active_connections", ...}"""
     v = variables or {}
     ram = int((hw or {}).get("ram_bytes") or 0)
     cpus = int((hw or {}).get("cpus") or 1)
     max_conn = _n(v.get("max_connections"), 151)
     active = min(max_conn, active_per_cpu * cpus)
+    if active_measured:  # measured concurrency, never above the model's assumption
+        active = max(1, min(active, int(active_measured)))
     items = []
 
     def add(name, b, basis):

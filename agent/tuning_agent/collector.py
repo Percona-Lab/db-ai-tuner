@@ -96,6 +96,11 @@ class DBSampler:
             # workload spending 45% of its time in group commit from every commit rule)
             out["tps"] = out["handler_commits"]
             out["tps_from"] = "Handler_commit (autocommit)"
+            if str((self.variables or {}).get("log_bin", "")).upper() in ("ON", "1"):
+                # with the binary log on every transaction commits twice (two-phase commit: the binary log and InnoDB):
+                # counted once (lab 221: 84,579 "tps" for 42,282 transactions, so binlog-off runs looked +100% unreliable)
+                out["tps"] = round(out["handler_commits"] / 2, 2)
+                out["tps_from"] = "Handler_commit / 2 (autocommit, binary log two-phase commit)"
         for name, k in GAUGES.items():
             v = _num(sb.get(k))
             if v is not None:
@@ -541,7 +546,7 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None):
         "row_lock_waits": db_rates.get("row_lock_waits"),
         "row_lock_wait_avg_ms": db_rates.get("row_lock_wait_avg_ms"),
         "tmp_disk_tables": db_rates.get("tmp_disk_tables"),
-        "threads_running_avg": avg("db", "threads_running"),
+        "threads_running_avg": avg("db", "threads_running"), "threads_running_max": mx("db", "threads_running"),
         "threads_connected_avg": avg("db", "threads_connected"),
         "checkpoint_age_pct_max": mx("db", "checkpoint_age_pct"),
         "bp_dirty_pct_avg": avg("db", "bp_dirty_pct"),
@@ -566,7 +571,7 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None):
                                          "net_retrans_pct", "net_conn_per_s", "net_resets_per_s", "net_time_wait", "net_softnet_drops",
                                          "net_softnet_squeeze", "conntrack_fill_pct", "net_estab")},
         "softirq_max_cpu_pct": avg("os", "softirq_max_cpu_pct"), "softirq_avg_cpu_pct": avg("os", "softirq_avg_cpu_pct"),
-        "rtt_avg_ms": avg("os", "rtt_avg_ms"), "rtt_p95_ms": avg("os", "rtt_p95_ms"), "mysql_conns_avg": avg("os", "mysql_conns"),
+        "rtt_avg_ms": avg("os", "rtt_avg_ms"), "rtt_p95_ms": avg("os", "rtt_p95_ms"), "rtt_min_ms": avg("os", "rtt_min_ms"), "mysql_conns_avg": avg("os", "mysql_conns"),
         "psi_memory_some_max": mx("os", "psi_memory_some"),
         "cpu_steal": os_rates.get("cpu_steal"),
         "cpu_steal_max": mx("os", "cpu_steal"),
@@ -582,6 +587,7 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None):
         "swap_out": os_rates.get("swap_out"),
         "mem_used_pct": os_rates.get("mem_used_pct"),
         "mem_available_mb": os_rates.get("mem_available_mb"),
+        "hugepages_total_mb": os_rates.get("hugepages_total_mb"), "hugepages_free_mb": os_rates.get("hugepages_free_mb"),
         # dirty page cache (buffered writes not yet on disk): the build-up vm.dirty_* limits act on. Redo fsync'ed at every
         # commit never gets far; data files without O_DIRECT, binary log with sync_binlog = 0, temporary files can
         "page_cache_dirty_mb_max": mx("os", "page_cache_dirty_mb"),
@@ -591,7 +597,8 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None):
         **{k: os_rates.get(k) for k in ("numa_other_node_pct", "numa_miss_per_s", "numa_pages_migrated_per_s", "numa_hint_faults_per_s",
                                          "numa_hint_faults_remote_pct", "numa_node_free_min_mb", "numa_node_free_max_mb") if k in os_rates},
         # database memory footprint incl. what was swapped out (swapping must not look like using less memory)
-        "db_mem_mb": (round((os_rates.get("dbproc_pss_mb") or 0) + (os_rates.get("dbproc_swap_pss_mb") or 0), 1)
+        "db_mem_mb": (round((os_rates.get("dbproc_pss_mb") or 0) + (os_rates.get("dbproc_swap_pss_mb") or 0)
+                            + (os_rates.get("dbproc_hugetlb_mb") or 0), 1)
                       if os_rates.get("dbproc_pss_mb") is not None else None),
         **{k: os_rates.get(k) for k in ("dbproc_procs", "dbproc_rss_mb", "dbproc_vsz_mb", "dbproc_pss_mb", "dbproc_pss_anon_mb",
                                          "dbproc_pss_file_mb", "dbproc_pss_shmem_mb", "dbproc_swap_pss_mb", "dbproc_swap_mb",

@@ -15,7 +15,7 @@ Every recommendation carries the evidence it was derived from so the decision ca
 import math
 import re
 
-from .evaluate import mean_noise
+from .evaluate import RESOLUTION_NOISE, mean_noise
 from . import bottleneck, knowledge
 from .mechanisms import MECHANISMS, missing_mechanism, name_resolution, relevance
 from .knowledge import KB, OPTIONS, flags_subset, fmt_size, human_size, normalize, parse_size, tradeoff_of
@@ -63,13 +63,15 @@ def classify_workload(summary, inputs):
           "write_share_pct": round(100 * writes / max(writes + reads, 1e-9), 1), "procedure_calls_per_s": round(calls, 1),
           "sort_merge_passes_per_s": rates.get("Sort_merge_passes", 0), "tmp_disk_tables_per_s": rates.get("Created_tmp_disk_tables", 0),
           "full_joins_per_s": rates.get("Select_full_join", 0)}
-    if lat >= 50 or rows_per_stmt >= 5000:
+    # latency counts only together with the work per statement: queueing at 4096 connections pushed a read-write load over
+    # 50 ms and made it "olap" (r1 HC-3: join-buffer and tmp-table experiments for point reads and short transactions)
+    if rows_per_stmt >= 5000 or (lat >= 50 and rows_per_stmt >= 200):
         kind = "olap"
     elif writes + reads == 0 and calls > 0:
         kind = "oltp-write"  # stored-procedure OLTP (e.g. HammerDB): statements run inside procedures
     elif writes / max(writes + reads, 1e-9) >= 0.15:
         kind = "oltp-write"
-    elif lat >= 10 or rows_per_stmt >= 500:
+    elif (lat >= 10 and rows_per_stmt >= 50) or rows_per_stmt >= 500:
         kind = "mixed"
     else:
         kind = "oltp-read"
@@ -257,12 +259,16 @@ def diagnose(ctx):
             f"CPU pressure: runnable {src} tasks waited for a CPU {cpu_some:.0f}% of the time (PSI cpu some).",
             {"psi_cpu_some": cpu_some, "source": src, "psi_cpu_some_host": s.get("psi_cpu_some")})
     wait_pct, delay = s.get("dbproc_runq_wait_pct"), s.get("dbproc_sched_delay_us")
+    # a queue that matters: enough threads waiting relative to the CPUs, or busy CPUs - 13% of runnable time on a host 77%
+    # idle (one thread waiting 32 us) is not a bottleneck (user 194, where commits waited 79% of the time)
+    queued = (s.get("dbproc_runq_wait_threads") or 0) >= max(1.0, 0.25 * cpus) or (s.get("cpu_busy") or 0) >= 60
     if wait_pct is not None and (wait_pct >= 10 or (delay or 0) >= 500):
-        add("sched-delay", "high" if wait_pct >= 25 else "medium",
+        add("sched-delay", ("high" if wait_pct >= 25 else "medium") if queued else "low",
             f"Scheduling delay: database threads were runnable but waiting for a CPU {wait_pct:.0f}% of their runnable time "
             f"(avg {delay or 0:.0f} µs each time they got a CPU, worst interval {s.get('dbproc_sched_delay_us_max') or 0:.0f} µs). "
-            "This adds directly to query latency, most visibly at the tail. Fewer runnable threads (thread pool, concurrency "
-            "limits) or keeping other work off the database CPUs helps more than faster I/O.",
+            "This adds directly to query latency, most visibly at the tail; fewer runnable threads (thread pool, concurrency "
+            "limits) or keeping other work off the database CPUs shortens it."
+            + ("" if queued else f" Few threads wait ({s.get('dbproc_runq_wait_threads') or 0:.1f} on {cpus} CPUs, {s.get('cpu_busy') or 0:.0f}% busy): minor."),
             {k: s.get(k) for k in ("dbproc_runq_wait_pct", "dbproc_sched_delay_us", "dbproc_sched_delay_us_max", "dbproc_runq_wait_threads",
                                    "dbproc_nvcsw_per_s", "host_runq_wait_pct", "mysqld_cpu_pct", "cpu_busy")})
     mem_some, src = psi("memory_some")
@@ -284,6 +290,23 @@ def diagnose(ctx):
         add("memory", "high" if s["bp_hit_pct"] < 95 else "medium",
             f"Working set does not fit: buffer pool hit ratio {s['bp_hit_pct']:.2f}%, {s['bp_disk_reads']:.0f} page reads/s from disk.",
             {"bp_hit_pct": s["bp_hit_pct"], "bp_disk_reads": s.get("bp_disk_reads"), "data_bytes": inp.get("data_bytes")})
+    # purge falling behind costs no thread waiting time, so the time breakdown cannot show it: the history list can
+    # (lab 213: 23M -> 28M inside one window, 43M later; r1 RW-2 3.9M -> 5.4M - the purge levers ranked 9th-14th)
+    hll = s.get("history_list_length_max") or 0
+    hll_ev = (((s.get("steady_state") or {}).get("evidence") or {}).get("history_list_length") or [None, None])
+    growing = hll_ev[0] is not None and hll_ev[1] is not None and hll_ev[1] > hll_ev[0] * 1.05
+    if hll >= 5_000_000 or (hll >= 1_000_000 and growing):
+        add("purge", "high" if hll >= 5_000_000 and growing else "medium",
+            f"Purge is falling behind: the undo history list reached {hll:,.0f} entries"
+            + (f" and grew {hll_ev[0]:,.0f} -> {hll_ev[1]:,.0f} within the window" if growing else "")
+            + ". Reads walk longer version chains and undo grows; more purge threads or a purge lag bound act on it.",
+            {"history_list_length_max": hll, "history_list_length_window": hll_ev})
+    ck_, du_ = s.get("checkpoint_age_pct_max") or 0, s.get("disk_util") or 0
+    if 50 <= ck_ < 70 and du_ >= 60:
+        # checkpoint-driven flushing on a busy disk before the redo log is "nearly full": a larger redo log spreads it out
+        # (user 191 / 169: checkpoint 57-58% with the disk 81-86% busy, redo-grow "validation only" - it gained later)
+        add("redo", "medium", f"Checkpoint age peaks at {ck_:.0f}% of the redo capacity with the disk {du_:.0f}% busy: flushing is "
+            "driven by redo space; a larger redo log spreads the writes out.", {"checkpoint_age_pct_max": ck_, "disk_util": du_})
     if (s.get("checkpoint_age_pct_max") or 0) >= 70:
         add("redo", "high", f"Redo log nearly full (checkpoint age peaked at {s['checkpoint_age_pct_max']:.0f}% of capacity): "
             "forced synchronous flushing stalls writes.", {"checkpoint_age_pct_max": s["checkpoint_age_pct_max"], "redo_mbs": s.get("redo_mbs")})
@@ -407,7 +430,12 @@ def diagnose(ctx):
     if (s.get("net_retrans_pct") or 0) > 0.5 and (rtt or 99) < 2:
         add("network-loss", "medium", f"{s['net_retrans_pct']:.2f}% TCP retransmits on a low-latency link: packet loss on the path or host.",
             {"net_retrans_pct": s.get("net_retrans_pct"), "rtt_avg_ms": rtt})
-    if rtt and rtt >= 10:
+    # a TCP RTT measured on a saturated server includes the server's own queueing (r1 HC-2: 20-25 ms at 100% CPU on a path
+    # that measured 0.3-0.8 ms in the other cells): the path's latency shows in the minimum RTT, or with CPUs to spare
+    rtt_min = s.get("rtt_min_ms")
+    path_rtt = rtt_min if rtt_min is not None else (rtt if (s.get("cpu_busy") or 0) < 80 else None)
+    if path_rtt and path_rtt >= 10:
+        rtt = path_rtt
         add("network-rtt", "medium" if rtt < 40 else "high", f"Clients are {rtt:.0f} ms away (TCP RTT): every round trip costs more than "
             "most statements; batching, pooling and window settings matter.", {"rtt_avg_ms": rtt, "rtt_p95_ms": s.get("rtt_p95_ms")})
     if (s.get("client_cpu_busy") or 0) >= 90:
@@ -527,8 +555,15 @@ def recommend(ctx):
     mem_psi = s.get("psi_memory_some") or 0
     swapping = harmful_swap(s)
 
+    # measured shares several gates below use (time breakdown; CPU profile categories)
+    commit_sh_ = sum(p.get("share_pct") or 0 for p in ctx.get("breakdown") or [] if "commit" in (p.get("tags") or ()))
+    cpu_cat_ = ((inp.get("cpu_profile") or {}).get("categories") or {})
+    noise_ = float(ctx.get("noise_pct") or 2.0)
+
     # ---------------- memory -----------------------------------------------------
-    if swapping and bp > 512 * MiB:
+    # shrinking only for swapping that costs: swap-in of ~0.3 MB/s triggered it twice (lab 205 / 179, -1.6%)
+    if swapping and bp > 512 * MiB and ((s.get("swap_in") or 0) > 1280 or (s.get("psi_memory_full") or 0) >= 2
+                                        or (s.get("psi_memory_some") or 0) >= 10 or (s.get("oom_kills") or 0) > 0):
         new = bp_round(v, bp * 0.85)
         if new >= bp:
             new = bp_round(v, bp - 1)
@@ -588,6 +623,20 @@ def recommend(ctx):
         b.add("io-capacity-up", "Raise background flushing budget", [("innodb_io_capacity", str(ioc * 2)), ("innodb_io_capacity_max", str(ioc * 4))],
               f"Redo fill {ck:.0f}% with the disk only {s.get('disk_util', 0):.0f}% utilised: page cleaners can flush harder.",
               {"checkpoint_age_pct_max": ck, "disk_util": s.get("disk_util"), "innodb_io_capacity": ioc, "bp_dirty_pct_avg": dirty}, impact=2, confidence=2)
+    # flush-bound without redo pressure: user threads wait for free pages or dirty pages sit at their limit (r1 WI-1: 94.6%
+    # dirty, 34 free-page waits/s at 17% checkpoint age - io-capacity-up never fired, the only sweep went down to 1000)
+    wait_free_ = s.get("bp_wait_free") or 0
+    try:
+        maxd_ = float(v.get("innodb_max_dirty_pages_pct") or 90)
+    except (TypeError, ValueError):
+        maxd_ = 90.0
+    if have_run and ssd and ck < 50 and ioc < 10000 and (wait_free_ >= 1 or dirty >= 0.9 * maxd_):
+        b.add("io-capacity-up", "Raise background flushing budget", [("innodb_io_capacity", str(min(20000, ioc * 2))),
+                                                                     ("innodb_io_capacity_max", str(min(40000, ioc * 4)))],
+              f"Flush-bound: {wait_free_:.0f} free-page waits/s, dirty pages {dirty:.0f}% (limit {maxd_:.0f}%) - the page cleaners fall "
+              f"behind at innodb_io_capacity {ioc}. Doubling the background flushing budget lets them keep free pages ready. Experiment.",
+              {"bp_wait_free": wait_free_, "bp_dirty_pct_avg": dirty, "innodb_io_capacity": ioc, "disk_util": s.get("disk_util")},
+              impact=2, confidence=2)
     if have_run and ck < 30 and ioc >= 2000 and (s.get("disk_w_iops") or 0) > ioc * 0.5 and (s.get("disk_util") or 0) > 60:
         b.add("io-capacity-down", "Flush less eagerly", [("innodb_io_capacity", str(max(200, ioc // 2))), ("innodb_io_capacity_max", str(max(400, ioc)))],
               "Redo has plenty of headroom yet background flushing keeps the disk busy; lazier flushing merges more writes per page.",
@@ -663,7 +712,9 @@ def recommend(ctx):
         if _on(v, "innodb_adaptive_hash_index") and (ahi_wait > 0 or "btr0sea" in sem):
             b.add("ahi-off", "Disable the adaptive hash index (contention)", [("innodb_adaptive_hash_index", "OFF")],
                   "Threads are waiting on AHI latches.", {"ahi_wait_s": ahi_wait}, impact=2, confidence=2)
-    if have_run and "innodb_log_writer_threads" in v and _on(v, "innodb_log_writer_threads") and cpus <= 16 and busy >= 60:
+    # not where commits dominate (the log threads do the grouping: lab 205 -38%, 217 -46%) or at high concurrency (174 -15%)
+    if have_run and "innodb_log_writer_threads" in v and _on(v, "innodb_log_writer_threads") and cpus <= 16 and busy >= 60 \
+            and commit_sh_ < 40 and (s.get("threads_running_avg") or 0) <= 8 * cpus:
         b.add("log-writer-threads-off", "Disable dedicated redo log writer threads", [("innodb_log_writer_threads", "OFF")],
               f"On {cpus} CPUs that are {busy:.0f}% busy the dedicated log writer/flusher threads compete with user threads; "
               "MySQL docs suggest disabling them on small systems. Experiment.",
@@ -677,7 +728,11 @@ def recommend(ctx):
     active = max(tr, (s.get("dbproc_runq_wait_threads") or 0) + min(cpus, busy / 100.0 * cpus))
     # the pool exists only where thread_pool_size does (Percona Server, MariaDB, MySQL Enterprise): MySQL Community has
     # thread_handling but not its pool-of-threads value
-    if have_run and "thread_handling" in v and "thread_pool_size" in v and v.get("thread_handling") == "one-thread-per-connection" and \
+    # and only at high concurrency: it regressed in every 64-connection cell with a co-located client (-4% to -29%, r1)
+    # and at 2x vCPUs (user sessions), and won at 1024 connections on 16 vCPUs (HC-1 +9%)
+    conns = s.get("threads_connected_avg") or 0
+    high_conc = conns >= 16 * cpus  # a deep run queue alone was not enough: r1 RO-1 (64 on 8 vCPUs, 72% queued) lost 3.6%
+    if have_run and high_conc and "thread_handling" in v and "thread_pool_size" in v and v.get("thread_handling") == "one-thread-per-connection" and \
             (active > cpus * 4 and busy >= 70 or active > cpus and (s.get("dbproc_runq_wait_pct") or 0) >= 15):
         tr = active
         b.add("thread-pool", "Try the thread pool", [("thread_handling", "pool-of-threads")],
@@ -747,14 +802,19 @@ def recommend(ctx):
               "Every commit is a two-phase commit between the binlog and InnoDB with its own fsync. Without the binlog there is no replication "
               "and no point-in-time recovery.", {"fsyncs_per_trx": s.get("fsyncs_per_trx"), "log_bin": v.get("log_bin")},
               impact=3, confidence=2, kind="config" if policy == "benchmark" else "advice")
-    if policy == "benchmark" and have_run and busy >= 70 and v.get("ps:profile") == "full":
+    # measured cost, not a CPU threshold: performance_schema's share of the CPU profile (r1: 15-24% in six cells; ps-off
+    # vanished when cpu_busy fell to 79.8%)
+    pfs_sh_ = cpu_cat_.get("performance_schema")
+    pfs_costly = (pfs_sh_ is not None and pfs_sh_ * (s.get("mysqld_cpu_pct") or busy) / 100 >= max(noise_, 5) * 0.5) \
+        or (pfs_sh_ is None and busy >= 80)
+    if policy == "benchmark" and have_run and pfs_costly and v.get("ps:profile") == "full":
         pfs = ((inp.get("cpu_profile") or {}).get("categories") or {}).get("performance_schema")
         b.add("ps-lite", "Lighter performance_schema (OBSERVABILITY TRADE-OFF)", [("ps:profile", "lite")],
               "Keeps what tuning needs (statement digests, latency histogram, wait summaries) and stops statement/transaction "
               "history and memory accounting, which cost CPU on every statement and allocation. Measured: full instrumentation "
               f"costs ~4.5% on HammerDB vs none.{f' The CPU profile shows {pfs:.0f}% of database CPU in performance_schema.' if pfs else ''}",
               {"cpu_busy": busy, "pfs_cpu_pct": pfs}, impact=2, confidence=2)
-    if policy == "benchmark" and have_run and goal == "tps" and busy >= 80 and _on(v, "performance_schema") and v.get("ps:profile") != "full":
+    if policy == "benchmark" and have_run and goal == "tps" and pfs_costly and _on(v, "performance_schema") and v.get("ps:profile") != "full":
         b.add("ps-off", "Disable Performance Schema (OBSERVABILITY TRADE-OFF)", [("performance_schema", "OFF")],
               "On a CPU-bound server instrumentation costs a few percent of CPU. You lose statement latency measurement "
               "(the tuner will rely on throughput only) and most diagnostics.", {"cpu_busy": busy}, impact=2, confidence=2)
@@ -947,7 +1007,9 @@ def recommend(ctx):
                    "log_fsyncs_per_s": s.get("log_fsyncs_per_s"), "disk_await_ms": s.get("disk_await_ms"),
                    "innodb_flush_method": v.get("innodb_flush_method")}, impact=1, confidence=1)
         alloc_pct = ((inp.get("cpu_profile") or {}).get("categories") or {}).get("memory allocator", 0)
-        if v.get("os:malloc") == "glibc" and busy_ >= 70 and ((s.get("threads_running_avg") or 0) >= cpus or alloc_pct >= 8):
+        # with a profile, the allocator's measured share decides (allocator at 0.9-1.4% of the time: 7 neutral runs)
+        profiled_ = bool((inp.get("cpu_profile") or {}).get("categories"))
+        if v.get("os:malloc") == "glibc" and busy_ >= 70 and (alloc_pct >= 2 if profiled_ else (s.get("threads_running_avg") or 0) >= cpus):
             b.add("os-jemalloc", "Run mysqld with jemalloc", [("os:malloc", "jemalloc")],
                   f"CPU-bound ({busy_:.0f}%) with {s.get('threads_running_avg', 0):.0f} running threads: jemalloc has less allocator lock "
                   "contention and fragmentation than glibc malloc (Percona recommendation). Needs a mysqld restart. Experiment.",
@@ -1191,7 +1253,10 @@ def recommend(ctx):
             sweep("sweep-bp", "Sweep the buffer pool size", "innodb_buffer_pool_size", [fmt_size(mid), fmt_size(top)],
                   "The working set misses memory and RAM is free: measure how throughput responds to more buffer pool.",
                   {"bp_hit_pct": s.get("bp_hit_pct"), "mem_available": human_size(mem_avail)}, impact=3)
-    if have_run and "commit" in diag_types and "innodb_log_write_ahead_size" in v:
+    # only with a read-modify-write to remove: redo writes that read the block first (0 redo reads in every run of 10 neutral
+    # write-ahead sweeps - audit of lab / user sessions)
+    redo_reads_ = ((inp.get("file_io") or {}).get("redo") or {}).get("reads") or 0
+    if have_run and "commit" in diag_types and "innodb_log_write_ahead_size" in v and redo_reads_ > 0:
         # redo writes padded to this size: smaller than the file system / device block costs a read-modify-write, larger
         # writes more than needed per flush. Cheap, safe, powers of two.
         wa = _int(v, "innodb_log_write_ahead_size", 8192)
@@ -1216,13 +1281,16 @@ def recommend(ctx):
               {"bp_dirty_pct_avg": s.get("bp_dirty_pct_avg"), "checkpoint_age_pct_max": ck}, impact=2,
               lead="Practitioners run opposite settings (0 vs 80) and each reports a win; unverified here, it only motivates the test.")
     wait_free = rates.get("Innodb_buffer_pool_wait_free", 0)
-    if have_run and io_bound and "innodb_lru_scan_depth" in v and (wait_free > 0 or write_heavy):
+    if have_run and io_bound and "innodb_lru_scan_depth" in v and wait_free > 0:  # free-page waits: what the depth acts on
         lru = _int(v, "innodb_lru_scan_depth", 1024)
         sweep("sweep-lru-depth", "Sweep the LRU scan depth", "innodb_lru_scan_depth", [str(max(256, lru // 4)), str(lru * 2), str(lru * 4)],
               "Page cleaners keep this many pages free per buffer pool instance. Deeper scans avoid single-page flushes by user "
               "threads (free-page waits); shallower scans spend less CPU and I/O when free pages are plentiful.",
               {"Innodb_buffer_pool_wait_free_per_s": wait_free}, impact=2)
-    if have_run and io_bound and cpus >= 8 and (s.get("bp_disk_reads") or 0) > 200 and "innodb_read_io_threads" in v:
+    # read I/O threads serve asynchronous reads (read-ahead): with none, synchronous page reads are done by the user threads
+    # themselves (r1: 7 neutral runs in RO-2, KV-1, RO-4 at read-ahead 0)
+    if have_run and io_bound and cpus >= 8 and (s.get("bp_disk_reads") or 0) > 200 and "innodb_read_io_threads" in v \
+            and ((rates.get("Innodb_buffer_pool_read_ahead") or 0) + (rates.get("Innodb_buffer_pool_read_ahead_rnd") or 0)) > 0:
         rio = _int(v, "innodb_read_io_threads", 4)
         vals = [x for x in (8, 16, 32) if x > rio][:2]
         if vals:
@@ -1282,8 +1350,13 @@ def recommend(ctx):
               "The CPU profile shows threads spinning on InnoDB latches. The pause between spin rounds trades CPU for wake-up latency; "
               "its best value depends on the CPU (PAUSE instruction cost differs a lot between generations - MySQL bug 116463).",
               {"cpu_profile_categories": ((inp.get("cpu_profile") or {}).get("categories") or {})}, impact=1)
-    if have_run and diag_types & {"concurrency", "cpu-pressure", "sched-delay"} and "innodb_thread_concurrency" in v:
-        sweep("sweep-thread-concurrency", "Sweep InnoDB thread concurrency", "innodb_thread_concurrency", [str(cpus * 2), str(cpus * 4), "0"],
+    # a limit at or above the connection count admits everyone - a no-op (64 for 64 virtual users in three user sessions);
+    # and after the thread pool (stronger admission control) lost in this session, a weaker one will not win
+    conns = s.get("threads_connected_avg") or 0
+    limits = [x for x in (cpus * 2, cpus * 4) if not conns or x < 0.75 * conns]
+    pool_lost = any(str(h.get("label") or "").startswith("thread-pool") and h.get("verdict") == "regressed" for h in ctx.get("history") or [])
+    if have_run and limits and not pool_lost and diag_types & {"concurrency", "cpu-pressure", "sched-delay"} and "innodb_thread_concurrency" in v:
+        sweep("sweep-thread-concurrency", "Sweep InnoDB thread concurrency", "innodb_thread_concurrency", [str(x) for x in limits] + ["0"],
               f"{s.get('threads_running_avg', 0):.0f} running threads on {cpus} CPUs: measure admission limits.",
               {"threads_running_avg": s.get("threads_running_avg"), "cpus": cpus})
 
@@ -1560,6 +1633,12 @@ EFFICIENCY_TIEBREAK = ("mysqld_cpu_ms_per_trx", "disk_ios_per_trx", "disk_kb_per
 EFFICIENCY_TIE_MIN = 0.03  # resource differences below 3% are not a reason to prefer a configuration
 
 
+def _unearned_unsteady(r):
+    """An improvement measured while deferred work still piled up, small enough to come from that unpaid work."""
+    ev = r.get("evaluation") or {}
+    return bool(ev.get("not_steady")) and not ev.get("not_steady_beyond_bias")
+
+
 def best_config(history, goal="tps", noise=2.0):
     """Highest mean wins when it beats the others beyond noise (scaled for the number of runs in each mean). Within
     noise: a configuration confirmed better than another tied one wins over it (an improvement kept over its parent),
@@ -1576,10 +1655,13 @@ def best_config(history, goal="tps", noise=2.0):
         # not with efficiency alone (TATP kept doublewrite OFF for +0.03%)
         if any(tradeoff_of(k, m.get("value") if isinstance(m, dict) else m) for k, m in (c.get("managed") or {}).items()):
             return any(r.get("verdict") == "improved" and (r.get("evaluation") or {}).get("confirmed") is not False
-                       and not (r.get("evaluation") or {}).get("not_steady") for r in rs)
+                       and not _unearned_unsteady(r) for r in rs)
         # an improvement measured while deferred work (flushing, purge, change-buffer merges) still piled up is not earned
-        return any((r.get("verdict") in KEEP and (r.get("evaluation") or {}).get("confirmed") is not False
-                    and not (r.get("verdict") == "improved" and (r.get("evaluation") or {}).get("not_steady")))
+        # an improvement / efficiency gain is earned once its repeats confirmed it; a single unconfirmed run is not
+        # (canary #202: one unconfirmed sweep point became the best safe configuration)
+        conf = lambda r: (r.get("evaluation") or {}).get("confirmed")  # noqa: E731
+        return any((r.get("verdict") == "reference" or (r.get("verdict") in KEEP and (conf(r) is True or (conf(r) is None and len(rs) >= 2))))
+                   and not (r.get("verdict") == "improved" and _unearned_unsteady(r))
                    or (is_practice_run(r) and r.get("verdict") == "neutral") for r in rs)
     kept_cfgs = [c for c in scores if kept(c)]
     if kept_cfgs:
@@ -1633,7 +1715,21 @@ def best_config(history, goal="tps", noise=2.0):
         c["swap_hazard"] = any(swap_hazard(r.get("summary") or {}, noise) for r in history if config_key(r.get("managed")) == c["key"])
     tied.sort(key=lambda c: (c["key"] in beaten, not c["kept"], c["swap_hazard"], -c["practices"], c["resource_score"], -c["n"],
                              c["mean"] if goal == "latency" else -c["mean"]))
-    return tied[0]
+    pick = tied[0]
+    # never report a best that measured worse than the configuration tuning started from: ties are broken on kept-ness,
+    # practices and resources, and with wide noise that picked configurations below the start (user 169 / 174, r1 HC-2,
+    # RW-4: -1% to -4.5%); then the start remains the best
+    start_runs = [r for r in history if str(r.get("label") or "").startswith("baseline")] or \
+                 [r for r in history if r.get("verdict") == "reference"]
+    if start_runs:
+        sk = config_key(start_runs[0].get("managed"))
+        start = next((c for c in scores if c["key"] == sk), None)
+        if start and pick["key"] != sk and start["mean"]:
+            # a tie within the resolution floor may still go to the leaner configuration; a real shortfall may not
+            d = 100.0 * (pick["mean"] - start["mean"]) / abs(start["mean"]) * (-1 if goal == "latency" else 1)
+            if d < -RESOLUTION_NOISE:
+                return start
+    return pick
 
 
 def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
@@ -1710,10 +1806,18 @@ def _unearned(history, managed):
         if not setters:
             continue  # applied outside the experiments (requirements, a person): not the tuner's to remove
         # a later winner on top of it earns its own change, not this one (MX-1: ps-off improved on top of jemalloc)
+        # hysteresis: once confirmed and still above its parent, a change is not dropped because the noise threshold moved
+        # (canaries #198 / #201: the confirmed winner removed twice, -6.2% / -4.6%, as the threshold drifted)
         earned = any((r.get("verdict") in ("improved", "efficiency-gain") and (r.get("evaluation") or {}).get("confirmed") is not False)
+                     or ((r.get("evaluation") or {}).get("ever_confirmed") and ((r.get("evaluation") or {}).get("confirmed_delta_pct") or 0) > 0)
                      or (is_practice_run(r) and r.get("verdict") in ("neutral", "efficiency-gain", "improved")) for r in setters)
         if not earned:
             out.add(k)
+    # the chunk size is the companion of the instance count / pool size (it keeps the pool at the intended size): it goes
+    # with them, never alone (user 191: a chunk dropped alone grew the pool from 45 to 48 GiB)
+    bp_main = {"innodb_buffer_pool_instances", "innodb_buffer_pool_size"}
+    if "innodb_buffer_pool_chunk_size" in out and not (bp_main & out):
+        out.discard("innodb_buffer_pool_chunk_size")
     return out
 
 
@@ -1870,11 +1974,14 @@ def _numa_rules(b, v, s, osf, ctx, have_run, bp, ram):
               "come from one node; a process-wide interleave policy (numactl --interleave, systemd NUMAPolicy) spreads them too. "
               "Needs a restart.", evidence, impact=2, confidence=1)
     # the whole server fits one node (CPUs it needs and its memory): local memory only, no cross-node traffic at all
-    cpus_used = (s.get("mysqld_cpu_pct") or 0) / 100.0
+    # mysqld_cpu_pct is a share of the whole host: CPUs used = share x host CPUs (user 194: "0.2 CPUs" for ~6.8); memory is
+    # the larger of what was measured (huge pages included) and the configured buffer pool (17 GiB measured for a 188 GiB pool)
+    cpus_used = (s.get("mysqld_cpu_pct") or 0) / 100.0 * int((ctx.get("hw") or {}).get("cpus") or 1)
     lists = str(osf.get("os:numa_node_cpulists") or "").split(";")
     ncpus = [int(x) for x in str(osf.get("os:numa_node_cpus") or "").split(",") if x.isdigit()]
-    db_mem = (s.get("db_mem_mb") or 0) * MiB
-    if ctx.get("os_tuning") and lists and lists[0] and ncpus and ev["node_mem"] and "os:mysqld_numa_policy" in v \
+    db_mem = max((s.get("db_mem_mb") or 0) * MiB, _int(v, "innodb_buffer_pool_size", 0))
+    remote = (s.get("numa_other_node_pct") or 0) >= 5  # only with measured cross-node traffic to remove (194: 0.0-0.47%)
+    if ctx.get("os_tuning") and remote and lists and lists[0] and ncpus and ev["node_mem"] and "os:mysqld_numa_policy" in v \
             and 0 < cpus_used < 0.7 * ncpus[0] and db_mem and db_mem < 0.7 * ev["node_mem"][0] and v.get("os:mysqld_numa_policy", "default") == "default":
         # InnoDB's own interleave overrides the process policy for the buffer pool (verified on a 2-node VM: bind:0 left the
         # pool interleaved over both nodes) - it goes off with the bind
@@ -1882,8 +1989,8 @@ def _numa_rules(b, v, s, osf, ctx, have_run, bp, ram):
         if _on(v, "innodb_numa_interleave"):
             ch.append(("innodb_numa_interleave", "OFF"))
         b.add("numa-single-node", "Keep mysqld on one NUMA node", ch,
-              f"mysqld uses {cpus_used:.1f} CPUs and {human_size(db_mem)} - both fit node 0 ({ncpus[0]} CPUs, {human_size(ev['node_mem'][0])}): "
-              "bound there, every memory access is local. Kept only if the goal improves; memory growth beyond the node would fail "
+              f"mysqld uses {cpus_used:.1f} CPUs and {human_size(db_mem)} - both fit node 0 ({ncpus[0]} CPUs, {human_size(ev['node_mem'][0])}) - "
+              f"and {s.get('numa_other_node_pct')}% of its allocations come from another node: bound there, every memory access is local. Kept only if the goal improves; memory growth beyond the node would fail "
               "instead of spilling over, so it is proposed only while mysqld uses under 70% of the node's memory. Experiment.",
               dict(evidence, mysqld_cpus=round(cpus_used, 2), node0_cpus=ncpus[0]), impact=2, confidence=1)
 
@@ -1954,9 +2061,13 @@ def credibility(it, hexp):
     for scope, w in (("similar", 1.0), ("all", 0.5)):
         e = next((x for x in (hexp or {}).get(scope) or [] if x["id"] == it["id"] and x["target"] == tgt), None)
         if e and e["n"] >= 2:
-            held = e.get("supported", 0) + e.get("improved-other-mechanism", 0)
+            held = e.get("supported", 0) + e.get("improved-other-mechanism", 0) + e.get("improved-unverified", 0)
             rate = held / e["n"]
-            delta = round(w * 4 * (rate - 0.5) * min(e["n"], 4) / 4, 2)
+            # the track record has to be able to outweigh a tag match (canaries: ahi-on held in 0 of 5 and still ran in
+            # 16 of 20 sessions; +-2 points never moved it): up to +-4, and a lever that never held in 3+ tests drops further
+            delta = round(w * 8 * (rate - 0.5) * min(e["n"], 4) / 4, 2)
+            if held == 0 and e["n"] >= 3:
+                delta -= round(w * 4, 2)
             where = "similar sessions" if scope == "similar" else "other workloads / machines"
             return delta, (f"held in {held} of {e['n']} earlier tests in {where}"
                            + (f"; {e.get('moved', 0)} times the targeted time shrank without a gain" if e.get("moved") else ""))
@@ -1985,7 +2096,9 @@ def rescore(it, hyps):
     return delta, notes
 
 
-ALSO_FROM_DIAGNOSIS = {"io-read", "io-flush"}  # status / OS evidence (read vs write split) the wait classes cannot separate
+ALSO_FROM_DIAGNOSIS = {"io-read", "io-flush"}
+QUEUE_LEVERS = {"thread-pool", "sweep-thread-concurrency"}
+STOP_AFTER_FRUITLESS = 6  # status / OS evidence (read vs write split) the wait classes cannot separate
 
 
 def run_engine(ctx):
@@ -2022,7 +2135,8 @@ def run_engine(ctx):
     hw_ = ctx.get("hw") or {}
     if hw_.get("ram_bytes"):
         other_ = _mem.host_other_bytes(ctx.get("summary"), hw_.get("ram_bytes"))
-        cur_b = _mem.budget(ctx["variables"], hw_, ctx.get("client_reserve") or 0, host_other=other_)
+        act_ = _mem.active_from(ctx.get("summary"))
+        cur_b = _mem.budget(ctx["variables"], hw_, ctx.get("client_reserve") or 0, host_other=other_, active_measured=act_)
         # the model checked against the run: mysqld's measured memory (resident + swapped) above what the model says for the
         # current configuration is an error of the model on this host and workload - carried into every projection
         sm_ = ctx.get("summary") or {}
@@ -2032,7 +2146,7 @@ def run_engine(ctx):
             ch = {c["variable"]: c.get("proposed") for c in it.get("changes") or [] if c["variable"] in _mem.MEMORY_VARS and not c.get("unset")}
             if not ch or it["kind"] not in ("config",):
                 continue
-            nb = _mem.budget(dict(ctx["variables"], **ch), hw_, ctx.get("client_reserve") or 0, host_other=other_)
+            nb = _mem.budget(dict(ctx["variables"], **ch), hw_, ctx.get("client_reserve") or 0, host_other=other_, active_measured=act_)
             if offset:
                 nb["needed"] += offset
                 nb["mysqld_bytes"] += offset
@@ -2091,7 +2205,9 @@ def run_engine(ctx):
                 in_time.add("sched-delay")
             rd, md = relevance(it["id"], [d for d in ctx["diagnosis"] if d["type"] not in in_time or d["type"] in ALSO_FROM_DIAGNOSIS])
             rel, matched = max(rb or 0, rd or 0), mb + md
-            if q is not None and "sched-delay" in MECHANISMS[it["id"]][0]:
+            # only levers that reduce the queue itself (admission control) earn the queue share: the boost for every
+            # "sched-delay" tag lifted log-writer-off, spin-loops and autogroup as high as the thread pool (r1 review)
+            if q is not None and it["id"] in QUEUE_LEVERS:
                 rq = 4 if q >= 60 else 3 if q >= 30 else 2 if q >= 15 else 1 if q >= 5 else 0
                 if rq > rel:
                     rel, matched = rq, matched + [f"Waiting for a CPU ({q:.0f}%)"]
@@ -2107,6 +2223,11 @@ def run_engine(ctx):
             it["relevance"] = rel
         nomech = missing_mechanism(it["id"], ctx.get("summary"), [{"variable": c["variable"]} for c in it.get("changes") or []],
                                    inp.get("status_rates"), inp) if it["kind"] == "config" else None
+        if nomech:
+            # what it acts on provably does not happen in this workload (a counter at zero, no writes): advice, never a
+            # run (r1: log-writer-threads-off with "redo 0.00 MB/s", thread cache with Threads_created = 0 still ran)
+            it["mechanism_absent"] = nomech
+            it["confidence"] = 0
         if not nomech and it["kind"] == "config" and ctx.get("summary"):
             nomech = no_evidence(it, ctx)
         if nomech:
@@ -2162,6 +2283,12 @@ def run_engine(ctx):
             e = it["experience"]
             w = e.get("weight", 0.5 if e.get("scope") else 1.0)  # less comparable evidence counts less (version, variant, conditions)
             sc += round(w * 3 * (e.get("wins", 0) - e.get("losses", 0)) / max(e["n"], 1) * min(e["n"], 3) / 3, 2)
+            # how large the measured effect was, not only its sign: a lever averaging -30% in comparable sessions (the
+            # thread pool on 64-connection co-located cells: -21% to -73% in 8 sessions, all counted "neutral" while
+            # not-steady neutralised regressions) must rank behind untried ideas
+            md, nz = e.get("mean_delta_pct"), float(ctx.get("noise_pct") or 2.0)
+            if md is not None and e.get("n", 0) >= 2 and md < -2 * nz and not e.get("wins"):
+                sc -= round(w * min(abs(md), 30.0) / 5.0, 2)
             # strong penalties only from comparable evidence (same workload, CPU class and concurrency): contention-related
             # changes (thread pool, spin settings, concurrency limits) that lose on small low-concurrency boxes can win
             # on many cores with 1000+ connections
@@ -2205,10 +2332,72 @@ def run_engine(ctx):
     items.sort(key=lambda i: (i["safety"] == "trade-off" and i["kind"] != "revert", -i["score"]))
     for n, it in enumerate(items, 1):
         it["rank"] = n
+    # benchmark prerequisites ([requires]: max_connections, back_log ...) are set by the profile, never tuned (r1 HC-1 / HC-2
+    # spent runs on max-connections)
+    required = set(((inp.get("bench") or {}).get("requires") or {}).keys())
+    # AI-suggested ideas: three runs per session unless one of them wins (user sessions: 0 of 14 improved the goal)
+    hist = ctx.get("history") or []
+    llm_runs = [h for h in hist if str(h.get("label") or "").startswith("llm-")]
+    llm_won = any(h.get("verdict") in ("improved", "efficiency-gain") for h in llm_runs)
+    for it in items:
+        if required & {c["variable"] for c in it.get("changes") or []} and it["kind"] == "config":
+            it["confidence"] = 0
+            it["note"] = (it.get("note", "") + " Not run: a benchmark prerequisite ([requires]), not a tuning setting.").strip()
+        if it["id"].startswith("llm-") and len(llm_runs) >= 3 and not llm_won and it["kind"] == "config":
+            it["confidence"] = 0
+            it["note"] = (it.get("note", "") + f" Not run: {len(llm_runs)} AI-suggested experiments in this session, none kept.").strip()
+    # admission control on a commit-bound load shrinks the commit groups (lab / r1: 9 picks with commits >= 50% of the time,
+    # 0 wins, -15% to -75%)
+    commit_sh = sum(p.get("share_pct") or 0 for p in ctx["breakdown"] or [] if "commit" in (p.get("tags") or ()))
+    if commit_sh >= 40 and ((ctx.get("summary") or {}).get("cpu_busy") or 0) < 90:
+        for it in items:
+            if it["id"] in QUEUE_LEVERS and it["kind"] == "config":
+                it["confidence"] = 0
+                it["note"] = (it.get("note", "") + f" Not run: commits take {commit_sh:.0f}% of the time - limiting admission "
+                              "shrinks the commit groups.").strip()
     actionable = [i for i in items if i["kind"] in ("config", "revert") and i["confidence"] > 0]
     safe_next = next((i for i in actionable if i["safety"] == "safe"), None)
     trade_next = next((i for i in actionable if i["safety"] == "trade-off"), None)
     nxt = safe_next or (trade_next if benchmark else None)
-    return {"workload": ctx["workload"], "diagnosis": ctx["diagnosis"], "breakdown": ctx["breakdown"], "items": items, "next": nxt["id"] if nxt else None,
+    # benchmark policy: a trade-off backed by evidence goes before a safe idea that has none, or that scores far lower
+    # (trx-commit-2 / ps-off / doublewrite-off had the top scores in five sessions and ran last or never)
+    if benchmark and safe_next and trade_next and safe_next["kind"] == "config" and (
+            trade_next["score"] > safe_next["score"] + 4
+            or ((safe_next.get("no_mechanism") or (safe_next.get("relevance") or 0) <= 1) and (trade_next.get("relevance") or 0) >= 2)):
+        nxt = trade_next
+    # value of information: after a long run of experiments that kept nothing, an idea that acts on little or nothing of
+    # the measured time will not be the one that changes that - stop and say what limits the workload (user 194: 21 runs
+    # after run 10 on a storage-bound host, all neutral)
+    streak = 0
+    for h in reversed(hist):
+        lab = str(h.get("label") or "")
+        if lab.startswith(("baseline", "calibration", "server defaults")) or "(confirm" in lab or "re-check" in lab or h.get("verdict") == "repeat":
+            continue
+        if h.get("verdict") == "improved":  # efficiency gains within noise do not end a fruitless streak
+            break
+        streak += 1
+    stop = None
+    noise = float(ctx.get("noise_pct") or 2.0)
+    # the most the next idea could gain: half of the share of the time it acts on (relevance levels: <5 / 5-15 / 15-30 /
+    # 30-60 / >60%); when even that is below the noise it cannot show (user 194 / 174, lab: ~40 points that could not)
+    ceiling = {0: 2.5, 1: 15, 2: 30, 3: 60, 4: 100}.get(nxt.get("relevance") or 0, 0) * 0.5 if nxt else 0
+    why = ""
+    if nxt and nxt["kind"] == "config" and streak >= STOP_AFTER_FRUITLESS and (nxt.get("relevance") or 0) <= 1:
+        why = f"{streak} experiments in a row kept nothing, and the best remaining idea ({nxt['id']}) acts on little of the measured time."
+    elif nxt and nxt["kind"] == "config" and nxt["safety"] == "safe" and nxt.get("relevance") is not None and streak >= 3 and ceiling < noise:
+        why = (f"{streak} experiments in a row kept nothing, and the best remaining idea ({nxt['id']}) acts on at most ~{2 * ceiling:.0f}% "
+               f"of the time - even halving that is below the ±{noise:.1f}% noise.")
+    # safe policy, storage-bound commits: grouping is already complete and each flush is slow - no server setting the
+    # policy allows can move it, the storage can (user 194: 27 runs, ~13.5 h, after the answer was known at run 4)
+    gc = group_commit(ctx.get("summary") or {}, inp, ctx["breakdown"], (ctx.get("variables") or {}).get("log_bin"))
+    w_ms = max((ctx.get("summary") or {}).get("disk_w_await_ms") or 0, (ctx.get("summary") or {}).get("disk_flush_await_ms") or 0)
+    tried_bundle = any(str(h.get("label") or "").startswith("best-practices") for h in hist)
+    if not why and not benchmark and commit_sh >= 50 and gc and gc.get("complete") and w_ms >= 5 and tried_bundle and streak >= 1:
+        why = (f"Storage-bound commits: {commit_sh:.0f}% of the time waits for commit flushes of {w_ms:.1f} ms each, and group commit "
+               "already batches every waiting commit - no production-safe server setting changes that. See the storage advice.")
+    if why and nxt and nxt["kind"] == "config":
+        stop = why + " What limits the workload: " + "; ".join(d.get("text", "")[:160] for d in ctx["diagnosis"][:2] if d.get("type") != "none")
+        nxt = None
+    return {"stop_reason": stop,"workload": ctx["workload"], "diagnosis": ctx["diagnosis"], "breakdown": ctx["breakdown"], "items": items, "next": nxt["id"] if nxt else None,
             "blocked_by_policy": ctx.get("_blocked_items") or [],
             "phase": "safe" if safe_next else ("trade-offs" if nxt else "done")}

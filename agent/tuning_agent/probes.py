@@ -168,6 +168,11 @@ def offcpu_category(ustack, kstack):
         return best[1], best[2]
     if CLIENT_KERNEL.search(kstack):
         return "Waiting: client (next statement)", ("network",)
+    user = [f for f in frames if f.strip()]
+    if user and sum(1 for f in user if re.fullmatch(r"\s*(0x)?[0-9a-f]{6,}\s*", f.strip())) >= 0.6 * len(user) and re.search(r"futex", kstack):
+        # the stack did not symbolise: what the thread waited for is unknown, and no lever may claim it (r1 KV-1: row-lock
+        # waits filed as "other futex / concurrency" sent the tuner to concurrency settings)
+        return "Waiting: futex, unresolved stack (symbols missing)", ()
     for cat, tags, kr in KERNEL_FALLBACK:
         if kr.search(kstack):
             return cat, tags

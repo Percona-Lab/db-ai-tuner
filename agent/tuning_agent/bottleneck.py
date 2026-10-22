@@ -47,7 +47,7 @@ WAIT_PARTS = {
     "sync": ("Waiting: mutex / rwlock", ("concurrency",)),
     "table_lock": ("Waiting: table locks", ("locks",)),
     "metadata_lock": ("Waiting: metadata locks", ("locks",)),
-    "other_file_io": ("Waiting: other file I/O (temp files, ...)", ("io",)),
+    "other_file_io": ("Waiting: other file I/O (temp files, ...)", ("io", "io-tmp")),
     "socket": ("Client / network: waiting for the next statement", ("network",)),
 }
 
@@ -93,10 +93,21 @@ def breakdown(summary, inputs, cpus):
     if fg:
         # every blocked moment of the connection threads, classified by where they blocked: replaces the
         # performance_schema wait classes and row lock counters (which miss uninstrumented waits)
+        unresolved = sum((c.get("threads") or 0) for cat, c in fg.items() if "unresolved" in cat)
+        lw, lms = s.get("row_lock_waits") or 0, s.get("row_lock_wait_avg_ms") or 0
+        counted_locks = lw * lms / 1000.0  # threads waiting on row locks on average, from InnoDB's own counters
+        profiled_locks = sum((x.get("threads") or 0) for x in fg.values() if "locks" in (x.get("tags") or ()))
+        moved = min(unresolved, max(0.0, counted_locks - profiled_locks)) if unresolved else 0.0
         for cat, c in fg.items():
             if "dns" in c.get("tags", ()) and nr:
                 continue  # the uprobes cover the whole measured window, the off-CPU slice only a part
-            add(cat, c.get("threads") or 0, c.get("tags") or (), "eBPF off-CPU profile of connection threads (end of warm-up)")
+            th = c.get("threads") or 0
+            if "unresolved" in cat and moved:
+                th -= moved
+            add(cat, th, c.get("tags") or (), "eBPF off-CPU profile of connection threads (end of warm-up)")
+        if moved:
+            # stacks without symbols hide what they waited for; InnoDB's row lock counters account for this much of it
+            add("Waiting: row lock", moved, ("locks",), "InnoDB row lock counters (reconciling unresolved off-CPU stacks)")
     else:
         fio = inp.get("file_io") or {}
         split = {"data_io", "redo_io", "binlog_io"} if fio else set()

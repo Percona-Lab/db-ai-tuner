@@ -95,12 +95,16 @@ def ss_probe(port=3306, role="server"):
     except (OSError, subprocess.TimeoutExpired):
         return {}
     rtts, retrans, local = [], 0, 0
-    for m in re.finditer(r"rtt:([\d.]+)/[\d.]+", r.stdout):
+    for m in re.finditer(r"(?<!min)rtt:([\d.]+)/[\d.]+", r.stdout):
         rtts.append(float(m.group(1)))
+    # the lowest RTT each connection ever saw: the path itself, without the server's queueing (a saturated server adds its
+    # run-queue wait to every smoothed RTT)
+    mins = sorted(float(x) for x in re.findall(r"minrtt:([\d.]+)", r.stdout))
     for m in re.finditer(r"retrans:\d+/(\d+)", r.stdout):
         retrans += int(m.group(1))
     if not rtts:
         return {"mysql_conns": 0}
     rtts.sort()
     return {"mysql_conns": len(rtts), "rtt_avg_ms": round(sum(rtts) / len(rtts), 3), "rtt_p95_ms": rtts[int(0.95 * (len(rtts) - 1))],
+            **({"rtt_min_ms": mins[len(mins) // 2]} if mins else {}),
             "rtt_max_ms": rtts[-1], "conn_retrans_total": retrans}

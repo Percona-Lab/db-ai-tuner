@@ -1345,7 +1345,8 @@ def _hypothesis_add(out, r):
         return
     for tgt in (h.get("target") or ["-"])[:1]:
         e = out.setdefault(f"{h['id']}|{tgt}", {"id": h["id"], "target": tgt, "n": 0, "supported": 0, "moved": 0, "refuted": 0,
-                                                 "improved-other-mechanism": 0})
+                                                 "improved-other-mechanism": 0, "improved-unverified": 0, "efficiency": 0,
+                                                 "not-confirmed": 0})
         e["n"] += 1
         e[h["outcome"]] = e.get(h["outcome"], 0) + 1
 
@@ -1357,10 +1358,15 @@ def _experience_add(out, r):
     for rid in ids:
         e = out.setdefault(rid, {"n": 0, "wins": 0, "losses": 0, "neutral": 0, "deltas": []})
         e["n"] += 1
-        if r["verdict"] in ("improved", "efficiency-gain"):
+        ev = store.uj(r["evaluation"], {}) or {}
+        v = ev.get("unsteady_verdict") or r["verdict"]  # the measured direction, before a not-steady window made it inconclusive
+        if v == "improved":
             e["wins"] += 1
-        elif r["verdict"] in ("regressed", "efficiency-loss"):
+        elif v in ("regressed", "efficiency-loss"):
             e["losses"] += 1
+        elif v == "efficiency-gain":
+            e["efficiency"] = e.get("efficiency", 0) + 1  # less work for the same goal: not a win (user review)
+            e["neutral"] += 1
         else:
             e["neutral"] += 1
         if delta is not None:

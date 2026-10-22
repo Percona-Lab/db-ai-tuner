@@ -39,7 +39,12 @@ DEFAULT_GOAL_NOISE = 2.0
 MIN_GOAL_NOISE = 2.0  # used only until the session (or this environment's history) has measured long-term variance
 RESOLUTION_NOISE = 0.5  # below this a difference is not worth acting on, however stable the environment
 MIN_EFF_NOISE = 3.0
+# an efficiency metric decides a verdict only when the resource is under load and its per-unit value is material: on an
+# in-memory read-only load 0.0014 -> 0.0008 KiB of disk per transaction is "-40%" of nothing (r1 RO-1: 6 such "gains")
+MATERIAL = {"disk_ios_per_trx": 0.05, "disk_kb_per_trx": 1.0, "db_mem_mb": 256.0}
+DEFERRABLE = ("disk_ios_per_trx", "disk_kb_per_trx")  # I/O a window can push past its end (flushing, purge)
 NOISE_K = 2.5  # threshold = K x coefficient of variation of single runs
+CONFIRM_K = 1.65  # confirmation of a screened change on its repeats alone: one-sided ~95%
 EXCLUDED = ("unreliable", "superseded")  # never compared, averaged, kept or used for calibration
 NOISE_TARGET = 3.0  # noise threshold (%) above which typical tuning gains (2-8% on OLTP) are hard to see
 
@@ -104,7 +109,7 @@ def environment_shift(run_summary, noise):
     return out
 
 
-def noise_estimate(runs, prior_cv=None):
+def noise_estimate(runs, prior_cv=None, prior_dof=4):
     """Goal noise of THIS environment + workload, re-estimated from every configuration measured more than once.
 
     Back-to-back repeats (calibration) only show short-term noise; repeats separated by other runs (re-checks,
@@ -120,6 +125,12 @@ def noise_estimate(runs, prior_cv=None):
         groups.setdefault(config_key(r.get("managed")), []).append(r)
     stats = []  # (cv of the group, its degrees of freedom, separated in time, seqs)
     for g in groups.values():
+        g = sorted(g, key=lambda r: r["seq"])
+        if not str(g[0].get("label") or "").startswith(("baseline", "calibration")) and len(g) > 1 and "label" in g[0]:
+            # a configuration measured again because its first run looked good (confirmation, re-check of a kept change):
+            # that run was selected, so its spread from the repeats is winner's curse, not noise (canaries: confirm runs
+            # -2.8% vs their first run on average, baselines -0.8%) - only the unselected repeats count
+            g = g[1:]
         if len(g) < 2:
             continue
         vals = [r["goal_value"] for r in g]
@@ -146,11 +157,55 @@ def noise_estimate(runs, prior_cv=None):
     if long_term:
         pct, basis = max(RESOLUTION_NOISE, NOISE_K * cv), f"{int(dof)} repeat(s), {long_term} separated in time"
     elif prior_cv is not None:
-        pct, basis = max(RESOLUTION_NOISE, NOISE_K * max(cv, prior_cv)), "back-to-back repeats + earlier sessions on this environment"
+        # the prior and this session's repeats pooled by their degrees of freedom: max() only ever went up (canaries: CV 0.47%
+        # in the session, threshold 6% from the prior alone)
+        pooled = ((cv * cv * dof + prior_cv * prior_cv * prior_dof) / (dof + prior_dof)) ** 0.5
+        pct, basis = max(RESOLUTION_NOISE, NOISE_K * pooled), "back-to-back repeats pooled with earlier sessions on this environment"
     else:
         pct, basis = max(MIN_GOAL_NOISE, NOISE_K * cv), "back-to-back repeats only (no long-term evidence yet)"
     return {"noise_pct": round(pct, 2), "pooled_cv_pct": round(cv, 3), "dof": int(dof), "long_term_dof": long_term,
             "prior_cv_pct": prior_cv, "basis": basis, **({"outlier_groups": outliers} if outliers else {})}
+
+
+DEBT_KEYS = ("checkpoint_age_pct", "bp_dirty_pct", "history_list_length", "ibuf_size")
+
+
+def _debt_growth(summary):
+    """Relative growth of deferred work from the middle to the last third of a window (steady_state evidence)."""
+    ev = ((summary or {}).get("steady_state") or {}).get("evidence") or {}
+    g = 0.0
+    for k in DEBT_KEYS:
+        a, b = (ev.get(k) or [None, None])[:2]
+        if a is not None and b is not None and b > a:
+            g += (b - a) / max(abs(a), 1e-9)
+    return g
+
+
+def _unsteady_bias(run, history, d, v, goal):
+    """Why a not-steady window cannot explain this verdict (None when it can): deferred work piling up flatters the run
+    that defers, so it cannot produce a regression; a window still warming up understates the run, so it cannot produce
+    an improvement; and a candidate that accumulates no more debt than its parent did is compared on equal terms (lab
+    205 redo-grow +19.9%, 221 thread pool -72.7% had been turned neutral)."""
+    reasons = d.get("not_steady") or []
+    rising_only = all(r.startswith("throughput +") for r in reasons)
+    debt = any(not r.startswith("throughput") for r in reasons)
+    if goal == "latency":
+        return None  # direction of the bias on latency goals is not modelled
+    if v == "regressed" and not rising_only:
+        return "deferred work flatters the run that defers it, so it cannot explain a regression - the verdict stands."
+    if v == "improved" and rising_only:
+        return "throughput was still rising, which understates this run - the improvement stands."
+    if v == "improved" and debt:
+        par = [h for h in history if h.get("seq") in (d.get("parent_runs") or [])]
+        pg = [_debt_growth(h.get("summary")) for h in par if (h.get("summary") or {}).get("steady_state")]
+        if pg and _debt_growth(run.get("summary")) <= 1.25 * (sum(pg) / len(pg)) + 0.02:
+            return "the parent configuration accumulated as much deferred work in its windows, so both sides are compared alike."
+    return None
+
+
+# the largest bias unpaid deferred work (flushing, purge, change-buffer merges) is credited with when a window is not at
+# steady state: differences beyond max(4 x noise, this) keep their verdict
+NOT_STEADY_MAX_BIAS_PCT = 25.0
 
 
 def warmup_check(runs, warmup):
@@ -422,7 +477,22 @@ def verdict(run, history, goal, noise):
         return "unreliable", {"client_saturated": cl, "note": f"UNRELIABLE: {cl}. The measured throughput is the client's limit, "
                                                               "so the run is kept for reference but excluded from comparisons."}
     v, d = _verdict(run, history, goal, noise)
-    if (d or {}).get("not_steady") and v in ("improved", "regressed"):
+    gn = float((d or {}).get("goal_noise_pct") or 0)
+    big = abs(float((d or {}).get("goal_delta_pct") or 0)) > max(4 * gn, NOT_STEADY_MAX_BIAS_PCT)
+    if (d or {}).get("not_steady") and v in ("improved", "regressed") and not big:
+        why = _unsteady_bias(run, history, d, v, goal)
+        if why:  # the unsteadiness cannot explain this difference: the verdict stands, with the reason
+            d = dict(d, not_steady_beyond_bias=True, note=f"{v} by {d.get('goal_delta_pct')}% although the window was not at steady "
+                                                          f"state ({'; '.join(d['not_steady'])}): {why}")
+            big = None  # handled
+    if big is None:
+        pass
+    elif (d or {}).get("not_steady") and v in ("improved", "regressed") and big:
+        # unpaid deferred work can bias a window by a few percent, not by multiples: a difference this large stands
+        # (session 210: the calibrated baseline +419% over server defaults had been cancelled, so the defaults stayed "best")
+        d = dict(d, not_steady_beyond_bias=True, note=f"{v} by {d.get('goal_delta_pct')}% although the window was not at steady state "
+                         f"({'; '.join(d['not_steady'])}): far beyond what unpaid deferred work could explain, so the verdict stands.")
+    elif (d or {}).get("not_steady") and v in ("improved", "regressed"):
         # deferred work (flushing, purge, change-buffer merges) was still piling up or the window still warming at its
         # end: the difference may come from what the window did not pay for, so it decides nothing either way
         d = dict(d, unsteady_verdict=v,
@@ -464,13 +534,31 @@ def confirm_pass(runs, goal, noise):
         par = [x for x in runs if x["seq"] in (ev.get("parent_runs") or []) and x.get("goal_value") is not None]
         if len(mine) < 2 or not par:
             continue
-        m = _mean([x["goal_value"] for x in mine])
+        # two-stage test: the first run screened the change (and was selected for looking good - winner's curse), the
+        # repeats test it independently: judged on the repeats alone, one-sided at ~95% (CONFIRM_K sigma, not the 2.5
+        # sigma of the screening)
+        rep = [x for x in mine if x["seq"] != r["seq"]] or mine
+        m = _mean([x["goal_value"] for x in rep])
         pm = _mean([x["goal_value"] for x in par])
         d = improvement(goal, m, pm)
-        thr = max(RESOLUTION_NOISE, mean_noise(noise_pct, len(mine), len(par)))
-        ok = d is not None and (d >= -thr if eff else d > thr)
+        thr = max(RESOLUTION_NOISE, CONFIRM_K / NOISE_K * mean_noise(noise_pct, len(rep), len(par)))
+        ok = d is not None and (d >= -0.5 * thr if eff else d > thr)
+        if ok and eff:
+            # the saving itself must hold on the repeats, not only the goal (lab 177 / 180: a disk-KiB "gain" confirmed by
+            # repeats that only checked the goal)
+            held = []
+            for k, e in ((ev.get("efficiency") or {}).items()):
+                if not e.get("counts") or (e.get("improvement_pct") or 0) <= (e.get("noise_pct") or 0):
+                    continue
+                rv = [x["summary"][k] for x in rep if (x.get("summary") or {}).get(k) is not None]
+                pv = [x["summary"][k] for x in par if (x.get("summary") or {}).get(k) is not None]
+                if rv and pv and _mean(pv):
+                    held.append(100.0 * (_mean(pv) - _mean(rv)) / _mean(pv) > CONFIRM_K / NOISE_K * (e.get("noise_pct") or MIN_EFF_NOISE))
+            ok = any(held) if held else ok
         new = ("efficiency-gain" if eff else "improved") if ok else "neutral"
-        ev = dict(ev, confirmed=ok, confirmed_runs=[x["seq"] for x in mine], confirmed_delta_pct=d, confirmed_threshold_pct=round(thr, 2))
+        ev = dict(ev, confirmed=ok, confirmed_runs=[x["seq"] for x in rep], confirmed_delta_pct=d, confirmed_threshold_pct=round(thr, 2))
+        if ok:
+            ev["ever_confirmed"] = True
         if eff:
             ev["confirmed_kind"] = "efficiency-gain"
         if not ok and d is None:
@@ -478,7 +566,7 @@ def confirm_pass(runs, goal, noise):
         elif not ok:
             ev["note"] = (f"Efficiency gain not confirmed: the mean of runs {ev['confirmed_runs']} is {d:+.2f}% vs the parent, worse than "
                           f"the ±{thr:.2f}% threshold for these run counts." if eff else
-                          f"Not confirmed: the mean of runs {ev['confirmed_runs']} is {d:+.2f}% vs the parent, within the ±{thr:.2f}% "
+                          f"Not confirmed: the repeat run(s) {ev['confirmed_runs']} measured {d:+.2f}% vs the parent, within the ±{thr:.2f}% "
                           "threshold for these run counts (the first run was lucky).")
         elif ev.get("note", "").startswith(("Not confirmed", "Efficiency gain not confirmed")):
             ev.pop("note")
@@ -555,7 +643,14 @@ def _verdict(run, history, goal, noise):
         dev = improvement(goal, run.get("goal_value"), same["goal"])
         d = {"note": "configuration measured before; averaged into its mean", "same_config_runs": same["seqs"],
              "same_config_mean": round(same["goal"], 4), "deviation_pct": dev, "goal_noise_pct": goal_noise}
-        if dev is not None and abs(dev) > goal_noise and (noise or {}).get("runs"):  # only once noise is calibrated
+        earlier = [h for h in history if h.get("seq") in same["seqs"]]
+        selected = len(earlier) == 1 and not str(earlier[0].get("label") or "").startswith(("baseline", "calibration"))
+        if dev is not None and abs(dev) > goal_noise and (noise or {}).get("runs") and selected:
+            # the only earlier run is the experiment run that got this configuration repeated: it was selected for
+            # passing the threshold, so a lower repeat is regression to the mean, not a changed environment
+            d["note"] = (f"This repeat measured {dev:+.1f}% versus the run that triggered it (run {same['seqs'][0]}): that run was "
+                         "likely lucky - it was repeated because it looked good - rather than the environment changing.")
+        elif dev is not None and abs(dev) > goal_noise and (noise or {}).get("runs"):  # only once noise is calibrated
             d["drift"] = True
             d["note"] = (f"DRIFT: this configuration measured {dev:+.1f}% versus its earlier mean (runs {same['seqs']}), beyond the "
                          f"±{goal_noise}% noise. The environment changed (data growth, noisy neighbour, caches?) — "
@@ -585,9 +680,10 @@ def _verdict(run, history, goal, noise):
         # every resource counts as a tie-breaker (less is better even when it is not the bottleneck); `relevant` is
         # kept for the explanation only. Thresholds stay noise-based, so only meaningful differences count.
         relevant = (k in CPU_METRICS and rel["cpu"]) or (k in IO_METRICS and rel["io"]) or k in MEM_METRICS
-        details["efficiency"][k]["counts"] = k in KEY_EFFICIENCY
+        material = pm[k] >= MATERIAL.get(k, 0.0)
+        details["efficiency"][k]["counts"] = k in KEY_EFFICIENCY and relevant and material
         details["efficiency"][k]["under_load"] = relevant
-        if k in KEY_EFFICIENCY:
+        if k in KEY_EFFICIENCY and relevant and material:
             if ch > thr:
                 better.append(label)
             elif ch < -thr:
@@ -612,6 +708,16 @@ def _verdict(run, history, goal, noise):
     if d_goal < -goal_noise:
         return "regressed", details
     if better and not worse:
+        if d_goal < -0.5 * goal_noise:
+            # the same result for less work - not a loss in the goal's point estimate beyond half the threshold
+            # (user 174: purge_threads=2 at -10.5% and redo-grow at -6% kept as "gains" on disk I/O)
+            details["note"] = (f"Uses less ({', '.join(better)}) but the goal is {d_goal:+.2f}%, more than half the ±{goal_noise}% "
+                               "threshold below the parent: not kept as an efficiency gain.")
+            return "neutral", details
+        if details.get("not_steady") and any(EFFICIENCY.get(k) in better for k in DEFERRABLE):
+            details["note"] = ("Less I/O per transaction while deferred work was still piling up at the end of the window: the "
+                               "saving may be I/O pushed past the window. Not kept as an efficiency gain.")
+            return "neutral", details
         return "efficiency-gain", details
     if worse and not better:
         return "efficiency-loss", details

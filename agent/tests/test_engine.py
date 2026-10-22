@@ -191,7 +191,7 @@ def test_network_rules():
     quiet = engine.run_engine({**base, "variables": v, "summary": OLTP[0]})
     assert not [i for i in quiet["items"] if i["id"].startswith(("net-", "client-", "skip-name"))]  # no network signal -> nothing
     noisy = dict(OLTP[0], net_listen_overflows=3.0, net_conn_per_s=400, net_softnet_drops=2, softirq_max_cpu_pct=70,
-                 softirq_avg_cpu_pct=20, rtt_avg_ms=18, conntrack_fill_pct=90, threads_running_avg=12)
+                 softirq_avg_cpu_pct=20, rtt_avg_ms=18, rtt_min_ms=17, conntrack_fill_pct=90, threads_running_avg=12)
     # a high connection rate alone is not evidence for skip_name_resolve: measured DNS time is
     res = engine.run_engine({**base, "variables": v, "summary": noisy})
     assert "skip-name-resolve" not in {i["id"] for i in res["items"]}
@@ -230,7 +230,7 @@ def test_oom():
 def test_bp_rounding_and_mariadb_chunk():
     v = dict(VARS, innodb_buffer_pool_chunk_size=str(128 * 2 ** 20), innodb_buffer_pool_instances="2")
     assert engine.bp_round(v, 1920 * 2 ** 20) == 1792 * 2 ** 20 and engine.bp_round(v, 1920 * 2 ** 20, up=True) == 2048 * 2 ** 20
-    res = run(dict(OLTP[0], swap_in=500, swap_out=50), OLTP[1], policy="safe")
+    res = run(dict(OLTP[0], swap_in=2000, swap_out=50), OLTP[1], policy="safe")  # swapping that costs (>5 MB/s back in)
     it = {i["id"]: i for i in res["items"]}
     assert int(it["bp-shrink"]["changes"][0]["proposed"].rstrip("M")) % 256 == 0
     from tuning_agent import baseline
@@ -371,10 +371,15 @@ def test_io_bound_advanced_sweeps():
     try:
         hw = dict(HW, cpus=16, ram_bytes=32 * GiB)
         summ = dict(OLTP[0], bp_hit_pct=93.0, bp_disk_reads=3000, cpu_busy=55)
-        ctx = {"variables": dict(VARS), "summary": summ, "inputs": OLTP[1], "hw": hw, "policy": "safe", "goal": "tps", "flavor": "mysql",
+        # what the LRU depth and the read threads act on: free-page waits, asynchronous (read-ahead) reads
+        inp = dict(OLTP[1], status_rates=dict(OLTP[1].get("status_rates") or {}, Innodb_buffer_pool_wait_free=5, Innodb_buffer_pool_read_ahead=40))
+        ctx = {"variables": dict(VARS), "summary": summ, "inputs": inp, "hw": hw, "policy": "safe", "goal": "tps", "flavor": "mysql",
                "history": [{"seq": 1, "managed": {}, "goal_value": 1}], "os_tuning": True}
         it = {i["id"] for i in engine.run_engine(ctx)["items"]}
         assert {"sweep-dirty-lwm", "sweep-lru-depth", "sweep-read-io-threads"} <= it, sorted(it)
+        # without them: neither (r1: 7 neutral read-thread runs at read-ahead 0)
+        it0 = {i["id"] for i in engine.run_engine(dict(ctx, inputs=OLTP[1]))["items"]}
+        assert not {"sweep-lru-depth", "sweep-read-io-threads"} & it0, sorted(it0)
     finally:
         for k in ("innodb_max_dirty_pages_pct_lwm", "innodb_lru_scan_depth", "innodb_read_io_threads"):
             VARS.pop(k)
@@ -549,7 +554,7 @@ def test_storage_and_stability_signals():
     sw = {"dbproc_swap_mb": 2300, "dbproc_workingset_refault_anon_per_s": 500}
     hist = [{"seq": 1, "label": "baseline", "managed": {"a": {"value": "1"}}, "verdict": "reference", "goal_value": 100, "summary": dict(sw)},
             {"seq": 2, "label": "x", "managed": {"a": {"value": "2"}}, "verdict": "efficiency-gain", "goal_value": 100.5,
-             "summary": {"dbproc_swap_mb": 10, "dbproc_workingset_refault_anon_per_s": 0}, "evaluation": {"parent_runs": [1]}}]
+             "summary": {"dbproc_swap_mb": 10, "dbproc_workingset_refault_anon_per_s": 0}, "evaluation": {"parent_runs": [1], "confirmed": True}}]
     assert engine.best_config(hist, "tps", 2.0)["seqs"] == [2]
     hist[1].update(verdict="regressed", goal_value=65)
     assert engine.best_config(hist, "tps", 2.0)["seqs"] == [1]
@@ -600,7 +605,22 @@ def test_unsteady_and_window_goal():
            "summary": {"tps": 80.0, "steady_state": {"steady": False, "growing": ["dirty pages % 40 -> 70"]}},
            "changes": [{"variable": "a", "old": "1", "new": "2", "source": "rec:x"}]}
     v, ev = evaluate.verdict(exp, [base], "tps", {"noise_pct": 2.0})
-    assert v == "neutral" and ev.get("unsteady_verdict") == "regressed"
+    # deferred work piling up flatters the run that defers it: it cannot explain a regression, which stands
+    assert v == "regressed" and "cannot explain a regression" in ev.get("note", ""), (v, ev.get("note"))
+    # an improvement measured while it piles up more debt than its parent did is inconclusive
+    gain = dict(exp, goal_value=110.0, summary={"tps": 110.0, "steady_state": {"steady": False, "growing": ["dirty pages % 40 -> 70"],
+                                                                              "evidence": {"bp_dirty_pct": [40, 70]}}})
+    base_s = dict(base, summary={"tps": 100.0, "steady_state": {"steady": True, "growing": [], "evidence": {"bp_dirty_pct": [40, 41]}}})
+    v, ev = evaluate.verdict(gain, [base_s], "tps", {"noise_pct": 2.0})
+    assert v == "neutral" and ev.get("unsteady_verdict") == "improved", (v, ev.get("note"))
+    # ... unless the parent piled up as much: compared alike, the improvement stands
+    base_s["summary"]["steady_state"]["evidence"]["bp_dirty_pct"] = [40, 70]
+    v, ev = evaluate.verdict(gain, [base_s], "tps", {"noise_pct": 2.0})
+    assert v == "improved" and "compared alike" in ev.get("note", ""), (v, ev.get("note"))
+    # ... but not a difference far beyond what unpaid deferred work could explain (session 210: baseline +419% vs defaults)
+    huge = dict(exp, goal_value=520.0, summary=dict(exp["summary"], tps=520.0))
+    v, ev = evaluate.verdict(huge, [base], "tps", {"noise_pct": 2.0})
+    assert v == "improved" and "verdict stands" in ev.get("note", ""), (v, ev.get("note"))
     # sysbench goal from the interval lines inside the measured window
     d = tempfile.mkdtemp(); p = os.path.join(d, "x.ini")
     open(p, "w").write("[bench]\nname=x\nrun=true\nwarmup=20\nduration=30\n[metrics]\nsysbench_tps = transactions:\\s+\\d+\\s+\\(([\\d.]+) per sec\n")
@@ -971,15 +991,16 @@ def test_efficiency_gain_needs_its_repeat():
             for s, g, v in ((5, 801, "improved"), (6, 780, "repeat"), (10, 788, "repeat"), (14, 795, "repeat"))]
     runs.append({"seq": 15, "label": "group-commit-delay", "managed": gcd, "goal_value": 749, "verdict": "efficiency-gain",
                  "evaluation": {"parent_runs": [5, 6, 10, 14]}})
-    assert engine.best_config(runs, "tps", 6.76)["seqs"] == [15]
+    # a single unconfirmed efficiency gain is not the best configuration yet (canary review: #202)
+    assert engine.best_config(runs, "tps", 6.76)["seqs"] == [5, 6, 10, 14]
     runs.append({"seq": 21, "label": "best safe config, confirmation", "managed": gcd, "goal_value": 711, "verdict": "repeat", "evaluation": {}})
     ch = evaluate.confirm_pass(runs, "tps", {"noise_pct": 6.76})
     assert (15, "efficiency-gain", "neutral") in ch
     assert engine.best_config(runs, "tps", 6.76)["seqs"] == [5, 6, 10, 14]
     # a repeat that holds keeps it
-    runs[-1]["goal_value"], runs[4]["verdict"], runs[4]["evaluation"] = 770, "efficiency-gain", {"parent_runs": [5, 6, 10, 14]}
+    runs[-1]["goal_value"], runs[4]["verdict"], runs[4]["evaluation"] = 790, "efficiency-gain", {"parent_runs": [5, 6, 10, 14]}
     evaluate.confirm_pass(runs, "tps", {"noise_pct": 6.76})
-    assert runs[4]["verdict"] == "efficiency-gain"
+    assert runs[4]["verdict"] == "efficiency-gain" and engine.best_config(runs, "tps", 6.76)["seqs"] == [15, 21]
 
 
 def test_swap_hazard_needs_measured_cost():
@@ -1244,9 +1265,16 @@ def test_numa_detection_and_rules():
     ctx1 = dict(ctx, os_facts={"os:numa_nodes": 1})
     assert not any(i["id"].startswith(("numa-", "os-zone")) for i in engine.run_engine(ctx1)["items"])
     # a small server that fits one node: the single-node experiment
-    small = dict(ctx, summary=dict(summ, mysqld_cpu_pct=400, db_mem_mb=20000),
+    # mysqld_cpu_pct is a share of the host: 10% of the host's CPUs; with measured remote allocations
+    small = dict(ctx, summary=dict(summ, mysqld_cpu_pct=10, db_mem_mb=20000, numa_other_node_pct=8.0),
                  variables=dict(vars_, innodb_buffer_pool_size=str(16 * GiB)))
     assert "numa-single-node" in {i["id"] for i in engine.run_engine(small)["items"]}
+    # no measured cross-node traffic: nothing to remove by binding (user 194: 0.0-0.47%)
+    quiet = dict(small, summary=dict(small["summary"], numa_other_node_pct=0.4))
+    assert "numa-single-node" not in {i["id"] for i in engine.run_engine(quiet)["items"]}
+    # a 188 GiB buffer pool does not fit a 126 GiB node, whatever the PSS says (huge pages hid it)
+    big = dict(small, variables=dict(vars_, innodb_buffer_pool_size=str(188 * GiB)))
+    assert "numa-single-node" not in {i["id"] for i in engine.run_engine(big)["items"]}
 
 
 def test_numa_mysql_side():
@@ -1453,7 +1481,8 @@ def test_commit_bound_from_measured_wait_despite_group_commit():
     summ = dict(OLTP[0], tps=1294.0, data_fsyncs=55.4, log_fsyncs_per_s=37.7, disk_w_await_ms=20.9, disk_await_ms=20.9)
     ctx = {"goal": "tps", "policy": "safe", "os_tuning": True, "os_facts": {}, "hw": HW, "flavor": "percona", "version": (8, 4, 11),
            "variables": dict(VARS, log_bin="OFF", innodb_log_write_ahead_size="8192"), "summary": summ,
-           "inputs": dict(OLTP[1], time_breakdown=bd), "history": [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}],
+           "inputs": dict(OLTP[1], time_breakdown=bd, file_io={"redo": {"reads": 12, "writes": 9000, "syncs": 900}}),
+           "history": [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}],
            "noise_pct": 19.7, "managed": {}}
     res = engine.run_engine(ctx)
     d = [x for x in res["diagnosis"] if x["type"] == "commit"]
@@ -1514,6 +1543,51 @@ def test_memory_budget_reserves_what_the_host_uses_outside_mysqld():
     assert not memory.budget(v, hw)["over_budget"]                       # the old 10% reserve let it through
     assert memory.budget(v, hw, host_other=other)["over_budget"]          # with the measured usage it does not fit
     assert memory.budget(v, hw, host_other=1 * GB)["os_reserve"] == int(3 * GB)  # small usage: the 10% floor stays
+
+
+def test_noise_without_winners_curse_and_confirmation_on_repeats():
+    # canary review 2026-10-22: selected first runs inflated the noise, the prior only ratcheted up, and confirmations
+    # averaged the lucky first run in (log_writer_threads OFF +7.8% lost in #195)
+    base = [{"seq": i, "label": f"baseline ({i}/3)", "goal_value": v, "managed": {}, "verdict": "repeat"} for i, v in ((1, 3300), (2, 3310), (3, 3290))]
+    lucky = [{"seq": 4, "label": "lwt-off", "goal_value": 3560, "managed": {"lwt": "OFF"}, "verdict": "improved"},
+             {"seq": 5, "label": "lwt-off (confirm)", "goal_value": 3430, "managed": {"lwt": "OFF"}, "verdict": "repeat"}]
+    est = evaluate.noise_estimate(base + lucky)
+    assert est["dof"] == 2 and est["pooled_cv_pct"] < 0.5, est           # the selected run 4 is not noise
+    low = evaluate.noise_estimate(base, prior_cv=2.4, prior_dof=4)
+    assert low["noise_pct"] < 2.5 * 2.4, low                               # pooled with the prior, not max()
+    runs = base + [dict(lucky[0], evaluation={"parent_runs": [1, 2, 3]}), lucky[1]]
+    ch = evaluate.confirm_pass(runs, "tps", {"noise_pct": 4.3})
+    ev = runs[3]["evaluation"]
+    assert ev["confirmed"] and ev["confirmed_runs"] == [5] and runs[3]["verdict"] == "improved", (ch, ev)
+    # the repeat alone at +1% does not confirm
+    runs[4]["goal_value"] = 3333
+    evaluate.confirm_pass(runs, "tps", {"noise_pct": 4.3})
+    assert runs[3]["verdict"] == "neutral" and "repeat run(s) [5]" in runs[3]["evaluation"]["note"]
+
+
+def test_decision_rules_from_the_audit():
+    # 2026-10-22 decision audit: storage-bound stop (user 194), concurrency limiters off commit-bound loads (lab 205 / 217),
+    # evidence-backed trade-off first under benchmark policy, ceiling stop
+    bd = [{"name": "Waiting: commit - redo flush", "threads": 34.5, "tags": ["commit"], "share_pct": 78.0},
+          {"name": "CPU: B-tree / row access", "threads": 2.0, "tags": ["cpu", "cpu-btree"], "share_pct": 5.0}]
+    summ = dict(OLTP[0], tps=1294.0, log_fsyncs_per_s=37.7, disk_w_await_ms=20.9, cpu_busy=23, threads_running_avg=64,
+                threads_connected_avg=65, dbproc_runq_wait_pct=40, dbproc_runq_wait_threads=40)
+    neutral = lambda seq, lab: {"seq": seq, "label": lab, "verdict": "neutral", "managed": {"x": str(seq)}, "changes": []}  # noqa: E731
+    hist = [{"seq": 1, "label": "baseline (1/3)", "verdict": "reference", "managed": {}, "changes": []},
+            neutral(2, "best-practices"), neutral(3, "os-hugepages"), neutral(4, "os-numa")]
+    ctx = {"goal": "tps", "policy": "safe", "os_tuning": True, "os_facts": {}, "hw": dict(HW, cpus=32), "flavor": "percona",
+           "version": (8, 4, 11), "variables": dict(VARS, log_bin="OFF"), "summary": summ,
+           "inputs": dict(OLTP[1], time_breakdown=bd), "history": hist, "noise_pct": 5.0, "managed": {}}
+    res = engine.run_engine(ctx)
+    it = {i["id"]: i for i in res["items"]}
+    assert res["next"] is None and "Storage-bound commits" in (res.get("stop_reason") or ""), (res["next"], res.get("stop_reason"))
+    for q in ("thread-pool", "sweep-thread-concurrency"):
+        assert q not in it or it[q]["confidence"] == 0, q
+    # benchmark policy: a durability trade-off acting on the 78% commit time goes before a safe idea with no evidence
+    calm = dict(summ, checkpoint_age_pct_max=10, bp_dirty_pct_avg=5, disk_util=20, bp_hit_pct=99.9, bp_disk_reads=0, bp_wait_free=0)
+    b = engine.run_engine(dict(ctx, policy="benchmark", history=hist[:2], summary=calm))
+    nx = {i["id"]: i for i in b["items"]}.get(b["next"]) or {}
+    assert nx.get("safety") == "trade-off", (b["next"], nx.get("safety"))
 
 if __name__ == "__main__":
     fails = 0

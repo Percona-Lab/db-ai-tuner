@@ -35,7 +35,7 @@ sb_profile() {  # sb_profile <file> <name> <test> <tables> <rows> <threads> <ran
   cat > $f <<INI
 [bench]
 name = $name
-run = ulimit -n 1048576; sysbench $test --tables=$t --table-size=$r --threads=$th --rand-type=$rnd $(SB) --time={total} --report-interval=10 --mysql-ignore-errors=all $* run
+run = ulimit -n 1048576; sysbench $test --tables=$t --table-size=$r --threads=$th --rand-type=$rnd $(SB) $([ $th -ge 1024 ] && echo --thread-init-timeout=600) --time={total} --report-interval=10 --mysql-ignore-errors=all $* run
 warmup = $wu
 duration = $du
 timeout = $(( (wu + du) * 3 + 600 ))

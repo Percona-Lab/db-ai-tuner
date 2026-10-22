@@ -431,7 +431,7 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
     # into 48 GB (Scaleway sweep: the "win" was the larger pool). Keep the intended size exact with a chunk size that
     # divides it (45G / 32 = 1440M -> 120M chunks); a size no chunk can fit is rounded down by at most instances x 1 MiB.
     vs = {ch["variable"]: ch for ch in changes}
-    if "innodb_buffer_pool_instances" in vs or "innodb_buffer_pool_size" in vs:
+    if "innodb_buffer_pool_instances" in vs or "innodb_buffer_pool_size" in vs or "innodb_buffer_pool_chunk_size" in vs:
         try:
             cur = c.db.variables()
             comp = _bp_companions(vs, cur, source)
@@ -855,11 +855,14 @@ def _assess_hypothesis(c, sess, seq, verdict, evaluation, summary, inputs):
         except (OSError, ValueError, KeyError):
             pass
     shrank = change is not None and change <= -10
-    better = verdict in ("improved", "efficiency-gain")
     if h.get("kind") in ("revert", "validation", "requested"):
         out["outcome"] = "done"
-    elif better:
-        out["outcome"] = "supported" if shrank or change is None else "improved-other-mechanism"
+    elif verdict == "improved":
+        # "supported" needs both halves of the prediction: the goal improved AND the targeted time shrank (r1 / user
+        # review: "supported" was recorded for goal losses and efficiency-only results, and taught the learner)
+        out["outcome"] = "supported" if shrank else ("improved-unverified" if change is None else "improved-other-mechanism")
+    elif verdict == "efficiency-gain":
+        out["outcome"] = "efficiency"  # less work for the same goal: not a win for the hypothesis
     elif shrank:
         out["outcome"] = "moved"  # the mechanism worked, but that part of the time was not what limited the goal
     else:
@@ -912,7 +915,8 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     try:  # memory budget of the configuration as measured, with mysqld's measured memory next to the model
         from . import memory
         mb = memory.budget(c.variables, c.hw(), _client_reserve(c), measured=((summary.get("dbproc_pss_mb") or 0) + (summary.get("dbproc_swap_mb") or 0)) * 2 ** 20 or None,
-                           host_other=memory.host_other_bytes(summary, (c.hw() or {}).get("ram_bytes")))
+                           host_other=memory.host_other_bytes(summary, (c.hw() or {}).get("ram_bytes")),
+                           active_measured=memory.active_from(summary))
         summary["memory_budget"] = {"needed": mb["needed"], "ram": mb["ram"], "headroom": mb["headroom"], "over_budget": mb["over_budget"],
                                     "mysqld_model": mb["mysqld_bytes"], "mysqld_measured": mb.get("measured_mysqld_bytes"),
                                     "active_connections": mb["active_connections"], "text": memory.text(mb)}
@@ -1195,7 +1199,8 @@ def _host_other_now():
             for line in open(f"/proc/{pid}/status"):
                 if line.startswith("VmRSS:"):
                     rss = int(line.split()[1]) * 1024
-        return max(0, mi.get("MemTotal", 0) - mi.get("MemAvailable", 0) - rss) or None
+        hp = mi.get("HugePages_Total", 0) / 1024 * mi.get("Hugepagesize", 0)  # pages x page bytes (meminfo() scales every value by 1024)
+        return max(0, int(mi.get("MemTotal", 0) - mi.get("MemAvailable", 0) - rss - hp)) or None
     except (OSError, ValueError):
         return None
 
@@ -1549,8 +1554,9 @@ def _noise_key(sess):
 
 
 def _prior_cv(c, sess):
-    """Long-term goal CV measured by earlier sessions of the same benchmark on this environment (median of the last 5)."""
-    hist = (c.state.get("noise_history") or {}).get(_noise_key(sess)) or []
+    """Long-term goal CV measured by earlier sessions of the same benchmark on this environment (median of the last 5).
+    Entries from before 2026-10-22 (v < 2) pooled selected first runs into the CV (winner's curse) and are ignored."""
+    hist = [h for h in ((c.state.get("noise_history") or {}).get(_noise_key(sess)) or []) if h.get("v", 1) >= 2]
     vals = sorted(h["cv"] for h in hist[-5:])
     return vals[len(vals) // 2] if vals else None
 
@@ -1559,6 +1565,12 @@ def _refresh_noise(c, sess, runs):
     """Re-estimate the goal noise threshold from all repeats so far (variance is environment and workload specific)."""
     if not sess.get("noise"):
         return
+    # calibration runs the calibration itself set aside (a cold first run before the slide was detected) stay out of
+    # every later estimate too (user session 194: back in, they took the threshold from ±5.1% to ±11.3%)
+    cal_runs = set((sess.get("noise") or {}).get("runs") or [])
+    if cal_runs:
+        runs = [r for r in runs if not (str(r.get("label") or "").startswith("baseline") and r["seq"] not in cal_runs
+                                        and r["seq"] < max(cal_runs))]
     est = evaluate.noise_estimate(runs, _prior_cv(c, sess))
     if not est:
         return
@@ -1585,7 +1597,7 @@ def _remember_noise(c, sess):
     est = (sess.get("noise") or {}).get("estimate") or {}
     if est.get("long_term_dof"):
         h = c.state.data.setdefault("noise_history", {}).setdefault(_noise_key(sess), [])
-        h.append({"cv": est["pooled_cv_pct"], "dof": est["dof"], "session": sess.get("id"), "t": time.time()})
+        h.append({"cv": est["pooled_cv_pct"], "dof": est["dof"], "session": sess.get("id"), "t": time.time(), "v": 2})
         del h[:-10]
         c.state.save()
 
@@ -1863,6 +1875,16 @@ def _confirm(c, sess=None, save=True):
             c.client.post(f"/runs/{r['id']}/evaluation", {"verdict": r["verdict"], "evaluation": r["evaluation"]})
         if old != new:
             log(f"   run {seq}: {old} -> {new} ({(r['evaluation'] or {}).get('note') or 'confirmed by its repeat'})")
+        if old in ("improved", "efficiency-gain") and new not in ("improved", "efficiency-gain"):
+            # the result did not hold on its repeat: the hypothesis it seemed to support did not either
+            for h in sess.get("hypotheses") or []:
+                if h.get("run") == seq and h.get("outcome") not in ("done", "refuted"):
+                    h["outcome"] = "not-confirmed"
+            hy = (r.get("evaluation") or {}).get("hypothesis")
+            if hy and hy.get("outcome") not in ("done", "refuted"):
+                r["evaluation"]["hypothesis"] = dict(hy, outcome="not-confirmed")
+                if r.get("id"):
+                    c.client.post(f"/runs/{r['id']}/evaluation", {"verdict": r["verdict"], "evaluation": r["evaluation"]})
     if save:
         _update_best(sess)
         c.state.set("session", sess)
@@ -1877,15 +1899,21 @@ def cmd_reevaluate(a):
          "\n".join(f"  run {s}: {o} -> {n}" for s, o, n in changed) or "All verdicts unchanged.")
 
 
-def _fill_profiles(c, sess, last):
+def _fill_profiles(c, sess, last, basis=None):
     """Profiles run once per configuration, so a repeat or confirmation has none: take them from the latest profiled run
     of the same configuration and rebuild the time breakdown, so the next decision keeps the detailed evidence."""
     inp = last.setdefault("inputs", {})
     need = [k for k in ("cpu_profile", "offcpu") if not (inp.get(k) or {}).get("categories" if k == "cpu_profile" else "foreground")]
     if not need or not sess["runs"]:
         return
-    key = evaluate.config_key(sess["runs"][-1].get("managed"))
-    for r in reversed(sess["runs"][:-1]):
+    # the configuration the inputs belong to: after a revert that is the configuration now in effect (`basis`), not the
+    # last run's - looking up the wrong one found no profiles and hid a 77-80% commit wait behind "CPU (not profiled)"
+    br = next((r for r in sess["runs"] if r["seq"] == basis), None) if basis else None
+    key = evaluate.config_key((br or sess["runs"][-1]).get("managed"))
+    skip = (br or sess["runs"][-1])["seq"]
+    for r in reversed(sess["runs"]):
+        if r["seq"] == skip:
+            continue
         if not need or evaluate.config_key(r.get("managed")) != key:
             continue
         try:
@@ -1896,6 +1924,23 @@ def _fill_profiles(c, sess, last):
         for k in list(need):
             if (old.get(k) or {}).get("categories" if k == "cpu_profile" else "foreground"):
                 inp[k] = dict(old[k], from_run=r["seq"])
+                need.remove(k)
+    # still nothing: the most recent profile of any configuration - the shape of the CPU time rarely changes with one
+    # setting, while "CPU (not profiled)" as one block matches every CPU lever (r1 audit: 30 of 66 decisions were made
+    # on unprofiled runs; AN-2 ahi-on flipped to "no evidence" right after a profile showed 43% B-tree time)
+    for r in reversed(sess["runs"]):
+        if not need:
+            break
+        if r["seq"] == skip:
+            continue
+        try:
+            with open(os.path.join(c.state.dir, f"run{r['seq']}_inputs.json")) as f:
+                old = json.load(f).get("inputs") or {}
+        except (OSError, ValueError):
+            continue
+        for k in list(need):
+            if (old.get(k) or {}).get("categories" if k == "cpu_profile" else "foreground"):
+                inp[k] = dict(old[k], from_run=r["seq"], other_config=True)
                 need.remove(k)
     if any(k in inp and (inp[k] or {}).get("from_run") for k in ("cpu_profile", "offcpu")):
         inp["time_breakdown"] = bottleneck.breakdown(last.get("summary"), inp, (c.hw() or {}).get("cpus"))
@@ -1919,7 +1964,7 @@ def _engine_ctx(c, sess):
     else:
         with open(path) as f:
             last = json.load(f)
-        _fill_profiles(c, sess, last)
+        _fill_profiles(c, sess, last, basis)
     flavor, vt, ver, _ = mysqldb.flavor_of(c.variables)
     _ap = Applier(c.cfg, c.state, c.db)
     osf = ostune.facts(c.datadir(), hostinfo.device_for_path(c.datadir()), _ap.service, _ap.fs_device)
@@ -2687,13 +2732,28 @@ def _autotune(a):
         # benchmark policy: keep the last 30% of the budget for trade-offs, otherwise safe experiments use it all up
         # ...unless the safe candidate targets the dominant measured bottleneck (r1 HC-3: thread pool for 3700 threads on
         # 16 CPUs, 97% of runnable time waiting for a CPU, was displaced by ps-off and never ran)
-        targeted = bool(item) and (item.get("relevance") or 0) >= 3 and not item.get("no_evidence") and not item.get("no_mechanism")
-        if a.tradeoffs and measured >= int(a.max_runs * 0.7) and not targeted and (not item or item.get("safety") == "safe" and item["kind"] != "revert"):
+        # relevance 4 (the dominant measured time, >= 60%) and at most twice: with relevance 3 nearly every safe item was
+        # "targeted", and 10 deploy canaries in a row never reached a trade-off (canary review 2026-10-22)
+        targeted = (bool(item) and (item.get("relevance") or 0) >= 4 and not item.get("no_evidence") and not item.get("no_mechanism")
+                    and sess.get("tradeoff_overrides", 0) < 2)
+        in_tradeoff_budget = a.tradeoffs and measured >= int(a.max_runs * 0.7)
+        if in_tradeoff_budget and targeted and item.get("safety") == "safe":
+            sess["tradeoff_overrides"] = sess.get("tradeoff_overrides", 0) + 1
+            c.state.set("session", sess)
+        if in_tradeoff_budget and not targeted and (not item or item.get("safety") == "safe" and item["kind"] != "revert"):
             tried = {r["label"].split(" ")[0] for r in sess["runs"]}
             trade = next((i for i in res["items"] if i.get("safety") == "trade-off" and i["kind"] == "config" and i.get("confidence", 0) > 0
                           and i["id"] not in tried and i["id"] not in blocked), None)
             if trade:
                 log(f"== trade-off budget: {measured} of {a.max_runs} runs used, switching to trade-off experiments")
+                item, nxt = trade, trade["id"]
+        if not item and res.get("stop_reason"):
+            log("== " + res["stop_reason"])
+            c.event("stop", res["stop_reason"], {"runs": measured})
+            trade = next((i for i in res["items"] if i.get("safety") == "trade-off" and i["kind"] == "config" and i.get("confidence", 0) > 0
+                          and i["id"] not in {r["label"].split(" ")[0] for r in sess["runs"]}), None) if a.tradeoffs else None
+            if trade:
+                log(f"== safe ideas exhausted: switching to trade-off experiments ({trade['id']})")
                 item, nxt = trade, trade["id"]
         if not item:
             log("== no further experiments suggested")
@@ -2737,7 +2797,7 @@ def _autotune(a):
                 cur = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
                 pts = [r for r in sess["runs"] if str(r.get("label") or "").startswith(f"exp#{eid} ")
                        and evaluate.config_key(r.get("managed")) == evaluate.config_key(cur)]
-                if pts and pts[-1].get("verdict") == "improved" and measured < a.max_runs:
+                if pts and pts[-1].get("verdict") in ("improved", "efficiency-gain") and measured < a.max_runs:
                     kp = pts[-1]
                     log(f"   sweep point run {kp['seq']} improved: measuring it again to confirm")
                     run, _ = _bench_run(c, prof, f"exp#{eid} {item['sweep']['variable']}={cur.get(item['sweep']['variable'])} (confirm)")
@@ -2842,9 +2902,14 @@ def _autotune(a):
                 measured += 1
                 log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
                 _confirm(c)  # the mean of both runs against the (tighter) two-run threshold
-        if run["verdict"] == "unreliable":
-            log("   hypervisor steal made the run unreliable: measuring the same configuration again")
-            run, _ = _bench_run(c, prof, f"{nxt} (re-measure: CPU steal)")
+        ue = run.get("evaluation") or {}
+        deterministic = ue.get("config_mismatch") or ue.get("client_saturated") or ue.get("goal_server_mismatch_pct") is not None
+        if run["verdict"] == "unreliable" and deterministic:
+            # the same configuration would be unreliable again (lab 221 / 213: a re-measure that could never pass)
+            log("   unreliable for a reason a repeat cannot change: " + str(ue.get("note") or "")[:200])
+        elif run["verdict"] == "unreliable":
+            log("   the run was unreliable (" + str(ue.get("note") or "transient disturbance")[:120] + "): measuring the same configuration again")
+            run, _ = _bench_run(c, prof, f"{nxt} (re-measure: unreliable run)")
             measured += 1
             log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
         shift = (run.get("evaluation") or {}).get("environment_shift")

@@ -149,7 +149,8 @@ def mysqld_pid():
 
 
 SMAPS_KEYS = {"Pss": "pss", "Pss_Anon": "pss_anon", "Pss_File": "pss_file", "Pss_Shmem": "pss_shmem", "SwapPss": "swap_pss"}
-STATUS_KEYS = {"VmRSS": "rss", "VmSize": "vsz", "VmSwap": "swap", "RssShmem": "rss_shmem"}
+# HugetlbPages: huge-page memory is in neither RSS nor PSS (a 188 GB buffer pool in huge pages measured as 17 GB)
+STATUS_KEYS = {"VmRSS": "rss", "VmSize": "vsz", "VmSwap": "swap", "RssShmem": "rss_shmem", "HugetlbPages": "hugetlb"}
 
 
 def service_pids(pid, cgroup=None, limit=1024):
@@ -354,7 +355,8 @@ class OSCounters:
             s["numa"] = numa.counters()
         mi = meminfo()
         s["mem"] = {k: mi.get(k, 0) for k in ("MemTotal", "MemAvailable", "Cached", "SwapTotal", "SwapFree", "Dirty",
-                                               "Inactive(anon)", "AnonPages", "SwapCached")}
+                                               "Inactive(anon)", "AnonPages", "SwapCached", "HugePages_Total", "HugePages_Free",
+                                               "Hugepagesize")}
         if self.device:
             for line in _read("/proc/diskstats").splitlines():
                 p = line.split()
@@ -433,6 +435,10 @@ class OSCounters:
             out["swap_used_mb"] = round((m["SwapTotal"] - m["SwapFree"]) / 2 ** 20, 1)
             out["swap_total_mb"] = round(m["SwapTotal"] / 2 ** 20, 1)
             out["inactive_anon_mb"] = round(m.get("Inactive(anon)", 0) / 2 ** 20, 1)  # cold anonymous memory: swap candidates
+            # meminfo() scales every value by 1024: Hugepagesize is in bytes, HugePages_* (page counts) need / 1024
+            hp_page = m.get("Hugepagesize", 0)
+            out["hugepages_total_mb"] = round(m.get("HugePages_Total", 0) / 1024 * hp_page / 2 ** 20, 1)
+            out["hugepages_free_mb"] = round(m.get("HugePages_Free", 0) / 1024 * hp_page / 2 ** 20, 1)
         for k, name in (("pswpin", "swap_in_mbs"), ("pswpout", "swap_out_mbs")):
             if k in va and k in vb:
                 out[name] = round((vb[k] - va[k]) * 4096 / dt / 2 ** 20, 3)

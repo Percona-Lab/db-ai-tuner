@@ -50,8 +50,17 @@ elif [ "$(awk '/SwapTotal/ {print $2}' /proc/meminfo)" -lt $(( RAMG * 1048576 * 
 fi
 free -g | grep -i swap
 
+# a client host runs a client-role agent: its CPU, network and RTT reach the server, so a saturated client is detected
+# (r1 HC cells: no client samples, the client-saturation check could never fire)
+if [ -n "$CLI" ]; then
+  ENVID=$(python3 -c "import json; print(json.load(open('/var/lib/tuning-agent/state.json')).get('environment_id') or '')" 2>/dev/null)
+  [ -n "$ENVID" ] && ssh -i /root/.ssh/bench_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new root@$CLI \
+    "curl -fsSL https://50-116-44-237.sslip.io/install.sh | bash -s -- --api-key $KEY --name $NAME-client --role client --environment $ENVID" \
+    > $B/client-agent.log 2>&1 || echo "client agent not installed (see client-agent.log)"
+fi
+
 # ---------------------------------------------------------------------------------------------------- cell data + profile
-DB=$(hostname -I | awk '{print $1}')
+DB=$(hostname -I | tr ' ' '\n' | grep -m1 '^192\.168\.' || hostname -I | awk '{print $1}')  # the private address when there is one
 if [ -n "$CLI" ]; then
   SSHC="ssh -i /root/.ssh/bench_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new root@$CLI"
   SBC="sysbench --mysql-host=$DB --mysql-user=sbtest --mysql-password=sbtest --mysql-db=sbtest"
@@ -73,7 +82,9 @@ sb_prepare() {  # tables rows
   eval "$(wrap "$SBC --tables=$1 --table-size=$2 --threads=16 oltp_read_write prepare")" > $B/prep.log 2>&1 || { echo SETUPFAILED: prepare; exit 1; }
 }
 sb_profile() {  # name test tables rows threads extra warmup duration reset-line
-  local run; run=$(wrap "$SBC --tables=$3 --table-size=$4 --threads=$5 $6 --time={total} --report-interval=10 --mysql-ignore-errors=all $2 run")
+  # thousands of threads need longer than sysbench's 30 s to connect (r1 HC-2: the thread-pool run aborted at start-up)
+  local init=""; [ "$5" -ge 1024 ] && init="--thread-init-timeout=600"
+  local run; run=$(wrap "$SBC --tables=$3 --table-size=$4 --threads=$5 $6 $init --time={total} --report-interval=10 --mysql-ignore-errors=all $2 run")
   printf "[bench]\nname = %s\n%s\nrun = %s\nwarmup = %s\nduration = %s\ntimeout = %s\n\n$SBM" "$1" "$9" "$run" "$7" "$8" $(( $7 + $8 + 1200 )) > $P
 }
 tuning-agent activity "loading data" "suite $V cell $CELL: building the data set"

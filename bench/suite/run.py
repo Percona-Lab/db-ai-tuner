@@ -80,13 +80,19 @@ def create(st, role, typ):
     key = open(os.path.join(OPS, "keys", "at_key.pub")).read().strip()
     d = linode("POST", "/linode/instances", {"type": typ, "region": REGION, "image": "linode/ubuntu24.04", "label": label,
                                               "tags": ["aituner", f"suite-{VERSION}"], "authorized_keys": [key],
-                                              "root_pass": secrets.token_urlsafe(24), "booted": True})
+                                              "root_pass": secrets.token_urlsafe(24), "booted": True,
+                                              # client-server cells talk over the private network, as the protocol says
+                                              "private_ip": True})
     alias = f"su-{st['cell'].lower()}-{role}"
+    pub = next((ip for ip in d["ipv4"] if not ip.startswith("192.168.")), d["ipv4"][0])
+    d["ipv4"] = [pub] + [ip for ip in d["ipv4"] if ip != pub]
     _forget_host(alias, d["ipv4"][0])
     with open(os.path.join(OPS, "ssh_config"), "a") as f:
         f.write(f"\nHost {alias}\n  HostName {d['ipv4'][0]}\n  User root\n  IdentityFile ~/aituner/ops/keys/at_key\n"
                 f"  UserKnownHostsFile ~/aituner/ops/known_hosts\n  StrictHostKeyChecking accept-new\n  ServerAliveInterval 30\n")
-    st.setdefault("vms", []).append({"role": role, "id": d["id"], "label": label, "ip": d["ipv4"][0], "alias": alias, "type": typ})
+    priv = next((ip for ip in d["ipv4"] if ip.startswith("192.168.")), None)
+    st.setdefault("vms", []).append({"role": role, "id": d["id"], "label": label, "ip": d["ipv4"][0], "private_ip": priv,
+                                     "alias": alias, "type": typ})
     log(st, f"created {label} ({typ}, {d['ipv4'][0]})")
     for _ in range(80):
         if ssh(alias, "true", timeout=30).returncode == 0:
@@ -186,7 +192,7 @@ def run_cell(st, srv, cli):
                      "apt-get install -yq sysbench >/dev/null; printf '* soft nofile 1048576\\n* hard nofile 1048576\\n' >> /etc/security/limits.conf; "
                      "sysctl -w net.ipv4.ip_local_port_range='1024 65000' net.core.somaxconn=8192 >/dev/null", check=True, timeout=1800)
             ssh(srv, "sysctl -w net.core.somaxconn=8192 net.ipv4.tcp_max_syn_backlog=8192 >/dev/null", check=True)
-            cip = st["vms"][1]["ip"]
+            cip = st["vms"][1].get("private_ip") or st["vms"][1]["ip"]  # grants, firewall and the client's traffic: private network
         study = f"Suite {VERSION} {run}"
         name = f"suite-{cell_id.lower()}-{run}"
         st["status"] = "setup"
