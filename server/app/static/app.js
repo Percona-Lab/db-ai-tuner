@@ -848,6 +848,7 @@ async function sessionPage(id) {
    ${d.cost ? `<div class="tile"><div class="k">Machine cost${info(`Session wall time ${d.cost.hours} h × $${d.cost.rate_hourly.toFixed(4)}/hour (the environment's price). Per-run costs are shown under each run's time.`)}</div><div class="v">$${d.cost.total.toFixed(2)}</div><div class="d">${d.cost.hours} h</div></div>` : ""}
    ${cfgTile("Best safe", bestSafe, firstCfg, lower, s.goal, false, s)}
    ${bestTrade ? cfgTile("Best with trade-offs", bestTrade, firstCfg, lower, s.goal, true, s) : ""}</div>
+  ${bestSafe || bestTrade ? `<details class="card" id="bestcfg" style="margin-top:10px"><summary style="margin:0;cursor:pointer"><b>Best known configuration</b> <span class="muted">· what differs from the defaults (MySQL and OS)</span></summary><div id="bestcfgBody" class="muted" style="margin-top:8px">Loading…</div></details>` : ""}
   <div class="card" style="margin-top:14px" id="bars"></div>
   ${benchCard(d.benchmarks || [])}
   <h2>Runs</h2><div class="card tablewrap"><table class="runs" data-opt="TPS|Avg ms|CPU ms/trx|IOs/trx|Time"><thead><tr><th>#</th><th>Run</th><th>Changes</th><th class="num">${goalUnit(s.goal, s) === "ms" ? "Avg ms" : "Goal"}</th><th class="num">Δ parent${info("Change of the goal vs the mean of the parent configuration (the configuration this run was changed from). Coloured only beyond the noise threshold.")}</th><th class="num">vs start${info("Change vs the calibrated starting configuration. Bold: the best configuration known at that point of the session (it took the lead by beating the previous best beyond the noise threshold). Changes shown struck through were rolled back afterwards; ↩ marks settings undone before the run.")}</th><th>Verdict</th>
@@ -945,6 +946,8 @@ async function sessionPage(id) {
     tb.appendChild(tr);
   });
   wireStars(tb);
+  const bc = document.getElementById("bestcfg");
+  if (bc) bc.addEventListener("toggle", () => { if (bc.open && !bc.dataset.loaded) { bc.dataset.loaded = 1; renderBestConfig(document.getElementById("bestcfgBody"), bestSafe, bestTrade, first); } });
   renderRecs(document.getElementById("recs"), d.recommendations[0], runs, d.feedback);
   renderExperiments(document.getElementById("exps"), s);
   renderEvents(document.getElementById("events"), null, false, { session: id });
@@ -955,6 +958,35 @@ async function sessionPage(id) {
     const d2 = await api("/api/sessions/" + id);
     if (JSON.stringify(d2.runs.map(r => [r.id, r.status])) !== JSON.stringify(d.runs.map(r => [r.id, r.status])) || d2.recommendations.length !== d.recommendations.length) { clearTimers(); sessionPage(id); }
   }, 10000));
+}
+
+// paths, identities and file locations differ from compiled defaults on every server: not configuration choices
+const NOT_TUNING = /(^|_)(dir|file|path|socket|pid|port|uuid|hostname|ssl|tls|key|cert|ca|version|plugin_load|server_id|log_error|basedir|datadir|tmpdir|character_sets_dir|lc_messages)/;
+async function renderBestConfig(el, bestSafe, bestTrade, first) {
+  const lastRun = cfg => cfg && cfg.runs[cfg.runs.length - 1];
+  const want = [["Best production-safe", lastRun(bestSafe)], ...(bestTrade && bestTrade !== bestSafe ? [["Best with trade-offs", lastRun(bestTrade)]] : [])].filter(x => x[1]);
+  try {
+    const [cfgs, start] = await Promise.all([Promise.all(want.map(([, r]) => api(`/api/runs/${r.id}/config`))), first ? api(`/api/runs/${first.id}/config`) : null]);
+    el.classList.remove("muted");
+    el.innerHTML = want.map(([title, r], i) => bestConfigHtml(title, r, cfgs[i], start)).join('<div style="height:14px"></div>');
+  } catch (e) { el.textContent = "Could not load the configuration: " + e.message; }
+}
+function bestConfigHtml(title, run, c, start) {
+  const meta = c.meta || {}, cfg = c.config || {}, managed = c.managed || {}, atDef = new Set(c.at_default || []);
+  const isDef = k => isDefault(meta[k]) || atDef.has(k);
+  const mine = Object.keys(managed).filter(k => !/^(os|rg|client):/.test(k) && !isDef(k)).sort();
+  const others = Object.keys(cfg).filter(k => !/^(os|rg):/.test(k) && !(k in managed) && meta[k] && meta[k].default != null && !isDef(k) && !NOT_TUNING.test(k)).sort();
+  const os = Object.keys(managed).filter(k => /^(os|rg):/.test(k)).sort();
+  const sc = (start && start.config) || {};
+  const row = (k, v, d) => `<tr><td class="mono">${esc(k)}</td><td class="mono"><b>${esc(val(k, v))}</b></td><td class="mono muted">${d != null ? esc(val(k, d)) : "–"}</td></tr>`;
+  const tbl = (head, rows) => `<div class="tablewrap"><table><thead><tr><th>Setting</th><th>Value</th><th>${head}</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  const myCnf = cnfBlock(Object.fromEntries(mine.map(k => [k, managed[k]])));
+  return `<h3 style="margin:0 0 4px">${esc(title)} <span class="muted" style="font-weight:400">· run <a href="#/run/${run.id}">#${run.seq} ${esc(run.label)}</a></span>${tradeBadge(run.tradeoffs_added || [])}</h3>
+    <h4 style="margin:8px 0 4px">MySQL: set by the tuner (${mine.length})</h4>
+    ${mine.length ? tbl("Compiled default", mine.map(k => row(k, cfg[k] != null ? cfg[k] : managed[k], (meta[k] || {}).default)).join("")) : '<p class="muted" style="margin:0">Nothing differs from the compiled defaults.</p>'}
+    ${myCnf ? `<details style="margin-top:6px"><summary style="cursor:pointer">Option file (copy into my.cnf)</summary><pre><code>${myCnf}</code></pre></details>` : ""}
+    ${os.length ? `<h4 style="margin:10px 0 4px">Operating system (${os.length})</h4>${tbl("Host at session start", os.map(k => row(k.replace(/^os:/, ""), managed[k], sc[k])).join(""))}` : ""}
+    ${others.length ? `<details style="margin-top:8px"><summary style="cursor:pointer">Other non-default MySQL settings on this server, not set by the tuner (${others.length})${info("From the server's own option files or the benchmark prerequisites (e.g. max_connections for many client threads). Paths, ports, identities and certificates are left out.")}</summary>${tbl("Compiled default", others.map(k => row(k, cfg[k], meta[k].default)).join(""))}</details>` : ""}`;
 }
 
 function cfgTile(title, cfg, firstCfg, lower, goal, trade, sess) {
