@@ -764,21 +764,30 @@ function runRanges(seqs) {
   if (a !== null) out.push(a === p ? `#${a}` : `#${a}–#${p}`);
   return out.join(", ");
 }
+function shq(a) { return /^[\w@%+=:,./-]+$/.test(a) ? a : "'" + a.replace(/'/g, "'\\''") + "'"; }
 function benchCard(list) {
   if (!list.length) return "";
+  const tool = o => `<div style="margin:6px 0 10px">${o.version ? `<div class="muted" style="font-size:12.5px">${esc(o.version)}</div>` : ""}
+      <pre style="margin:2px 0">${esc(o.argv.map(shq).join(" "))}</pre>
+      ${Object.keys(o.env || {}).length ? `<div class="kv" style="font-size:13px">${Object.entries(o.env).map(([k, v]) => `<div class="mono">${esc(k)}</div><div class="mono">${esc(v)}</div>`).join("")}</div>` : ""}
+      ${Object.entries(o.scripts || {}).map(([p, t]) => `<details><summary>${esc(p)}</summary><pre>${esc(t)}</pre></details>`).join("")}</div>`;
   const one = b => {
     const ph = b.phases || {}, wu = ph.warmup_s ?? (/^\d+$/.test(String(b.warmup)) ? +b.warmup : null), ms = ph.measured_s ?? b.duration;
     const phases = wu != null ? `warm-up ${wu} s, then measured ${ms ? ms + " s" : "until the benchmark finishes"}` : `measured ${ms ? ms + " s" : "until the benchmark finishes"} (no fixed warm-up)`;
-    const scripts = Object.entries(b.scripts || {});
-    return `<div style="margin-bottom:10px"><b>${esc(b.name || "")}</b>${list.length > 1 ? ` <span class="muted">runs ${runRanges(b.runs)}</span>` : ""}
-      <div class="kv" style="margin-top:6px"><div>Command as run</div><div><pre style="margin:0">${esc(b.command || b.run || "")}</pre></div>
-      <div>Phases${info("The benchmark runs once per measurement: the warm-up part is not measured; the measured window follows it. The agent samples metrics only inside the window.")}</div><div>${esc(phases)}</div>
+    const obs = b.observed || [];
+    const harness = `<div class="kv"><div>Command</div><div><pre style="margin:0">${esc(b.command || b.run || "")}</pre></div>
       ${b.reset ? `<div>Reset before each run</div><div class="mono">${esc(b.reset)}</div>` : ""}
       ${b.profile ? `<div>Profile</div><div class="mono">${esc(b.profile)}</div>` : ""}</div>
-      ${b.profile_text ? `<details style="margin-top:6px"><summary>Profile file</summary><pre>${esc(b.profile_text)}</pre></details>` : ""}
-      ${scripts.map(([p, t]) => `<details><summary>Script ${esc(p)}</summary><pre>${esc(t)}</pre></details>`).join("")}</div>`;
+      ${b.profile_text ? `<details><summary>Profile file</summary><pre>${esc(b.profile_text)}</pre></details>` : ""}
+      ${Object.entries(b.scripts || {}).map(([p, t]) => `<details><summary>${esc(p)}</summary><pre>${esc(t)}</pre></details>`).join("")}`;
+    return `<div style="margin-top:8px"><b>${esc(b.name || "")}</b>${list.length > 1 ? ` <span class="muted">runs ${runRanges(b.runs)}</span>` : ""}
+      <div style="margin:4px 0" class="muted">${esc(phases)}</div>
+      ${obs.length ? `<div style="margin-top:6px"><span class="muted" style="font-size:12.5px">Benchmark tool as it ran${info("Seen by the agent while measuring: the processes the benchmark command started, minus shells and helpers - full command line, version, the script files the tool was given and the environment variables those scripts read. Passwords masked.")}</span>${obs.map(tool).join("")}</div>
+        <details><summary>Harness: how the agent started it</summary>${harness}</details>` : harness}</div>`;
   };
-  return `<h2>Benchmark${info("What each run executed, as recorded by the agent: the command with the warm-up and run length filled in, the reset command, the profile file and the scripts the commands call. Runs with a different specification (for example after the agent lengthened the warm-up) are listed separately.")}</h2><div class="card">${list.map(one).join("")}</div>`;
+  const head = list.map(b => (b.observed || [])[0]).filter(Boolean).map(o => o.argv.slice(0, 3).map(shq).join(" "))[0];
+  return `<details class="card" style="margin-top:14px"><summary style="cursor:pointer"><b>Benchmark</b>${info("What each run executed, as recorded by the agent: the benchmark tool's own command line and configuration, the warm-up and measured phases, and how the agent started it. Runs with a different specification (for example after the agent lengthened the warm-up) are listed separately.")}
+    <span class="muted" style="margin-left:6px">${esc(list[0].name || "")}${head ? " · " + esc(head) : ""}${list.length > 1 ? ` · ${list.length} specifications` : ""}</span></summary>${list.map(one).join("")}</details>`;
 }
 async function sessionPage(id) {
   setNav("envs");
@@ -1279,7 +1288,7 @@ function renderInputs(el, r) {
   if (inp.probe && Object.keys(inp.probe).length) h += `<p>Environment probe${info("Measured with the database idle right before the benchmark: single-thread CPU speed (sysbench events/s), 4k random read/write IOPS and fsync rate on the data filesystem (fio). Compared with the calibration runs to tell a slower VM from a worse configuration.")}: ${esc(kvText(inp.probe))}${(r.evaluation || {}).environment_shift ? ` <span class="badge warn">shift vs calibration: ${esc(kvText(r.evaluation.environment_shift))} %</span>` : ""}</p>`;
   if (inp.bench) {
     const b = inp.bench;
-    h += `<h3>Benchmark: ${esc(b.name)}</h3><div class="kv"><div>Run command</div><div class="mono">${esc(b.run)}</div>${b.reset ? `<div>Reset</div><div class="mono">${esc(b.reset)}</div>` : ""}<div>Warm-up / measured</div><div>${esc(b.warmup)} s / ${b.duration ? esc(b.duration) + " s" : "until finished"}</div><div>Exit code</div><div>${esc(b.exit_code)}</div>${(b.requirements || []).length ? `<div>Prerequisites${info(REQ_TIP)}</div><div class="mono">${b.requirements.map(q => esc(q.variable) + " ≥ " + esc(q.required)).join(" · ")}</div>` : ""}
+    h += `<h3>Benchmark: ${esc(b.name)}</h3><div class="kv">${(b.observed || []).map(o => `<div>Tool as it ran</div><div class="mono">${esc(o.argv.map(shq).join(" "))}${Object.keys(o.env || {}).length ? " " + esc(Object.entries(o.env).map(([k, v]) => k + "=" + v).join(" ")) : ""}</div>`).join("")}<div>Run command</div><div class="mono">${esc(b.command || b.run)}</div>${b.reset ? `<div>Reset</div><div class="mono">${esc(b.reset)}</div>` : ""}<div>Warm-up / measured</div><div>${esc(b.warmup)} s / ${b.duration ? esc(b.duration) + " s" : "until finished"}</div><div>Exit code</div><div>${esc(b.exit_code)}</div>${(b.requirements || []).length ? `<div>Prerequisites${info(REQ_TIP)}</div><div class="mono">${b.requirements.map(q => esc(q.variable) + " ≥ " + esc(q.required)).join(" · ")}</div>` : ""}
       ${Object.entries(b.metrics || {}).map(([k, v]) => `<div class="mono">${esc(k)}</div><div class="mono"><b>${esc(v)}</b></div>`).join("")}</div><details><summary>Benchmark output (tail)</summary><pre>${esc(b.log_tail || "")}</pre></details>`;
   }
   const tbk = inp.time_breakdown || [];

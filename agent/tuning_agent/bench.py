@@ -185,6 +185,34 @@ class Profile:
         return out
 
 
+# processes of a benchmark run that only launch or plumb the real tool (their command lines are the harness, not the benchmark)
+HELPERS = {"bash", "sh", "dash", "zsh", "timeout", "sleep", "tee", "env", "nohup", "setsid", "cat", "grep", "awk", "sed", "xargs",
+           "time", "nice", "ionice", "taskset", "numactl", "stdbuf", "sudo", "su", "flock", "head", "tail", "date", "wait"}
+SECRET = re.compile(r"pass|pwd|secret|token|key", re.I)
+
+
+def mask(s):
+    """Passwords out of command lines and scripts (--mysql-password=x, -pX, 'diset ... mysql_pass x', PASSWORD=x)."""
+    s = re.sub(r"(--?[\w-]*pass(?:word)?[= ])\S+", r"\1***", s, flags=re.I)
+    s = re.sub(r"(?m)(\b\w*pass(?:word)?\w*\s*[=:]?\s+)(\S+)\s*$", r"\1***", s, flags=re.I)
+    s = re.sub(r"(\b\w*(?:PASSWORD|PASSWD|PWD)\w*=)\S+", r"\1***", s)
+    return s
+
+
+def tool_version(exe):
+    """A known tool's version: sysbench / pgbench / mysqlslap report it; HammerDB is named by its install directory."""
+    m = re.search(r"HammerDB-([\d.]+)", exe)
+    if m:
+        return "HammerDB " + m.group(1)
+    if os.path.basename(exe) in ("sysbench", "pgbench", "mysqlslap", "go-tpc", "ycsb"):
+        try:
+            r = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=5)
+            return (r.stdout or r.stderr).strip().splitlines()[0][:80]
+        except (OSError, subprocess.TimeoutExpired, IndexError):
+            return None
+    return None
+
+
 def run_shell(cmd, timeout, log=None):
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
     if log:
@@ -222,6 +250,43 @@ class Running:
                 os.killpg(self.p.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+
+    def observe(self):
+        """The benchmark as it actually runs, whatever wrapper scripts launched it: every process of the run's session
+        (start_new_session) that is a tool, not a shell or helper - its full command line, executable, version, the
+        script files it was given (e.g. HammerDB's Tcl) and the environment variables those scripts read. Passwords are
+        masked. A list of {argv, exe, cwd, version, scripts, env}."""
+        out, seen = [], set()
+        for d in os.listdir("/proc"):
+            if not d.isdigit():
+                continue
+            try:
+                st = open(f"/proc/{d}/stat").read()
+                if int(st[st.rindex(")") + 2:].split()[3]) != self.p.pid:  # session id
+                    continue
+                argv = [a.decode(errors="replace") for a in open(f"/proc/{d}/cmdline", "rb").read().split(b"\0") if a]
+                exe = os.readlink(f"/proc/{d}/exe")
+                cwd = os.readlink(f"/proc/{d}/cwd")
+                env = dict(x.decode(errors="replace").split("=", 1) for x in open(f"/proc/{d}/environ", "rb").read().split(b"\0") if b"=" in x)
+            except (OSError, ValueError, IndexError):
+                continue
+            if not argv or os.path.basename(exe).rstrip("0123456789.") in HELPERS or tuple(argv) in seen:
+                continue
+            seen.add(tuple(argv))
+            scripts = {}
+            for a in argv[1:]:
+                path = a if a.startswith("/") else os.path.join(cwd, a)
+                if re.search(r"\.(tcl|lua|py|sql|js|sh|ini|cfg|conf|xml|json|yaml|yml)$", a) and os.path.isfile(path):
+                    try:
+                        scripts[path] = mask(open(path, errors="replace").read(32768))
+                    except OSError:
+                        pass
+            text = " ".join(scripts.values())
+            used = {k: v for k, v in env.items() if re.search(r"\b" + re.escape(k) + r"\b", text) and not SECRET.search(k)}
+            used.update({k: v for k, v in env.items() if k.startswith(("HDB_", "SB_", "SYSBENCH_", "BENCH_")) and not SECRET.search(k)})
+            out.append({"argv": [mask(a) for a in argv], "exe": exe, "cwd": cwd, "version": tool_version(exe),
+                        "scripts": scripts, "env": dict(sorted(used.items()))})
+        return out
 
     def output(self):
         try:

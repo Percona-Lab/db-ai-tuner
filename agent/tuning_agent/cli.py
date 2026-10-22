@@ -1183,6 +1183,16 @@ def _maybe_offcpu(c, sess, warmup_s, cpu_secs, in_window=False):
     return o
 
 
+def _observe(r, prev):
+    """Benchmark tool processes seen now, added to what was seen before (never fails a run)."""
+    try:
+        got = r.observe()
+    except Exception:
+        return prev
+    have = {tuple(o["argv"]) for o in prev}
+    return prev + [o for o in got if tuple(o["argv"]) not in have]
+
+
 def _finish_offcpu(o):
     o.join(timeout=o.seconds + 900)
     try:
@@ -1364,6 +1374,7 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
                               + f"benchmark exited during warm-up (code {r.p.returncode}); tail:\n{r.output()[-1500:]}")
         m, warn, url = _measure_start(c, label, notes, warmed=True)
         t_meas0 = time.time()
+        observed = _observe(r, [])
         probes = _start_probes(c, prof.duration if prof.duration > 0 else prof.timeout)
         if profiler is None and not waited:
             profiler = _maybe_profile(c, c.session(), prof, 0, in_window=True)
@@ -1396,6 +1407,7 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
                 time.sleep(2)
             if r.alive():
                 raise TooSlow(f"run exceeded {limit:.0f}s (2.5x the typical run time): configuration rejected")
+        observed = _observe(r, observed)  # tools that started later (no warm-up, multi-stage drivers)
         if probes:
             probes.stop()
             if getattr(probes, "block", None):
@@ -1425,7 +1437,12 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         else:
             goal_value = metrics[prof.goal_metric] * prof.goal_scale
             goal_src = f"benchmark:{prof.goal_metric}" + (f" x{prof.goal_scale:g}" if prof.goal_scale != 1 else "")
-    extra = {"bench": {**prof.spec(), "requirements": requirements, "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:],
+    spec = prof.spec()
+    if observed:
+        import hashlib
+        spec["observed"] = observed
+        spec["spec_sha"] = hashlib.sha256((spec["spec_sha"] + json.dumps([o["argv"] for o in observed])).encode()).hexdigest()[:12]
+    extra = {"bench": {**spec, "requirements": requirements, "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:],
                        "window_start_delay_s": m.get("window_start_delay_s"), "warmup_s": waited}, "probe": env_probe}
     if cow is not None:
         extra["cow"] = cow

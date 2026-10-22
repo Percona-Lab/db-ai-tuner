@@ -637,7 +637,7 @@ def session_benchmarks(sid):
         key = b.get("spec_sha") or json.dumps([b.get("command") or b.get("run"), b.get("reset"), b.get("warmup"), b.get("duration")])
         if key not in by:
             spec = {k: b.get(k) for k in ("name", "profile", "command", "run", "reset", "warmup", "duration", "phases", "goal_metric",
-                                          "data_state", "requires", "profile_text", "scripts", "spec_sha", "restart_before_run")}
+                                          "data_state", "requires", "profile_text", "scripts", "spec_sha", "restart_before_run", "observed")}
             by[key] = dict(spec, runs=[])
             out.append(by[key])
         by[key]["runs"].append(r["seq"])
