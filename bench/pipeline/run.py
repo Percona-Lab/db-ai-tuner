@@ -17,6 +17,7 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 OPS = os.path.join(ROOT, "ops")
 STATE = os.path.join(OPS, "pipeline", "state.json")
+FAST_FAIL_S = 20 * 60  # an item failing this soon after its start holds the other items of the same script
 SSH = ["ssh", "-F", os.path.join(OPS, "ssh_config"), "-o", "ConnectTimeout=20", "-o", "BatchMode=yes"]
 SYNC = ["bench/pipeline", "bench/bm2", "bench/queue-common.sh", "bench/session.sh", "bench/reset_datadir.sh"]
 
@@ -104,7 +105,7 @@ def tick():
     items, st = load()
     busy = set()
     for iid, s in list(st.items()):
-        if s["status"] != "running":
+        if iid.startswith("_") or s["status"] != "running":
             continue
         res = check(iid, s)
         if all(v in ("ok", "failed", "lost") for v in res.values()):
@@ -112,6 +113,12 @@ def tick():
             s["status"] = "done" if all(v == "ok" for v in res.values()) else "failed"
             s["ended"], s["per_host"] = time.time(), res
             log(f"{iid}: {s['status']} {res}")
+            script = next((i.get("script") for i in items if i["id"] == iid), None)
+            if s["status"] == "failed" and script and s["ended"] - s["started"] < FAST_FAIL_S:
+                # failed within minutes: most likely the script or the box, not the study - hold the other items using the
+                # same script until it is looked at (`retry` releases them), instead of failing them one after another
+                st.setdefault("_held", {})[script] = iid
+                log(f"HOLD: items using {script} held after {iid} failed in {int((s['ended'] - s['started']) // 60)} min")
         else:
             busy |= set(s["hosts"])
     if os.path.exists(os.path.join(OPS, "pipeline", "PAUSE")):
@@ -120,6 +127,8 @@ def tick():
     free = {h for it in items for h in it["hosts"]} - busy
     for it in items:
         if not it.get("script") or st.get(it["id"], {}).get("status") in ("running", "done", "failed"):
+            continue
+        if it["script"] in st.get("_held", {}):
             continue
         cand = [h for h in it["hosts"] if h in free]
         if it.get("group"):
@@ -136,6 +145,8 @@ def status():
     items, st = load()
     for it in items:
         s = st.get(it["id"], {})
+        if not s and it.get("script") in st.get("_held", {}):
+            s = {"status": "held"}
         when = time.strftime("%m-%d %H:%M", time.gmtime(s["started"])) if s.get("started") else ""
         print(f"{it['id']:22} {s.get('status', 'pending' if it.get('script') else 'todo'):8} {','.join(s.get('hosts') or []):26} "
               f"{when:11} ~{it['est_hours']}h  {it['question'][:70]}")
@@ -158,6 +169,9 @@ if __name__ == "__main__":
     elif cmd == "retry":
         items, st = load()
         st.pop(sys.argv[2], None)
+        held = st.get("_held", {})
+        for scr in [k for k, v in held.items() if v == sys.argv[2]]:
+            held.pop(scr)  # the item that caused the hold is being retried: release the others
         save(st)
         print("pending:", sys.argv[2])
     else:
