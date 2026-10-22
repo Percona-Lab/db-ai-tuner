@@ -28,7 +28,7 @@ CLASSES = {"S": ("g6-dedicated-8", None), "L": ("g6-dedicated-16", "g6-dedicated
 CELLS = {  # cell -> (tier, class)
     "RO-1": ("core", "S"), "RO-2": ("core", "S"), "RO-4": ("core", "S"), "RW-1": ("core", "S"), "RW-2": ("core", "S"),
     "RW-3": ("core", "S"), "RW-4": ("core", "S"), "WI-1": ("core", "S"), "WI-3": ("core", "S"), "KV-1": ("core", "S"),
-    "AN-1": ("core", "S"), "AN-2": ("core", "S"), "MX-1": ("core", "S"),
+    "AN-1": ("core", "S"), "AN-2": ("core", "S"), "MX-1": ("core", "S"), "TB-1": ("core", "S"), "DS-1": ("core", "S"),
     "HC-1": ("core", "L"), "HC-2": ("core", "L"), "HC-3": ("core", "L"), "HC-6": ("core", "L"),
 }
 # repeat cells: the same cell measured twice in one run (KV-1.2 = KV-1 again) - how much the tuner's own outcome varies
@@ -39,7 +39,7 @@ NOSWAP = ("RO-4.ns", "HC-2.ns")
 
 def base_cell(cell_id):
     return cell_id.split(".")[0]
-BENCH_FILES = ["session.sh", "queue-common.sh", "reset_datadir.sh", "tpch_warm.sh", "hdb_run.tcl", "hdb_build200.tcl", "stopall.sh", "connstorm.lua"]
+BENCH_FILES = ["session.sh", "queue-common.sh", "reset_datadir.sh", "tpch_warm.sh", "hdb_run.tcl", "hdb_build200.tcl", "stopall.sh", "connstorm.lua", "db_warm.sh"]
 BENCH_DIRS = ["ibench", "benchbase", "job"]
 
 

@@ -63,6 +63,8 @@ Core cells run at every engine milestone. Extended cells run before a release, o
 | AN-2 | core | Join Order Benchmark, 113 queries | 0.5x | 1 | total time | optimizer-bound queries |
 | AN-3 | ext | TPC-H SF30, 4 streams | ≈3x | 4 | total time | concurrent analytics on I/O |
 | MX-1 | core | CH-benCHmark 500W: 32 TPC-C + 1 analytical | ≈3x | 33 | NOPM and Q time | mixed OLTP plus analytics |
+| TB-1 | core | TPC-B (stroppy tpcb/tx) scale 100: 100 branches, 1000 tellers, 10M accounts, read committed | ≈0.15x | 64 | tps (server-side, in the window) | one short update-heavy transaction per commit: row locks on the few branch / teller rows, commit path, redo, history inserts |
+| DS-1 | core | TPC-DS SF1 (stroppy), 99 queries, 1 stream, 60 s cap per query | ≈0.2x | 1 | total time | optimizer on a wide query mix: joins, subqueries, temporary tables, sorts, window functions (in memory: CPU, not I/O) |
 
 ### Client-server, high concurrency (class L)
 

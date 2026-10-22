@@ -64,6 +64,10 @@ HDB="cd /opt/HammerDB-6.0 && LD_LIBRARY_PATH=/opt/mysqlclient TMP=/tmp"; GT=/opt
 RESET="reset = $B/reset_datadir.sh"
 SBM='[metrics]\nsysbench_tps = transactions:\\s+\\d+\\s+\\(([\\d.]+) per sec\nsysbench_qps = queries:\\s+\\d+\\s+\\(([\\d.]+) per sec\nsysbench_p95_ms = 95th percentile:\\s+([\\d.]+)\n'
 GOAL=tps; MAX=16; BASELINE_ARGS=""; REQ=""
+stroppy_install() {  # stroppy (TPC-B / TPC-DS cells): one static binary, pinned release
+  curl -fsSL https://github.com/stroppy-io/stroppy/releases/download/v6.2.0/stroppy_linux_amd64.tar.gz | tar xz -C /usr/local/bin stroppy \
+    || { echo SETUPFAILED: stroppy; exit 1; }
+}
 sb_prepare() {  # tables rows
   mysql -e "CREATE DATABASE IF NOT EXISTS sbtest"
   eval "$(wrap "$SBC --tables=$1 --table-size=$2 --threads=16 oltp_read_write prepare")" > $B/prep.log 2>&1 || { echo SETUPFAILED: prepare; exit 1; }
@@ -131,6 +135,18 @@ back_log = 4096"; BASELINE_ARGS="--max-connections 4200" ;;
     run=$(wrap "sysbench /root/connstorm.lua --mysql-host=$DB --mysql-user=sbtest --mysql-password=sbtest --mysql-db=sbtest --tables=4 --table-size=1000000 --threads=256 --time={total} --report-interval=10 --mysql-ignore-errors=all run")
     printf "[bench]\nname = HC-6 connection storm: a new connection + 5 point selects per event, 256 threads from a separate client\ndata_state = read-only\nrun = %s\nwarmup = 120\nduration = 600\ntimeout = 1800\ngoal_metric = sysbench_qps\n\n$SBM" "$run" > $P
     REQ="max_connections = 600"; BASELINE_ARGS="--max-connections 600" ;;
+  TB-1) stroppy_install  # tpcb/tx has no --warmup: one run of warm-up + window; the goal is the server-side tps in the window
+    mysql -e "CREATE DATABASE IF NOT EXISTS tpcb"
+    ST="/usr/local/bin/stroppy run tpcb/tx --scale-factor 100 -d mysql -D 'url=tpcc:tpcc@tcp(127.0.0.1:3306)/tpcb'"
+    eval "$ST --no-steps workload --load-workers 8" > $B/prep.log 2>&1 || { echo SETUPFAILED: tpcb load; exit 1; }
+    printf '[bench]\nname = TB-1 TPC-B (stroppy tpcb/tx) scale 100: 100 branches, 1000 tellers, 10M accounts (~2 GB, in memory), 64 VUs, read committed\n%s\nrun = %s --steps workload --executor constant-vus --vus 64 --duration {total}s\nwarmup = 300\nduration = 600\ntimeout = 2400\n\n[metrics]\nstroppy_tps_whole_run = \\btps\\s+([\\d.]+)\n' "$RESET" "$ST" > $P
+    REQ="max_connections = 300"; MAX=14 ;;
+  DS-1) stroppy_install
+    mysql -e "CREATE DATABASE IF NOT EXISTS tpcds"
+    ST="/usr/local/bin/stroppy run tpcds --scale-factor 1 -d mysql -D 'url=tpcc:tpcc@tcp(127.0.0.1:3306)/tpcds'"
+    eval "$ST --no-steps workload --load-workers 8" > $B/prep.log 2>&1 || { echo SETUPFAILED: tpcds load; exit 1; }
+    printf '[bench]\nname = DS-1 TPC-DS SF1 (stroppy): 99 queries, 1 stream, 60 s cap per query (~3 GB, in memory)\nreset = %s/db_warm.sh tpcds\ndata_state = read-only\nrun = %s --steps workload --query-timeout 60s\nwarmup = 0\nduration = 0\ntimeout = 9000\ngoal_metric = pass_seconds\n\n[metrics]\npass_seconds = measurement_seconds\\s+([\\d.]+)\nfailed_queries = failed_queries_total\\s+([\\d.]+)\n' $B "$ST" > $P
+    GOAL=latency; MAX=10 ;;
   *) echo "SETUPFAILED: unknown cell $CELL"; exit 1 ;;
 esac
 [ -n "$REQ" ] && printf '\n[requires]\n%s\n' "$REQ" >> $P
