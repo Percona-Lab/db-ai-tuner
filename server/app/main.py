@@ -231,6 +231,21 @@ def at_compiled_default(cfg, meta):
     return {k for k, m in (meta or {}).items() if isinstance(m, dict) and m.get("default") is not None and k in cfg and norm(cfg[k]) == norm(m["default"])}
 
 
+def start_tradeoffs(runs):
+    """Trade-offs of the session's starting configuration (its first run): the benchmark setup's, not the tuner's."""
+    first = min((r for r in runs if r.get("status") == "done"), key=lambda r: r.get("seq") or 0, default=None)
+    return [t for t in (first or {}).get("tradeoffs") or [] if t.get("category") != "memory"] if first else []
+
+
+def mark_added_tradeoffs(runs):
+    """Each run's trade-offs beyond the starting configuration's (tradeoffs_added); returns the start's."""
+    start = start_tradeoffs(runs)
+    have = {(t.get("variable"), str(t.get("value"))) for t in start}
+    for r in runs:
+        r["tradeoffs_added"] = [t for t in r.get("tradeoffs") or [] if (t.get("variable"), str(t.get("value"))) not in have]
+    return start
+
+
 def run_brief(r):
     d = {k: r[k] for k in RUN_LIST_FIELDS}
     d["summary"] = store.uj(r["summary"], {})
@@ -634,6 +649,7 @@ def session(sid: int, request: Request):
     s["calibration"] = store.uj(s.get("calibration"))
     e = own_env(s["env_id"], u["id"])
     runs = [run_brief(r) for r in store.q("SELECT * FROM runs WHERE session_id=? ORDER BY seq, id", (sid,))]
+    s["start_tradeoffs"] = mark_added_tradeoffs(runs)
     stars = set() if u.get("share") else {x["run_id"] for x in store.q("SELECT run_id FROM stars WHERE user_id=? AND run_id IN (SELECT id FROM runs WHERE session_id=?)", (u["id"], sid))}
     for r in runs:
         r["starred"] = r["id"] in stars
@@ -845,6 +861,11 @@ def run_detail(run_id: int, request: Request, vs: int = None):
     recs = [store.row(x, ("items", "diagnosis", "workload", "llm")) for x in store.q("SELECT * FROM recommendations WHERE run_id=? ORDER BY id", (run_id,))]
     siblings = [{"id": x["id"], "seq": x["seq"], "label": x["label"]} for x in store.q("SELECT id, seq, label FROM runs WHERE session_id=? AND status<>'aborted' ORDER BY seq", (r["session_id"],))]
     out = run_brief(r)
+    sib = [run_brief(x) for x in store.q("SELECT * FROM runs WHERE session_id=? AND status='done' ORDER BY seq LIMIT 1", (r["session_id"],))]
+    start = start_tradeoffs(sib)
+    have = {(t.get("variable"), str(t.get("value"))) for t in start}
+    out["start_tradeoffs"] = start
+    out["tradeoffs_added"] = [t for t in out.get("tradeoffs") or [] if (t.get("variable"), str(t.get("value"))) not in have]
     out.update({
         "inputs": store.uj(r["inputs"], {}), "diagnosis": store.uj(r["diagnosis"], []), "managed": store.uj(r["managed"], {}),
         "config_count": len(cfg), "diff": diff, "compared_with": run_brief(prev) if prev else None,
