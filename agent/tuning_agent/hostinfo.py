@@ -313,34 +313,6 @@ class OSCounters:
                 f = st.rsplit(")", 1)[1].split()
                 s["mysqld"] = (self.pid, int(f[11]) + int(f[12]))  # utime + stime (ticks)
                 s["mysqld_rss"] = int(f[21]) * os.sysconf("SC_PAGE_SIZE")
-            # PSS needs a page-table walk per process: every 30 s is plenty for a memory gauge
-            if time.time() - getattr(self, "_mem_t", 0) >= 30 or getattr(self, "_mem_pid", None) != self.pid:
-                self._mem_t, self._mem_pid = time.time(), self.pid
-                try:
-                    self._pids = service_pids(self.pid, self.cgroup)
-                    self._mem = process_memory(self._pids)
-                    if self._mem is not None and self.cgroup:
-                        self._mem.update(cgroup_memory(self.cgroup))
-                except Exception:  # best effort
-                    self._mem = None
-            if getattr(self, "_mem", None):
-                s["dbmem"] = self._mem
-            # scheduling delay of the database threads. Threads come and go (connections, PostgreSQL backends), so the
-            # deltas are taken per thread inside this long-lived collector and the snapshot carries the interval's rates.
-            try:
-                now_t, cur = time.time(), thread_sched(getattr(self, "_pids", None) or [self.pid])
-                prev, pt = getattr(self, "_sched", None), getattr(self, "_sched_t", None)
-                if prev is not None and now_t > pt:
-                    d = [0, 0, 0, 0]
-                    for tid, v in cur.items():
-                        base = prev.get(tid, (0, 0, 0, 0))  # new thread: started within the interval
-                        for i in range(4):
-                            d[i] += max(v[i] - base[i], 0)
-                    s["dbsched"] = dict(sched_rates(d[0], d[1], d[2], now_t - pt, "dbproc_"), dbproc_nvcsw_per_s=round(d[3] / (now_t - pt), 1),
-                                        dbproc_threads=len(cur))
-                self._sched, self._sched_t = cur, now_t
-            except Exception:  # best effort
-                pass
         s["hsched"] = host_sched()
         la = _read("/proc/loadavg").split()
         s["load1"] = float(la[0]) if la else 0.0
@@ -379,7 +351,44 @@ class OSCounters:
             s["ss"] = netmon.ss_probe(self.mysql_port, self.role)
         except Exception:  # network observability is best effort
             pass
+        self._slow(s)
         return s
+
+    def _slow(self, s):
+        """The expensive parts (a page-table walk for PSS every 30 s, every database thread's scheduling stats), read after
+        the cheap counters: before, the walk sat between the snapshot's timestamp and the disk / network counters, so every
+        third interval looked ~0.6 s longer and the next one shorter (run 4123: disk reads +6% / -6% every third 10 s sample
+        on a 160 GB buffer pool while InnoDB's page reads were flat)."""
+        if not self.pid:
+            return
+        # PSS needs a page-table walk per process: every 30 s is plenty for a memory gauge
+        if time.time() - getattr(self, "_mem_t", 0) >= 30 or getattr(self, "_mem_pid", None) != self.pid:
+            self._mem_t, self._mem_pid = time.time(), self.pid
+            try:
+                self._pids = service_pids(self.pid, self.cgroup)
+                self._mem = process_memory(self._pids)
+                if self._mem is not None and self.cgroup:
+                    self._mem.update(cgroup_memory(self.cgroup))
+            except Exception:  # best effort
+                self._mem = None
+        if getattr(self, "_mem", None):
+            s["dbmem"] = self._mem
+        # scheduling delay of the database threads. Threads come and go (connections, PostgreSQL backends), so the
+        # deltas are taken per thread inside this long-lived collector and the snapshot carries the interval's rates.
+        try:
+            now_t, cur = time.time(), thread_sched(getattr(self, "_pids", None) or [self.pid])
+            prev, pt = getattr(self, "_sched", None), getattr(self, "_sched_t", None)
+            if prev is not None and now_t > pt:
+                d = [0, 0, 0, 0]
+                for tid, v in cur.items():
+                    base = prev.get(tid, (0, 0, 0, 0))  # new thread: started within the interval
+                    for i in range(4):
+                        d[i] += max(v[i] - base[i], 0)
+                s["dbsched"] = dict(sched_rates(d[0], d[1], d[2], now_t - pt, "dbproc_"), dbproc_nvcsw_per_s=round(d[3] / (now_t - pt), 1),
+                                    dbproc_threads=len(cur))
+            self._sched, self._sched_t = cur, now_t
+        except Exception:  # best effort
+            pass
 
     @staticmethod
     def rates(a, b):
