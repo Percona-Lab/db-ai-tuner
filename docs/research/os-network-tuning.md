@@ -570,3 +570,27 @@ Percona: OS checklist 2023 <https://www.percona.com/blog/dont-start-using-your-m
 Scheduler: AWS EEVDF/MySQL numbers <https://lkml.iu.edu/hypermail/linux/kernel/2411.3/01578.html>; sysctl proposal rejected <https://lkml.rescloud.iu.edu/2502.1/05730.html>.
 Cloud: AWS ENA latency <https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ena-improve-network-latency-linux.html>; AWS TWP <https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configure-twp.html>; GCP MySQL workloads <https://cloud.google.com/compute/docs/instances/mysql/mysql-workloads>; Azure MTU <https://learn.microsoft.com/en-us/azure/virtual-network/how-to-virtual-machine-mtu>; Akamai multi-queue <https://techdocs.akamai.com/cloud-computing/docs/multi-queue-nics>.
 Other: Gregg Netflix EC2 tunables 2017 <https://brendangregg.com/blog/2017-12-31/reinvent-netflix-ec2-tuning.html>; Cloudflare ephemeral ports 2022 <https://blog.cloudflare.com/how-to-stop-running-out-of-ephemeral-ports-and-start-to-love-long-lived-connections/>; Cloudflare TCP buffers 2022 <https://blog.cloudflare.com/optimizing-tcp-for-high-throughput-and-low-latency/>; BBR (ACM Queue 2016) <https://queue.acm.org/detail.cfm?id=3022184>; Phoronix filesystems 7.0 <https://www.phoronix.com/review/linux-70-filesystems/4>, I/O schedulers <https://www.phoronix.com/review/linux-56-nvme/2>, mitigations Zen 5 <https://www.phoronix.com/review/amd-zen5-mitigations-off>; Shattered Silicon ZFS <https://shatteredsilicon.net/mysql-mariadb-innodb-on-zfs/>; Klara ZFS direct I/O 2026 <https://klarasystems.com/articles/managing-cache-and-direct-io-for-databases-on-zfs/>; MongoDB tcmalloc/THP <https://www.mongodb.com/docs/manual/administration/tcmalloc-performance/>; jemalloc TUNING.md <https://github.com/jemalloc/jemalloc/blob/dev/TUNING.md>; glibc tunables <https://www.gnu.org/software/libc/manual/html_node/Tunables.html>; MariaDB allocators <https://mariadb.com/kb/en/using-mariadb-with-tcmalloc-or-jemalloc/>; MariaDB 10.6.5 io_uring note <https://mariadb.com/docs/release-notes/community-server/10.6/10.6.5>; MySQL Bug #100704, #110404, #115130.
+
+## Client-side findings from the r2 connection storm (HC-6, 2026-10-23)
+
+A 256-thread connect-per-request storm, from a 16 vCPU client to a 16 vCPU server over the public network, MySQL 8.4,
+caching_sha2_password.
+
+1. **TLS per connection saturated the client.** The client ran Ubuntu's sysbench 1.0.20. Its `--mysql-ssl=off` does not
+   disable TLS: the server's `Ssl_accepts` grew with every connection. libmysqlclient with OpenSSL 3 re-reads the system
+   CA bundle on every TLS connect (`PEM_X509_INFO_read_bio_ex`), and 57% of the client's CPU was spent in OpenSSL's global
+   lock (`CRYPTO_THREAD_unlock`). All 16 cores were busy for about 60 new connections/s (313 queries/s).
+   - sysbench 1.1 with `--mysql-ssl=DISABLED` makes no TLS handshakes; `Ssl_accepts` stayed unchanged over 5,206
+     connections.
+   - Without TLS, caching_sha2_password accepts a plain connection only once the server has cached the password. Log in
+     once over TLS after every restart.
+2. **Then ephemeral ports.** Without TLS the client reached about 2,300 connections/s and spent 97% of its CPU in the
+   kernel looking for free ports. The kernel default `tcp_tw_reuse=2` reuses TIME_WAIT ports for loopback only.
+   - With `tcp_tw_reuse=1`: 18,669 queries/s (about 3,700 connections/s), with the client 84% idle.
+3. **Gaps in the tuner (to do):**
+   - The client-saturation guard stops the session before client-side rules (client-ports) can act. It should apply an
+     available client remedy and recalibrate, and stop only when none is left.
+   - It needs a client CPU diagnosis: system CPU plus TIME_WAIT points to ports; user CPU in libcrypto on connect points
+     to per-connection TLS (remedies: pooling, TLS session reuse; TLS off is a security trade-off).
+   - The name-resolution and authentication path on the server is what HC-6 is meant to measure once the client is out of
+     the way.
