@@ -25,7 +25,11 @@ RATE_COUNTERS = {
     "read_ahead_rnd": ["Innodb_buffer_pool_read_ahead_rnd"],  # by random read-ahead
     "read_ahead_evicted": ["Innodb_buffer_pool_read_ahead_evicted"],  # prefetched, evicted before any use: wasted I/O
     "data_reads": ["Innodb_data_reads"],
-    "data_writes": ["Innodb_data_writes"],
+    "data_writes": ["Innodb_data_writes"],  # every write through InnoDB's file layer: redo + data pages + doublewrite
+    "log_writes": ["Innodb_log_writes"],  # redo log write calls
+    "dblwr_writes": ["Innodb_dblwr_writes"],  # doublewrite batches
+    "data_written_mbs": ["Innodb_data_written"],  # bytes (scaled to MiB below)
+    "log_written_mbs": ["Innodb_os_log_written"],
     "data_fsyncs": ["Innodb_data_fsyncs"],
     "log_fsyncs": ["Innodb_os_log_fsyncs"],
     "log_waits": ["Innodb_log_waits"],
@@ -91,6 +95,9 @@ class DBSampler:
                     seen = True
             if seen:
                 out[name] = round(max(tot, 0) / dt, 2)
+        for k in ("data_written_mbs", "log_written_mbs"):  # bytes/s -> MiB/s
+            if k in out:
+                out[k] = round(out[k] / 2 ** 20, 2)
         out["tps"] = round(out.get("commits", 0) + out.get("rollbacks", 0), 2)
         if not out["tps"] and out.get("handler_commits"):
             # autocommit statements send no COMMIT: each is a transaction the engine commits (r1 WI-3: tps 0 hid a
