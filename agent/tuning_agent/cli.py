@@ -1712,6 +1712,45 @@ def _season(c, prof):
     return res
 
 
+def _queue_promising_retests(c):
+    """Changes that beat the measured variation but not the conservative floor threshold (which holds until a re-check of
+    the same configuration measures drift) were reverted as neutral (session 294: os-autogroup +0.7% at CV 0.21% against
+    the 2% floor). They are remembered; once the noise estimate has time-separated repeats, each is measured again with
+    repeats. Returns True when it queued something."""
+    sess = c.session()
+    seen = set(sess.get("promising_runs") or [])
+    for r in sess["runs"]:
+        if (r.get("evaluation") or {}).get("promising") and r["seq"] not in seen:
+            seen.add(r["seq"])
+    queued = set(sess.get("promising_queued") or [])
+    sess["promising_runs"] = sorted(seen)
+    if not (sess.get("noise") or {}).get("long_term_dof"):
+        c.state.set("session", sess)
+        return False
+    cur = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
+    did = False
+    for seq in sorted(seen - queued):
+        r = next((x for x in sess["runs"] if x["seq"] == seq), None)
+        own = [x for x in (r or {}).get("changes") or [] if str(x.get("source", "")).startswith("rec:")
+               and not str(x["source"])[4:].startswith(("revert", "rollback", "drop"))]
+        queued.add(seq)
+        if not own or all(str(cur.get(x["variable"])) == str(x.get("new")) for x in own):
+            continue
+        settings = ",".join(f"{x['variable']}={x.get('new')}" for x in own)
+        d = ((r.get("evaluation") or {}).get("promising") or {}).get("goal_delta_pct")
+        try:
+            c.client.post(f"/sessions/{sess['id']}/experiments", {"kind": "try", "settings": settings, "repeats": 2,
+                          "reason": f"re-test of run {seq} ({r.get('label')}): {d:+.2f}% beat the measured variation but not the "
+                                    "floor threshold; a re-check has measured drift since", "created_by": "agent:retest-promising"})
+            log(f"== re-test queued: run {seq} {r.get('label')} ({settings}), 2 runs")
+            did = True
+        except Exception as e:  # the re-test is a bonus, never a reason to stop
+            log(f"note: could not queue the re-test of run {seq}: {e}")
+    sess["promising_queued"] = sorted(queued)
+    c.state.set("session", sess)
+    return did
+
+
 def _review_run_plan(c, runs):
     """How the run-length probe's predictions held up in calibration (kept for the data review): the measured within-run
     noise against the predicted one, and whether the warm-up reached the state the window measured."""
@@ -2967,6 +3006,8 @@ def _autotune(a):
             log("   " + _run_experiment(c, prof, e))
             measured += max(1, len(c.session()["runs"]) - n0)  # runs it really made (screening skips, extensions add)
             continue
+        if _queue_promising_retests(c):
+            continue  # the queued re-tests run first, as experiments
         c.activity("choosing next experiment", "diagnosis and recommendation")
         res = _recommend(c, sess)
         nxt = res.get("next")

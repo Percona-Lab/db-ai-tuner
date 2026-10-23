@@ -1702,6 +1702,25 @@ def test_measure_length_from_settled_samples():
     assert b["recommended_s"] >= 600 and b["recommended_s"] > a["recommended_s"], b
     assert collector.measure_length(white[:20]) is None  # too little settled data
 
+
+def test_neutral_explained_promising_and_latency_gain():
+    """Session 294: os-autogroup +0.67% TPS at calibration CV 0.21% (2% floor until a re-check), avg statement latency
+    -24% and p95 -37% - not kept for the goal, but explained, marked promising, and the latency gain reported."""
+    from tuning_agent import evaluate
+    mk = lambda seq, label, g, lat, p95, managed, changes=(): {"seq": seq, "label": label, "goal_value": g, "verdict": "reference" if seq == 1 else "repeat",
+        "managed": managed, "changes": list(changes), "summary": {"tps": g, "avg_latency_ms": lat, "p95_latency_ms": p95, "mysqld_cpu_ms_per_trx": 1.2}}
+    base = {"innodb_buffer_pool_size": "8G"}
+    hist = [mk(1, "baseline (1/3)", 19685, 0.1815, 0.549, base), mk(2, "baseline (2/3)", 19703, 0.1812, 0.549, base),
+            mk(3, "baseline (3/3)", 19624, 0.1822, 0.549, base)]
+    run = mk(4, "os-autogroup", 19802, 0.1376, 0.347, dict(base, **{"os:kernel.sched_autogroup_enabled": "0"}),
+             [{"variable": "os:kernel.sched_autogroup_enabled", "new": "0", "source": "rec:os-autogroup"}])
+    noise = {"noise_pct": 2.0, "pooled_cv_pct": 0.21, "dof": 2, "long_term_dof": 0, "runs": [1, 2, 3]}
+    v, d = evaluate.verdict(run, hist, "tps", noise)
+    assert v == "neutral" and "within the ±2.0% noise threshold" in d["note"] and d.get("promising"), d
+    assert d["secondary_gain"]["avg_latency_ms"]["faster_pct"] > 20 and "faster" in d["note"], d
+    v2, d2 = evaluate.verdict(run, hist, "tps", dict(noise, long_term_dof=3, noise_pct=0.53))
+    assert v2 == "improved" and not d2.get("promising"), (v2, d2)
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

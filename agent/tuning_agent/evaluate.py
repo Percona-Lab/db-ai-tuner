@@ -920,27 +920,87 @@ def _verdict(run, history, goal, noise):
     if swap_cost(s, goal_noise):
         details["swap_hazard"] = {"dbproc_swap_mb": s.get("dbproc_swap_mb"), "swap_in": s.get("swap_in"),
                                   "offcpu_swapin_share_pct": s.get("offcpu_swapin_share_pct")}
+    v = _goal_verdict(d_goal, goal_noise, better, worse, details)
+    _secondary_latency(details, s, parent_runs, d_goal, goal_noise)
+    if v == "neutral" and d_goal is not None:
+        _explain_neutral(details, d_goal, goal_noise, noise)
+    return v, details
+
+
+def _goal_verdict(d_goal, goal_noise, better, worse, details):
     if d_goal is None:
-        return "neutral", details
+        return "neutral"
     if d_goal > goal_noise:
-        return "improved", details
+        return "improved"
     if d_goal < -goal_noise:
-        return "regressed", details
+        return "regressed"
     if better and not worse:
         if d_goal < -0.5 * goal_noise:
             # the same result for less work - not a loss in the goal's point estimate beyond half the threshold
             # (user 174: purge_threads=2 at -10.5% and redo-grow at -6% kept as "gains" on disk I/O)
             details["note"] = (f"Uses less ({', '.join(better)}) but the goal is {d_goal:+.2f}%, more than half the ±{goal_noise}% "
                                "threshold below the parent: not kept as an efficiency gain.")
-            return "neutral", details
+            return "neutral"
         if details.get("not_steady") and any(EFFICIENCY.get(k) in better for k in DEFERRABLE):
             details["note"] = ("Less I/O per transaction while deferred work was still piling up at the end of the window: the "
                                "saving may be I/O pushed past the window. Not kept as an efficiency gain.")
-            return "neutral", details
-        return "efficiency-gain", details
+            return "neutral"
+        return "efficiency-gain"
     if worse and not better:
-        return "efficiency-loss", details
-    return "neutral", details
+        return "efficiency-loss"
+    return "neutral"
+
+
+LATENCY_KEYS = (("avg_latency_ms", "avg statement latency"), ("p95_latency_ms", "p95 statement latency"))
+MIN_LATENCY_NOISE = 10.0  # %: statement latencies scatter more than throughput
+
+
+def _secondary_latency(details, s, parent_runs, d_goal, goal_noise):
+    """The goal did not move, but statements got clearly faster at no extra CPU or I/O per transaction (session 294:
+    os-autogroup +0.7% TPS, avg statement latency -24%, p95 -37% - with a co-located closed-loop client the time saved
+    in the server moved to the client, so TPS could not show it). Reported, and offered as a latency improvement."""
+    if d_goal is None or d_goal < -0.5 * goal_noise or details.get("efficiency_worse"):
+        return
+    gains = {}
+    for k, label in LATENCY_KEYS:
+        pv = [(r.get("summary") or {}).get(k) for r in parent_runs]
+        pv = [x for x in pv if x]
+        now = s.get(k)
+        if not pv or not now:
+            continue
+        m = sum(pv) / len(pv)
+        cv = (sum((x - m) ** 2 for x in pv) / (len(pv) - 1)) ** 0.5 / m * 100 if len(pv) > 1 else 0
+        thr = max(MIN_LATENCY_NOISE, NOISE_K * cv)
+        ch = round(100.0 * (m - now) / m, 1)  # positive = faster
+        if ch > thr:
+            gains[k] = {"label": label, "parent": round(m, 4), "now": now, "faster_pct": ch, "noise_pct": round(thr, 1)}
+    if gains:
+        details["secondary_gain"] = gains
+        txt = ", ".join(f"{g['label']} {-g['faster_pct']:+.0f}%" for g in gains.values())
+        details["note"] = ((details.get("note") + " ") if details.get("note") else "") + \
+            f"Statements got faster ({txt}, beyond their ±{max(g['noise_pct'] for g in gains.values()):.0f}% spread) at no extra CPU or I/O per transaction."
+
+
+def _explain_neutral(details, d_goal, goal_noise, noise):
+    """Say why a change was not kept, and keep a promising one for a re-test: it beats what the measured variation alone
+    allows (K x the repeats' CV) but not the conservative floor that holds until a re-check measures drift."""
+    n = noise or {}
+    point = max(RESOLUTION_NOISE, NOISE_K * float(n.get("pooled_cv_pct") or n.get("goal_cv_pct") or 0)) if (n.get("pooled_cv_pct") or n.get("goal_cv_pct")) else None
+    floor_held = point is not None and point < goal_noise and not n.get("long_term_dof")
+    base = f"{d_goal:+.2f}% is within the ±{goal_noise}% noise threshold"
+    if floor_held:
+        base += (f" (the floor until a re-check of the same configuration measures drift; the calibration repeats alone "
+                 f"suggest ±{point:.1f}%)")
+    base += ": not kept."
+    if floor_held and d_goal >= point:
+        details["promising"] = {"goal_delta_pct": d_goal, "point_threshold_pct": round(point, 2), "threshold_pct": goal_noise}
+        base += " Promising: it beats the measured variation, so it is measured again once a re-check has lowered the threshold."
+    details["note"] = base + ((" " + details["note"]) if details.get("note") else "")
+
+    if d_goal > goal_noise:
+        return "improved", details
+    if d_goal < -goal_noise:
+        return "regressed", details
 
 
 KEEP_VERDICTS = ("improved", "efficiency-gain", "reference")  # EXCLUDED runs are never kept or compared

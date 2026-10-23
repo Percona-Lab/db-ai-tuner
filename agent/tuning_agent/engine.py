@@ -1167,6 +1167,23 @@ def recommend(ctx):
                   "a thread pool or smaller client pools.", {"threads_running_avg": s.get("threads_running_avg"), "kernel": kernel},
                   impact=2, confidence=2, kind="advice")
 
+    # ---------------- latency improvements the goal could not show ---------------
+    # a change whose run left the goal unchanged but made statements clearly faster at no extra CPU or I/O per transaction
+    # (session 294: os-autogroup, TPS +0.7%, avg statement latency -24%, p95 -37%): offered, not run again
+    cur_m = {k: (m.get("value") if isinstance(m, dict) else m) for k, m in (ctx.get("managed") or {}).items()}
+    for h in ctx.get("history") or []:
+        sg = (h.get("evaluation") or {}).get("secondary_gain")
+        own = [x for x in h.get("changes") or [] if str(x.get("source", "")).startswith("rec:")
+               and not str(x["source"])[4:].startswith(("revert", "rollback", "drop"))]
+        if not sg or not own or all(str(cur_m.get(x["variable"])) == str(x.get("new")) for x in own):
+            continue
+        txt = ", ".join(f"{g['label']} {-g['faster_pct']:+.0f}%" for g in sg.values())
+        b.add(f"latency-run{h['seq']}", f"Lower statement latency: {h.get('label')}", [(x["variable"], str(x.get("new"))) for x in own],
+              f"Run {h['seq']} ({h.get('label')}) left the goal unchanged ({((h.get('evaluation') or {}).get('goal_delta_pct') or 0):+.1f}%) "
+              f"but statements got faster ({txt}) at no extra CPU or I/O per transaction. Worth keeping where latency matters; "
+              "with a closed-loop benchmark on the same host the saved time can move to the client, so throughput does not show it.",
+              {"run": h["seq"], "latency": sg}, impact=1, confidence=3, kind="advice")
+
     # ---------------- client hosts (applied through the client role) ---------------
     if have_run and ctx.get("os_tuning") and any(k.startswith("client:os:") for k in v):
         tw, cr = s.get("client_net_time_wait") or 0, s.get("client_net_conn_per_s") or 0
