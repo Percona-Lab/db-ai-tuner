@@ -469,6 +469,43 @@ WARMUP_SIGNALS = (("checkpoint_age_pct", "checkpoint age %", 3.0, 0.15), ("bp_di
                   ("tps", "throughput", 0.0, 0.05), ("avg_latency_ms", "average latency", 0.0, 0.10))
 
 
+MEASURE_CANDIDATES_S = (120, 180, 300, 450, 600, 900, 1200, 1800, 2700, 3600)
+
+
+def measure_length(samples, start_ts=None, key="tps", target_pct=3.0, k=2.5):
+    """How long must a measured window be? From the settled part of one long run: the variance of the mean of a window
+    of W seconds, estimated by batch means (block sizes 10 s .. 5 min; the largest variance x block length is used, so
+    slow cycles - checkpoint or flush waves - count), gives the within-run noise of a W-second run: k x CV(W). The
+    recommendation is the shortest candidate whose within-run noise uses at most half the target noise threshold (the
+    other half is left for run-to-run differences). Returns None without at least 5 minutes of settled samples."""
+    pts = [(x.get("ts") or 0, x["db"][key]) for x in samples
+           if (x.get("db") or {}).get(key) is not None and (start_ts is None or (x.get("ts") or 0) >= start_ts)]
+    if len(pts) < 30:
+        return None
+    gaps = sorted(pts[i + 1][0] - pts[i][0] for i in range(len(pts) - 1))
+    dt = max(gaps[len(gaps) // 2], 1e-6)
+    vals = [v for _, v in pts]
+    mean = sum(vals) / len(vals)
+    if not mean:
+        return None
+    sig2, block = 0.0, 1
+    for b in (1, 2, 3, 6, 9, 12, 18, 30):
+        nb = len(vals) // b
+        if nb < 6:
+            break
+        bm = [sum(vals[i * b:(i + 1) * b]) / b for i in range(nb)]
+        m_ = sum(bm) / nb
+        v_ = sum((x - m_) ** 2 for x in bm) / (nb - 1)
+        sig2, block = v_ * b * dt, b  # the largest block size that still leaves 6+ blocks (batch means)
+    budget = target_pct / 2
+    table = [(w, round(100 * k * (sig2 / w) ** 0.5 / abs(mean), 2)) for w in MEASURE_CANDIDATES_S]
+    rec = next((w for w, n in table if n <= budget), None)
+    return {"recommended_s": rec or MEASURE_CANDIDATES_S[-1], "reaches_target": rec is not None,
+            "predicted_within_noise_pct": dict(table)[rec or MEASURE_CANDIDATES_S[-1]], "target_pct": target_pct,
+            "budget_within_pct": budget, "table": table, "basis_s": int(pts[-1][0] - pts[0][0]), "block_s": int(block * dt),
+            "mean": round(mean, 2)}
+
+
 def settle_times(samples, t0=None):
     """How long each state metric takes to reach its working level from the start of a benchmark (warmup-probe). For each
     metric: the level of its last 20% (at least 3 minutes), a tolerance (its relative / absolute minimum from

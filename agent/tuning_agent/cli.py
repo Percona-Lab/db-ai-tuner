@@ -1307,6 +1307,9 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     """reset -> start benchmark -> warm-up -> measure -> wait for exit -> parse metrics -> finish run."""
     t_run0 = time.time()
     sess = c.session()
+    if (prof.auto_warmup or prof.auto_duration) and not sess.get("run_plan"):
+        log(f"note: the profile leaves the run length to the probe; without one this run uses warm-up {prof.warmup} s and "
+            f"{prof.duration} s measured (find them with `tuning-agent run-length --bench ...`, or let autotune do it)")
     logdir = os.path.join(c.state.dir, "bench")
     os.makedirs(logdir, exist_ok=True)
     seq = len(sess["runs"]) + 1
@@ -1709,6 +1712,30 @@ def _season(c, prof):
     return res
 
 
+def _review_run_plan(c, runs):
+    """How the run-length probe's predictions held up in calibration (kept for the data review): the measured within-run
+    noise against the predicted one, and whether the warm-up reached the state the window measured."""
+    sess = c.session()
+    plan = sess.get("run_plan")
+    if not plan or plan.get("review"):
+        return
+    ses = [(r.get("summary") or {}).get("within_se_pct") for r in runs]
+    ses = [x for x in ses if x]
+    measured = round(evaluate.NOISE_K * (sum(x * x for x in ses) / len(ses)) ** 0.5, 2) if ses else None
+    wu = (sess.get("noise") or {}).get("warmup") or {}
+    review = {"predicted_within_noise_pct": plan.get("predicted_within_noise_pct"), "measured_within_noise_pct": measured,
+              "calibration_noise_pct": (sess.get("noise") or {}).get("noise_pct"),
+              "warmup_adequate": bool(wu.get("adequate", True)) and not wu.get("settling_runs"),
+              "warmup_note": wu.get("text")}
+    plan["review"] = review
+    sess["run_plan"] = plan
+    c.state.set("session", sess)
+    txt = (f"run-length plan held up: within-run noise ±{measured}% measured vs ±{plan.get('predicted_within_noise_pct')}% predicted; "
+           f"warm-up {'adequate' if review['warmup_adequate'] else 'NOT adequate'}")
+    log("   " + txt)
+    c.event("run_length_review", txt, review)
+
+
 def _noise_plan(c, prof, runs, n):
     """After calibration: is the noise threshold small enough to see typical gains, and what would reduce it?
     Longer runs only when the noise is mostly within-run (they do not remove run-to-run shifts); then the earlier
@@ -1836,20 +1863,17 @@ def _fmt_cal(cal):
     return "\n".join(lines)
 
 
-def cmd_warmup_probe(a):
-    """How long a warm-up does this benchmark need on the current configuration? One continuous run from the benchmark's
-    clean start (restart / data reset, as every measured run gets) until every state metric - throughput, latency,
-    checkpoint age, dirty and free pages, hit ratio, history list - has settled and held its level for a while, or --max.
-    Recommends the longest settling time + 20%; --apply writes it into the profile."""
-    c = Ctx()
+def _run_length_probe(c, prof, max_s=3600, target_pct=None):
+    """One continuous run from the benchmark's clean start until every state metric has settled and held its level
+    (warm-up), then the measurement length that keeps the within-run noise inside half the target noise threshold."""
+    target_pct = target_pct or evaluate.NOISE_TARGET
     if c.state.get("measurement"):
         raise Fail("a measurement is in progress")
-    prof = bench.Profile(a.bench)
     if not prof.can_resize():
         raise Fail("the profile's run command has no {total}/{duration} placeholder: its length cannot be set for one long run")
     logdir = os.path.join(c.state.dir, "bench")
     os.makedirs(logdir, exist_ok=True)
-    logfile = os.path.join(logdir, f"warmup-probe-{int(time.time())}.log")
+    logfile = os.path.join(logdir, f"run-length-probe-{int(time.time())}.log")
     if prof.restart_before_run and (not prof.reset or prof.data_state in ("read-only", "seasoned")):
         log("clean start: restarting mysqld and dropping the OS page cache")
         ok, err = Applier(c.cfg, c.state, c.db, log=log).restart()
@@ -1865,16 +1889,16 @@ def cmd_warmup_probe(a):
             raise ServerDown(f"reset command failed ({rc}): {out[-500:]}")
         c.db.connect(retries=30, delay=2)
     hold = lambda el: max(600, 0.25 * el)  # noqa: E731  a settled level has to hold this long to count
-    log(f"== warm-up probe: one continuous run of up to {a.max // 60} min; each state metric must settle and hold its level "
-        f"for at least 10 min (and a quarter of the run)")
+    log(f"== run-length probe: one continuous run of up to {max_s // 60} min; each state metric must settle and hold its level "
+        f"for at least 10 min (and a quarter of the run); then the measurement length for a ±{target_pct:g}% noise target")
     t0 = time.time()
-    r = bench.Running(prof.command(total_s=a.max + 60), logfile)
-    res, done = {}, False
+    r = bench.Running(prof.command(total_s=max_s + 60), logfile)
+    done = False
     try:
-        while r.alive() and time.time() - t0 < a.max:
+        while r.alive() and time.time() - t0 < max_s:
             time.sleep(60)
             el = time.time() - t0
-            c.activity("warm-up probe", f"{el / 60:.0f} of max {a.max // 60} min")
+            c.activity("run-length probe", f"{el / 60:.0f} of max {max_s // 60} min")
             if el < 900:
                 continue
             res = collector.settle_times(SampleStore(c.state.dir).window(t0, time.time()), t0)
@@ -1889,36 +1913,56 @@ def cmd_warmup_probe(a):
     finally:
         if r.alive():
             r.kill()
-    res = collector.settle_times(SampleStore(c.state.dir).window(t0, time.time()), t0)
+    smp = SampleStore(c.state.dir).window(t0, time.time())
+    res = collector.settle_times(smp, t0)
     m = res["metrics"]
     settled = [x for x in m.values() if x["settled_after_s"] is not None and not x["unbounded"]]
     longest = max([x["settled_after_s"] for x in settled] or [0])
     rec = max(60, int(-(-longest * 1.2 // 60)) * 60)
-    log("== warm-up probe " + ("finished: every metric settled" if done else "stopped at the time limit") + f" after {res['elapsed_s'] // 60} min")
+    ml = collector.measure_length(smp, t0 + longest, "tps", target_pct, evaluate.NOISE_K)
+    unsettled = [x["label"] for x in m.values() if x["settled_after_s"] is None and not x["unbounded"]]
+    log("== run-length probe " + ("finished: every metric settled" if done else "stopped at the time limit") + f" after {res['elapsed_s'] // 60} min")
     for k, x in sorted(m.items(), key=lambda kv: -(kv[1]["settled_after_s"] or 10 ** 9)):
         log(f"   {x['label']:28} " + ("grows without bound - no warm-up settles it (unsustainable configuration)" if x["unbounded"]
             else f"settled after {x['settled_after_s'] // 60} min {x['settled_after_s'] % 60:02d} s at {x['level']:,} (held {x['plateau_s'] // 60} min)"
             if x["settled_after_s"] is not None else "did not settle within the probe"))
-    unsettled = [x["label"] for x in m.values() if x["settled_after_s"] is None and not x["unbounded"]]
     txt = (f"recommended warm-up: {rec} s ({rec // 60} min; longest settling time + 20%)"
            + (f"; not settled: {', '.join(unsettled)} - run the probe longer" if unsettled else "")
            + (f"; growing without bound: {', '.join(u['label'] for u in res['unbounded'])}" if res["unbounded"] else ""))
+    if ml:
+        txt += (f"; recommended measurement: {ml['recommended_s']} s (predicted within-run noise ±{ml['predicted_within_noise_pct']}% "
+                f"of a ±{target_pct:g}% target" + ("" if ml["reaches_target"] else "; the target is not reached within an hour") + ")")
+        log("   within-run noise by measurement length: " + ", ".join(f"{w // 60 if w >= 60 else w}{'m' if w >= 60 else 's'} ±{n}%" for w, n in ml["table"][:7]))
     log("   " + txt)
-    c.event("warmup_probe", txt, {"recommended_s": rec, "complete": done and not unsettled, **res})
-    if a.apply and not unsettled:
+    out = {"recommended_warmup_s": rec, "recommended_duration_s": (ml or {}).get("recommended_s"), "measure": ml,
+           "complete": done and not unsettled, **res}
+    c.event("run_length", txt, out)
+    return out
+
+
+def cmd_run_length(a):
+    """How long a warm-up and how long a measurement does this benchmark need on the current configuration?"""
+    c = Ctx()
+    prof = bench.Profile(a.bench)
+    out = _run_length_probe(c, prof, a.max or prof.run_length_max, a.target or prof.noise_target)
+    if a.apply and out["complete"]:
+        sets = {"warmup": out["recommended_warmup_s"]}
+        if out.get("recommended_duration_s"):
+            sets["duration"] = out["recommended_duration_s"]
         lines = open(a.bench).read().splitlines()
-        new = [f"warmup = {rec}" if re.match(r"\s*warmup\s*=", ln) else ln for ln in lines]
-        if new == lines:
-            new = [ln for ln in lines]
-            i = next((n for n, ln in enumerate(new) if ln.strip() == "[bench]"), 0)
-            new.insert(i + 1, f"warmup = {rec}")
+        for key, v in sets.items():
+            if any(re.match(rf"\s*{key}\s*=", ln) for ln in lines):
+                lines = [f"{key} = {v}" if re.match(rf"\s*{key}\s*=", ln) else ln for ln in lines]
+            else:
+                i = next((n for n, ln in enumerate(lines) if ln.strip() == "[bench]"), 0)
+                lines.insert(i + 1, f"{key} = {v}")
         tmp = a.bench + ".new"
         with open(tmp, "w") as f:
-            f.write("\n".join(new) + "\n")
+            f.write("\n".join(lines) + "\n")
         os.replace(tmp, a.bench)
-        log(f"   {a.bench}: warmup = {rec}")
+        log(f"   {a.bench}: " + ", ".join(f"{k} = {v}" for k, v in sets.items()))
     if getattr(a, "json", False):
-        print(json.dumps({"recommended_warmup_s": rec, "complete": done and not unsettled, **res}, default=str))
+        print(json.dumps(out, default=str))
 
 
 def cmd_calibrate(a):
@@ -2842,6 +2886,24 @@ def _autotune(a):
                                "source": "fs-baseline"}], "autotune")
     if prof.data_state == "seasoned" and not sess.get("seasoning") and prof.season_hours > 0:
         _season(c, prof)
+    if prof.auto_warmup or prof.auto_duration:
+        plan = sess.get("run_plan")
+        if not plan:
+            out = _run_length_probe(c, prof, prof.run_length_max, prof.noise_target)
+            plan = {"warmup_s": out["recommended_warmup_s"] if prof.auto_warmup else int(prof.warmup),
+                    "duration_s": (out.get("recommended_duration_s") or prof.duration) if prof.auto_duration else prof.duration,
+                    "auto": [k for k, on in (("warmup", prof.auto_warmup), ("duration", prof.auto_duration)) if on],
+                    "predicted_within_noise_pct": (out.get("measure") or {}).get("predicted_within_noise_pct"),
+                    "target_pct": (out.get("measure") or {}).get("target_pct"), "complete": out["complete"],
+                    "settling": {k: x["settled_after_s"] for k, x in out["metrics"].items()},
+                    "unbounded": [u["label"] for u in out["unbounded"]]}
+            sess = c.session()
+            sess["run_plan"] = plan
+            c.state.set("session", sess)
+        prof.warmup, prof.duration = str(plan["warmup_s"]), int(plan["duration_s"])
+        prof.base_warmup, prof.base_duration = prof.warmup, prof.duration
+        prof.timeout = max(prof.timeout, (plan["warmup_s"] + plan["duration_s"]) * 3)
+        log(f"== run length: warm-up {plan['warmup_s']} s, measurement {plan['duration_s']} s ({', '.join(plan['auto'])} from the run-length probe)")
     if not sess.get("noise"):
         log(f"== calibration: {a.calibrate} runs of the current configuration")
         c.activity("calibrating", f"{a.calibrate} runs of the starting configuration to measure noise")
@@ -2884,6 +2946,7 @@ def _autotune(a):
         _reevaluate(c, c.session())
         log(_fmt_cal(cal))
         runs = _noise_plan(c, prof, runs, a.calibrate)
+        _review_run_plan(c, runs)
 
     sess = c.session()
     sess["bench"] = os.path.abspath(a.bench)
@@ -3471,11 +3534,12 @@ def main(argv=None):
                                      "Default: auto if mysqld restarted in the last 10 min, else none")
     s.set_defaults(fn=cmd_measure)
 
-    s = sp.add_parser("warmup-probe", help="find the warm-up the benchmark needs: one long run until every state metric settles")
+    s = sp.add_parser("run-length", help="find the warm-up and measurement length the benchmark needs (one long run)")
     s.add_argument("--bench", required=True, help="benchmark profile")
-    s.add_argument("--max", type=int, default=3600, help="longest probe in seconds (default 3600)")
+    s.add_argument("--max", type=int, default=None, help="longest probe in seconds (default: the profile's run_length_max, 3600)")
+    s.add_argument("--target", type=float, default=None, help="noise threshold to aim for, %% (default: the tuner's target)")
     s.add_argument("--apply", action="store_true", help="write the recommended warm-up into the profile")
-    s.set_defaults(fn=cmd_warmup_probe)
+    s.set_defaults(fn=cmd_run_length)
     s = sp.add_parser("calibrate", help="measure the current configuration N times to calibrate the noise threshold")
     s.add_argument("--runs", type=int, default=3)
     s.add_argument("--duration", type=int, default=300)

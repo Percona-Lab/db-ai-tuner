@@ -6,7 +6,7 @@ Profile (INI):
     name = HammerDB TPROC-C 10W, 10 VU
     reset = /root/bench/reset.sh        ; optional: restore the data set before each run (may restart mysqld)
     run = /root/bench/hammerdb.sh       ; started in the background; output is captured
-    warmup = 120                        ; seconds after start before measuring, or "auto"
+    warmup = 120                        ; seconds after start before measuring; not set or "auto": found by a run-length probe
     duration = 300                      ; measured seconds; 0 = until the run command exits
     timeout = 1200                      ; hard limit for the run command
     goal_metric = nopm                  ; external metric used as the goal value (optional)
@@ -50,8 +50,15 @@ class Profile:
         # caches, swapped-out memory or fragmentation. restart_before_run = false keeps the state (opt-out, stated).
         self.restart_before_run = str(b.get("restart_before_run", "true")).lower() not in ("false", "0", "no", "off")
         self.run = b["run"]
-        self.warmup = b.get("warmup", "0")
-        self.duration = int(b.get("duration", "300"))
+        # run length: warm-up and measured window. Not set (or "auto"): the session finds them once with a run-length probe
+        # (warm-up until every state metric settles, a window long enough for the noise target); numbers are used as given
+        w, d = b.get("warmup"), b.get("duration")
+        self.auto_warmup = w is None or str(w).strip().lower() == "auto"
+        self.auto_duration = d is None or str(d).strip().lower() == "auto"
+        self.warmup = "600" if self.auto_warmup else w  # placeholders until the probe has run
+        self.duration = 600 if self.auto_duration else int(d)
+        self.run_length_max = int(b.get("run_length_max", "3600"))
+        self.noise_target = float(b["noise_target"]) if b.get("noise_target") else None
         self.timeout = int(b.get("timeout", str(max(self.duration * 3, 1800))))
         self.goal_metric = b.get("goal_metric")
         self.goal_scale = float(b.get("goal_scale", "1"))

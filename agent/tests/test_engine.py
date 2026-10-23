@@ -1689,6 +1689,19 @@ def test_client_failures_and_low_disk_space():
     assert evaluate.client_failures(ok) is None and not evaluate.state_flags(ok).get("low_free_space")
     assert evaluate.state_flags({"datadir_free_pct": 7.5, "datadir_free_gb": 30}).get("low_free_space")
 
+
+def test_measure_length_from_settled_samples():
+    """Run-length probe: plain sample noise needs a short window; a slow flush wave needs several of its periods."""
+    import math, random
+    from tuning_agent import collector
+    rnd = random.Random(3)
+    white = [{"ts": 10 * i, "db": {"tps": 1000 * (1 + rnd.gauss(0, 0.02))}} for i in range(120)]
+    wave = [{"ts": 10 * i, "db": {"tps": 1000 * (1 + 0.05 * math.sin(2 * math.pi * 10 * i / 240) + rnd.gauss(0, 0.01))}} for i in range(120)]
+    a, b = collector.measure_length(white), collector.measure_length(wave)
+    assert a["reaches_target"] and a["recommended_s"] <= 300, a
+    assert b["recommended_s"] >= 600 and b["recommended_s"] > a["recommended_s"], b
+    assert collector.measure_length(white[:20]) is None  # too little settled data
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
