@@ -563,6 +563,28 @@ def relevant_resources(*summaries):
 STEAL_FLAG_PEAK = 5.0  # any 10 s sample; measured normal across our hosts: mean < 0.05%, p99 < 1.5%, max < 2%
 
 
+DISK_FULL = (1114, 1021, 3, 1030)
+LOW_FREE_PCT = 10.0
+
+
+def client_failures(s):
+    """The server returned errors instead of doing the work: disk-full errors (the table / disk is full), or failures
+    amounting to more than a fifth of the transactions. Session 222 (HammerDB 2000W on seasoned data): the data disk
+    filled, every transaction failed with 'table order_line is full', and the run was reported as CPU steal."""
+    errs = s.get("client_errors") or []
+    per_s = s.get("client_errors_per_s") or 0
+    disk = [e for e in errs if e["number"] in DISK_FULL]
+    work = max(s.get("tps") or 0, 1.0)
+    if not disk and per_s < 0.2 * work:
+        return None
+    top = "; ".join(f"{e['name']} ({e['number']}) {e['per_s']}/s" for e in errs[:3])
+    space = (f" Data directory: {s['datadir_free_gb']} GiB free ({s.get('datadir_free_pct')}%)." if s.get("datadir_free_gb") is not None else "")
+    text = ("UNRELIABLE: the server returned disk-full errors - " if disk else
+            f"UNRELIABLE: {per_s:.0f} failed statements/s for {s.get('tps') or 0:.0f} transactions/s - ") + top + "." + space \
+        + (" Free space on the data disk, or reset the data set between runs." if disk else " The run measured failures, not work.")
+    return {"disk_full": bool(disk), "errors_per_s": per_s, "top": errs[:3], "text": text}
+
+
 def client_stall(s):
     """The clients stopped sending work: most connections stay open but idle and the server has nothing to do (session
     222: 259 HammerDB connections, ~15 running, CPU 1%, 14 commits/s after 270k NOPM - reported as 'CPU steal')."""
@@ -624,6 +646,11 @@ def state_flags(s):
         out["warmup_short"] = s["warmup_signals"]
     if (s or {}).get("unbounded_growth"):
         out["unbounded"] = s["unbounded_growth"]
+    fp = (s or {}).get("datadir_free_pct")
+    if fp is not None and fp < LOW_FREE_PCT:
+        # below ~10% free, SSDs (less spare area for garbage collection) and filesystems (fragmented allocation) slow down:
+        # a warning - results may drift for reasons that are not the configuration
+        out["low_free_space"] = {"free_pct": fp, "free_gb": s.get("datadir_free_gb"), "full_in_h": s.get("datadir_full_in_h")}
     return out
 
 
@@ -647,6 +674,9 @@ def _run_verdict(run, history, goal, noise):
         return "unreliable", {"config_mismatch": mm, "note": "UNRELIABLE: the server did not run the configuration this run is labelled "
                               "with (" + "; ".join(f"{x['variable']} {x['running']} instead of {x['configured']}" for x in mm[:3])
                               + "). The result is kept for reference but excluded from comparisons."}
+    fail = client_failures(run.get("summary") or {})
+    if fail:
+        return "unreliable", {"client_failures": fail, "note": fail["text"]}
     stall = client_stall(run.get("summary") or {})
     if stall:
         return "unreliable", {"client_stalled": stall,

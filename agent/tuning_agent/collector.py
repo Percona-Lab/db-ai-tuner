@@ -1,5 +1,6 @@
 """Metric sampling and measurement-window analysis."""
 import hashlib
+import os
 import time
 
 from . import mysqldb
@@ -245,6 +246,12 @@ def full_snapshot(db, device):
         snap["wait_coverage"] = db.wait_coverage()
         snap["mem"] = db.memory()
     snap["data_bytes"], snap["tables"] = db.table_sizes()
+    snap["errors"] = db.errors_raised() if ps else None
+    try:  # the data directory's filesystem: a seasoned / growing data set can fill it (session 222)
+        st = os.statvfs(snap["variables"].get("datadir") or "/var/lib/mysql")
+        snap["fs"] = {"free": st.f_bavail * st.f_frsize, "total": st.f_blocks * st.f_frsize}
+    except (OSError, TypeError):
+        snap["fs"] = None
     return snap
 
 
@@ -451,6 +458,36 @@ WARMUP_SIGNALS = (("checkpoint_age_pct", "checkpoint age %", 3.0, 0.15), ("bp_di
                   ("tps", "throughput", 0.0, 0.05), ("avg_latency_ms", "average latency", 0.0, 0.10))
 
 
+def settle_times(samples, t0=None):
+    """How long each state metric takes to reach its working level from the start of a benchmark (warmup-probe). For each
+    metric: the level of its last 20% (at least 3 minutes), a tolerance (its relative / absolute minimum from
+    WARMUP_SIGNALS, or twice the scatter at that level, whichever is larger), and the first moment after which the
+    3-minute rolling mean stays within it. Metrics growing without bound are reported apart: no warm-up settles them.
+    Returns {"metrics": {key: {...}}, "unbounded": [...], "elapsed_s"}."""
+    if not samples:
+        return {"metrics": {}, "unbounded": [], "elapsed_s": 0}
+    t0 = t0 if t0 is not None else samples[0].get("ts") or 0
+    end = samples[-1].get("ts") or t0
+    unb = {u["metric"]: u for u in unbounded_growth([x for x in samples if (x.get("ts") or 0) >= t0 + 0.4 * (end - t0)])}
+    out = {}
+    for key, label, absmin, rel in WARMUP_SIGNALS:
+        pts = [(x.get("ts") or 0, x["db"][key]) for x in samples if (x.get("db") or {}).get(key) is not None]
+        if len(pts) < 18:
+            continue
+        tail_n = max(18, len(pts) // 5)
+        last = [v for _, v in pts[-tail_n:]]
+        level = sum(last) / len(last)
+        sd = (sum((v - level) ** 2 for v in last) / max(len(last) - 1, 1)) ** 0.5
+        tol = max(absmin, rel * abs(level), 2 * sd, 1e-9)
+        w = 18  # 3 minutes of 10 s samples
+        sm = [(pts[i][0], sum(v for _, v in pts[max(0, i - w + 1):i + 1]) / len(pts[max(0, i - w + 1):i + 1])) for i in range(len(pts))]
+        settled = next((sm[i][0] for i in range(len(sm)) if all(abs(v - level) <= tol for _, v in sm[i:])), None)
+        out[key] = {"label": label, "level": round(level, 2), "tolerance": round(tol, 2),
+                    "settled_after_s": int(settled - t0) if settled is not None else None,
+                    "plateau_s": int(end - settled) if settled is not None else 0, "unbounded": key in unb}
+    return {"metrics": out, "unbounded": list(unb.values()), "elapsed_s": int(end - t0)}
+
+
 def warmup_signals(samples, warmup_s=None, tail=None, skip=()):
     """Was the warm-up long enough? For each state metric: its level in the first minute of the window vs the level it
     settled at (the last third), and how far into the window it got there. A metric still moving at the end is the
@@ -511,6 +548,34 @@ def warmup_signals(samples, warmup_s=None, tail=None, skip=()):
     return {"settling": out, "tail_vs_window": differs, "suggest_warmup_s": sug,
             "text": "Warm-up may be too short: " + "; ".join(parts)
                     + (". A warm-up of about %d s would measure the settled state only." % sug if sug else ".")}
+
+
+DISK_FULL_ERRORS = {1114: "table is full", 1021: "disk full", 3: "error writing file", 1030: "storage engine error"}
+
+
+def _errors_and_space(a, b, dt):
+    """Errors returned to clients in the window (top 5 by count) and the data directory's free space and growth."""
+    out = {}
+    ea, eb = a.get("errors"), b.get("errors")
+    if ea is not None and eb is not None:
+        d = []
+        for num, (name, n) in eb.items():
+            k = n - (ea.get(num) or [None, 0])[1]
+            if k > 0:
+                d.append({"number": num, "name": name, "count": k, "per_s": round(k / dt, 2)})
+        d.sort(key=lambda x: -x["count"])
+        out["client_errors"] = d[:5]
+        out["client_errors_per_s"] = round(sum(x["count"] for x in d) / dt, 2)
+    fa, fb = a.get("fs"), b.get("fs")
+    if fb and fb.get("total"):
+        out["datadir_free_gb"] = round(fb["free"] / 2 ** 30, 2)
+        out["datadir_free_pct"] = round(100.0 * fb["free"] / fb["total"], 2)
+        if fa:
+            grow = (fa["free"] - fb["free"]) / dt * 3600  # bytes per hour (positive: filling)
+            out["datadir_growth_gb_per_h"] = round(grow / 2 ** 30, 3)
+            if grow > 0:
+                out["datadir_full_in_h"] = round(fb["free"] / grow, 1)
+    return out
 
 
 def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None):
@@ -668,6 +733,7 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None):
         "db_rates": db_rates,
         "os_rates": os_rates,
         "data_bytes": b.get("data_bytes"),
+        **_errors_and_space(a, b, dt),
         "tables": b.get("tables"),
         "ps_enabled": b.get("ps"),
     }

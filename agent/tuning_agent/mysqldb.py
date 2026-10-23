@@ -187,6 +187,16 @@ class DB:
         except pymysql.MySQLError:
             return {}
 
+    def errors_raised(self):
+        """Errors the server returned to clients so far, by error number (MySQL 8.0+ performance_schema): a run whose
+        transactions fail measures nothing (session 222: every HammerDB transaction failed with 'table is full')."""
+        try:
+            return {int(r[0]): [r[1], int(r[2] or 0)] for r in self.rows(
+                "SELECT ERROR_NUMBER, ERROR_NAME, SUM_ERROR_RAISED FROM performance_schema.events_errors_summary_global_by_error "
+                "WHERE SUM_ERROR_RAISED > 0 AND ERROR_NUMBER IS NOT NULL")}
+        except pymysql.MySQLError:
+            return None
+
     def wait_coverage(self):
         """How much of the wait instrumentation is on: {instruments, enabled, sync_enabled}."""
         try:

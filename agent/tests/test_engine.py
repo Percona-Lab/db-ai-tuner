@@ -1659,6 +1659,36 @@ def test_client_stall_and_steal_on_idle_host():
     idle_steal = evaluate.steal_check({"cpu_busy": 2, "cpu_steal": 3.0, "cpu_steal_max": 3.5}, 2.0)
     assert idle_steal is None or idle_steal["est_impact_pct"] < 0.1, idle_steal
 
+
+def test_settle_times_for_warmup_probe():
+    """warmup-probe: settling times per metric from one long run; saturating curves settle, a linear history list is
+    reported as unbounded, not as a warm-up to wait for."""
+    import math
+    from tuning_agent import collector
+    smp = [{"ts": 10 * i, "db": {"tps": 1000 * (1 - math.exp(-10 * i / 300)) + 5 * math.sin(i),
+                                 "checkpoint_age_pct": 60 * (1 - math.exp(-10 * i / 900)),
+                                 "history_list_length": 2000.0 * 10 * i}} for i in range(1, 361)]
+    r = collector.settle_times(smp, 0)
+    m = r["metrics"]
+    assert m["tps"]["settled_after_s"] is not None and m["tps"]["settled_after_s"] < 1500, m["tps"]
+    assert m["checkpoint_age_pct"]["settled_after_s"] > m["tps"]["settled_after_s"], m
+    assert m["history_list_length"]["unbounded"], m["history_list_length"]
+
+
+def test_client_failures_and_low_disk_space():
+    """Session 222: the data disk filled and every HammerDB transaction failed with 'table is full' - a failed run, named
+    as such; below 10% free space a run carries a warning."""
+    from tuning_agent import evaluate
+    s = {"tps": 13.5, "cpu_busy": 1.0, "threads_connected_avg": 259, "threads_running_avg": 15, "mysqld_cpu_pct": 0.6,
+         "client_errors": [{"number": 1114, "name": "ER_RECORD_FILE_FULL", "count": 9000, "per_s": 10.0}], "client_errors_per_s": 10.0,
+         "datadir_free_gb": 0.0, "datadir_free_pct": 0.0}
+    v, d = evaluate.verdict({"seq": 16, "summary": s, "goal_value": 4140}, [], "tps", {"noise_pct": 12})
+    assert v == "unreliable" and d["client_failures"]["disk_full"] and "disk-full" in d["note"] and d.get("low_free_space"), d
+    ok = {"tps": 1000, "client_errors": [{"number": 1213, "name": "ER_LOCK_DEADLOCK", "count": 30, "per_s": 0.05}], "client_errors_per_s": 0.05,
+          "datadir_free_pct": 40.0}
+    assert evaluate.client_failures(ok) is None and not evaluate.state_flags(ok).get("low_free_space")
+    assert evaluate.state_flags({"datadir_free_pct": 7.5, "datadir_free_gb": 30}).get("low_free_space")
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

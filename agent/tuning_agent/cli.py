@@ -1332,6 +1332,15 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         c.db.connect(retries=30, delay=2)
         c.state.set("restart_pending", False)
 
+    try:  # free space on the data disk before the run: a seasoned / growing data set can fill it (session 222)
+        st_ = os.statvfs(c.variables.get("datadir") or "/var/lib/mysql")
+        free_pct = 100.0 * st_.f_bavail / max(st_.f_blocks, 1)
+        if free_pct < 2:
+            raise Fail(f"the data disk is almost full ({free_pct:.1f}% free): free space or reset the data set before measuring")
+        if free_pct < 10:
+            log(f"WARNING: the data disk has {free_pct:.1f}% free - below ~10% SSDs and filesystems slow down")
+    except OSError:
+        pass
     # the configuration the run is labelled with must be the one the server runs: a value MySQL silently adjusted
     # (buffer pool rounded to chunk x instances: 45G -> 48G) makes the run measure something else - judged unreliable
     mismatch = _config_mismatches(c)
@@ -1825,6 +1834,91 @@ def _fmt_cal(cal):
     for k, e in cal["efficiency"].items():
         lines.append(f"  {evaluate.EFFICIENCY[k]}: mean {e['mean']:.4g}, CV {e['cv_pct']}% -> threshold ±{e['noise_pct']}%")
     return "\n".join(lines)
+
+
+def cmd_warmup_probe(a):
+    """How long a warm-up does this benchmark need on the current configuration? One continuous run from the benchmark's
+    clean start (restart / data reset, as every measured run gets) until every state metric - throughput, latency,
+    checkpoint age, dirty and free pages, hit ratio, history list - has settled and held its level for a while, or --max.
+    Recommends the longest settling time + 20%; --apply writes it into the profile."""
+    c = Ctx()
+    if c.state.get("measurement"):
+        raise Fail("a measurement is in progress")
+    prof = bench.Profile(a.bench)
+    if not prof.can_resize():
+        raise Fail("the profile's run command has no {total}/{duration} placeholder: its length cannot be set for one long run")
+    logdir = os.path.join(c.state.dir, "bench")
+    os.makedirs(logdir, exist_ok=True)
+    logfile = os.path.join(logdir, f"warmup-probe-{int(time.time())}.log")
+    if prof.restart_before_run and (not prof.reset or prof.data_state in ("read-only", "seasoned")):
+        log("clean start: restarting mysqld and dropping the OS page cache")
+        ok, err = Applier(c.cfg, c.state, c.db, log=log).restart()
+        if not ok:
+            raise ServerDown(f"mysqld restart failed: {err}")
+        subprocess.run(["sh", "-c", "sync; echo 3 > /proc/sys/vm/drop_caches"], capture_output=True)
+        c.db.connect(retries=30, delay=2)
+    if prof.reset:
+        log(f"reset: {prof.reset}")
+        c.db.close()
+        rc, out = bench.run_shell(prof.reset, timeout=3600, log=logfile + ".reset")
+        if rc != 0:
+            raise ServerDown(f"reset command failed ({rc}): {out[-500:]}")
+        c.db.connect(retries=30, delay=2)
+    hold = lambda el: max(600, 0.25 * el)  # noqa: E731  a settled level has to hold this long to count
+    log(f"== warm-up probe: one continuous run of up to {a.max // 60} min; each state metric must settle and hold its level "
+        f"for at least 10 min (and a quarter of the run)")
+    t0 = time.time()
+    r = bench.Running(prof.command(total_s=a.max + 60), logfile)
+    res, done = {}, False
+    try:
+        while r.alive() and time.time() - t0 < a.max:
+            time.sleep(60)
+            el = time.time() - t0
+            c.activity("warm-up probe", f"{el / 60:.0f} of max {a.max // 60} min")
+            if el < 900:
+                continue
+            res = collector.settle_times(SampleStore(c.state.dir).window(t0, time.time()), t0)
+            m = res["metrics"]
+            pending = [k for k, x in m.items() if not x["unbounded"] and (x["settled_after_s"] is None or x["plateau_s"] < hold(el))]
+            if int(el) % 300 < 60:
+                log(f"   {el / 60:4.0f} min: " + "; ".join(f"{x['label']} " + (f"settled at {x['settled_after_s'] // 60} min"
+                    if x["settled_after_s"] is not None else "moving") for x in m.values()))
+            if m and not pending:
+                done = True
+                break
+    finally:
+        if r.alive():
+            r.kill()
+    res = collector.settle_times(SampleStore(c.state.dir).window(t0, time.time()), t0)
+    m = res["metrics"]
+    settled = [x for x in m.values() if x["settled_after_s"] is not None and not x["unbounded"]]
+    longest = max([x["settled_after_s"] for x in settled] or [0])
+    rec = max(60, int(-(-longest * 1.2 // 60)) * 60)
+    log("== warm-up probe " + ("finished: every metric settled" if done else "stopped at the time limit") + f" after {res['elapsed_s'] // 60} min")
+    for k, x in sorted(m.items(), key=lambda kv: -(kv[1]["settled_after_s"] or 10 ** 9)):
+        log(f"   {x['label']:28} " + ("grows without bound - no warm-up settles it (unsustainable configuration)" if x["unbounded"]
+            else f"settled after {x['settled_after_s'] // 60} min {x['settled_after_s'] % 60:02d} s at {x['level']:,} (held {x['plateau_s'] // 60} min)"
+            if x["settled_after_s"] is not None else "did not settle within the probe"))
+    unsettled = [x["label"] for x in m.values() if x["settled_after_s"] is None and not x["unbounded"]]
+    txt = (f"recommended warm-up: {rec} s ({rec // 60} min; longest settling time + 20%)"
+           + (f"; not settled: {', '.join(unsettled)} - run the probe longer" if unsettled else "")
+           + (f"; growing without bound: {', '.join(u['label'] for u in res['unbounded'])}" if res["unbounded"] else ""))
+    log("   " + txt)
+    c.event("warmup_probe", txt, {"recommended_s": rec, "complete": done and not unsettled, **res})
+    if a.apply and not unsettled:
+        lines = open(a.bench).read().splitlines()
+        new = [f"warmup = {rec}" if re.match(r"\s*warmup\s*=", ln) else ln for ln in lines]
+        if new == lines:
+            new = [ln for ln in lines]
+            i = next((n for n, ln in enumerate(new) if ln.strip() == "[bench]"), 0)
+            new.insert(i + 1, f"warmup = {rec}")
+        tmp = a.bench + ".new"
+        with open(tmp, "w") as f:
+            f.write("\n".join(new) + "\n")
+        os.replace(tmp, a.bench)
+        log(f"   {a.bench}: warmup = {rec}")
+    if getattr(a, "json", False):
+        print(json.dumps({"recommended_warmup_s": rec, "complete": done and not unsettled, **res}, default=str))
 
 
 def cmd_calibrate(a):
@@ -3000,6 +3094,17 @@ def _autotune(a):
         ue = run.get("evaluation") or {}
         deterministic = ue.get("config_mismatch") or ue.get("client_saturated") or ue.get("goal_server_mismatch_pct") is not None \
             or ue.get("client_stalled")
+        cf = ue.get("client_failures") or {}
+        sm_ = run.get("summary") or {}
+        nxt_h = (int(prof.warmup) if str(prof.warmup).isdigit() else 0) / 3600 + prof.duration / 3600
+        if cf.get("disk_full") or (sm_.get("datadir_full_in_h") is not None and sm_["datadir_full_in_h"] < 2 * nxt_h) \
+                or (sm_.get("datadir_free_pct") is not None and sm_["datadir_free_pct"] < 2):
+            why = (cf.get("text") or "") if cf.get("disk_full") else \
+                (f"the data disk fills: {sm_.get('datadir_free_gb')} GiB free, growing {sm_.get('datadir_growth_gb_per_h')} GiB/h "
+                 f"(full in ~{sm_.get('datadir_full_in_h')} h)")
+            log("== stopping: " + why[:300])
+            c.event("stop", "data disk full or about to fill: " + why[:300], {"run": run["seq"]})
+            break
         if ue.get("client_stalled"):
             # two stalled runs in a row: the benchmark client is broken, not the configuration - stop instead of measuring
             # nothing for hours (session 222: three 15-minute runs at 1% CPU)
@@ -3366,6 +3471,11 @@ def main(argv=None):
                                      "Default: auto if mysqld restarted in the last 10 min, else none")
     s.set_defaults(fn=cmd_measure)
 
+    s = sp.add_parser("warmup-probe", help="find the warm-up the benchmark needs: one long run until every state metric settles")
+    s.add_argument("--bench", required=True, help="benchmark profile")
+    s.add_argument("--max", type=int, default=3600, help="longest probe in seconds (default 3600)")
+    s.add_argument("--apply", action="store_true", help="write the recommended warm-up into the profile")
+    s.set_defaults(fn=cmd_warmup_probe)
     s = sp.add_parser("calibrate", help="measure the current configuration N times to calibrate the noise threshold")
     s.add_argument("--runs", type=int, default=3)
     s.add_argument("--duration", type=int, default=300)

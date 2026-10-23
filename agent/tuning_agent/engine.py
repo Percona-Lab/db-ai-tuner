@@ -311,6 +311,13 @@ def diagnose(ctx):
             + (f" and grew {hll_ev[0]:,.0f} -> {hll_ev[1]:,.0f} within the window" if growing else "")
             + ". Reads walk longer version chains and undo grows; more purge threads or a purge lag bound act on it.",
             {"history_list_length_max": hll, "history_list_length_window": hll_ev})
+    fp_ = s.get("datadir_free_pct")
+    if fp_ is not None and fp_ < 10:
+        add("disk-space", "high" if fp_ < 5 else "medium",
+            f"The data disk has {s.get('datadir_free_gb')} GiB free ({fp_:.1f}%)"
+            + (f", filling at {s.get('datadir_growth_gb_per_h')} GiB/h (full in ~{s.get('datadir_full_in_h')} h)" if s.get("datadir_full_in_h") else "")
+            + ". Below ~10% free SSDs and filesystems slow down, so results can drift for reasons that are not the configuration; "
+              "free space or reset the data set between runs.", {k: s.get(k) for k in ("datadir_free_gb", "datadir_free_pct", "datadir_growth_gb_per_h", "datadir_full_in_h")})
     ck_, du_ = s.get("checkpoint_age_pct_max") or 0, s.get("disk_util") or 0
     if 50 <= ck_ < 70 and du_ >= 60:
         # checkpoint-driven flushing on a busy disk before the redo log is "nearly full": a larger redo log spreads it out
