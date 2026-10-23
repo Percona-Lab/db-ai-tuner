@@ -2998,7 +2998,16 @@ def _autotune(a):
                 log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
                 _confirm(c)  # the mean of both runs against the (tighter) two-run threshold
         ue = run.get("evaluation") or {}
-        deterministic = ue.get("config_mismatch") or ue.get("client_saturated") or ue.get("goal_server_mismatch_pct") is not None
+        deterministic = ue.get("config_mismatch") or ue.get("client_saturated") or ue.get("goal_server_mismatch_pct") is not None \
+            or ue.get("client_stalled")
+        if ue.get("client_stalled"):
+            # two stalled runs in a row: the benchmark client is broken, not the configuration - stop instead of measuring
+            # nothing for hours (session 222: three 15-minute runs at 1% CPU)
+            prev = [r for r in c.session()["runs"] if r["seq"] < run["seq"]][-1:]
+            if prev and ((prev[0].get("evaluation") or {}).get("client_stalled")):
+                log("== the benchmark client stalled in two runs in a row: stopping - check the client (errors, dead virtual users)")
+                c.event("stop", "benchmark client stalled in two consecutive runs", {"runs": [prev[0]["seq"], run["seq"]]})
+                break
         if run["verdict"] == "unreliable" and deterministic:
             # the same configuration would be unreliable again (lab 221 / 213: a re-measure that could never pass)
             log("   unreliable for a reason a repeat cannot change: " + str(ue.get("note") or "")[:200])

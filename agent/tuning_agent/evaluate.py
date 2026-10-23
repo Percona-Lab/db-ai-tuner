@@ -563,6 +563,15 @@ def relevant_resources(*summaries):
 STEAL_FLAG_PEAK = 5.0  # any 10 s sample; measured normal across our hosts: mean < 0.05%, p99 < 1.5%, max < 2%
 
 
+def client_stall(s):
+    """The clients stopped sending work: most connections stay open but idle and the server has nothing to do (session
+    222: 259 HammerDB connections, ~15 running, CPU 1%, 14 commits/s after 270k NOPM - reported as 'CPU steal')."""
+    con, run_, busy = s.get("threads_connected_avg") or 0, s.get("threads_running_avg") or 0, s.get("cpu_busy")
+    if con >= 8 and busy is not None and busy < 10 and run_ < 0.25 * con and (s.get("mysqld_cpu_pct") or 0) < 5:
+        return {"cpu_busy": busy, "threads_running": round(run_, 1), "threads_connected": round(con, 1)}
+    return None
+
+
 def steal_check(summary, noise_pct=None):
     """Hypervisor CPU steal on the database host or a client during the run. Steal takes CPU away from a CPU-bound
     workload roughly one for one, so its possible effect on the result is about the average steal, scaled down when the
@@ -572,7 +581,9 @@ def steal_check(summary, noise_pct=None):
     s = summary or {}
     avg, peak, cli = s.get("cpu_steal") or 0, s.get("cpu_steal_max") or 0, s.get("client_cpu_steal") or 0
     noise = float(noise_pct or DEFAULT_GOAL_NOISE)
-    cpu_factor = min(1.0, max(0.2, (s.get("cpu_busy") or 100) / 70.0))
+    # steal costs throughput only when the CPUs are needed: scale by how busy the host was (no floor - on a mostly idle
+    # host steal is mostly the hypervisor's accounting at low clock speeds, not lost work)
+    cpu_factor = min(1.0, (s.get("cpu_busy") if s.get("cpu_busy") is not None else 100) / 70.0)
     impact = max(avg, cli) * cpu_factor
     flag_at, invalid_at = max(0.25, noise / 4), max(0.5, noise / 2)
     if impact >= invalid_at:
@@ -636,6 +647,13 @@ def _run_verdict(run, history, goal, noise):
         return "unreliable", {"config_mismatch": mm, "note": "UNRELIABLE: the server did not run the configuration this run is labelled "
                               "with (" + "; ".join(f"{x['variable']} {x['running']} instead of {x['configured']}" for x in mm[:3])
                               + "). The result is kept for reference but excluded from comparisons."}
+    stall = client_stall(run.get("summary") or {})
+    if stall:
+        return "unreliable", {"client_stalled": stall,
+                              "note": f"UNRELIABLE: the benchmark client stalled - the server was idle (CPU {stall['cpu_busy']:.0f}% busy, "
+                                      f"{stall['threads_running']:.0f} of {stall['threads_connected']:.0f} connections running) while the "
+                                      "clients sent almost no work. Nothing in this run says anything about the configuration; check the "
+                                      "benchmark client (errors, dead virtual users)."}
     if goal != "latency":
         dev = goal_server_check(run, (noise or {}).get("goal_server_ratio"))
         if dev is not None and abs(dev) > max(3.0, float((noise or {}).get("noise_pct") or 0)):

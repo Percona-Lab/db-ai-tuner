@@ -1646,6 +1646,19 @@ def test_start_tradeoffs_are_not_the_tuners():
     assert not added_tradeoffs(runs[1], start)
     assert [t["variable"] for t in added_tradeoffs(runs[2], start)] == ["innodb_flush_log_at_trx_commit"]
 
+
+def test_client_stall_and_steal_on_idle_host():
+    """Session 222: after 270k NOPM the HammerDB clients stalled (259 connected, ~15 running, CPU 1%); the run must say
+    so instead of blaming steal, and steal on an idle host has no throughput cost."""
+    from tuning_agent import evaluate
+    s = {"tps": 13.5, "cpu_busy": 1.0, "mysqld_cpu_pct": 0.65, "threads_running_avg": 15.3, "threads_connected_avg": 259, "cpu_steal": 0.0}
+    v, d = evaluate.verdict({"seq": 16, "summary": s, "goal_value": 4140}, [], "tps", {"noise_pct": 12})
+    assert v == "unreliable" and d.get("client_stalled") and "client stalled" in d["note"], (v, d)
+    busy = {"tps": 1000, "cpu_busy": 70, "mysqld_cpu_pct": 60, "threads_running_avg": 50, "threads_connected_avg": 64}
+    assert evaluate.client_stall(busy) is None
+    idle_steal = evaluate.steal_check({"cpu_busy": 2, "cpu_steal": 3.0, "cpu_steal_max": 3.5}, 2.0)
+    assert idle_steal is None or idle_steal["est_impact_pct"] < 0.1, idle_steal
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
