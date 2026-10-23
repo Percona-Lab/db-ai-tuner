@@ -202,7 +202,7 @@ def run_cell(st, srv, cli):
             pub = ssh(srv, "mkdir -p /root/.ssh; [ -f /root/.ssh/bench_key ] || ssh-keygen -q -t ed25519 -N '' -f /root/.ssh/bench_key; cat /root/.ssh/bench_key.pub", check=True).stdout.strip()
             ssh(cli, f"echo '{pub}' >> /root/.ssh/authorized_keys; export DEBIAN_FRONTEND=noninteractive; apt-get update -q >/dev/null; "
                      "apt-get install -yq sysbench >/dev/null; printf '* soft nofile 1048576\\n* hard nofile 1048576\\n' >> /etc/security/limits.conf; "
-                     "sysctl -w net.ipv4.ip_local_port_range='1024 65000' net.core.somaxconn=8192 >/dev/null", check=True, timeout=1800)
+                     "sysctl -w net.ipv4.ip_local_port_range='1024 65000' net.core.somaxconn=8192 net.ipv4.tcp_tw_reuse=1 >/dev/null", check=True, timeout=1800)
             ssh(srv, "sysctl -w net.core.somaxconn=8192 net.ipv4.tcp_max_syn_backlog=8192 >/dev/null", check=True)
             cip = st["vms"][1].get("private_ip") or st["vms"][1]["ip"]  # grants, firewall and the client's traffic: private network
         study = f"Suite {VERSION} {run}"
