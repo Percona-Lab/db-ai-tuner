@@ -198,6 +198,17 @@
    "question": "Head-to-head W3 (CPU-bound, 512 threads in memory): rules arm on atvbmamd; crossover with the pair box in opposite order"
   },
   {
+   "id": "irdma-off-atvbmamd",
+   "script": "irdma-off.sh",
+   "args": [],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 0.1,
+   "question": "Free the ~5.5 GiB the E810 NIC's RDMA driver (irdma) reserves on the AMD box, between the W3 and W4 head-to-head sessions"
+  },
+  {
    "id": "h2h-W4-rules-atvbmamd",
    "script": "h2h.sh",
    "args": [
