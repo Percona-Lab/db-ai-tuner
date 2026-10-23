@@ -95,6 +95,10 @@ class DBSampler:
                     seen = True
             if seen:
                 out[name] = round(max(tot, 0) / dt, 2)
+        if "data_fsyncs" in out and "log_fsyncs" in out:
+            # Innodb_data_fsyncs counts every InnoDB fsync, the redo log's included (8.4, measured: 2,000 commits moved both
+            # counters by ~2,000); the data-file part is the difference
+            out["datafile_fsyncs"] = round(max(out["data_fsyncs"] - out["log_fsyncs"], 0), 2)
         for k in ("data_written_mbs", "log_written_mbs"):  # bytes/s -> MiB/s
             if k in out:
                 out[k] = round(out[k] / 2 ** 20, 2)
