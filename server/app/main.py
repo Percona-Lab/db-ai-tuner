@@ -1027,7 +1027,8 @@ def run_metrics(run_id: int, request: Request, pad: float = 60, points: int = 40
     for h in store.q("SELECT id, name FROM hosts WHERE env_id=? ORDER BY name", (s["env_id"],)):
         hm = metrics_window(None, t0, t1, points, host_id=h["id"])
         if hm["ts"]:
-            m.setdefault("clients", []).append({"name": h["name"], "ts": hm["ts"], "os": hm["os"]})
+            m.setdefault("clients", []).append({"id": h["id"], "name": h["name"], "ts": hm["ts"], "os": hm["os"]})
+    m["cpus"] = ((store.uj(own_env(s["env_id"], u["id"])["facts"], {}) or {}).get("hardware") or {}).get("cpus")
     return m
 
 

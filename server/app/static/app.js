@@ -532,46 +532,6 @@ function chartsGrid(container, m, defs, window_, markers, opts) {
 const ser = (m, g, k) => (m[g] || {})[k] || [];
 const combine = (m, f, ...refs) => (m.ts || []).map((_, i) => { const v = refs.map(([g, k]) => ser(m, g, k)[i]); return v.some(x => x == null) ? null : f(...v); });
 const perTrx = (m, f, ...refs) => combine(m, (tps, ...v) => tps >= 5 ? f(...v) / tps : null, ["db", "tps"], ...refs);
-const LIVE_CHARTS = [
-  { title: "Throughput", unit: "per s", series: [["db", "tps", "transactions"], ["db", "qps", "queries"]] },
-  { title: "Avg statement latency", unit: "ms", series: [["db", "avg_latency_ms", "avg latency"]] },
-  { title: "CPU", unit: "%", max100: true, series: [["os", "cpu_user", "user"], ["os", "cpu_sys", "system"], ["os", "cpu_iowait", "iowait"], ["os", "mysqld_cpu_pct", "mysqld process"]] },
-  { title: "Disk IOPS", unit: "per s", series: [["os", "disk_r_iops", "reads"], ["os", "disk_w_iops", "writes"]] },
-];
-const LIVE_MEM = { title: "Database process memory", unit: "MiB", series: [["os", "dbproc_rss_mb", "RSS"], ["os", "dbproc_pss_mb", "PSS"], ["os", "dbproc_swap_pss_mb", "swap PSS"]] };
-const LIVE_SCHED = { title: "Scheduling delay", unit: "µs per CPU slice", series: [["os", "dbproc_sched_delay_us", "database threads"], ["os", "host_sched_delay_us", "all tasks"]] };
-const LIVE_THREADS = { title: "Threads", unit: "", series: [["db", "threads_running", "running"], ["db", "threads_connected", "connected"]] };
-const LIVE_PSI = { title: "Pressure stall (host, some)", unit: "% time", max100: true, series: [["os", "psi_cpu_some", "CPU"], ["os", "psi_io_some", "I/O"], ["os", "psi_memory_some", "memory"]] };
-const RUN_CHARTS = [
-  ...LIVE_CHARTS,
-  LIVE_THREADS,
-  { title: "Buffer pool reads", unit: "pages/s", series: [["db", "bp_disk_reads", "from disk"]] },
-  { title: "Buffer pool hit ratio", unit: "%", min0: false, series: [["db", "bp_hit_pct", "hit ratio"]] },
-  { title: "Redo checkpoint age", unit: "% of capacity", max100: true, series: [["db", "checkpoint_age_pct", "checkpoint age"], ["db", "bp_dirty_pct", "dirty pages %"]] },
-  { title: "Redo written", unit: "MiB/s", series: [["db", "redo_mbs", "redo"]] },
-  { title: "fsyncs", unit: "per s", series: [["db", "data_fsyncs", "data fsyncs"], ["db", "log_fsyncs", "log fsyncs"]] },
-  LIVE_SCHED,
-  { title: "Run-queue wait", unit: "% of runnable time", series: [["os", "dbproc_runq_wait_pct", "database threads"], ["os", "host_runq_wait_pct", "all tasks"]] },
-  { title: "Swap traffic", unit: "MiB/s", series: [["os", "swap_in_mbs", "swap-in"], ["os", "swap_out_mbs", "swap-out"]] },
-  { title: "Swap used", unit: "MiB", series: [["os", "swap_used_mb", "host"], ["os", "dbproc_swap_mb", "database process(es)"]] },
-  { title: "Database process memory", unit: "MiB", series: [["os", "dbproc_rss_mb", "RSS"], ["os", "dbproc_pss_mb", "PSS"], ["os", "dbproc_pss_shmem_mb", "PSS shared memory"], ["os", "dbproc_swap_pss_mb", "swap PSS"], ["os", "dbproc_cg_mem_mb", "cgroup charge"]] },
-  { title: "Disk throughput", unit: "MiB/s", series: [["os", "disk_r_mbs", "read"], ["os", "disk_w_mbs", "write"]] },
-  { title: "Disk utilisation / latency", unit: "", series: [["os", "disk_util", "util %"], ["os", "disk_r_await_ms", "read ms"], ["os", "disk_w_await_ms", "write ms"]] },
-  { title: "Row lock waits", unit: "per s", series: [["db", "row_lock_waits", "waits"]] },
-  { title: "Pressure stall: CPU", unit: "% time", max100: true, series: [["os", "psi_cpu_some", "host some"], ["os", "mysqld_psi_cpu_some", "mysqld some"]] },
-  { title: "Pressure stall: I/O", unit: "% time", max100: true, series: [["os", "psi_io_some", "host some"], ["os", "psi_io_full", "host full"], ["os", "mysqld_psi_io_some", "mysqld some"], ["os", "mysqld_psi_io_full", "mysqld full"]] },
-  { title: "Pressure stall: memory", unit: "% time", max100: true, series: [["os", "psi_memory_some", "host some"], ["os", "psi_memory_full", "host full"], ["os", "mysqld_psi_memory_some", "mysqld some"], ["os", "mysqld_psi_memory_full", "mysqld full"]] },
-  { title: "Memory", unit: "%", max100: true, series: [["os", "mem_used_pct", "used"]] },
-  { title: "Swap", unit: "pages/s", series: [["os", "swap_in", "in"], ["os", "swap_out", "out"]] },
-  { title: "Statements by type", unit: "per s", series: [["db", "selects", "select"], ["db", "inserts", "insert"], ["db", "updates", "update"], ["db", "deletes", "delete"]] },
-  { title: "History list length", unit: "", series: [["db", "history_list_length", "undo history"]] },
-  { title: "Temp tables on disk", unit: "per s", series: [["db", "tmp_disk_tables", "on disk"], ["db", "tmp_tables", "all"]] },
-  { title: "Network", unit: "MiB/s", series: [["os", "net_rx_mbs", "rx"], ["os", "net_tx_mbs", "tx"]] },
-  { title: "TCP connections", unit: "per s", series: [["os", "net_conn_per_s", "new connections"], ["os", "net_listen_overflows", "listen overflows"], ["os", "net_resets_per_s", "resets"]] },
-  { title: "Client RTT (MySQL connections)", unit: "ms", series: [["os", "rtt_avg_ms", "avg"], ["os", "rtt_p95_ms", "p95"]] },
-  { title: "Packet processing", unit: "%", series: [["os", "softirq_max_cpu_pct", "busiest CPU softirq"], ["os", "softirq_avg_cpu_pct", "avg CPU softirq"], ["os", "net_retrans_pct", "TCP retransmits"]] },
-  { title: "Context switches", unit: "per s", series: [["os", "ctx_switches", "ctx switches"]] },
-];
 
 async function envPage(id) {
   setNav("envs");
@@ -667,7 +627,7 @@ const LIVE_DB = [
   { title: "Buffer pool content", unit: "% of pages", max100: true, series: [["db", "bp_dirty_pct", "dirty"], ["db", "bp_free_pct", "free"]] },
   { title: "Redo log", unit: "", series: [["db", "redo_mbs", "written MiB/s"], ["db", "checkpoint_age_pct", "checkpoint age %"], ["db", "log_waits", "log buffer waits/s"]],
     tip: "Checkpoint age near 75-80% of capacity forces synchronous flushing (stalls). Log buffer waits mean innodb_log_buffer_size is too small." },
-  { title: "InnoDB file I/O", unit: "per s", series: [["db", "data_reads", "reads"], ["db", "data_writes", "writes (all)"], ["db", "log_writes", "redo log writes"], ["db", "bp_pages_flushed", "data page writes"], ["db", "dblwr_writes", "doublewrite writes"], ["db", "log_fsyncs", "redo log fsyncs"], ["db", "datafile_fsyncs", "data-file fsyncs"]],
+  { title: "InnoDB file I/O", unit: "per s", series: [["db", "data_reads", "reads"], ["db", "data_writes", "writes (all)"], ["db", "log_writes", "redo log writes"], ["db", "bp_pages_flushed", "data page writes"], ["db", "dblwr_writes", "doublewrite writes"], ["db", "log_fsyncs", "redo log fsyncs"], ["db", "datafile_fsyncs", "data-file fsyncs"], ["db", "data_fsyncs", "fsyncs (all, incl. redo)"]],
     tip: "Write operations through InnoDB's file layer. 'writes (all)' (Innodb_data_writes) is the sum of redo log writes, data pages flushed from the buffer pool and doublewrite batches - often mostly small redo writes. Redo log fsyncs (Innodb_os_log_fsyncs) follow commits with innodb_flush_log_at_trx_commit=1 (fewer with group commit). Innodb_data_fsyncs counts all InnoDB fsyncs including the redo log's; data-file fsyncs is the difference." },
   { title: "InnoDB bytes written", unit: "MiB/s", series: [["db", "data_written_mbs", "all"], ["db", "log_written_mbs", "redo log"]] },
   { title: "Locks and purge", unit: "", series: [["db", "row_lock_waits", "row lock waits/s"], ["db", "row_lock_current_waits", "waiting now"]],
@@ -686,47 +646,49 @@ const LIVE_DB = [
 ];
 const LIVE_DBPROC = [
   { title: "mysqld CPU", unit: "% of host", series: [["os", "mysqld_cpu_pct", "mysqld"]] },
-  { title: "Database process memory", unit: "MiB", series: [["os", "dbproc_rss_mb", "RSS"], ["os", "dbproc_pss_mb", "PSS"], ["os", "dbproc_swap_pss_mb", "swap PSS"], ["os", "dbproc_cg_mem_mb", "cgroup charge"]],
+  { title: "Database process memory", unit: "MiB", series: [["os", "dbproc_rss_mb", "RSS"], ["os", "dbproc_pss_mb", "PSS"], ["os", "dbproc_pss_shmem_mb", "PSS shared memory"], ["os", "dbproc_swap_pss_mb", "swap PSS"], ["os", "dbproc_swap_mb", "swap"], ["os", "dbproc_cg_mem_mb", "cgroup charge"]],
     tip: "PSS splits shared pages between the processes that map them: the real share of RAM. The cgroup charge also includes page cache charged to the service." },
   { title: "Scheduling delay", unit: "µs per CPU slice", series: [["os", "dbproc_sched_delay_us", "database threads"], ["os", "host_sched_delay_us", "all tasks"]],
     tip: "Time a runnable database thread waited for a CPU each time it was scheduled; adds directly to query latency." },
-  { title: "Run-queue wait", unit: "% of runnable time", series: [["os", "dbproc_runq_wait_pct", "database threads"]] },
-  { title: "Pressure stall (mysqld cgroup)", unit: "% time", max100: true, series: [["os", "mysqld_psi_cpu_some", "CPU"], ["os", "mysqld_psi_io_some", "I/O"], ["os", "mysqld_psi_memory_some", "memory"]] },
+  { title: "Run-queue wait", unit: "% of runnable time", series: [["os", "dbproc_runq_wait_pct", "database threads"], ["os", "host_runq_wait_pct", "all tasks"]] },
+  { title: "Pressure stall (mysqld cgroup)", unit: "% time", max100: true, series: [["os", "mysqld_psi_cpu_some", "CPU"], ["os", "mysqld_psi_io_some", "I/O"], ["os", "mysqld_psi_memory_some", "memory"], ["os", "mysqld_psi_io_full", "I/O (all stalled)"], ["os", "mysqld_psi_memory_full", "memory (all stalled)"]] },
   { title: "Preemptions and faults", unit: "per s", series: [["os", "dbproc_nvcsw_per_s", "involuntary switches"], ["os", "dbproc_pgmajfault_per_s", "major faults"]],
     tip: "Involuntary switches: threads preempted while running. Major faults on a database with O_DIRECT data files are mostly swap-ins." },
 ];
 const LIVE_OS = [
   { title: "CPU", unit: "%", max100: true, series: [["os", "cpu_user", "user"], ["os", "cpu_sys", "system"], ["os", "cpu_iowait", "iowait"], ["os", "cpu_steal", "steal"]] },
   { title: "Load", unit: "", series: [["os", "load1", "load 1m"], ["os", "procs_running", "running"], ["os", "procs_blocked", "blocked on I/O"]] },
-  { title: "Pressure stall (host)", unit: "% time", max100: true, series: [["os", "psi_cpu_some", "CPU"], ["os", "psi_io_some", "I/O"], ["os", "psi_memory_some", "memory"]] },
+  { title: "Pressure stall (host)", unit: "% time", max100: true, series: [["os", "psi_cpu_some", "CPU"], ["os", "psi_io_some", "I/O"], ["os", "psi_memory_some", "memory"], ["os", "psi_io_full", "I/O (all stalled)"], ["os", "psi_memory_full", "memory (all stalled)"]] },
   { title: "Disk IOPS", unit: "per s", series: [["os", "disk_r_iops", "reads"], ["os", "disk_w_iops", "writes"]] },
   { title: "Disk throughput", unit: "MiB/s", series: [["os", "disk_r_mbs", "read"], ["os", "disk_w_mbs", "write"]] },
   { title: "Disk latency and queue", unit: "", series: [["os", "disk_r_await_ms", "read ms"], ["os", "disk_w_await_ms", "write ms"], ["os", "disk_flush_await_ms", "flush ms"], ["os", "disk_queue", "queue depth"], ["os", "disk_util", "util %"]] },
   { title: "Memory", unit: "MiB", series: [["os", "mem_available_mb", "available"], ["os", "page_cache_mb", "page cache"], ["os", "inactive_anon_mb", "inactive anon"]] },
-  { title: "Swap", unit: "", series: [["os", "swap_used_mb", "used MiB"], ["os", "swap_in_mbs", "in MiB/s"], ["os", "swap_out_mbs", "out MiB/s"]] },
+  { title: "Memory used", unit: "%", max100: true, series: [["os", "mem_used_pct", "used"]] },
+  { title: "Swap", unit: "", series: [["os", "swap_used_mb", "used MiB"], ["os", "swap_in_mbs", "in MiB/s"], ["os", "swap_out_mbs", "out MiB/s"], ["os", "swap_in", "in pages/s"], ["os", "swap_out", "out pages/s"]] },
   { title: "Network", unit: "MiB/s", series: [["os", "net_rx_mbs", "received"], ["os", "net_tx_mbs", "sent"]] },
-  { title: "TCP", unit: "", series: [["os", "net_conn_per_s", "connections/s"], ["os", "net_retrans_pct", "retransmits %"], ["os", "net_time_wait", "TIME_WAIT"]] },
+  { title: "TCP", unit: "", series: [["os", "net_conn_per_s", "connections/s"], ["os", "net_retrans_pct", "retransmits %"], ["os", "net_time_wait", "TIME_WAIT"], ["os", "net_listen_overflows", "listen overflows/s"], ["os", "net_resets_per_s", "resets/s"]] },
   { title: "Packet processing", unit: "", series: [["os", "softirq_max_cpu_pct", "busiest CPU softirq %"], ["os", "softirq_avg_cpu_pct", "avg softirq %"], ["os", "net_softnet_drops", "drops/s"]] },
   { title: "Context switches", unit: "per s", series: [["os", "ctx_switches", "switches"]] },
 ];
 const LIVE_CLIENT = [
-  { title: "CPU", unit: "%", max100: true, series: [["os", "cpu_user", "user"], ["os", "cpu_sys", "system"], ["os", "cpu_steal", "steal"]] },
+  { title: "CPU", unit: "%", max100: true, series: [["os", "cpu_user", "user"], ["os", "cpu_sys", "system"], ["os", "cpu_steal", "steal"], ["os", "softirq_max_cpu_pct", "busiest CPU softirq"]] },
   { title: "Round trip to the database", unit: "ms", series: [["os", "rtt_avg_ms", "avg"], ["os", "rtt_p95_ms", "p95"]] },
   { title: "Network", unit: "MiB/s", series: [["os", "net_rx_mbs", "received"], ["os", "net_tx_mbs", "sent"]] },
   { title: "TCP", unit: "", series: [["os", "net_conn_per_s", "connections/s"], ["os", "net_retrans_pct", "retransmits %"], ["os", "net_time_wait", "TIME_WAIT"]] },
   { title: "Pressure stall", unit: "% time", max100: true, series: [["os", "psi_cpu_some", "CPU"], ["os", "psi_memory_some", "memory"]] },
   { title: "Scheduling delay (all tasks)", unit: "µs per CPU slice", series: [["os", "host_sched_delay_us", "all tasks"]] },
 ];
-function renderLive(el, m, cpus, hostName, markers) {
+function renderLive(el, m, cpus, hostName, markers, window_) {
+  // one chart set for the environment (last X) and a run (warm-up and measured window shaded)
   m._cpus = cpus;
   let open = {};
   try { open = JSON.parse(localStorage.getItem("liveOpen") || "{}"); } catch (e) { }
   const sections = [["db", `Database: ${hostName}`, LIVE_DB, m], ["proc", `Database process: ${hostName}`, LIVE_DBPROC, m], ["os", `Operating system: ${hostName}`, LIVE_OS, m]];
-  (m.clients || []).forEach(c => sections.push(["cli" + c.id, `Client host: ${c.name}`, LIVE_CLIENT, { ts: c.ts, os: c.os, db: {} }]));
+  (m.clients || []).forEach((c, i) => sections.push(["cli" + (c.id != null ? c.id : i), `Client host: ${c.name}`, LIVE_CLIENT, { ts: c.ts, os: c.os, db: {}, warmup: m.warmup }]));
   // keep open/closed state across refreshes
   const prev = {}; el.querySelectorAll("details[data-k]").forEach(d => { prev[d.dataset.k] = d.open; });
   el.innerHTML = sections.map(([k, title]) => `<details class="livesec" data-k="${k}" ${(k in prev ? prev[k] : open[k] !== false) ? "open" : ""}><summary><h3 style="display:inline">${esc(title)}</h3></summary><div class="grid g3" data-grid="${k}"></div></details>`).join("");
-  sections.forEach(([k, , defs, mm]) => chartsGrid(el.querySelector(`[data-grid="${k}"]`), mm, defs, null, markers, { skipEmpty: true }));
+  sections.forEach(([k, , defs, mm]) => chartsGrid(el.querySelector(`[data-grid="${k}"]`), mm, defs, window_ || null, markers, { skipEmpty: true }));
   const dbGrid = el.querySelector('[data-grid="db"]');
   if (dbGrid && m._waits && m._waits.events && m._waits.events.length) {
     const card = document.createElement("div"); card.className = "card";
@@ -1238,20 +1200,15 @@ async function runPage(id, tab) {
     clearTimers();
     if (name === "changes") { renderDiff(tabEl, r); const ks = document.createElement("div"); tabEl.appendChild(ks); renderKeySettings(ks, id); }
     else if (name === "graphs") {
-      tabEl.innerHTML = `<p class="muted"><span class="swatch warm"></span>warm-up <span class="swatch win"></span>measurement window${info("Charts show the warm-up, the measurement window and 60 s around them. The benchmark runs throughout: throughput should be at its steady level for the whole measurement window - a drop inside it means the window measured something other than the workload.")}</p><div class="grid g3" id="rc"></div>`;
-      const m = await api(`/api/runs/${id}/metrics?points=300`);
-      chartsGrid(document.getElementById("rc"), m, RUN_CHARTS, m.window);
-      (m.clients || []).forEach(cl => {
-        const box = document.createElement("div"); box.className = "grid g3"; box.style.marginTop = "14px";
-        document.getElementById("rc").after(box);
-        const cm = { ts: cl.ts, os: cl.os, db: {} };
-        chartsGrid(box, cm, [
-          { title: `Client ${cl.name}: CPU`, unit: "%", max100: true, series: [["os", "cpu_user", "user"], ["os", "cpu_sys", "system"], ["os", "softirq_max_cpu_pct", "busiest CPU softirq"]] },
-          { title: `Client ${cl.name}: RTT to DB`, unit: "ms", series: [["os", "rtt_avg_ms", "avg"], ["os", "rtt_p95_ms", "p95"]] },
-          { title: `Client ${cl.name}: connections`, unit: "", series: [["os", "net_conn_per_s", "new/s"], ["os", "net_time_wait", "TIME_WAIT"], ["os", "net_retrans_pct", "retrans %"]] },
-        ], m.window);
-      });
-      if (r.status === "measuring") timers.push(setInterval(async () => { const m2 = await api(`/api/runs/${id}/metrics?points=300`); chartsGrid(document.getElementById("rc"), m2, RUN_CHARTS, m2.window); }, 15000));
+      tabEl.innerHTML = `<p class="muted"><span class="swatch warm"></span>warm-up <span class="swatch win"></span>measurement window${info("The same charts as the environment page, for this run: the warm-up, the measurement window and 60 s around them. The benchmark runs throughout: throughput should be at its steady level for the whole measurement window - a drop inside it means the window measured something other than the workload.")}</p><div id="rc"></div>`;
+      const loadRun = async () => {
+        const m = await api(`/api/runs/${id}/metrics?points=300`);
+        const w1 = (m.window || [])[1] || Date.now() / 1000;
+        try { m._waits = await api(`/api/environments/${r.environment.id}/waits?start=${m.window[0]}&end=${w1}`); } catch (e) { }
+        renderLive(document.getElementById("rc"), m, m.cpus || 1, r.environment.name, null, m.window);
+      };
+      await loadRun();
+      if (r.status === "measuring") timers.push(setInterval(loadRun, 15000));
     }
     else if (name === "inputs") renderInputs(tabEl, r);
     else if (name === "cpu") renderCpuProfile(tabEl, r.inputs.cpu_profile);
