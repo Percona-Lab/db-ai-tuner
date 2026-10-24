@@ -85,3 +85,34 @@ host with swap. With OS tuning allowed and swap below 0.9 x RAM, the engine prop
 file of about 1x RAM, at most 64 GiB (and at most half the free disk), measured on its own and kept unless it costs throughput, like the
 best practices. With no swap at all, memory-setting experiments rank after it, so they are measured with swap in
 place; memory settings tried before the swap state changed by 1 GiB or more are tried again (`apply_history`).
+
+## Where the model runs high (2026-10-24)
+
+The budget is a production-safety bound: the host must not crash under the benchmark client's load. Several of its
+parts are deliberately conservative, so it can sit well above what a given workload uses. The run's measured memory
+(available memory, mysqld PSS, hugepages, swap) is the evidence of what the workload actually used. Every memory
+trade-off now shows those measurements next to the model's figure.
+
+- **Conservative parts, in order of size on session 294:**
+  - **OS reserve:** max(1 GiB, 10% of RAM, measured use outside mysqld). It came to 6.3 GiB, while the host used
+    about 1.1 GiB outside mysqld, client included.
+  - **Client reserve:** as declared at baseline (`--reserve-mem`), not measured: 4 GiB for a sysbench client with 64
+    threads. It stays in the budget while the client runs on the same host; a separate client box removes it.
+  - **In-memory temporary tables:** counted up to `temptable_max_ram` / active x `tmp_table_size` (1.9 GiB), even for
+    workloads that create none (sysbench read-only point and range selects).
+  - **Connections:** base cost and performance_schema memory counted for every allowed connection (1000), not the
+    ~66 open ones.
+  - **Per-query buffers and execution memory:** the configured sizes per active connection (an upper bound: sort and
+    join buffers are allocated as needed).
+- **Measured on fleet runs:** across 2284 runs without hugepages, the mysqld part of the model was 1.08x mysqld's
+  measured memory at the median, and 1.68x at p90. It runs high mostly with many allowed connections and with large
+  per-query or temporary-table settings. At the minimum it was 0.7x, so it can also run low (allocator overhead).
+- **Session 294 (sysbench read-only, 62.8 GiB host with no swap, client on the same host):** with a 51 GiB buffer
+  pool in hugepages, the model needed 69.1 GiB. The host measured 57.3 GiB in use and 5.5 GiB available, with no swap.
+  - The mysqld part outside the buffer pool was 7.8 GiB in the model, against 4.8 GiB measured.
+  - The rest of the 11.8 GiB gap is the two reserves.
+- **Caveat:** for hugepage buffer pools, `mysqld_measured` (PSS + swap) leaves out the pool, because hugepages are
+  not in PSS. Compare against PSS plus `hugepages_total_mb`.
+- **No swap:** a host without swap is flagged on the environment page. The conservative parts cannot be tested there:
+  going past them ends in an OOM kill, not in measurable swapping. To find the practical buffer pool size where
+  active swapping starts, the host needs swap (`best-practices-swap`).

@@ -245,7 +245,16 @@ def added_tradeoffs(r, have):
     out = [t for t in r.get("tradeoffs") or [] if (t.get("variable"), str(t.get("value"))) not in have]
     mb = (r.get("summary") or {}).get("memory_budget") or {}
     if mb.get("over_budget") and not any(t.get("category") == "memory" for t in out):
-        out.append({"variable": "memory", "value": mb.get("text", ""), "category": "memory",
+        s = r.get("summary") or {}
+        seen = ""
+        if s.get("mem_available_mb") is not None and mb.get("ram"):
+            # the model is a conservative bound (reserves, every allowed connection, temporary tables at their cap):
+            # what this workload actually used is the evidence next to it
+            seen = (f"; measured under this benchmark: {(mb['ram'] / 2 ** 20 - s['mem_available_mb']) / 1024:.1f} GiB in use, "
+                    f"{s['mem_available_mb'] / 1024:.1f} GiB available, "
+                    + (f"{s['swap_used_mb'] / 1024:.1f} GiB swap used" if s.get("swap_total_mb") else "no swap configured")
+                    + (f", {s['swap_in_mbs']} MB/s swapped in" if (s.get("swap_in_mbs") or 0) > 0 else ""))
+        out.append({"variable": "memory", "value": mb.get("text", "") + seen, "category": "memory",
                     "lost": "Production safety: memory budget exceeded - swapping / OOM under load."})
     return out
 
