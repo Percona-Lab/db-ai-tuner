@@ -14,7 +14,7 @@ else
   /opt/aituner/venv/bin/python -c "import pytest, httpx" 2>/dev/null || /opt/aituner/venv/bin/pip install -q pytest httpx || true
   if /opt/aituner/venv/bin/python -c "import pytest, httpx" 2>/dev/null; then
     TT=$(mktemp -d /tmp/aituner-gate-XXXXXX)
-    git archive "$REV" server | tar -x -C "$TT"
+    git archive "$REV" server docs/claude-code-skill | tar -x -C "$TT"
     /opt/aituner/venv/bin/pip install -q -r "$TT/server/requirements.txt"
     echo "server tests on ${REV:0:7} ..."
     if ! timeout 180 env PY=/opt/aituner/venv/bin/python bash "$TT/server/tests/run.sh" > "$TT/tests.log" 2>&1; then
