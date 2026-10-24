@@ -2153,6 +2153,37 @@ def test_lost_mysqld_during_a_run_is_a_failed_configuration():
 
 
 
+def test_preflush_reports_progress():
+    """User session 311: a restart of a large dirty buffer pool showed as 'measuring' going stale for 15+ min. The
+    pre-restart flush reports what it does, how much is left and how long it may take."""
+    from tuning_agent import applier
+    seen = []
+
+    class DB:
+        dirty = [65536 * 8, 65536 * 4, 5]
+        sql = []
+
+        def scalar(self, q):
+            if "pages_dirty" in q:
+                return self.dirty.pop(0) if len(self.dirty) > 1 else self.dirty[0]
+            return {"SELECT @@innodb_max_dirty_pages_pct": 90, "SELECT @@innodb_max_dirty_pages_pct_lwm": 10,
+                    "SELECT @@innodb_page_size": 16384}.get(q, 655360)
+
+        def execute(self, q):
+            self.sql.append(q)
+    ap = applier.Applier({"cnf_path": "/tmp/x.cnf", "service_name": "mysql"}, None, DB(), log=lambda *a: None,
+                         activity=lambda phase, detail=None, seconds=None: seen.append((phase, detail, seconds)))
+    saved = applier.time.sleep
+    applier.time.sleep = lambda s: None
+    try:
+        ap.preflush()
+    finally:
+        applier.time.sleep = saved
+    assert seen and seen[0][0] == "stopping mysqld" and "8.0 GB" in seen[0][1] and seen[0][2], seen
+    assert any("SET GLOBAL innodb_max_dirty_pages_pct = 90" in q for q in ap.db.sql)  # restored afterwards
+
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

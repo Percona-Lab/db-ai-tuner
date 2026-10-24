@@ -60,11 +60,14 @@ def sql_value(var, value):
 
 
 class Applier:
-    def __init__(self, cfg, state, db, log=print):
+    def __init__(self, cfg, state, db, log=print, activity=None):
         self.cfg = cfg
         self.state = state
         self.db = db
         self.log = log
+        # progress of long steps for the session page and the watchdog (phase, detail): a silent restart of a large
+        # dirty buffer pool looked like a hang ('measuring' 15 min overdue, user session 311)
+        self.activity = activity or (lambda phase, detail=None, seconds=None: None)
         self.cnf_path = cfg.get("cnf_path") or detect_cnf_path()
         self.service = cfg.get("service_name") or detect_service()
         self.os_allowed = str(cfg.get("allow_os_tuning", "true")).lower() == "true"
@@ -106,11 +109,22 @@ class Applier:
             d0 = dirty()
             if not total or d0 < max(1000, total * 0.01):
                 return
-            self.log(f"flushing {d0} dirty pages before the restart ...")
+            page = int(self.db.scalar("SELECT @@innodb_page_size") or 16384)
+            gb = lambda n: n * page / 2 ** 30  # noqa: E731
+            self.log(f"flushing {d0} dirty pages ({gb(d0):.1f} GB) before the restart ...")
+            self.activity("stopping mysqld", f"flushing {gb(d0):.1f} GB of dirty pages first", max_wait + 60)
             self.db.execute("SET GLOBAL innodb_max_dirty_pages_pct_lwm = 0")
             self.db.execute("SET GLOBAL innodb_max_dirty_pages_pct = 0")
-            t0 = time.time()
-            while time.time() - t0 < max_wait and dirty() > max(1000, total * 0.01):
+            t0, last = time.time(), 0
+            while time.time() - t0 < max_wait:
+                d = dirty()
+                if d <= max(1000, total * 0.01):
+                    break
+                if time.time() - last >= 30:
+                    self.activity("stopping mysqld", f"flushing dirty pages: {gb(d):.1f} of {gb(d0):.1f} GB left "
+                                                     f"({100 * (d0 - d) / max(d0, 1):.0f}% done, {int(time.time() - t0)} s)",
+                                  max_wait - (time.time() - t0) + 60)
+                    last = time.time()
                 time.sleep(5)
         except Exception:
             pass
@@ -124,6 +138,7 @@ class Applier:
     def restart(self, timeout=1800):
         self.preflush()
         self.log(f"restarting {self.service} ...")
+        self.activity("restarting mysqld", f"systemctl restart {self.service}", timeout)
         self.db.close()
         try:
             r = subprocess.run(["systemctl", "restart", self.service], capture_output=True, text=True, timeout=timeout)
@@ -132,6 +147,7 @@ class Applier:
         if r is not None and r.returncode != 0:
             return False, (r.stderr or r.stdout).strip()[-800:]
         deadline = time.time() + timeout
+        self.activity("starting mysqld", "waiting for it to accept connections (crash recovery, buffer pool load)", timeout)
         while time.time() < deadline:
             try:
                 self.db.connect()

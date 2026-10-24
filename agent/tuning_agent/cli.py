@@ -461,7 +461,7 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
         changes = _order_pairs(changes, c.db.variables())
     except Exception:
         changes = _order_pairs(changes)
-    ap = Applier(c.cfg, c.state, c.db, log=log)
+    ap = Applier(c.cfg, c.state, c.db, log=log, activity=c.activity)
     try:
         res = ap.apply(changes, allow_restart=allow, defer_restart=defer and _reset_restarts(c)) if changes else {
                                                                       "applied": [], "restarted": False, "needs_restart": [],
@@ -1413,7 +1413,7 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
     if prof.restart_before_run and (not prof.reset or prof.data_state in ("read-only", "seasoned")):
         log("clean start: restarting mysqld and dropping the OS page cache")
         c.activity("clean start", "restarting mysqld")
-        ok, err = Applier(c.cfg, c.state, c.db, log=log).restart()
+        ok, err = Applier(c.cfg, c.state, c.db, log=log, activity=c.activity).restart()
         if not ok:
             raise ServerDown(f"mysqld restart before the run failed: {err}")
         subprocess.run(["sh", "-c", "sync; echo 3 > /proc/sys/vm/drop_caches"], capture_output=True)
@@ -1554,7 +1554,18 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
             if getattr(probes, "block", None):
                 probes.block.stop()
         b_snap = _end_snapshot(c)
-        rc = r.wait(max(10, prof.timeout - (time.time() - r.t0)))
+        # after the measured window the benchmark still has to exit (1024 threads disconnecting, a final report): said so,
+        # with the time it takes, instead of 'measuring' going stale (user session 311: 15 min overdue alerts)
+        t_exit, last_ = time.time(), 0
+        limit_ = max(10, prof.timeout - (time.time() - r.t0))
+        while r.alive() and time.time() - t_exit < limit_:
+            if time.time() - last_ >= 60:
+                c.activity("waiting for the benchmark to exit", f"run #{m['seq']}: measured window done "
+                           + (f"{int(time.time() - t_exit) // 60} min ago" if time.time() - t_exit >= 60 else "just now"),
+                           limit_ - (time.time() - t_exit))
+                last_ = time.time()
+            time.sleep(2)
+        rc = r.wait(max(1, limit_ - (time.time() - t_exit)))
     except BaseException as exc:
         r.kill()
         if c.state.get("measurement"):
