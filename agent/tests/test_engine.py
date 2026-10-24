@@ -2108,6 +2108,51 @@ def test_baseline_redo_in_whole_mib():
 
 
 
+def test_lost_mysqld_during_a_run_is_a_failed_configuration():
+    """r2 RO-4.ns: an OOM kill during the warm-up surfaced as a pymysql read timeout at the measurement start and ended the
+    session; it must come back as BenchFailed (OOM) / ServerDown so autotune reverts the change and continues."""
+    import pymysql
+    from tuning_agent import cli
+
+    class St:
+        data = {}
+
+        def get(self, k, d=None):
+            return self.data.get(k, d)
+
+        def save(self):
+            pass
+
+    class C:
+        state = St()
+
+        class db:
+            @staticmethod
+            def connect(retries=1, delay=0):
+                return None
+
+    def boom(*a, **k):
+        raise pymysql.err.OperationalError(2013, "Lost connection to MySQL server during query (The read operation timed out)")
+    saved = (cli._bench_run_once, cli._oom_killed_since)
+    cli._bench_run_once = boom
+    try:
+        cli._oom_killed_since = lambda t0: "Oct 24 kernel: Out of memory: Killed process 63351 (mysqld)"
+        try:
+            cli._bench_run(C(), None, "sweep-bp")
+            raise AssertionError("must raise")
+        except cli.BenchFailed as e:
+            assert "OOM-killed" in str(e)
+        cli._oom_killed_since = lambda t0: None
+        try:
+            cli._bench_run(C(), None, "x")
+            raise AssertionError("must raise")
+        except cli.ServerDown as e:
+            assert "lost the connection" in str(e)
+    finally:
+        cli._bench_run_once, cli._oom_killed_since = saved
+
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

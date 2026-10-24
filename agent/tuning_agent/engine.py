@@ -2350,9 +2350,13 @@ def run_engine(ctx):
         sm0 = ctx.get("summary") or {}
         swap_free0 = max(0, ((sm0.get("swap_total_mb") or 0) - (sm0.get("swap_used_mb") or 0))) * MiB
 
+        # without swap, going over is an OOM kill, not slower pages: keep a margin the model cannot promise to be exact to
+        # (r2 RO-4.ns: 11G estimated at 15.3 of 15.6 GiB, OOM-killed) - at least 1 GiB or 5% of RAM
+        margin0 = max(GiB, int(0.05 * (hw_.get("ram_bytes") or 0))) if swap_free0 < GiB else 0
+
         def _fits(var, val):  # a configuration with this value stays within RAM + free swap (else: an OOM kill, not a trade-off)
             nb = _mem.budget(dict(ctx["variables"], **{var: val}), hw_, ctx.get("client_reserve") or 0, host_other=other_, active_measured=act_)
-            return nb["needed"] + offset <= nb["ram"] + swap_free0 or nb["needed"] <= cur_b["needed"]
+            return nb["needed"] + offset + margin0 <= nb["ram"] + swap_free0 or nb["needed"] <= cur_b["needed"]
         for it in items:
             sw = it.get("sweep") or {}
             if sw.get("variable") in _mem.MEMORY_VARS and it["kind"] == "config":
@@ -2382,15 +2386,18 @@ def run_engine(ctx):
                 nb["over_budget"] = bool(nb["ram"]) and nb["needed"] > nb["ram"]
                 nb["measured_offset"] = offset
             it.setdefault("evidence", {})["memory_budget"] = _mem.text(nb)
-            if nb["over_budget"] and nb["needed"] > cur_b["needed"]:
+            sm = ctx.get("summary") or {}
+            swap_free = max(0, ((sm.get("swap_total_mb") or 0) - (sm.get("swap_used_mb") or 0))) * MiB
+            if any(c["variable"] == "os:swapfile" for c in it.get("changes") or []):
+                swap_free += _swapfile_bytes(next(c["proposed"] for c in it["changes"] if c["variable"] == "os:swapfile"))
+            # without swap a margin the model cannot promise to be exact to: an 11G pool estimated at 15.3 of 15.6 GiB was
+            # OOM-killed (r2 RO-4.ns) - at least 1 GiB or 5% of RAM before the configuration counts as fitting
+            margin = max(GiB, int(0.05 * nb["ram"])) if swap_free < GiB else 0
+            if (nb["over_budget"] or nb["needed"] + margin > nb["ram"]) and nb["needed"] > cur_b["needed"]:
                 # beyond RAM + free swap the kernel OOM-kills mysqld (suite RO-4: a 12 GB pool on 16 GB with 0.5 GB swap):
                 # that is a crash, not a trade-off. With OS tuning the experiment brings a swap file of about 1x RAM (64 GiB at most)
                 # (pressure then shows as swapping in the run); without it the change is not run.
-                sm = ctx.get("summary") or {}
-                swap_free = max(0, ((sm.get("swap_total_mb") or 0) - (sm.get("swap_used_mb") or 0))) * MiB
-                if any(c["variable"] == "os:swapfile" for c in it.get("changes") or []):
-                    swap_free += _swapfile_bytes(next(c["proposed"] for c in it["changes"] if c["variable"] == "os:swapfile"))
-                if nb["needed"] > nb["ram"] + swap_free:
+                if nb["needed"] + margin > nb["ram"] + swap_free:
                     size = max(nb["needed"] - nb["ram"] - swap_free + GiB, swap_target(nb["ram"]) // GiB * GiB)
                     if size <= SWAP_CAP and ctx.get("os_tuning") and not ctx.get("no_swap") and "os:swapfile" in ctx["variables"] and not any(
                             c["variable"] == "os:swapfile" for c in it.get("changes") or []):
@@ -2400,8 +2407,9 @@ def run_engine(ctx):
                                            "shows as swapping instead of an OOM kill.")
                     else:
                         it["confidence"] = 0
-                        it["note"] = (f"Not run: needs {human_size(nb['needed'])}, more than {human_size(nb['ram'])} RAM plus "
-                                      f"{human_size(swap_free)} free swap - mysqld would be OOM-killed"
+                        it["note"] = (f"Not run: needs {human_size(nb['needed'])}"
+                                      + (f" plus a {human_size(margin)} safety margin (no swap: going over is an OOM kill)" if margin else "")
+                                      + f", more than {human_size(nb['ram'])} RAM plus {human_size(swap_free)} free swap - mysqld would be OOM-killed"
                                       + (" (no swap by design on this host)." if ctx.get("no_swap") else
                                          f" (it would need a {fmt_size(size)} swap file, more than the {fmt_size(SWAP_CAP)} cap)." if size > SWAP_CAP
                                          else " (swap needs OS tuning)."))

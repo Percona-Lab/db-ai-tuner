@@ -1371,6 +1371,33 @@ def _ensure_requirements(c, prof):
 
 
 def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
+    """One measured run (_bench_run_once). mysqld lost while the agent talks to it - OOM-killed or crashed during the
+    warm-up or at the measurement start - is the configuration failing, not the session: it comes back as ServerDown /
+    BenchFailed, which autotune reverts and continues from (r2 RO-4.ns: an OOM kill surfaced as a pymysql read timeout in
+    the measurement start and ended the session)."""
+    import pymysql
+    t0 = time.time()
+    try:
+        return _bench_run_once(c, prof, label, notes, warmup_override)
+    except (pymysql.err.OperationalError, pymysql.err.InterfaceError) as e:
+        oom = _oom_killed_since(t0)
+        try:  # wait for mysqld to come back (systemd restarts it) so the revert can be applied
+            c.db.connect(retries=60, delay=2)
+        except Exception:
+            pass
+        if c.state.get("measurement"):  # a run had been started: it measured nothing
+            try:
+                c.client.post(f"/runs/{c.state['measurement']['run_id']}/abort", {"reason": f"mysqld lost: {str(e)[:300]}"})
+            except Exception:
+                pass
+            c.state.data["measurement"] = None
+            c.state.save()
+        if oom:
+            raise BenchFailed("mysqld was OOM-killed during the run (" + oom.split("kernel:")[-1].strip()[:160] + ")")
+        raise ServerDown(f"lost the connection to mysqld during the run: {str(e)[:300]}")
+
+
+def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
     """reset -> start benchmark -> warm-up -> measure -> wait for exit -> parse metrics -> finish run."""
     t_run0 = time.time()
     sess = c.session()
