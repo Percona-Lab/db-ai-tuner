@@ -755,12 +755,20 @@ def recommend(ctx):
             b.add("ahi-off", "Disable the adaptive hash index (contention)", [("innodb_adaptive_hash_index", "OFF")],
                   "Threads are waiting on AHI latches.", {"ahi_wait_s": ahi_wait}, impact=2, confidence=2)
     # not where commits dominate (the log threads do the grouping: lab 205 -38%, 217 -46%) or at high concurrency (174 -15%)
-    if have_run and "innodb_log_writer_threads" in v and _on(v, "innodb_log_writer_threads") and cpus <= 16 and busy >= 60 \
-            and commit_sh_ < 40 and (s.get("threads_running_avg") or 0) <= 8 * cpus:
+    # without an fsync per commit (trx_commit 0/2) on saturated CPUs the hand-offs to the log threads are the cost, at any
+    # concurrency: 9 of 10 wins, +7.7% to +25.4% (h2h W1 285/288: 250 running threads on 12 CPUs, the gate below kept it
+    # out of the rules arm, 283). With fsync per commit the log threads do the grouping: -38% / -46% (205, 217)
+    no_fsync = str(v.get("innodb_flush_log_at_trx_commit", "1")) in ("0", "2")
+    lw_ok = (cpus <= 16 and busy >= 60 and commit_sh_ < 40 and (s.get("threads_running_avg") or 0) <= 8 * cpus) or (no_fsync and busy >= 85)
+    if have_run and "innodb_log_writer_threads" in v and _on(v, "innodb_log_writer_threads") and lw_ok:
         b.add("log-writer-threads-off", "Disable dedicated redo log writer threads", [("innodb_log_writer_threads", "OFF")],
-              f"On {cpus} CPUs that are {busy:.0f}% busy the dedicated log writer/flusher threads compete with user threads; "
-              "MySQL docs suggest disabling them on small systems. Experiment.",
-              {"cpus": cpus, "cpu_busy": busy}, impact=2, confidence=1)
+              (f"Commits do not wait for an fsync (innodb_flush_log_at_trx_commit={v.get('innodb_flush_log_at_trx_commit')}) and the "
+               f"{cpus} CPUs are {busy:.0f}% busy: handing every commit to the log writer/flusher threads costs context switches "
+               "and run-queue waits. Measured +8% to +25% in such conditions (9 of 10). Experiment." if no_fsync and busy >= 85 else
+               f"On {cpus} CPUs that are {busy:.0f}% busy the dedicated log writer/flusher threads compete with user threads; "
+               "MySQL docs suggest disabling them on small systems. Experiment."),
+              {"cpus": cpus, "cpu_busy": busy, "innodb_flush_log_at_trx_commit": v.get("innodb_flush_log_at_trx_commit")},
+              impact=3 if no_fsync and busy >= 85 else 2, confidence=2 if no_fsync and busy >= 85 else 1)
     if have_run and busy >= 80 and "innodb_sync_spin_loops" in v and _int(v, "innodb_sync_spin_loops", 30) > 10 and tr > cpus:
         b.add("spin-loops", "Spin less before sleeping on mutexes", [("innodb_sync_spin_loops", "10")],
               f"CPU saturated with {tr:.0f} running threads on {cpus} CPUs: shorter spinning gives cycles back to useful work. Experiment.",
@@ -1395,11 +1403,20 @@ def recommend(ctx):
               "and hurt small CPU-bound ones: the direction depends on the machine, so it is measured.",
               {"history_list_length_max": hll_max}, impact=3 if hll_max > 1000000 or unb_h else 2 if hll_max > 300000 else 1,
               lead="Published results disagree between large and small machines; unverified here.")
-        if unb_h and b.items and b.items[-1]["id"] == "sweep-purge-threads":
-            # an unsustainable configuration: fixing it comes before tuning it (the time breakdown cannot show purge)
-            b.items[-1]["score_prior"] = b.items[-1].get("score_prior", 0) + 6
-            b.items[-1]["rationale"] = ("Purge cannot keep up: the history list grows without slowing down, so this configuration is "
-                                        "unsustainable. " + b.items[-1]["rationale"])
+        if b.items and b.items[-1]["id"] == "sweep-purge-threads":
+            it_ = b.items[-1]
+            if busy >= 85:
+                # no CPU for more purge threads: 23 sweep runs, 0 wins, 17 losses (mean -10%, worst -51%), and its +6 priority
+                # put it ahead of trx-commit-2 (h2h 283/285/288). On saturated CPUs a growing backlog is advice, not a run
+                it_["kind"] = "advice"
+                it_["note"] = (f"Advice: the CPUs are {busy:.0f}% busy, so more purge threads compete with the transactions "
+                               "(0 wins in 23 measured sweeps). A history list that keeps growing means this load is faster than "
+                               "this machine can clean up after it - often the effect of a trade-off that sped up commits.")
+            elif unb_h:
+                # an unsustainable configuration with CPU to spare: more purge threads come before tuning it
+                it_["score_prior"] = it_.get("score_prior", 0) + 2
+                it_["rationale"] = ("Purge cannot keep up: the history list grows without slowing down, so this configuration is "
+                                    "unsustainable. " + it_["rationale"])
     if have_run and ck >= 75 and _on(v, "innodb_flush_sync"):
         b.add("flush-sync-off", "Respect io_capacity_max during sync flushing", [("innodb_flush_sync", "OFF")],
               f"Checkpoint age reached {ck:.0f}%: InnoDB then flushes as fast as it can, ignoring io_capacity_max and starving reads. "
@@ -1511,7 +1528,13 @@ def score(item, goal):
     return s
 
 
-def apply_history(items, history, swap_now_mb=None):
+# settings whose effect flips with the commit path: tried with an fsync per commit, they say nothing about the same change
+# without one (log writer threads: -38% at trx_commit=1, +25% at trx_commit=2 on the same box)
+COMMIT_PATH = ("innodb_flush_log_at_trx_commit", "sync_binlog", "disable_log_bin", "log_bin")
+COMMIT_PATH_DEPENDENT = {"log-writer-threads-off"}
+
+
+def apply_history(items, history, swap_now_mb=None, managed_now=None):
     """Mark/skip items already tried. A memory-using setting tried while the swap state was different (no swap -> a swap
     file of about 1x RAM, or back) is tried again: its best value depends on whether pressure means slower or killed."""
     tried = {}
@@ -1544,6 +1567,15 @@ def apply_history(items, history, swap_now_mb=None):
                               f"{swap_now_mb / 1024:.0f} GiB: memory settings are measured again with the new swap state.")
                 out.append(it)
                 continue
+            if it["id"] in COMMIT_PATH_DEPENDENT and managed_now is not None:
+                then = {k: (p.get("managed") or {}).get(k) for k in COMMIT_PATH}
+                now_ = {k: managed_now.get(k) for k in COMMIT_PATH}
+                if then != now_:
+                    it["retest"] = {"run": p.get("seq"), "commit_path_then": then, "commit_path_now": now_}
+                    it["note"] = (f"Tried in run #{p.get('seq')} ({p.get('verdict')}) with another commit path "
+                                  f"({', '.join(f'{k}={v}' for k, v in then.items() if v is not None) or 'defaults'}): measured again.")
+                    out.append(it)
+                    continue
             if p.get("verdict") in ("regressed", "neutral", "efficiency-loss"):
                 it["confidence"] = 0
                 it["note"] = f"Already tried in run #{p.get('seq')} ({p.get('verdict')})."
@@ -1857,6 +1889,12 @@ def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
     return [i for i in items if i]
 
 
+def _big_gain(r):
+    ev = r.get("evaluation") or {}
+    d, nz = ev.get("goal_delta_pct"), ev.get("goal_noise_pct")
+    return r.get("verdict") in ("improved", "repeat") and d is not None and nz and d >= 2 * float(nz)
+
+
 def _unearned(history, managed):
     """Managed changes (vs the calibration's starting configuration) that no run still earns: the runs that set them
     are neither kept (improved / efficiency gain, not unconfirmed) nor an accepted best-practice bundle. Suite r1:
@@ -1877,7 +1915,10 @@ def _unearned(history, managed):
         # (canaries #198 / #201: the confirmed winner removed twice, -6.2% / -4.6%, as the threshold drifted)
         earned = any((r.get("verdict") in ("improved", "efficiency-gain") and (r.get("evaluation") or {}).get("confirmed") is not False)
                      or ((r.get("evaluation") or {}).get("ever_confirmed") and ((r.get("evaluation") or {}).get("confirmed_delta_pct") or 0) > 0)
-                     or (is_practice_run(r) and r.get("verdict") in ("neutral", "efficiency-gain", "improved")) for r in setters)
+                     or (is_practice_run(r) and r.get("verdict") in ("neutral", "efficiency-gain", "improved"))
+                     # a gain of twice the threshold it was measured against is not noise however the threshold moves later
+                     # (12 drops, 0 gains, 7 losses: binlog-off dropped for -25% / -28% in 249 / 271, log writers for -18%)
+                     or _big_gain(r) for r in setters)
         if not earned:
             out.add(k)
     # the chunk size is the companion of the instance count / pool size (it keeps the pool at the intended size): it goes
@@ -2207,7 +2248,7 @@ def run_engine(ctx):
     ctx["breakdown"] = inp.get("time_breakdown") or bottleneck.breakdown(ctx.get("summary"), inp, (ctx.get("hw") or {}).get("cpus"))
     ctx["diagnosis"] = diagnose(ctx) if ctx.get("summary") else []
     items = recommend(ctx)
-    items = apply_history(items, ctx.get("history") or [], (ctx.get("summary") or {}).get("swap_total_mb"))
+    items = apply_history(items, ctx.get("history") or [], (ctx.get("summary") or {}).get("swap_total_mb"), ctx.get("managed"))
     items = practice_bundle(items, ctx.get("history") or [])
     items = stack_small_wins(items, ctx)
     items = items + per_query_hints(ctx.get("history") or [], ctx["variables"])

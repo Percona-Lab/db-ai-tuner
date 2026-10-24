@@ -90,6 +90,8 @@ def main():
     for r in hist:
         if r["verdict"] != "improved" or (r.get("evaluation") or {}).get("rejudged_unconfirmed"):
             continue  # promoted by a later, tighter threshold: flagged unconfirmed and never kept (checked in 4)
+        if str((r.get("evaluation") or {}).get("confirmed_by") or "").startswith("margin"):
+            continue  # far beyond the threshold (cli.CONFIRM_MARGIN): kept without a repeat by design
         m = re.match(r"exp#(\d+) ", r["label"])
         if m and any(x["label"].startswith(f"exp#{m.group(1)} ") and "(confirm)" in x["label"] for x in hist):
             continue  # a sweep point the sweep did not pick: the chosen point was confirmed

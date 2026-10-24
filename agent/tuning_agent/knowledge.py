@@ -537,11 +537,20 @@ def run_tradeoffs(run):
     return out
 
 
+def start_run(runs):
+    """The session's starting configuration: its first baseline / calibration run when there is one, else its first run.
+    The server-defaults reference before a baseline is not the start: taking its trade-offs made the baseline's own setup
+    (binlog off, a pool sized near the budget) a trade-off the tuner "added", and the best safe configuration fell back to
+    server defaults (210, 212, 213, 224, 282, 286: -50% to -84%) or did not exist (205, 211, 217, 225, 226, 228)."""
+    rs = sorted((r for r in runs or [] if r.get("managed") is not None), key=lambda r: r.get("seq") or 0)
+    return next((r for r in rs if str(r.get("label") or "").lower().startswith(("baseline", "calibration"))), rs[0] if rs else None)
+
+
 def start_tradeoffs(runs):
     """What the session's starting configuration already gives up (the first run's; e.g. a benchmark defined without a
     binary log, or a setup already over the memory budget). Every run inherits these: they say the benchmark setup is
     not production-safe, not what the tuner did."""
-    first = min((r for r in runs or [] if r.get("managed") is not None), key=lambda r: r.get("seq") or 0, default=None)
+    first = start_run(runs)
     if not first:
         return []
     out = run_tradeoffs(first)

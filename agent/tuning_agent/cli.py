@@ -35,6 +35,9 @@ class ServerDown(Fail):
     """mysqld does not come back after the reset (e.g. OOM-killed on start with an oversized buffer pool)."""
 
 
+CONFIRM_MARGIN = 3.0  # an improvement this many times the noise threshold is kept without a confirmation run
+
+
 class TooSlow(Fail):
     pass
 
@@ -1030,9 +1033,12 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     d_first = _improvement(sess["goal"], gv, first.get("goal_value")) if first else None
     _refresh_noise(c, sess, runs)
     # the same fields a re-evaluation sees (the label tells a sweep point's own change from a sweep restore)
+    hint = c.state.get("parent_hint")
     verdict, evaluation = evaluate.verdict({"seq": m.get("seq"), "label": m.get("label"), "managed": m["managed"], "goal_value": gv,
-                                            "summary": summary, "changes": m.get("changes")}, runs, sess["goal"],
+                                            "summary": summary, "changes": m.get("changes"), "parent_hint": hint}, runs, sess["goal"],
         sess.get("noise") or ({"noise_pct": sess["noise_pct"]} if sess.get("noise_pct") else None))
+    if hint:
+        evaluation["parent_hint"] = hint  # a re-evaluation compares with the same parent
     if evaluation.get("parent_runs"):
         try:  # query-level view: which statements got faster / slower than under the parent configuration
             with open(os.path.join(c.state.dir, f"run{evaluation['parent_runs'][-1]}_inputs.json")) as f:
@@ -2909,6 +2915,10 @@ def _safe_wins_in_tradeoff_phase(sess, best_safe):
                and not str(x["source"])[4:].startswith(("revert", "rollback"))]
         if not own or tradeoffs_in({x["variable"]: x.get("new") for x in own}):
             continue
+        # a lever whose effect depends on the trade-offs it was measured under does not carry over (log writer threads
+        # off: +25% at trx_commit=2, -26% / -41% carried onto durable commits in W1 288 / 285)
+        if any(str(x["source"])[4:] in engine.COMMIT_PATH_DEPENDENT for x in own):
+            continue
         for x in own:
             cur = safe_cfg.get(x["variable"])
             cur = cur.get("value") if isinstance(cur, dict) else cur
@@ -3194,7 +3204,22 @@ def _autotune(a):
             continue
         measured += 1
         log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
-        if run["verdict"] in ("improved", "efficiency-gain") and measured < a.max_runs:
+        ev0 = run.get("evaluation") or {}
+        d0, nz0 = ev0.get("goal_delta_pct"), float(ev0.get("goal_noise_pct") or 0)
+        if run["verdict"] == "improved" and d0 is not None and nz0 and d0 >= CONFIRM_MARGIN * nz0 and (sess.get("noise") or {}).get("runs"):
+            # far beyond the threshold, luck cannot explain it: 112 confirmations of gains at 2x the threshold or more, 0 failed
+            # (all 6 failures were below 1.1x). Kept without a repeat - re-checks later still catch drift
+            r0 = next((x for x in c.session()["runs"] if x["seq"] == run["seq"]), run)
+            r0["evaluation"] = dict(ev0, confirmed=True, ever_confirmed=True, confirmed_by=f"margin: {d0:+.1f}% is {d0 / nz0:.1f}x the threshold")
+            if r0.get("id"):
+                c.client.post(f"/runs/{r0['id']}/evaluation", {"verdict": r0["verdict"], "evaluation": r0["evaluation"]})
+            sess_ = c.session()
+            for x in sess_["runs"]:
+                if x["seq"] == run["seq"]:
+                    x["evaluation"] = r0["evaluation"]
+            c.state.set("session", sess_)
+            log(f"   improvement of {d0:+.1f}% is {d0 / nz0:.1f}x the ±{nz0}% threshold: kept without a confirmation run")
+        elif run["verdict"] in ("improved", "efficiency-gain") and measured < a.max_runs:
             # a single run above the threshold can be luck (winner's curse): measure it again before building on it. An
             # efficiency gain is kept with the goal within noise: one low run can hide a real loss (canary #141)
             log(f"   {'improvement' if run['verdict'] == 'improved' else 'efficiency gain'}: measuring the same configuration again to confirm it")
@@ -3294,9 +3319,15 @@ def _autotune(a):
             log(f"== safe changes that improved in the trade-off phase, on the best safe configuration: {', '.join(ids)}")
             _apply_and_record(c, [{"variable": x["variable"], "value": x["new"], "reason": f"autotune: {x['source'][4:]} improved in the "
                                    "trade-off phase; measured on the best safe configuration", "source": "autotune"} for x in extra], "autotune")
-            for i in (1, 2):
-                run, _ = _bench_run(c, prof, f"best safe + {', '.join(ids)} ({i}/2)")
-                log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
+            c.state.set("parent_hint", list(best_safe.get("runs") or [best_safe["seq"]]))  # judged against best safe
+            try:
+                for i in (1, 2):
+                    run, _ = _bench_run(c, prof, f"best safe + {', '.join(ids)} ({i}/2)")
+                    log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
+                    if run["verdict"] in ("regressed", "efficiency-loss", "unreliable"):
+                        break  # a loss on the first run: no second run (W1 285 / 288: -41% / -26%, measured twice)
+            finally:
+                c.state.set("parent_hint", None)
             _confirm(c)
             best_safe = c.session().get("best_safe")
     if best_safe:

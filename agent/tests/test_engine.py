@@ -1762,6 +1762,35 @@ def test_basis_shows_rule_vs_learned():
 
 
 
+def test_start_is_the_baseline_not_server_defaults():
+    """210/212/224/282/286: the start's trade-offs came from the server-defaults run, so the baseline's own setup became
+    an added trade-off and best safe fell back to server defaults."""
+    from tuning_agent import knowledge
+    runs = [{"seq": 1, "label": "server defaults", "managed": {}},
+            {"seq": 2, "label": "baseline (1/3)", "managed": {"innodb_flush_log_at_trx_commit": "2"}},
+            {"seq": 3, "label": "ps-off", "managed": {"innodb_flush_log_at_trx_commit": "2", "performance_schema": "OFF"}}]
+    st = knowledge.start_tradeoffs(runs)
+    assert any(x["variable"] == "innodb_flush_log_at_trx_commit" for x in st), st
+    assert knowledge.added_tradeoffs(runs[1], st) == []
+
+
+def test_drop_unearned_keeps_big_gains():
+    from tuning_agent import engine
+    assert engine._big_gain({"verdict": "improved", "evaluation": {"goal_delta_pct": 24.6, "goal_noise_pct": 2.0}})
+    assert not engine._big_gain({"verdict": "improved", "evaluation": {"goal_delta_pct": 2.5, "goal_noise_pct": 2.0}})
+
+
+def test_parent_hint_overrides_netted_changes():
+    """'best safe + X' nets out to rollbacks only: judged against the hinted best safe runs, not the trade-off config."""
+    from tuning_agent import evaluate
+    hist = [{"seq": 1, "label": "baseline (1/3)", "managed": {"a": "1"}, "goal_value": 100.0, "verdict": "reference"},
+            {"seq": 2, "label": "x", "managed": {"a": "1", "b": "2"}, "goal_value": 200.0, "verdict": "improved"}]
+    run = {"seq": 3, "label": "best safe + spin-loops (1/2)", "managed": {"a": "1", "c": "3"}, "goal_value": 101.0,
+           "changes": [{"variable": "b", "old": "2", "new": None, "source": "rollback"}], "parent_hint": [1]}
+    assert evaluate._parent_key(run, hist, evaluate.config_key(run["managed"])) == evaluate.config_key({"a": "1"})
+
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

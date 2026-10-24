@@ -712,7 +712,13 @@ def _run_verdict(run, history, goal, noise):
                                           "(warm-up or tail, a client hiccup). Kept for reference, excluded from comparisons."}
     cl = client_saturated(run.get("summary") or {})
     if cl:
-        # the benchmark client, not the database, set the pace: no server change can show (C3 / C6: 16 runs each)
+        # the benchmark client, not the database, set the pace: a loss or no change says nothing (C3 / C6: 16 runs each).
+        # A gain beyond noise is real and at least that large - the client capped it (273: thread pool +18%, ps-off +11%;
+        # 275: thread pool +12% were thrown away and the sessions ended at -0.6% / +0.9%)
+        v0, d0 = _verdict(run, history, goal, noise)
+        if v0 == "improved" and goal != "latency":
+            return v0, dict(d0 or {}, client_limited=cl, note=f"Improved by at least {(d0 or {}).get('goal_delta_pct')}%: {cl}, so the "
+                                                               "server could have gone further - a lower bound.")
         return "unreliable", {"client_saturated": cl, "note": f"UNRELIABLE: {cl}. The measured throughput is the client's limit, "
                                                               "so the run is kept for reference but excluded from comparisons."}
     v, d = _verdict(run, history, goal, noise)
@@ -840,6 +846,14 @@ def _parent_key(run, history, key):
     except the run's own experiment changes (reverts merged into the run are not part of the experiment). Own settings
     prefer their previous values; for sweep points the value before the sweep started (the sweep base), so every point
     is compared with the base rather than with the previous point."""
+    hint = run.get("parent_hint") or (run.get("evaluation") or {}).get("parent_hint")
+    if hint:
+        # set by the caller when the changes cannot tell: "best safe + X" goes back to the best safe configuration and
+        # re-applies X, which nets out against the trade-off configuration before it - judged against that, 17 such runs
+        # showed -20% to -79% "regressions" (237: -78.4%, really +1.0% against best safe)
+        hr = next((r for r in reversed(history) if r.get("seq") in hint and r.get("goal_value") is not None), None)
+        if hr is not None:
+            return config_key(hr.get("managed"))
     own_ch = [c for c in run.get("changes") or [] if not _is_revert(c, run)]
     own = {c["variable"] for c in own_ch}
     if own:

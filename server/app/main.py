@@ -252,7 +252,9 @@ def _memory_tradeoff(r):
 def start_tradeoffs(runs):
     """Trade-offs of the session's starting configuration (its first run): the benchmark setup's, not the tuner's -
     including a setup already over the memory budget."""
-    first = min((r for r in runs if r.get("status") == "done"), key=lambda r: r.get("seq") or 0, default=None)
+    # the first baseline / calibration run, not the server-defaults reference before it (knowledge.start_run)
+    done = sorted((r for r in runs if r.get("status") == "done"), key=lambda r: r.get("seq") or 0)
+    first = next((r for r in done if str(r.get("label") or "").lower().startswith(("baseline", "calibration"))), done[0] if done else None)
     if not first:
         return []
     out = [t for t in first.get("tradeoffs") or [] if t.get("category") != "memory"]
@@ -903,7 +905,7 @@ def run_detail(run_id: int, request: Request, vs: int = None):
     recs = [store.row(x, ("items", "diagnosis", "workload", "llm", "decision")) for x in store.q("SELECT * FROM recommendations WHERE run_id=? ORDER BY id", (run_id,))]
     siblings = [{"id": x["id"], "seq": x["seq"], "label": x["label"]} for x in store.q("SELECT id, seq, label FROM runs WHERE session_id=? AND status<>'aborted' ORDER BY seq", (r["session_id"],))]
     out = run_brief(r)
-    sib = [run_brief(x) for x in store.q("SELECT * FROM runs WHERE session_id=? AND status='done' ORDER BY seq LIMIT 1", (r["session_id"],))]
+    sib = [run_brief(x) for x in store.q("SELECT * FROM runs WHERE session_id=? AND status='done' ORDER BY seq LIMIT 12", (r["session_id"],))]
     start = start_tradeoffs(sib)
     have = {(t.get("variable"), str(t.get("value"))) for t in start}
     out["start_tradeoffs"] = start
