@@ -718,11 +718,11 @@ def recommend(ctx):
               {"unbounded_growth": unb_hll, "innodb_purge_batch_size": v.get("innodb_purge_batch_size")}, impact=2, confidence=1)
     if have_run and unb_hll and busy >= 85 and cpus >= 8:
         b.add("purge-cpus", "Give the purge threads their own CPUs", [],
-              f"Purge cannot keep up on {cpus} CPUs that are {busy:.0f}% busy: purge threads compete with {tr:.0f} running user threads "
+              f"Purge cannot keep up on {cpus} CPUs that are {busy:.0f}% busy: purge threads compete with {(s.get("threads_running_avg") or 0):.0f} running user threads "
               "for the same cores. Pinning the purge threads (performance_schema.threads: thread/innodb/srv_purge_thread and "
               "srv_worker_thread, THREAD_OS_ID) to one or two cores the user threads do not use (taskset -p -c) keeps purge running. "
-              "Advice: the agent does not pin threads yet.", {"cpu_busy": busy, "cpus": cpus, "threads_running_avg": tr}, impact=2, confidence=1)
-        b.items[-1]["kind"] = "advice"
+              "Advice: the agent does not pin threads yet.", {"cpu_busy": busy, "cpus": cpus, "threads_running_avg": s.get("threads_running_avg")},
+              impact=2, confidence=1, kind="advice")
     if have_run and v.get("log_bin") == "ON" and _int(v, "binlog_transaction_dependency_history_size", 25000) > 1000 and (s.get("cpu_busy") or 0) >= 80 \
             and wtype in ("oltp-write", "mixed") and "binlog_transaction_dependency_history_size" in v:
         b.add("writeset-history", "Smaller WRITESET dependency history", [("binlog_transaction_dependency_history_size", "1000")],

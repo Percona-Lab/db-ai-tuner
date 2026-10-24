@@ -1813,6 +1813,169 @@ def test_stability_first():
 
 
 
+def test_stability_remedies_rank_first():
+    """Unbounded undo history on busy CPUs: the purge lag bound ranks first (stability first), purge batch size and
+    the purge-thread step are stability candidates, pinning purge threads is advice; with stability off they rank as usual."""
+    s = dict(OLTP[0], history_list_length_max=950000, cpu_busy=95,
+             unbounded_growth=[{"metric": "history_list_length", "label": "history list", "start": 600000, "end": 950000, "per_hour": 1000000}])
+    v = dict(VARS, innodb_purge_threads="4", innodb_max_purge_lag="0", innodb_max_purge_lag_delay="0", innodb_purge_batch_size="300")
+    ctx = {"goal": "tps", "policy": "benchmark", "os_tuning": True, "os_facts": {}, "hw": dict(HW, cpus=16), "flavor": "percona",
+           "version": (8, 4, 11), "variables": v, "summary": s, "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}}
+    res = engine.run_engine(ctx)
+    it = ids(res)
+    assert it["purge-lag"].get("stability") and it["purge-lag"]["score"] > 100, it["purge-lag"]
+    assert it["purge-lag"]["changes"][0]["proposed"] in ("600000", "600K", "600k") or int(float(str(it["purge-lag"]["changes"][0]["proposed"]).rstrip("kK") or 0)) >= 200, it["purge-lag"]["changes"]
+    actionable = [i for i in res["items"] if i["kind"] in ("config", "revert") and i["confidence"] > 0]
+    assert actionable[0]["id"] == "purge-lag", [i["id"] for i in actionable[:4]]
+    assert it.get("purge-cpus", {}).get("kind") == "advice"
+    engine.STABILITY_FIRST = False
+    try:
+        it2 = ids(engine.run_engine(dict(ctx, variables=dict(v))))
+        assert not it2["purge-lag"].get("stability")
+    finally:
+        engine.STABILITY_FIRST = True
+
+
+def test_log_writer_threads_off_without_fsync_at_any_concurrency():
+    """h2h W1: 250 running threads on 12 CPUs at trx_commit=2 - the old gate (<= 8 x CPUs) kept it out of the rules arm."""
+    s = dict(OLTP[0], cpu_busy=97, threads_running_avg=250)
+    v = dict(VARS, innodb_flush_log_at_trx_commit="2")
+    ctx = {"goal": "tps", "policy": "benchmark", "os_tuning": True, "os_facts": {}, "hw": dict(HW, cpus=12), "flavor": "percona",
+           "version": (8, 4, 11), "variables": v, "summary": s, "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}}
+    it = ids(engine.run_engine(ctx))
+    assert "log-writer-threads-off" in it and it["log-writer-threads-off"]["impact"] == 3, it.get("log-writer-threads-off")
+    ctx1 = dict(ctx, variables=dict(VARS))  # fsync per commit, 250 threads: not proposed
+    assert "log-writer-threads-off" not in ids(engine.run_engine(ctx1))
+
+
+def test_commit_path_change_retests_log_writer_threads():
+    item = {"id": "log-writer-threads-off", "kind": "config", "confidence": 2,
+            "changes": [{"variable": "innodb_log_writer_threads", "current": "ON", "proposed": "OFF"}]}
+    hist = [{"seq": 5, "verdict": "regressed", "managed": {"innodb_flush_log_at_trx_commit": "1"},
+             "changes": [{"variable": "innodb_log_writer_threads", "new": "OFF", "source": "rec:log-writer-threads-off"}]}]
+    out = engine.apply_history([dict(item)], hist, None, {"innodb_flush_log_at_trx_commit": "2"})
+    assert out[0].get("retest") and out[0]["confidence"] == 2, out[0]
+    same = engine.apply_history([dict(item)], hist, None, {"innodb_flush_log_at_trx_commit": "1"})
+    assert same[0]["confidence"] == 0
+
+
+def test_client_limited_gain_is_kept():
+    """273 / 275: gains under a saturated client were thrown away; a gain beyond noise is a lower bound and kept."""
+    hist = [{"seq": 1, "label": "baseline (1/3)", "managed": {"a": "1"}, "goal_value": 100.0, "verdict": "reference", "summary": {}},
+            {"seq": 2, "label": "baseline (2/3)", "managed": {"a": "1"}, "goal_value": 100.0, "verdict": "repeat", "summary": {}}]
+    sat = {"client_cpu_busy": 97}
+    up = {"seq": 3, "label": "thread-pool", "managed": {"a": "1", "b": "2"}, "goal_value": 118.0, "summary": sat,
+          "changes": [{"variable": "b", "old": None, "new": "2", "source": "rec:thread-pool"}]}
+    v, d = evaluate.verdict(up, hist, "tps", {"noise_pct": 2.0, "runs": [1, 2]})
+    assert v == "improved" and d.get("client_limited"), (v, d)
+    v2, _ = evaluate.verdict(dict(up, goal_value=97.0), hist, "tps", {"noise_pct": 2.0, "runs": [1, 2]})
+    assert v2 == "unreliable"
+
+
+def test_fruitless_streak_since_last_gain():
+    from tuning_agent import cli
+    runs = [{"seq": 1, "label": "baseline (1/3)", "verdict": "reference"}, {"seq": 2, "label": "x", "verdict": "improved"},
+            {"seq": 3, "label": "x (confirm)", "verdict": "repeat"}] + \
+           [{"seq": 4 + i, "label": f"idea{i}", "verdict": "neutral"} for i in range(5)] + [{"seq": 9, "label": "re-check (run 2 config)", "verdict": "repeat"}]
+    f = cli._fruitless_since_gain({"runs": runs})
+    assert [r["seq"] for r in f] == [4, 5, 6, 7, 8], f
+
+
+def test_learning_state_counts_loaded_learnings():
+    st = engine.learning_state({"experience": {"a": {"n": 4}, "b": {"n": 2}}, "hypothesis_experience": [1, 2],
+                                "param_impact": {"x": {"impact": "high"}, "y": {}}, "insights": [{}]})
+    assert st == {"experience_ideas": 2, "experience_runs": 6, "hypothesis_outcomes": 2, "learned_parameters": 1, "insights": 1}, st
+    assert engine.learning_state({}) == {"experience_ideas": 0, "experience_runs": 0, "hypothesis_outcomes": 0, "learned_parameters": 0, "insights": 0}
+
+
+class _FakeCtx:
+    def __init__(self, sess=None, cfg=None, osv=None):
+        self._sess, self.cfg, self._osv = sess or {}, cfg or {}, osv if osv is not None else {"os:swapfile": "0"}
+
+    def session(self, required=False):
+        return self._sess
+
+    def os_tuning_allowed(self):
+        return str(self.cfg.get("allow_os_tuning", "true")) == "true"
+
+    def os_settings(self):
+        return self._osv
+
+
+def test_baseline_adds_swap_unless_opted_out():
+    from tuning_agent import cli
+    hw = {"ram_bytes": 32 * GiB, "swap_bytes": 0, "disk_free_bytes": 500 * GiB}
+    sw = cli._baseline_swap(_FakeCtx({"os_tuning": True}), hw)
+    assert sw and sw["variable"] == "os:swapfile" and parse_size(sw["value"]) == 32 * GiB, sw
+    assert cli._baseline_swap(_FakeCtx({"os_tuning": True}, {"swap": "none"}), hw) is None  # host without swap by design
+    assert cli._baseline_swap(_FakeCtx({"os_tuning": False}), hw) is None  # no OS tuning
+    assert cli._baseline_swap(_FakeCtx({"os_tuning": True}), dict(hw, swap_bytes=31 * GiB)) is None  # already about 1x RAM
+    small = cli._baseline_swap(_FakeCtx({"os_tuning": True}), dict(hw, disk_free_bytes=20 * GiB))
+    assert small and parse_size(small["value"]) <= 9 * GiB, small  # at most half the free disk
+
+
+def test_rollback_fails_loudly_and_starts_mysqld():
+    """Deploy canary #308: mysqld down, rollback --reset could not connect, printed 'Rolled back' and exited 0."""
+    import argparse
+    from tuning_agent import cli
+    calls = {"connect": 0, "systemctl": []}
+
+    class DB:
+        def connect(self, retries=1, delay=0):
+            calls["connect"] += 1
+            if calls["connect"] == 1:
+                raise OSError("Can't connect to MySQL server")
+
+    class State:
+        def get(self, k, d=None):
+            return {"managed": {"innodb_flush_log_at_trx_commit": {"value": "2"}}}.get(k, d)
+
+    class C:
+        state, db, cfg = State(), DB(), {}
+
+        def session(self, required=False):
+            return None
+
+    class Ap:
+        def __init__(self, *a, **k):
+            self.service = "mysql"
+    saved = (cli.Ctx, cli._apply_and_record, cli.Applier, cli.subprocess.run, cli.emit)
+    cli.Ctx, cli.Applier = (lambda: C()), Ap
+    cli.subprocess.run = lambda args, **k: calls["systemctl"].append(args)
+    cli.emit = lambda *a, **k: None
+    try:
+        cli._apply_and_record = lambda c, ch, src: {"errors": ["OperationalError: 2003"], "rolled_back": True}
+        try:
+            cli.cmd_rollback(argparse.Namespace(reset=True))
+            raise AssertionError("a failed rollback must not succeed")
+        except cli.Fail as e:
+            assert "rollback" in str(e)
+        assert calls["systemctl"] and calls["systemctl"][0][:2] == ["systemctl", "start"], calls
+        calls["connect"] = 1
+        cli._apply_and_record = lambda c, ch, src: {"errors": [], "applied": []}
+        cli.cmd_rollback(argparse.Namespace(reset=True))  # works once mysqld answers
+    finally:
+        cli.Ctx, cli._apply_and_record, cli.Applier, cli.subprocess.run, cli.emit = saved
+
+
+def test_memory_sweep_values_checked_against_ram_and_swap():
+    """r2 RO-4.ns: only the first sweep value was checked; 12G on a 15.6 GiB host without swap OOM-killed mysqld.
+    Every value must fit in RAM + free swap: none fit -> not run; some fit -> only those; all fit (with swap) -> all."""
+    s = dict(OLTP[0], bp_hit_pct=90, bp_disk_reads=5000, cpu_iowait=30, cpu_busy=40, mem_available_mb=3000, swap_used_mb=0, disk_util=90)
+
+    def sweep(swap_mb):
+        ctx = {"goal": "tps", "policy": "benchmark", "os_tuning": False, "os_facts": {}, "hw": HW, "flavor": "percona", "version": (8, 4, 11),
+               "variables": dict(VARS), "summary": dict(s, swap_total_mb=swap_mb), "inputs": dict(OLTP[1], data_bytes=20 * GiB), "history": [],
+               "noise_pct": 2.0, "managed": {}}
+        return ids(engine.run_engine(ctx))["sweep-bp"]
+    none_ = sweep(0)
+    assert none_["confidence"] == 0 and "OOM" in none_["note"], none_
+    some = sweep(1024)
+    assert not some.get("sweep") and [c["proposed"] for c in some["changes"]] == ["2560M"] and "Left out: 3G" in some["rationale"], some
+    assert sweep(8192)["sweep"]["values"] == ["2560M", "3G"]
+
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
