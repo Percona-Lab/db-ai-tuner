@@ -2096,12 +2096,13 @@ def _fmt_cal(cal):
     return "\n".join(lines)
 
 
-TRIAGE_SEG_S = 300     # each online setting runs this long (the first TRIAGE_SETTLE_S not counted): a remedy shows in minutes
+TRIAGE_SEG_S = 300       # each remedy is measured this long (the first TRIAGE_SETTLE_S not counted): a remedy shows in minutes
 TRIAGE_SETTLE_S = 60
-TRIAGE_HELP = 0.5      # a setting that at least halves the history growth (and costs <= STABILITY_MAX_COST_PCT) is kept;
-                       # one that alone makes it stable (TRIAGE_FIX) is kept whatever it costs
-TRIAGE_FIX = 0.25      # stable with a margin: the growth down to a quarter of where it started, or the history shrinking
-TRIAGE_BUDGET_S = 3600
+TRIAGE_RESTART_LEAD_S = 120  # after a mysqld restart: the benchmark reconnects and warms up before the step is measured
+TRIAGE_HELP = 0.5        # a partial remedy: growth per committed transaction at most half the reference's
+TRIAGE_FIX = 0.25        # stable with a margin: growth down to a quarter of the reference, or the history shrinking
+TRIAGE_FREE_PCT = 5.0    # a stable remedy costing at most this much throughput ends the triage early: nothing cheaper to find
+TRIAGE_BUDGET_S = 7200
 PROVISIONAL_WINDOW_S = 600  # measurement length while no stable configuration exists
 
 
@@ -2123,9 +2124,10 @@ def _per_trx(seg):
 
 
 def _triage_candidates(c):
-    """Purge remedies that apply online, in the order they cost the workload least; the purge lag bound last (a stopgap
-    that throttles every writer). Restart-only remedies (more purge threads in MySQL / Percona, enabling the thread pool)
-    are left to the session's stability experiments."""
+    """Purge remedies to try, each measured on its own: [{label, changes: [(var, value)], restart, last}]. Online ones
+    first (cheaper to try), then the ones that need a mysqld restart - the thread pool, more purge threads at a higher
+    priority - and the purge lag bound last: a stopgap that throttles every writer, and one that cannot act while purge
+    is stalled (MySQL computes the delay at the start of each purge batch)."""
     from .knowledge import dynamic_in, series_of
     from .mysqldb import flavor_of
     from . import resgroups
@@ -2134,111 +2136,174 @@ def _triage_candidates(c):
     series = series_of(fl, v.get("version")) if v.get("version") else None
     cpus = os.cpu_count() or 1
     out = []
-    if resgroups.available(c.db) and resgroups.has_cap_sys_nice():
-        out.append(("purge threads at a higher priority", [("rg:purge", "prio=-10")]))
-    pt = int(v.get("innodb_purge_threads") or 4)
-    if dynamic_in("innodb_purge_threads", series) and pt < 32:  # MariaDB 10.5+ changes it online
-        out += [(f"purge threads {x}", [("innodb_purge_threads", str(x))]) for x in sorted({min(32, pt * 2), 32}) if x > pt]
+
+    def add(label, changes, restart=False, last=False):
+        out.append({"label": label, "changes": changes, "restart": restart, "last": last})
+
+    rg = resgroups.available(c.db)
+    cap = resgroups.has_cap_sys_nice() if rg else None
+    try:
+        can_cap = rg and cap is False and c.os_tuning_allowed() and "os:mysqld_cap_sys_nice" in (c.os_settings() or {})
+    except Exception:
+        can_cap = False
+    prio = ([("rg:purge", "prio=-10")] if rg and cap else [("os:mysqld_cap_sys_nice", "ON"), ("rg:purge", "prio=-10")] if can_cap else [])
+    if prio:
+        add("purge threads at a higher priority", prio, restart=not cap)
     bs = int(v.get("innodb_purge_batch_size") or 300)
-    out += [(f"purge batch size {x}", [("innodb_purge_batch_size", str(x))]) for x in (1000, 5000) if x > bs]
+    for x in (1000, 5000):
+        if x > bs:
+            add(f"purge batch size {x}", [("innodb_purge_batch_size", str(x))])
+    if "innodb_thread_concurrency" in v and int(v.get("innodb_thread_concurrency") or 0) == 0 and fl != "mariadb":
+        # to control purge the cap has to be low - at or below the cores - so purge gets CPU and locks between user threads
+        for x in sorted({cpus, max(2, cpus // 2)}, reverse=True):
+            add(f"innodb_thread_concurrency {x}", [("innodb_thread_concurrency", str(x))])
     tp_on = str(v.get("thread_handling") or "").lower() == "pool-of-threads"
-    if tp_on and int(v.get("thread_pool_oversubscribe") or 3) > 1:
-        out.append(("thread pool oversubscribe 1", [("thread_pool_oversubscribe", "1")]))
-    elif not tp_on and "thread_pool_size" not in v and "innodb_thread_concurrency" in v and int(v.get("innodb_thread_concurrency") or 0) == 0 \
-            and fl != "mariadb":
-        # no thread pool in this server (MySQL Community): the cruder cap on threads inside InnoDB is the online stand-in
-        out += [(f"innodb_thread_concurrency {x}", [("innodb_thread_concurrency", str(x))]) for x in (4 * cpus, 2 * cpus)]
-    # restart-only remedies left (the thread pool, more purge threads): they come first as the session's experiments, and
-    # the purge lag bound - a stopgap throttling every writer - only after them (run_engine ranks it last)
-    restart_left = (not tp_on and "thread_pool_size" in v) or (pt < 32 and not dynamic_in("innodb_purge_threads", series))
-    last = []
-    if not restart_left and "innodb_max_purge_lag" in v and int(v.get("innodb_max_purge_lag") or 0) == 0:
-        last.append(("purge lag bound (stopgap)", [("innodb_max_purge_lag", "__HLL__"), ("innodb_max_purge_lag_delay", "300000")]))
-    return out, last
+    if "thread_pool_size" in v and not tp_on:
+        add("thread pool", [("thread_handling", "pool-of-threads"), ("thread_pool_size", str(cpus))], restart=True)
+        if "thread_pool_oversubscribe" in v:
+            add("thread pool, oversubscribe 1", [("thread_handling", "pool-of-threads"), ("thread_pool_size", str(cpus)),
+                                                 ("thread_pool_oversubscribe", "1")], restart=True)
+    elif tp_on and int(v.get("thread_pool_oversubscribe") or 3) > 1:
+        add("thread pool oversubscribe 1", [("thread_pool_oversubscribe", "1")])
+    pt = int(v.get("innodb_purge_threads") or 4)
+    pt_online = bool(dynamic_in("innodb_purge_threads", series))
+    for x in sorted({min(32, max(4, pt * 2)), min(32, max(8, cpus // 2))}):
+        if x > pt:
+            add(f"{x} purge threads" + (" at a higher priority" if prio else ""), [("innodb_purge_threads", str(x))] + prio,
+                restart=not pt_online or (bool(prio) and not cap))
+    if "innodb_max_purge_lag" in v and int(v.get("innodb_max_purge_lag") or 0) == 0:
+        add("purge lag bound (stopgap)", [("innodb_max_purge_lag", "__HLL__"), ("innodb_max_purge_lag_delay", "300000")], last=True)
+    return out
 
 
-def _purge_triage(c, running, deadline):
-    """While the benchmark keeps running: measure how fast the history list grows, then try each online purge remedy for
-    TRIAGE_SEG_S and keep the ones that cut the growth substantially (TRIAGE_HELP) at an acceptable throughput cost, until
-    it is down to TRIAGE_FIX of where it started (stable with a margin). Only then is the purge lag bound tried. Returns
-    {"stable", "kept", "steps"}; kept settings stay applied and are recorded as the session's starting configuration."""
-    cands, last = _triage_candidates(c)
-    steps, kept = [], []
+RESTART_VARS = ("thread_handling", "os:mysqld_cap_sys_nice")
 
-    def step(label, changes):
+
+def _purge_triage(c, running, deadline, start_bench=None):
+    """Find a configuration whose undo history stays bounded before anything is measured for long. The benchmark keeps
+    running; each remedy is measured on its own for TRIAGE_SEG_S (after a restart, the benchmark is started again and
+    warms up first): history growth per minute and throughput. A remedy that brings the growth down to TRIAGE_FIX of the
+    reference (or makes the history shrink) is stable; among stable ones the fastest wins - kept whatever it costs
+    (stability first, then performance). Without one: the two best partial remedies (growth per transaction halved)
+    together, then the purge lag bound. start_bench() starts the benchmark again after a restart (None: online remedies
+    only). Returns {"stable", "kept", "steps", "running"}; the winner stays applied, recorded as the session's start."""
+    cands = _triage_candidates(c)
+    if start_bench is None:
+        cands = [x for x in cands if not x["restart"]]
+    steps = []
+    prev = {k: x.get("value") for k, x in c.state["managed"].items()}  # back to the managed value, or unmanaged
+    trial = {}  # settings the triage has in effect now
+
+    def needs_restart(changes):
+        return any(k in RESTART_VARS or (k == "innodb_purge_threads" and not _triage_online(c, k))
+                   or (k.startswith("thread_pool_") and str(c.db.variables().get("thread_handling") or "") != "pool-of-threads"
+                       and dict(changes).get("thread_handling") == "pool-of-threads") for k, _ in changes)
+
+    def switch(changes, label):
+        nonlocal running, trial
+        want = dict(changes)
+        undo = {k: prev.get(k) for k in trial if k not in want}
+        diff = [(k, x) for k, x in list(undo.items()) + list(want.items()) if trial.get(k, prev.get(k)) != x or k in undo]
+        if not diff:
+            return
+        restart = needs_restart(list(want.items())) or needs_restart([(k, trial[k]) for k in undo])
+        if restart and running.alive():
+            running.kill()
+        _apply_and_record(c, [{"variable": k, "value": x, "reason": f"purge triage: {label}"} for k, x in diff], "stability-triage",
+                          restart=restart)
+        trial = want
+        if restart:
+            c.db.connect(retries=30, delay=2)
+            running = start_bench()
+            c.activity("purge triage", f"{label}: benchmark warming up after the restart")
+            t = time.time()
+            while time.time() - t < TRIAGE_RESTART_LEAD_S and running.alive():
+                time.sleep(10)
+
+    def measure(label, changes):
         t0 = time.time()
-        if changes:
-            _apply_and_record(c, [{"variable": k, "value": x, "reason": f"purge triage: {label}"} for k, x in changes],
-                              "stability-triage", restart=False)
         c.activity("purge triage", f"{label} ({TRIAGE_SEG_S // 60} min)")
         while time.time() - t0 < TRIAGE_SEG_S and running.alive():
             time.sleep(15)
         seg = _segment(c, t0 + TRIAGE_SETTLE_S, time.time())
-        seg["label"] = label
-        seg["changes"] = [f"{k}={x}" for k, x in changes]
+        seg.update(label=label, changes=[f"{k}={x}" for k, x in changes])
         steps.append(seg)
         return seg
 
-    log(f"== purge triage: the history list grows past {engine.PURGE_UNBOUNDED_MIN:,} without slowing down; online purge remedies, "
-        f"{TRIAGE_SEG_S // 60} min each, while the benchmark keeps running")
-    ref = step("current configuration", [])
+    log(f"== purge triage: the history list grows past {engine.PURGE_UNBOUNDED_MIN:,} without slowing down; each remedy "
+        f"{TRIAGE_SEG_S // 60} min on the running benchmark (restart remedies after a {TRIAGE_RESTART_LEAD_S // 60}-min warm-up)")
+    ref = measure("current configuration", [])
     if not ref["hll_per_min"] or ref["hll_per_min"] <= 0:
         log(f"   history not growing now ({ref['hll_per_min']}/min): nothing to fix")
-        return {"stable": True, "kept": [], "steps": steps}
-    base, cur = ref, ref
+        return {"stable": True, "kept": [], "steps": steps, "running": running}
     log(f"   reference: history +{ref['hll_per_min']:,}/min at {ref['tps']} tps")
     c.event("purge_triage", f"purge triage: history +{ref['hll_per_min']:,}/min at {ref['tps']} tps on the current configuration; "
-            f"trying {', '.join(l for l, _ in cands) or 'nothing (no online remedy here)'}, {TRIAGE_SEG_S // 60} min each",
-            dict(ref, steps_planned=[l for l, _ in cands] + [l for l, _ in last]))
+            f"trying {', '.join(x['label'] for x in cands) or 'nothing (no remedy available here)'}, {TRIAGE_SEG_S // 60} min each",
+            dict(ref, steps_planned=[x["label"] for x in cands]))
 
-    def judge(label, changes, stopgap=False):
-        nonlocal cur
-        seg = step(label, changes)
-        cost = 100.0 * (base["tps"] - seg["tps"]) / base["tps"] if base.get("tps") and seg.get("tps") is not None else 0.0
-        fixes = seg["hll_per_min"] is not None and seg["hll_per_min"] <= max(0, TRIAGE_FIX * base["hll_per_min"])
-        # stable with a margin: kept whatever it costs (stability first, then performance). A partial cut is judged per
-        # transaction: fewer transactions create less undo, so lower growth from lower throughput is no purge improvement
-        # (env 56: batch size 1000 "cut" growth 40% at -38% tps - the same ~1 undo log per transaction, purge still stalled)
-        ok = fixes or (_per_trx(seg) is not None and _per_trx(cur) and _per_trx(seg) <= TRIAGE_HELP * _per_trx(cur)
-                       and cost <= evaluate.STABILITY_MAX_COST_PCT)
-        log(f"   {label:40} history {seg['hll_per_min']:+,}/min, {seg['tps']} tps ({-cost:+.1f}% vs reference): "
-            + ("kept: stable" if fixes else "kept" if ok else "reverted (not a substantial cut)" if cost <= evaluate.STABILITY_MAX_COST_PCT
-               else "reverted (partial cut, too costly)"))
-        seg["result"] = "kept: stable" if fixes else "kept" if ok else "reverted"
-        c.event("purge_triage", f"purge triage step: {label} ({', '.join(f'{k}={x}' for k, x in changes)}): history "
-                f"{seg['hll_per_min']:+,}/min vs {base['hll_per_min']:+,}/min at the start, {seg['tps']} tps ({-cost:+.1f}%) - {seg['result']}",
-                dict(seg, reference=base))
-        if ok:
-            kept.extend(changes)
-            cur = seg
-        else:
-            prev = c.state.get("before_triage") or {}  # back to the managed value, or unmanaged (server default / no group)
-            _apply_and_record(c, [{"variable": k, "value": prev.get(k), "reason": f"purge triage: {label} reverted"} for k, _ in changes],
-                              "stability-triage", restart=False)
-        return cur["hll_per_min"] <= max(0, TRIAGE_FIX * base["hll_per_min"])
+    def judge(cand):
+        changes = [(k, str(max(engine.PURGE_UNBOUNDED_MIN, int(ref.get("hll_end") or 0))) if x == "__HLL__" else x)
+                   for k, x in cand["changes"]]
+        switch(changes, cand["label"])
+        seg = measure(cand["label"], changes)
+        cost = 100.0 * (ref["tps"] - seg["tps"]) / ref["tps"] if ref.get("tps") and seg.get("tps") is not None else 0.0
+        stable = seg["hll_per_min"] is not None and seg["hll_per_min"] <= max(0, TRIAGE_FIX * ref["hll_per_min"])
+        # partial: judged per committed transaction - lower growth from lower throughput is no purge improvement
+        # (env 56: batch size 1000 "cut" growth 40% at -38% tps, the same ~1 undo log per transaction)
+        partial = not stable and _per_trx(seg) is not None and _per_trx(ref) and _per_trx(seg) <= TRIAGE_HELP * _per_trx(ref)
+        seg.update(cost_pct=round(cost, 1), result="stable" if stable else "partial" if partial else "no effect", _changes=changes)
+        log(f"   {cand['label']:42} history {seg['hll_per_min']:+,}/min, {seg['tps']} tps ({-cost:+.1f}%): {seg['result']}")
+        c.event("purge_triage", f"purge triage step: {cand['label']} ({', '.join(f'{k}={x}' for k, x in changes)}): history "
+                f"{seg['hll_per_min']:+,}/min vs {ref['hll_per_min']:+,}/min, {seg['tps']} tps ({-cost:+.1f}%) - {seg['result']}",
+                dict({k: x for k, x in seg.items() if k != "_changes"}, reference=ref))
+        return seg
 
-    c.state.set("before_triage", {k: x.get("value") for k, x in c.state["managed"].items()})
-    stable = False
-    for label, changes in cands:
-        if time.time() + TRIAGE_SEG_S > deadline or not running.alive():
+    def time_left(cand):
+        return time.time() + TRIAGE_SEG_S + (TRIAGE_RESTART_LEAD_S + 120 if cand["restart"] else 0) <= deadline
+
+    results = []
+    for cand in [x for x in cands if not x["last"]]:
+        if not time_left(cand) or not running.alive():
             break
-        if any(k == kk for k, _ in changes for kk, _ in kept):  # a value of this setting is already kept
-            continue
-        if judge(label, changes):
-            stable = True
-            break
-    if not stable and last and time.time() + TRIAGE_SEG_S <= deadline and running.alive():
-        label, changes = last[0]
-        cap = max(engine.PURGE_UNBOUNDED_MIN, int(cur.get("hll_end") or 0))
-        stable = judge(label, [(k, str(cap) if x == "__HLL__" else x) for k, x in changes])
-    c.state.set("before_triage", None)
-    txt = ("purge triage: stable with " + (", ".join(f"{k}={x}" for k, x in kept) or "the current configuration") if stable else
-           "purge triage: no online remedy bounds the history" + (f" (kept {', '.join(f'{k}={x}' for k, x in kept)})" if kept else "")
-           + "; restart-only remedies (more purge threads, the thread pool) follow as the session's first experiments")
+        seg = judge(cand)
+        results.append(seg)
+        if seg["result"] == "stable" and seg["cost_pct"] <= TRIAGE_FREE_PCT:
+            break  # stable at (almost) no cost: nothing better to find
+    stable = [x for x in results if x["result"] == "stable"]
+    if not stable:
+        part = sorted([x for x in results if x["result"] == "partial"], key=lambda x: _per_trx(x))
+        if len(part) >= 2 and not set(dict(part[0]["_changes"])) & set(dict(part[1]["_changes"])):
+            both = {"label": f"{part[0]['label']} + {part[1]['label']}", "changes": part[0]["_changes"] + part[1]["_changes"],
+                    "restart": True, "last": False}
+            if time_left(both) and running.alive():
+                seg = judge(both)
+                if seg["result"] == "stable":
+                    stable = [seg]
+    if not stable:
+        for cand in [x for x in cands if x["last"]]:
+            if time_left(cand) and running.alive():
+                seg = judge(cand)
+                if seg["result"] == "stable":
+                    stable = [seg]
+    win = max(stable, key=lambda x: x["tps"] or 0) if stable else None
+    switch(win["_changes"] if win else [], "the stable configuration" if win else "back to the starting configuration")
+    kept = win["_changes"] if win else []
+    for x in steps:
+        x.pop("_changes", None)
+    txt = (f"purge triage: stable with {', '.join(f'{k}={x}' for k, x in kept) or 'the current configuration'} "
+           f"({win['tps']} tps, {-win['cost_pct']:+.1f}% vs the start)" if win else
+           "purge triage: no remedy bounds the undo history under this load (" + ", ".join(f"{x['label']}: {x['result']}" for x in results)
+           + "); the configuration cannot run this load in production")
     log("   " + txt)
-    c.event("purge_triage", txt, {"stable": stable, "kept": kept, "steps": steps, "reference": base})
-    return {"stable": stable, "kept": kept, "steps": steps}
+    c.event("purge_triage", txt, {"stable": bool(win), "kept": kept, "steps": steps, "reference": ref})
+    return {"stable": bool(win), "kept": kept, "steps": steps, "running": running}
 
+
+def _triage_online(c, var):
+    from .knowledge import dynamic_in, series_of
+    from .mysqldb import flavor_of
+    v = c.db.variables()
+    return bool(dynamic_in(var, series_of(flavor_of(v)[0], v.get("version")) if v.get("version") else None))
 
 
 def _run_length_probe(c, prof, max_s=3600, target_pct=None):
@@ -2299,7 +2364,11 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
                         "(no purge setting can help); end that transaction")
                     c.event("purge_triage", f"purge held back by a transaction open {omax // 60} min: no triage", triage)
                 elif unb:
-                    triage = _purge_triage(c, r, start + max_s + TRIAGE_BUDGET_S)
+                    def start_bench():
+                        _ensure_requirements(c, prof)
+                        return bench.Running(prof.command(total_s=max_s + TRIAGE_BUDGET_S + 60), logfile + f".{int(time.time())}")
+                    triage = _purge_triage(c, r, start + max_s + TRIAGE_BUDGET_S, start_bench)
+                    r = triage.pop("running")
                     if not triage["stable"]:
                         log("   no stable configuration: the run length is not measured on an unstable one (it would only measure "
                             "the drift); a provisional plan follows")
@@ -2380,7 +2449,11 @@ def cmd_purge_triage(a):
         while r.alive() and time.time() - t0 < a.lead:
             c.activity("purge triage", f"lead-in {(time.time() - t0) / 60:.0f} of {a.lead // 60} min")
             time.sleep(30)
-        out = _purge_triage(c, r, time.time() + TRIAGE_BUDGET_S)
+        def start_bench():
+            _ensure_requirements(c, prof)
+            return bench.Running(prof.command(total_s=TRIAGE_BUDGET_S + 60), os.path.join(logdir, f"purge-triage-{int(time.time())}.log"))
+        out = _purge_triage(c, r, time.time() + TRIAGE_BUDGET_S, start_bench)
+        r = out.pop("running")
     finally:
         if r.alive():
             r.kill()
@@ -3400,6 +3473,14 @@ def _autotune(a):
             sess = c.session()
             sess["run_plan"] = plan
             c.state.set("session", sess)
+        if plan.get("unstable") and not getattr(a, "allow_unstable", False):
+            # no configuration found whose undo history stays bounded: every run would measure the drift, and the best
+            # of them could not run this load in production (user, session 328: 40 + 10 min runs destined to be useless)
+            msg = ("autotune stopped: no stable configuration - the undo history grows without bound under this load with every "
+                   "remedy tried (see the purge triage). Lower the client concurrency, or run with --allow-unstable to tune anyway.")
+            log("== " + msg)
+            c.event("session", msg, {"triage": plan.get("triage_kept"), "unstable": True})
+            return
         prof.warmup, prof.duration = str(plan["warmup_s"]), int(plan["duration_s"])
         prof.base_warmup, prof.base_duration = prof.warmup, prof.duration
         prof.timeout = max(prof.timeout, (plan["warmup_s"] + plan["duration_s"]) * 3)
@@ -4139,6 +4220,8 @@ def main(argv=None):
     s.add_argument("--tradeoffs", action="store_true", help="after safe experiments, continue with trade-offs (policy=benchmark)")
     s.add_argument("--no-confirm", dest="confirm", action="store_false", help="skip the confirmation run of the best config")
     s.add_argument("--close", action="store_true", help="close the session when autotune ends (otherwise it stays open for follow-up experiments)")
+    s.add_argument("--allow-unstable", action="store_true",
+                   help="tune even when the purge triage finds no configuration with a bounded undo history (results drift)")
     s.add_argument("--recheck-every", type=int, default=3,
                    help="re-measure the current configuration before an experiment when it was last measured this many runs ago (0 = off)")
     s.set_defaults(fn=cmd_autotune)

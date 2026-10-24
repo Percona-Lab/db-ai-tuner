@@ -2287,67 +2287,71 @@ def test_purge_unbounded_threshold_and_blocked_purge():
 
 
 def test_purge_triage_keeps_substantial_cuts_and_tries_the_lag_bound_last():
-    """Online purge remedies, 5 min each while the benchmark runs: a setting is kept only when it at least halves the
-    history growth at an acceptable throughput cost; stable once growth is down to a quarter (or shrinking); the purge
-    lag bound only when nothing else got there."""
+    """Each remedy measured on its own (online, or after a restart with the benchmark started again); among the stable
+    ones the fastest wins, whatever it costs; a lower growth that only follows lower throughput is no remedy; the two
+    best partial remedies together before the purge lag bound, which comes last."""
     from tuning_agent import cli
-    applied, events = [], []
+    applied, events, starts = [], [], []
+
+    class DB:
+        variables = staticmethod(lambda: {"thread_handling": "one-thread-per-connection", "version": "8.4.11-11"})
+        connect = staticmethod(lambda **k: None)
 
     class C:
         state = type("S", (), {"d": {"managed": {}}, "get": lambda self, k, d=None: self.d.get(k, d),
                                 "set": lambda self, k, v: self.d.__setitem__(k, v), "__getitem__": lambda self, k: self.d[k]})()
+        db = DB()
         activity = staticmethod(lambda *a: None)
         event = staticmethod(lambda *a: events.append(a))
 
     class R:
         alive = staticmethod(lambda: True)
+        kill = staticmethod(lambda: None)
 
-    saved = {k: getattr(cli, k) for k in ("TRIAGE_SEG_S", "_apply_and_record", "_triage_candidates", "_segment")}
+    saved = {k: getattr(cli, k) for k in ("TRIAGE_SEG_S", "TRIAGE_RESTART_LEAD_S", "_apply_and_record", "_triage_candidates", "_segment",
+                                          "_triage_online")}
     saved_sleep = cli.time.sleep
     cli.time.sleep = lambda s: None
-    cli.TRIAGE_SEG_S = 0
-    cli._apply_and_record = lambda c, ch, src, restart=None: applied.append([(x["variable"], x["value"]) for x in ch])
+    cli.TRIAGE_SEG_S = cli.TRIAGE_RESTART_LEAD_S = 0
+    cli._triage_online = lambda c, v: False
+    cli._apply_and_record = lambda c, ch, src, restart=None: applied.append(([(x["variable"], x["value"]) for x in ch], restart))
 
-    def run(cands, segs, last=()):
+    def cand(label, changes, restart=False, last=False):
+        return {"label": label, "changes": changes, "restart": restart, "last": last}
+
+    def run(cands, segs):
         applied.clear()
+        starts.clear()
         it = iter(segs)
-        cli._triage_candidates = lambda c: (cands, list(last))
+        cli._triage_candidates = lambda c: cands
         cli._segment = lambda c, a, b: dict(next(it))
-        return cli._purge_triage(C(), R(), cli.time.time() + 3600)
+        return cli._purge_triage(C(), R(), cli.time.time() + 36000, lambda: starts.append(1) or R())
 
+    ref = {"hll_per_min": 300000, "tps": 5000, "hll_end": 1e7}
     try:
-        # batch 1000 cuts growth by 60% at the same throughput (kept), thread concurrency cuts the rest below a quarter:
-        # stable, lag never tried
-        out = run([("batch 1000", [("innodb_purge_batch_size", "1000")]), ("prio", [("rg:purge", "prio=-10")]),
-                   ("conc", [("innodb_thread_concurrency", "64")])],
-                  [{"hll_per_min": 10000, "tps": 1000, "hll_end": 2e6}, {"hll_per_min": 4000, "tps": 990, "hll_end": 2.1e6},
-                   {"hll_per_min": 3500, "tps": 980, "hll_end": 2.2e6}, {"hll_per_min": 1500, "tps": 900, "hll_end": 2.2e6}],
-                  last=[("lag", [("innodb_max_purge_lag", "__HLL__")])])
-        assert out["stable"] and out["kept"] == [("innodb_purge_batch_size", "1000"), ("innodb_thread_concurrency", "64")], out
-        assert [("rg:purge", None)] in applied  # the 12% cut was reverted (borderline is not a remedy)
-        assert not any(k == "innodb_max_purge_lag" for a in applied for k, _ in a)
-        # a partial cut that costs half the throughput is reverted; the lag bound last, capped at the history level reached
-        out = run([("conc", [("innodb_thread_concurrency", "64")])],
-                  [{"hll_per_min": 10000, "tps": 1000, "hll_end": 2e6}, {"hll_per_min": 4000, "tps": 500, "hll_end": 2.1e6},
-                   {"hll_per_min": -500, "tps": 800, "hll_end": 2.1e6}],
-                  last=[("lag", [("innodb_max_purge_lag", "__HLL__"), ("innodb_max_purge_lag_delay", "300000")])])
-        assert out["stable"] and out["kept"] == [("innodb_max_purge_lag", "2000000"), ("innodb_max_purge_lag_delay", "300000")], out
-        # a step that alone makes the history stable is kept whatever it costs (stability first, then performance)
-        out = run([("conc", [("innodb_thread_concurrency", "32")])],
-                  [{"hll_per_min": 10000, "tps": 1000, "hll_end": 2e6}, {"hll_per_min": -100, "tps": 450, "hll_end": 2e6}])
-        assert out["stable"] and out["kept"] == [("innodb_thread_concurrency", "32")], out
-        # lower growth only because throughput fell (same growth per transaction): not a purge improvement
-        out = run([("conc", [("innodb_thread_concurrency", "64")])],
-                  [{"hll_per_min": 333000, "tps": 5574, "hll_end": 1e7}, {"hll_per_min": 201000, "tps": 3460, "hll_end": 1.1e7}])
-        assert not out["stable"] and not out["kept"], out
+        # batch size: no effect; concurrency 8: stable at -40%; the thread pool (a restart): stable at -15% - it wins
+        out = run([cand("batch 1000", [("innodb_purge_batch_size", "1000")]), cand("conc 8", [("innodb_thread_concurrency", "8")]),
+                   cand("thread pool", [("thread_handling", "pool-of-threads"), ("thread_pool_size", "8")], restart=True),
+                   cand("lag", [("innodb_max_purge_lag", "__HLL__")], last=True)],
+                  [ref, dict(ref, hll_per_min=298000), {"hll_per_min": 10000, "tps": 3000}, {"hll_per_min": -500, "tps": 4250}])
+        assert out["stable"] and out["kept"] == [("thread_handling", "pool-of-threads"), ("thread_pool_size", "8")], out
+        assert starts and any(r for _, r in applied)  # restarted, benchmark started again
+        assert not any(k == "innodb_max_purge_lag" for a, _ in applied for k, _ in a)
+        # lower growth only because throughput fell: no effect; nothing stable -> the lag bound last, at the level reached
+        out = run([cand("conc 64", [("innodb_thread_concurrency", "64")]), cand("lag", [("innodb_max_purge_lag", "__HLL__")], last=True)],
+                  [ref, {"hll_per_min": 180000, "tps": 3000}, {"hll_per_min": -100, "tps": 2000}])
+        assert out["stable"] and out["kept"] == [("innodb_max_purge_lag", "10000000")], out
+        assert out["steps"][1]["result"] == "no effect", out["steps"]
+        # nothing works: back to the start, not stable
+        out = run([cand("conc 8", [("innodb_thread_concurrency", "8")])], [ref, ref])
+        assert not out["stable"] and not out["kept"] and applied[-1][0] == [("innodb_thread_concurrency", None)], applied
         # the history is not growing now: nothing to do
-        out = run([("conc", [("innodb_thread_concurrency", "64")])], [{"hll_per_min": -20, "tps": 1000, "hll_end": 5e5}])
+        out = run([cand("conc 8", [("innodb_thread_concurrency", "8")])], [{"hll_per_min": -20, "tps": 1000, "hll_end": 5e5}])
         assert out["stable"] and not out["kept"] and not applied
     finally:
         cli.time.sleep = saved_sleep
         for k, x in saved.items():
             setattr(cli, k, x)
-
 
 def test_benchmarks_get_a_high_open_files_limit():
     """Canary 2026-10-25: 1024 sysbench threads failed with "Can't create UNIX socket (24)" under the default 1024 open
