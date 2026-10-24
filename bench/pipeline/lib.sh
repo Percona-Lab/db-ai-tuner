@@ -116,7 +116,8 @@ gotpc_prep() {  # gotpc_prep <tpcc|tpch> <db> <size>: go-tpc data set (TPC-C war
   mysql -e "CREATE USER IF NOT EXISTS 'tpcc'@'localhost' IDENTIFIED BY 'tpcc'; CREATE USER IF NOT EXISTS 'tpcc'@'127.0.0.1' IDENTIFIED BY 'tpcc'; GRANT ALL ON *.* TO 'tpcc'@'localhost'; GRANT ALL ON *.* TO 'tpcc'@'127.0.0.1'"
   if [ "$(mysql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$db'")" -lt 8 ]; then
     if [ $kind = tpcc ]; then step /opt/go-tpc/go-tpc tpcc prepare -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D $db --warehouses $n -T 16 --no-check
-    else step /opt/go-tpc/go-tpc tpch prepare -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D $db --sf $n --analyze; fi
+    else step /opt/go-tpc/go-tpc tpch prepare -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D $db --sf $n; fi  # its --analyze is TiDB-only
     rm -f /var/lib/mysql_base.dataset  # the pristine copy must include it: dataset() makes a new one
   fi
+  mysqlcheck --analyze --databases $db > /dev/null || true  # optimizer statistics (MySQL's own ANALYZE TABLE)
 }
