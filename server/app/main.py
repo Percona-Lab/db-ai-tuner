@@ -1128,6 +1128,13 @@ def run_metrics(run_id: int, request: Request, pad: float = 60, points: int = 40
     m = metrics_window(s["env_id"], t0, t1, points)
     m["window"] = [r["started"], r["ended"]]
     m["warmup"] = warm
+    # the benchmark's own start-up inside the window (a measuring process started with the window reconnects its threads):
+    # left out of the sample analyses by the agent (summary.startup_excluded_s), shown as its own band
+    try:
+        su = float((store.uj(r["summary"], {}) or {}).get("startup_excluded_s") or 0)
+        m["startup"] = [r["started"], r["started"] + su] if su > 0 and r["started"] else None
+    except (TypeError, ValueError):
+        m["startup"] = None
     for h in store.q("SELECT id, name FROM hosts WHERE env_id=? ORDER BY name", (s["env_id"],)):
         hm = metrics_window(None, t0, t1, points, host_id=h["id"])
         if hm["ts"]:

@@ -113,6 +113,10 @@
       const a = X(Math.max(opts.window[0], x0)), b = X(Math.min(opts.window[1] || x1, x1));
       if (b > a) el("rect", { x: a, y: m.t, width: b - a, height: H - m.t - m.b, fill: "var(--window)" }, svg);
     }
+    if (opts.startup && opts.startup[0]) {  // the benchmark's start-up inside the window: left out of the analyses (grey band)
+      const a = X(Math.max(opts.startup[0], x0)), b = X(Math.min(opts.startup[1], x1));
+      if (b > a) el("rect", { x: a, y: m.t, width: Math.max(b - a, 2), height: H - m.t - m.b, fill: "var(--startup)" }, svg);
+    }
     ticks.forEach(v => {
       el("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: v === lo ? "var(--axis)" : "var(--grid)", "stroke-width": 1 }, svg);
       const t = el("text", { x: m.l - 6, y: Y(v) + 4, "text-anchor": "end", "font-size": 11, fill: "var(--muted)" }, svg);

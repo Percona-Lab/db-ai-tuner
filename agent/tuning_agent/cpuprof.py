@@ -84,6 +84,8 @@ def ensure_perf(log=print):
     return available()
 
 
+PRIO = ["nice", "-n", "-10"]  # perf record must keep up on a saturated host (see Profiler.start)
+
 class Profiler:
     """Background `perf record` over a slice of the run; process() afterwards."""
 
@@ -99,13 +101,17 @@ class Profiler:
             try:
                 time.sleep(delay)
                 self.t0 = time.time()
-                r = subprocess.run(["perf", "record", "-F", str(self.hz), "-a", "-g", "-o", self.data, "--", "sleep", str(self.seconds)],
+                # raised priority: on CPUs saturated by hundreds of runnable mysqld threads (and without scheduler autogroups,
+                # which otherwise give perf its own fair share) perf could not drain its buffers and write the data in time -
+                # session 300 run 14 (os-autogroup, 1024 connections, 99% busy): 20 s profile timed out after 80 s.
+                # -N: no build-id cache copy at the end (symbols are resolved right after, on the same host)
+                r = subprocess.run(PRIO + ["perf", "record", "-N", "-F", str(self.hz), "-a", "-g", "-o", self.data, "--", "sleep", str(self.seconds)],
                                    capture_output=True, text=True, timeout=self.seconds + 60)
                 self.t1 = time.time()
                 if r.returncode != 0:
                     # VMs without a hardware PMU: fall back to the software timer event
                     self.t0 = time.time()
-                    r = subprocess.run(["perf", "record", "-e", "cpu-clock", "-F", str(self.hz), "-a", "-g", "-o", self.data, "--",
+                    r = subprocess.run(PRIO + ["perf", "record", "-N", "-e", "cpu-clock", "-F", str(self.hz), "-a", "-g", "-o", self.data, "--",
                                         "sleep", str(self.seconds)], capture_output=True, text=True, timeout=self.seconds + 60)
                     self.t1 = time.time()
                     if r.returncode != 0:

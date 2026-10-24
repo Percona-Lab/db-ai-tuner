@@ -5,7 +5,7 @@
   --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #8a6fd1; --s6: #c94f8f; --s7: #1597a8; --s8: #737d8c;
   --on-warm: #1d1d1b; --soft: rgba(127,127,127,.08);
   --good: #0ca30c; --good-text: #006300; --warn: #fab219; --serious: #ec835a; --crit: #d03b3b;
-  --accent: #2a78d6; --accent-ink: #fff; --window: rgba(42,120,214,0.09); --warmup: rgba(237,161,0,0.10); --code: #f0efec;
+  --accent: #2a78d6; --accent-ink: #fff; --window: rgba(42,120,214,0.09); --warmup: rgba(237,161,0,0.10); --startup: rgba(110,110,110,0.22); --code: #f0efec;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -13,7 +13,7 @@
     --page: #0d0d0d; --surface: #1a1a19; --surface-2: #222220; --ink: #fff; --ink-2: #c3c2b7; --muted: #898781;
     --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
     --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #9d84e3; --s6: #d8629f; --s7: #22aabb; --s8: #8d97a6; --good-text: #0ca30c;
-    --accent: #3987e5; --window: rgba(57,135,229,0.12); --warmup: rgba(237,161,0,0.12); --code: #262624;
+    --accent: #3987e5; --window: rgba(57,135,229,0.12); --warmup: rgba(237,161,0,0.12); --startup: rgba(170,170,170,0.22); --code: #262624;
   }
 }
 :root[data-theme="dark"] {
@@ -21,7 +21,7 @@
   --page: #0d0d0d; --surface: #1a1a19; --surface-2: #222220; --ink: #fff; --ink-2: #c3c2b7; --muted: #898781;
   --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
   --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #9d84e3; --s6: #d8629f; --s7: #22aabb; --s8: #8d97a6; --good-text: #0ca30c;
-  --accent: #3987e5; --window: rgba(57,135,229,0.12); --warmup: rgba(237,161,0,0.12); --code: #262624;
+  --accent: #3987e5; --window: rgba(57,135,229,0.12); --warmup: rgba(237,161,0,0.12); --startup: rgba(170,170,170,0.22); --code: #262624;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
@@ -218,3 +218,5 @@ button.star:hover { color: var(--s4); }
 @media (max-width: 760px) { .m-only { display: block; } }
 
 button.small-btn { padding: 2px 8px; font-size: 12px; margin-left: 6px; vertical-align: middle; }
+
+.swatch.su { background: var(--startup); }

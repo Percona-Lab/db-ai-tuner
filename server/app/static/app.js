@@ -647,7 +647,7 @@ function chartsGrid(container, m, defs, window_, markers, opts) {
     }
     const cell = document.createElement("div"); cell.className = "card";
     container.appendChild(cell);
-    C.lineChart(cell, { title: def.title, unit, ts: m.ts, window: window_, warmup: m.warmup, max100: def.max100, min0: def.min0, markers, series });
+    C.lineChart(cell, { title: def.title, unit, ts: m.ts, window: window_, warmup: m.warmup, startup: m.startup, max100: def.max100, min0: def.min0, markers, series });
     const t = cell.querySelector(".title");
     if (def.tip && t) t.insertAdjacentHTML("beforeend", info(def.tip));
   });
@@ -1524,7 +1524,7 @@ async function runPage(id, tab) {
     clearTimers();
     if (name === "changes") { renderDiff(tabEl, r); const ks = document.createElement("div"); tabEl.appendChild(ks); renderKeySettings(ks, id); }
     else if (name === "graphs") {
-      tabEl.innerHTML = `<p class="muted"><span class="swatch warm"></span>warm-up <span class="swatch win"></span>measurement window${info("The same charts as the environment page, for this run: the warm-up, the measurement window and 60 s around them. The benchmark runs throughout: throughput should be at its steady level for the whole measurement window - a drop inside it means the window measured something other than the workload.")}</p><div id="rc"></div>`;
+      tabEl.innerHTML = `<p class="muted"><span class="swatch warm"></span>warm-up ${(r.summary || {}).startup_excluded_s ? `<span class="swatch su"></span><span data-tip="${esc(`The benchmark's own start-up at the beginning of the measured window (a new benchmark process connecting its threads): ${r.summary.startup_excluded_s} s, left out of the warm-up, steady-state and noise analyses. The benchmark's own result still covers it.`)}" tabindex="0">benchmark start-up</span> ` : ""}<span class="swatch win"></span>measurement window${info("The same charts as the environment page, for this run: the warm-up, the measurement window and 60 s around them. The benchmark runs throughout: throughput should be at its steady level for the whole measurement window - a drop inside it means the window measured something other than the workload.")}</p><div id="rc"></div>`;
       const loadRun = async () => {
         const m = await api(`/api/runs/${id}/metrics?points=300`);
         const w1 = (m.window || [])[1] || Date.now() / 1000;
