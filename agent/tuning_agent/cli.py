@@ -2465,6 +2465,9 @@ def _recommend(c, sess, llm=False):
     if extra:
         for it in extra:
             it["score"] = engine.score(it, ctx.get("goal", "tps")) + (2 if why not in (None, "routine") else 0) - (10 if it.get("no_mechanism") else 0)
+            ob = engine.oversubscription_block(it, ctx)  # AI ideas get the same gate as the rules'
+            if ob:
+                it["confidence"], it["note"] = 0, (it.get("note", "") + " " + ob).strip()
             if it["safety"] == "trade-off" and ctx.get("policy") != "benchmark":
                 it["kind"] = "advice"
         ids = {i["id"] for i in res["items"]}
@@ -2505,6 +2508,8 @@ def _plan(c, sess, ctx, res):
     except Exception:
         meta = {}
     pk = planner.packet(ctx, res, meta)
+    if sess.get("planner_rejected"):
+        pk["rejected_this_session"] = sess["planner_rejected"]
     if fb.get("session") or fb.get("other_sessions"):
         # people's views of earlier runs and advice: an opinion to weigh, not a measurement
         pk["human_feedback"] = fb
@@ -2524,6 +2529,13 @@ def _plan(c, sess, ctx, res):
         p.update(action=r["final"]["action"], choice=r["final"]["choice"])
     nxt, added, why = planner.check(p, ctx, res)
     rec.update(applied=nxt, rejected=why)
+    if why is not None:  # told to the planner next time (backtest: ps:profile=lite proposed 23 times under policy=safe)
+        sess_ = c.session()
+        ch_ = p.get("choice") or {}
+        sess_.setdefault("planner_rejected", []).append({"choice": ch_.get("candidate_id") or ", ".join(
+            f"{x.get('variable')}={x.get('value')}" for x in ch_.get("changes") or []) or p.get("action"), "reason": str(why)[:200]})
+        sess_["planner_rejected"] = sess_["planner_rejected"][-10:]
+        c.state.set("session", sess_)
     if why is None:
         for it in added:
             res["items"].append(it)
@@ -3210,6 +3222,15 @@ def _autotune(a):
             if trade:
                 log(f"== trade-off budget: {measured} of {a.max_runs} runs used, switching to trade-off experiments")
                 item, nxt = trade, trade["id"]
+        last3 = [r.get("verdict") for r in sess["runs"][-3:]]
+        if len(last3) == 3 and all(v == "unreliable" for v in last3):
+            # the environment, not the configuration: 303 measured 25 runs, every one unreliable (steady 2-2.7% steal under
+            # the old absolute rule), each experiment twice
+            why = ("Stopped: the last 3 runs were all unreliable (" + "; ".join(sorted({str((r.get("evaluation") or {}).get("note") or "")[:80]
+                   for r in sess["runs"][-3:]})) + "). Fix the environment (see the run notes) before tuning further.")
+            log("== " + why)
+            c.event("stop", why, {"runs": measured})
+            break
         fruitless = _fruitless_since_gain(sess)
         if item and item["kind"] != "revert" and len(fruitless) >= FRUITLESS_STOP:
             # diminishing returns: 26% of recent runs came after a session's last gain (tails of 18-21 runs) and the ceiling

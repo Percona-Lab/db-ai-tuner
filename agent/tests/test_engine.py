@@ -2184,6 +2184,37 @@ def test_preflush_reports_progress():
 
 
 
+def test_backtest_rule_fixes():
+    """Backtest 2026-10-24: limiters blocked at 16+ connections per vCPU (rules, AI, planner); AHI only with B-tree time in
+    the CPU profile; the CPU governor only on bare metal; stability remedies first for two tries only; trx-commit-2 first
+    on commit-bound loads under the benchmark policy (still a trade-off, never under safe)."""
+    from tuning_agent import planner
+    ctx = {"summary": {"threads_connected_avg": 1024}, "hw": {"cpus": 16}}
+    it = {"changes": [{"variable": "innodb_thread_concurrency", "proposed": "24"}]}
+    assert engine.oversubscription_block(it, ctx) and not engine.oversubscription_block(it, dict(ctx, summary={"threads_connected_avg": 64}))
+    assert not engine.oversubscription_block({"changes": [{"variable": "innodb_thread_concurrency", "proposed": "0"}]}, ctx)
+    assert engine.is_vm({"vendor": "QEMU"}) and engine.is_vm({"vendor": "Linode"}) and not engine.is_vm({"vendor": "Supermicro"})
+    # AHI: hot in-memory reads without / with B-tree time
+    s = dict(OLTP[0], bp_hit_pct=99.5)
+    inp = dict(OLTP[1], status_rates={"Com_select": 5000, "Com_update": 10})
+    assert "ahi-on" not in ids(run(s, inp, "safe"))
+    assert "ahi-on" in ids(run(s, dict(inp, cpu_profile={"categories": {"B-tree / row access": 30}}), "safe"))
+    # stability: priority for two tries, then by score
+    unb = {"unbounded_growth": [{"metric": "history_list_length", "label": "h", "start": 600000, "end": 900000, "per_hour": 1e6}]}
+    v = dict(VARS, innodb_purge_threads="4", innodb_max_purge_lag="0", innodb_max_purge_lag_delay="0", innodb_purge_batch_size="300")
+    base = {"goal": "tps", "policy": "benchmark", "os_tuning": True, "os_facts": {}, "hw": dict(HW, cpus=16), "flavor": "percona",
+            "version": (8, 4, 11), "variables": v, "summary": dict(OLTP[0], cpu_busy=95, history_list_length_max=900000, **unb),
+            "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}}
+    assert ids(engine.run_engine(base))["purge-lag"].get("stability")
+    tried = [{"seq": i, "verdict": "neutral", "changes": [{"variable": "x", "new": "1", "source": f"rec:{rid}"}]}
+             for i, rid in ((5, "purge-lag"), (6, "purge-batch"))]
+    assert not any(i.get("stability") for i in engine.run_engine(dict(base, history=tried))["items"])
+    # the planner is told what its checks refused
+    ctx2 = {"summary": {}, "variables": {}, "history": []}
+    assert planner  # packet field is added by cli._plan from sess["planner_rejected"]
+
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

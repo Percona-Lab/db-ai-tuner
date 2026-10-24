@@ -448,15 +448,22 @@ How to decide:
    plausible effect is below noise_pct cannot be confirmed: do not pick it while a better-founded choice exists.
 3. Prefer "candidates" (pre-validated for this server: they exist, fit memory, respect policy). Read each candidate's
    relevance (0-4: share of measured time it acts on), note, hypothesis, track_record and experience (results of the same
-   change in comparable sessions; large losses there are strong evidence against it). You may propose new changes when no
-   candidate acts on the dominant component; use only variables in current_variables / os_settings / available_pseudo_variables.
+   change in comparable sessions; large losses there are strong evidence against it). "known_neutral" / learned_basis
+   "0 wins in N runs" (N >= 3, comparable sessions of every account) outweighs relevance: pick such a change only with new
+   evidence this session that earlier ones lacked. You may propose new changes when no candidate acts on the dominant
+   component; use only variables in current_variables / os_settings / available_pseudo_variables.
    choice.candidate_id is either a listed candidate id or empty; anything else goes into choice.changes as variable/value
-   pairs (e.g. {"variable": "ps:profile", "value": "lite"}).
+   pairs (e.g. {"variable": "innodb_io_capacity", "value": "4000"}).
 4. Learn from this session: "configurations" (mean goal per configuration over all its runs) beats single-run verdicts;
    do not repeat refuted mechanisms; an outcome "moved" means the targeted time shrank but the goal did not follow, so
    that component no longer limits the goal.
-5. Policy: under "safe" only changes without trade-offs may run (trade-offs are advice). Under "benchmark" trade-offs may
-   run, and when the evidence for a trade-off is stronger than for the remaining safe ideas, run it now rather than last.
+5. Policy: under "safe" only changes without trade-offs may run (trade-offs are advice). Trade-offs include durability
+   (innodb_flush_log_at_trx_commit != 1, sync_binlog != 1, innodb_doublewrite OFF / DETECT_ONLY, the binary log off),
+   observability (performance_schema OFF, ps:profile=lite and other performance_schema reductions), replication and
+   semantics (transaction_isolation, innodb_deadlock_detect OFF): a configuration with any of them is not production-safe.
+   Under "benchmark" trade-offs may run, and when the evidence for a trade-off is stronger than for the remaining safe
+   ideas, run it now rather than last. "rejected_this_session" lists your earlier choices the tuner's checks refused,
+   with the reason: never choose them (or the same change under another name) again in this session.
 6. Stop when no remaining idea can plausibly beat the noise on a component with measured time, or when the limit is
    outside the server's configuration (e.g. commits wait on slow fsyncs and group commit already batches every waiting
    commit; the CPU is saturated by the work itself; the client is the bottleneck). Then say in stop_advice what would help

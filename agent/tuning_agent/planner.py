@@ -76,8 +76,9 @@ def packet(ctx, res, meta=None):
     u = unbounded_hll(ctx.get("summary"))
     if STABILITY_FIRST and u:
         p["stability_first"] = {"unbounded_history": u, "rule": "the current configuration is unsustainable (undo history grows without "
-                                "bound): choose a stability remedy (purge lag bound, purge threads, purge batch size) before any tuning "
-                                "experiment; a change that ends the growth is kept even at some cost in throughput"}
+                                "bound): choose a stability remedy (purge priority, purge lag bound, purge threads, purge batch size) before any "
+                                "tuning experiment for the first two steps; after two remedies without success rank them like other "
+                                "ideas. A change that ends the growth is kept even at some cost in throughput"}
     mb = (ctx.get("summary") or {}).get("memory_budget") or {}
     if mb:
         p["memory_budget_now"] = {"text": mb.get("text"), "over_budget": mb.get("over_budget"),
@@ -131,6 +132,10 @@ def check(plan, ctx, res):
         return res.get("next"), [], f"no mechanism: {nomech}"
     if it["safety"] == "trade-off" and not benchmark:
         return res.get("next"), [], "the proposed change is a trade-off and the policy is safe"
+    from .engine import oversubscription_block
+    ob = oversubscription_block(dict(it, changes=[dict(c, proposed=c.get("proposed", c.get("value"))) for c in it["changes"]]), ctx)
+    if ob:
+        return res.get("next"), [], ob
     it["id"] = "plan-" + it["id"][4:]
     it["source"] = "planner"
     it["confidence"] = 2

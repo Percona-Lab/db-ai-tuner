@@ -778,11 +778,14 @@ def recommend(ctx):
     selects = rates.get("Com_select", 0)
     writes = sum(rates.get(k, 0) for k in ("Com_insert", "Com_update", "Com_delete", "Com_replace"))
     if have_run and "innodb_adaptive_hash_index" in v:
-        if not _on(v, "innodb_adaptive_hash_index") and selects > writes and (s.get("bp_hit_pct") or 0) > 98:
+        # measured evidence first: B-tree descents in the CPU profile (0 wins in 6 sessions without it, backtest 2026-10-24)
+        btree = ((inp.get("cpu_profile") or {}).get("categories") or {}).get("B-tree / row access")
+        if not _on(v, "innodb_adaptive_hash_index") and selects > writes and (s.get("bp_hit_pct") or 0) > 98 and (btree or 0) >= 15:
             b.add("ahi-on", "Try the adaptive hash index", [("innodb_adaptive_hash_index", "ON")],
-                  "Read-mostly workload with a hot in-memory working set: AHI can shortcut B-tree descents for point lookups. "
-                  "Experiment: keep only if the goal metric improves.",
-                  {"selects_per_s": selects, "writes_per_s": round(writes, 1), "bp_hit_pct": s.get("bp_hit_pct")}, impact=2, confidence=1)
+                  f"Read-mostly workload with a hot in-memory working set, and {btree:.0f}% of the database CPU in B-tree / row access: "
+                  "AHI can shortcut B-tree descents for point lookups. Experiment: keep only if the goal metric improves.",
+                  {"selects_per_s": selects, "writes_per_s": round(writes, 1), "bp_hit_pct": s.get("bp_hit_pct"), "cpu_btree_pct": btree},
+                  impact=2, confidence=1)
         ahi_wait = sum(w["time_s"] for w in inp.get("top_waits", []) if "btr_search" in w["event"] or "ahi" in w["event"].lower())
         sem = (inp.get("innodb_status") or {}).get("semaphores", "")
         if _on(v, "innodb_adaptive_hash_index") and (ahi_wait > 0 or "btr0sea" in sem):
@@ -1112,7 +1115,8 @@ def recommend(ctx):
                   "(MySQL docs / field reports: 5-30%). The memory is reserved even when unused; needs a restart. Experiment.",
                   {"innodb_buffer_pool_size": human_size(bp), "hugepages": pages, "mem_available": human_size(mem_avail)}, impact=2, confidence=1)
         my = s.get("mysqld_cpu_pct")
-        if v.get("os:kernel.sched_autogroup_enabled") == "1" and my is not None and busy_ >= 85 and my < 0.8 * busy_:
+        if v.get("os:kernel.sched_autogroup_enabled") == "1" and my is not None and busy_ >= 85 and my < 0.8 * busy_ \
+                and (s.get("threads_connected_avg") or 0) < OVERSUB_CONN_PER_CPU * cpus:
             b.add("os-autogroup", "Disable scheduler autogroups", [("os:kernel.sched_autogroup_enabled", "0")],
                   f"CPU saturated and mysqld gets only {my:.0f}% of {busy_:.0f}% busy CPU: other processes (e.g. the benchmark client) "
                   "run in separate autogroups that get an equal CPU share regardless of their thread count. tuned's postgresql profile "
@@ -1126,7 +1130,8 @@ def recommend(ctx):
                   f"{aio_used} of {aio_max} AIO request slots in use: InnoDB falls back to simulated AIO when the limit is reached.",
                   {"aio_in_use": aio_used, "aio_max": aio_max}, impact=2, confidence=3)
         gov = v.get("os:cpu_governor")
-        if gov and gov != "performance":
+        # a guest's governor does not set the host's clock (backtest: counted in the best-practice bundle on VMs, no effect)
+        if gov and gov != "performance" and not is_vm(ctx.get("hw")):
             b.add("os-governor", "CPU frequency governor 'performance'", [("os:cpu_governor", "performance")],
                   f"Governor {gov} lowers clock speed between bursts, adding latency.", {"cpu_governor": gov}, impact=1, confidence=2)
         if v.get("os:mount_barrier") == "ON" and commit_bound and wtype in ("oltp-write", "mixed"):
@@ -1338,7 +1343,8 @@ def recommend(ctx):
         size = (swap_target(ram) - (swap_total - own_swap)) // GiB * GiB
         if free:
             size = min(size, max(0, int((free - 2 * GiB) * 0.5)) // GiB * GiB)  # at most half of the free disk
-        if size >= GiB and size > own_swap:
+        pressure = mem_avail <= max(768 * MiB, ram * 0.10) or bool(diag_types & {"memory", "swap"})
+        if size >= GiB and size > own_swap and pressure:  # the baseline adds swap as a practice; an experiment only with pressure
             b.add("best-practices-swap", "Add swap (about 1x RAM, at most 64 GiB): memory pressure slows instead of OOM-killing mysqld",
                   [("os:swapfile", fmt_size(size))],
                   f"{'No swap' if not swap_total else human_size(swap_total) + ' of swap'} on a host with {human_size(ram)} RAM: when memory "
@@ -1783,6 +1789,7 @@ def _unearned_unsteady(r):
 # the remedies (purge threads, a purge lag bound, larger purge batches) run before tuning experiments
 STABILITY_FIRST = True
 STABILITY_IDS = ("sweep-purge-threads", "purge-lag", "purge-batch", "purge-priority")
+STABILITY_TRIES = 2  # remedies that run first; after them the stability candidates rank like any other
 
 
 def unbounded_hll(summary):
@@ -2206,6 +2213,33 @@ def basis(it, exp_delta=0):
     return out
 
 
+VM_VENDORS = ("qemu", "kvm", "linode", "akamai", "xen", "vmware", "microsoft corporation", "amazon ec2", "google", "digitalocean",
+              "openstack", "innotek", "bochs", "parallels", "red hat", "hetzner", "vultr")
+OVERSUB_CONN_PER_CPU = 16  # connections per vCPU from which autogroups and concurrency limiters lost (299/300: -13% to -28%)
+
+
+LIMITERS = ("innodb_thread_concurrency", "os:kernel.sched_autogroup_enabled")
+
+
+def oversubscription_block(it, ctx):
+    """Concurrency limiters and scheduler groups at 16+ connections per vCPU - rule or AI ideas - lost every time
+    (299 AI innodb_thread_concurrency=24 -17.5%, 300 os-autogroup -27.5%): not run; returns the reason, else None."""
+    s = ctx.get("summary") or {}
+    cpus = int((ctx.get("hw") or {}).get("cpus") or 1)
+    conns = s.get("threads_connected_avg") or 0
+    lim = [c["variable"] for c in it.get("changes") or [] if c.get("variable") in LIMITERS and str(c.get("proposed")) not in ("0", "1")]
+    if lim and conns >= OVERSUB_CONN_PER_CPU * cpus:
+        return (f"Not run: {conns:.0f} connections on {cpus} vCPUs ({conns / cpus:.0f} per vCPU): limiting concurrency or regrouping the "
+                f"scheduler ({', '.join(lim)}) lost in every comparable session at 16+ connections per vCPU.")
+    return None
+
+
+def is_vm(hw):
+    """A virtual machine (DMI system vendor of a hypervisor): CPU frequency and idle states belong to the host."""
+    vendor = str((hw or {}).get("vendor") or "").lower()
+    return any(x in vendor for x in VM_VENDORS)
+
+
 def matching_insights(it, insights):
     """Learned insights about the settings this change sets (the same variable and value, or the same variable)."""
     ch = {str(c["variable"]).lower(): str(c.get("proposed")).lower() for c in it.get("changes") or []}
@@ -2423,6 +2457,11 @@ def run_engine(ctx):
     has_major = any(d.get("severity") in ("high", "medium") and d["type"] != "none" for d in ctx["diagnosis"])
     exp = ctx.get("experience") or {}
     unstable_now = bool(unbounded_hll(ctx.get("summary")))
+    # stability first, but bounded: the first STABILITY_TRIES remedies run before tuning, then they compete by score
+    # (backtest 288: purge chased 6 times, -1.2% / -0.75% / -0.3%, while trade-offs worth +23% to +66% waited)
+    stab_tried = sum(1 for h in ctx.get("history") or [] if any(str(c.get("source") or "")[4:] in STABILITY_IDS
+                                                               or str(c.get("source") or "").startswith("rec:sweep-purge")
+                                                               for c in h.get("changes") or []))
     busy_now = (ctx.get("summary") or {}).get("cpu_busy") or 0
     for it in items:
         it.setdefault("safety", "safe")
@@ -2506,6 +2545,10 @@ def run_engine(ctx):
         if it["id"] in (ctx.get("failed") or []) and not it.get("retest"):
             it["confidence"] = 0
             it["note"] = (it.get("note", "") + " Failed earlier in this session (apply/restart failure or run too slow).").strip()
+        ob = oversubscription_block(it, ctx)
+        if ob and it["kind"] == "config":
+            it["confidence"] = 0
+            it["note"] = (it.get("note", "") + " " + ob).strip()
         # experience prior: how did this change do in earlier sessions with a similar workload?
         e = exp.get(it["id"])
         if e and e.get("n"):
@@ -2544,7 +2587,8 @@ def run_engine(ctx):
         # priority only for returning to measured configurations; everything else - the best-practice bundle included -
         # ranks by the evidence for what it acts on
         it["score"] = 100 if it.get("priority") and not it.get("no_mechanism") and not it.get("practice") else sc
-        if STABILITY_FIRST and unstable_now and it["id"] in STABILITY_IDS and it["kind"] == "config" and it.get("confidence", 0) > 0:
+        if STABILITY_FIRST and unstable_now and stab_tried < STABILITY_TRIES and it["id"] in STABILITY_IDS and it["kind"] == "config" \
+                and it.get("confidence", 0) > 0:
             # stability first: while the history grows without bound, its remedies run before tuning experiments. On busy
             # CPUs the purge lag bound first (more purge threads compete with the transactions), else more purge threads
             # on busy CPUs: a higher priority for purge first (costs the user threads least), then the lag bound (slows every
@@ -2620,6 +2664,13 @@ def run_engine(ctx):
             trade_next["score"] > safe_next["score"] + 4
             or ((safe_next.get("no_mechanism") or (safe_next.get("relevance") or 0) <= 1) and (trade_next.get("relevance") or 0) >= 2)):
         nxt = trade_next
+    # commit-bound under the benchmark policy: the commit-path trade-off first (backtest: canaries ran best-practices and
+    # ahi-on before trx-commit-2, which then gained +19% to +29.5%). Still a trade-off: never part of the production-safe
+    # configuration, and never run under policy=safe
+    commit_now = sum(p.get("share_pct") or 0 for p in ctx.get("breakdown") or [] if "commit" in (p.get("tags") or ()))
+    tc2 = next((i for i in actionable if i["id"] == "trx-commit-2"), None)
+    if benchmark and tc2 and commit_now >= 20 and not (nxt and nxt.get("kind") == "revert") and not (nxt and nxt.get("stability")):
+        nxt = tc2
     # value of information: after a long run of experiments that kept nothing, an idea that acts on little or nothing of
     # the measured time will not be the one that changes that - stop and say what limits the workload (user 194: 21 runs
     # after run 10 on a storage-bound host, all neutral)
