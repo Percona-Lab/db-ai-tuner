@@ -2213,6 +2213,43 @@ def agent_study_create(body: dict = Body(...), key=Depends(auth.agent_key)):
 
 
 # background threads start last: their first scan uses functions defined anywhere in this module (now(), ...)
-status.set_watchdog(watchdog_scan)
+AUTO_CLOSE_SILENT_S = 6 * 3600   # an active session whose agent has been silent this long cannot continue
+AUTO_CLOSE_IDLE_S = 24 * 3600    # agent alive and idle (no autotune), nothing measured for this long
+
+
+def auto_close_dead():
+    """Close active sessions that cannot continue, as 'abandoned' with the reason (an event on the session): the host is
+    gone, its agent has been silent for 6 h, or the agent is alive but idle with nothing measured for 24 h. A crashed
+    autotune left them open until a person closed them by hand (suite r2 RO-4 / RO-4.ns: alerts for 31 h, nobody saw)."""
+    t = now()
+    for s in store.q("SELECT s.*, e.last_seen, e.destroyed_at, e.activity, e.activity_at, e.name en FROM tsessions s JOIN environments e "
+                     "ON e.id=s.env_id WHERE s.status='active'"):
+        last_run = store.q1("SELECT MAX(MAX(COALESCE(ended,0)), MAX(COALESCE(started,0))) t, SUM(status='measuring') m FROM runs WHERE session_id=?",
+                            (s["id"],))
+        last = max(last_run["t"] or 0, s["created"] or 0)
+        act = store.uj(s["activity"], {}) or {}
+        why = None
+        if s["destroyed_at"]:
+            why = "the host was shut down"
+        elif t - (s["last_seen"] or 0) > AUTO_CLOSE_SILENT_S:
+            why = f"its agent has been silent for {int((t - (s['last_seen'] or 0)) // 3600)} h"
+        elif not last_run["m"] and (act.get("phase") in (None, "idle") or (act.get("until") and t - act["until"] > AUTO_CLOSE_IDLE_S)) \
+                and t - last > AUTO_CLOSE_IDLE_S:  # a phase whose end passed a day ago is a dead autotune (RO-4: "warm-up" for 2 days)
+            why = f"nothing was measured for {int((t - last) // 3600)} h and no autotune is running"
+        if why:
+            store.ex("UPDATE tsessions SET status='abandoned', ended=? WHERE id=? AND status='active'", (t, s["id"]))
+            store.ex("INSERT INTO events(env_id, session_id, ts, type, message, data) VALUES (?,?,?,?,?,?)",
+                     (s["env_id"], s["id"], t, "session", f"session closed automatically (abandoned): {why}", store.j({"reason": why})))
+
+
+def watchdog_with_cleanup():
+    try:
+        auto_close_dead()
+    except Exception:  # noqa - the scan must run whatever the cleanup does
+        pass
+    return watchdog_scan()
+
+
+status.set_watchdog(watchdog_with_cleanup)
 status.start()
 learner.start()  # background learner: observations -> learning.db (docs/design/agentic-saas.md)

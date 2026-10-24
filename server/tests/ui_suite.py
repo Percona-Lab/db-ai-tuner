@@ -115,6 +115,8 @@ def check_page(pg, base, name, hash_, checks, viewport, bad_api):
     errs = []
     n0 = len(bad_api)
     pg.set_viewport_size(viewport)
+    # a full load per page: a hash-only navigation can leave the previous page on screen when the checks read it
+    pg.goto("about:blank")
     pg.goto(base + "/" + hash_ if not hash_.startswith("/") else base + hash_)
     try:
         pg.wait_for_load_state("networkidle", timeout=15000)
