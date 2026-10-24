@@ -29,6 +29,11 @@ def _cand(i):
         c["experience"] = {k: e.get(k) for k in ("n", "wins", "losses", "mean_delta_pct", "scope") if e.get(k) is not None}
     if i.get("tradeoffs"):
         c["tradeoffs"] = [t.get("lost") for t in i["tradeoffs"]][:2]
+    mb = (i.get("evidence") or {}).get("memory_budget")
+    if mb:
+        c["memory_budget_after"] = mb
+    if i.get("insights"):
+        c["learned"] = [x.get("statement") for x in i["insights"]][:3]
     return c
 
 
@@ -60,6 +65,14 @@ def packet(ctx, res, meta=None):
     p["profiles"] = _profile(ctx.get("inputs") or {})
     p["noise"] = {"noise_pct": ctx.get("noise_pct"), "model": ctx.get("noise")}
     p["managed_now"] = ctx.get("managed") or {}
+    # the tuner's memory budget: the planner sized a 51 GiB pool as "51.4 of 62.8 GiB" while the budget (reserves, every
+    # allowed connection) said 69.1 - a memory trade-off it did not know it was choosing (session 294)
+    mb = (ctx.get("summary") or {}).get("memory_budget") or {}
+    if mb:
+        p["memory_budget_now"] = {"text": mb.get("text"), "over_budget": mb.get("over_budget"),
+                                  "rule": "a configuration needing more than RAM is a memory trade-off (not production-safe); more than RAM "
+                                          "plus free swap is not run (OOM kill)",
+                                  "swap_total_mb": (ctx.get("summary") or {}).get("swap_total_mb")}
     return p
 
 

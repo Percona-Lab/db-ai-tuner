@@ -927,7 +927,9 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     inputs["agent_version"] = __version__  # which engine build measured and judged this run
     try:  # memory budget of the configuration as measured, with mysqld's measured memory next to the model
         from . import memory
-        mb = memory.budget(c.variables, c.hw(), _client_reserve(c), measured=((summary.get("dbproc_pss_mb") or 0) + (summary.get("dbproc_swap_mb") or 0)) * 2 ** 20 or None,
+        # a buffer pool in huge pages is not in PSS (session 294: 4.8 GiB "measured" next to a 51 GiB pool): counted from the pool
+        huge = (summary.get("hugepages_total_mb") or 0) if str(c.variables.get("large_pages", "")).upper() in ("ON", "1") else 0
+        mb = memory.budget(c.variables, c.hw(), _client_reserve(c), measured=((summary.get("dbproc_pss_mb") or 0) + (summary.get("dbproc_swap_mb") or 0) + huge) * 2 ** 20 or None,
                            host_other=memory.host_other_bytes(summary, (c.hw() or {}).get("ram_bytes")),
                            active_measured=memory.active_from(summary))
         summary["memory_budget"] = {"needed": mb["needed"], "ram": mb["ram"], "headroom": mb["headroom"], "over_budget": mb["over_budget"],
@@ -2635,7 +2637,7 @@ def _run_experiment(c, prof, exp):
             except Exception:
                 cur = None
         pv = _sv(spec["variable"], cur)
-    worse_at = {}
+    worse_at, oom_at = {}, {}
     from .knowledge import response_shape
     shape = response_shape(spec.get("variable")) if exp["kind"] == "sweep" else None
     extended = 0
@@ -2668,6 +2670,11 @@ def _run_experiment(c, prof, exp):
             results.append({"arm": label(arm), "status": "skipped", "reason": why})
             log(f"   {label(arm)}: skipped ({why})")
             continue
+        x0 = _sv(arm[0]["variable"], arm[0]["value"]) if pv is not None else None
+        if x0 is not None and x0 != pv and abs(x0 - pv) >= oom_at.get(1 if x0 > pv else -1, float("inf")):
+            results.append({"arm": label(arm), "status": "skipped", "reason": "a smaller step in the same direction OOM-killed mysqld"})
+            log(f"   {label(arm)}: skipped (a smaller step this way OOM-killed mysqld)")
+            continue
         if auto and pv is not None:
             x = _sv(arm[0]["variable"], arm[0]["value"])
             if x is not None and x != pv:
@@ -2691,10 +2698,28 @@ def _run_experiment(c, prof, exp):
             results.append({"arm": label(arm), "status": "failed", "reason": "; ".join(res.get("errors") or ["apply failed"])})
             continue
         vals = []
+        crashed = None
         for rep in range(int(exp.get("repeats") or 1)):  # not `i`: that is the arm index of the while loop (#142 re-ran one arm forever)
-            run, _ = _bench_run(c, prof, f"exp#{eid} {label(arm)}" + (f" ({rep + 1}/{exp['repeats']})" if (exp.get("repeats") or 1) > 1 else ""))
+            try:
+                run, _ = _bench_run(c, prof, f"exp#{eid} {label(arm)}" + (f" ({rep + 1}/{exp['repeats']})" if (exp.get("repeats") or 1) > 1 else ""))
+            except (TooSlow, ServerDown, BenchFailed) as e:
+                # one value that OOM-kills mysqld or breaks the benchmark is a result of the sweep, not the end of the session
+                # (suite r2 RO-4.ns: buffer pool 12G on a 15.6 GiB host without swap ended the session)
+                crashed = str(e)[:300]
+                break
             if run.get("goal_value") is not None:
                 vals.append(run["goal_value"])
+        if crashed:
+            log(f"   {label(arm)}: failed - {crashed}; back to the parent configuration")
+            results.append({"arm": label(arm), "status": "failed", "reason": crashed})
+            c.event("experiment", f"experiment #{eid}: {label(arm)} failed, reverted; the sweep continues", {"error": crashed})
+            _goto_managed(c, dict(parent), f"experiment #{eid}: {label(arm)} failed", f"exp:{eid}")
+            x = _sv(arm[0]["variable"], arm[0]["value"])
+            if "OOM" in crashed and x is not None and pv is not None and x != pv:
+                # more of a memory setting needs more memory: values further out on this side would be killed too
+                sd = 1 if x > pv else -1
+                oom_at[sd] = min(oom_at.get(sd, float("inf")), abs(x - pv))
+            continue
         mean = sum(vals) / len(vals) if vals else None
         d = _improvement(goal, mean, pm["goal"]) if (pm and mean is not None) else None
         results.append({"arm": label(arm), "status": "measured", "runs": len(vals), "goal_mean": round(mean, 4) if mean is not None else None,

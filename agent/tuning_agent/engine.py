@@ -489,6 +489,31 @@ def diagnose(ctx):
     if not out:
         add("none", "low", "No dominant bottleneck: the server is not saturated by this workload (client-bound or too little load?).",
             {"cpu_busy": busy, "cpu_iowait": iow})
+    # memory no process holds: RAM minus available minus mysqld minus the huge-page pool. Kernel or driver allocations
+    # (tuner-vbm-amd: the irdma RDMA driver of an E810 NIC held ~6.6 GB of 30 GB) shrink what the buffer pool can use
+    ram = int(hw.get("ram_bytes") or 0)
+    from . import memory as _mem
+    held = _mem.host_other_bytes(s, ram)
+    if held and held > max(2 * GiB, 0.08 * ram):
+        add("memory-gap", "low",  # advice about the host: it does not make experiments more relevant
+            f"{held / GiB:.1f} GiB of {ram / GiB:.0f} GiB RAM is held outside mysqld and the page cache (kernel, drivers or other "
+            "processes, a co-located client included). The buffer pool budget subtracts it. If no process explains it, check "
+            "kernel allocations (slabtop, /proc/meminfo: SUnreclaim, VmallocUsed) and drivers such as RDMA (irdma on Intel E810 "
+            "NICs: blacklist it and reboot when RDMA is not used).",
+            {"held_gb": round(held / GiB, 1), "ram_gb": round(ram / GiB, 1), "mem_available_mb": s.get("mem_available_mb"),
+             "dbproc_rss_mb": s.get("dbproc_rss_mb")})
+    # large transactions: redo per commit far above OLTP's few KB (env 57: data writes far above the pages flushed came from
+    # multi-MB transactions, not from redo in the data counters)
+    commits = s.get("handler_commits") or 0
+    if commits >= 1 and s.get("redo_mbs"):
+        kb = s["redo_mbs"] * 1024 / commits
+        if kb >= 256:
+            rows = (s.get("rows_changed_per_s") or 0) / commits
+            add("large-transactions", "low",
+                f"Large transactions: {kb:,.0f} KB of redo per commit" + (f" and {rows:,.0f} rows changed per commit" if rows else "")
+                + ". Commit-path settings (group commit, trx_commit, sync_binlog) matter less; redo log buffer and capacity, "
+                "binlog cache and undo/purge matter more.",
+                {"redo_kb_per_commit": round(kb), "rows_per_commit": round(rows) if rows else None, "commits_per_s": commits})
     return out
 
 
@@ -2182,9 +2207,33 @@ def run_engine(ctx):
         # the model checked against the run: mysqld's measured memory (resident + swapped) above what the model says for the
         # current configuration is an error of the model on this host and workload - carried into every projection
         sm_ = ctx.get("summary") or {}
-        seen = ((sm_.get("dbproc_pss_mb") or 0) + (sm_.get("dbproc_swap_pss_mb") or 0)) * MiB
+        huge_ = (sm_.get("hugepages_total_mb") or 0) if str(ctx["variables"].get("large_pages", "")).upper() in ("ON", "1") else 0
+        seen = ((sm_.get("dbproc_pss_mb") or 0) + (sm_.get("dbproc_swap_pss_mb") or 0) + huge_) * MiB
         offset = max(0, seen - cur_b["mysqld_bytes"]) if sm_.get("dbproc_pss_mb") else 0
+        sm0 = ctx.get("summary") or {}
+        swap_free0 = max(0, ((sm0.get("swap_total_mb") or 0) - (sm0.get("swap_used_mb") or 0))) * MiB
+
+        def _fits(var, val):  # a configuration with this value stays within RAM + free swap (else: an OOM kill, not a trade-off)
+            nb = _mem.budget(dict(ctx["variables"], **{var: val}), hw_, ctx.get("client_reserve") or 0, host_other=other_, active_measured=act_)
+            return nb["needed"] + offset <= nb["ram"] + swap_free0 or nb["needed"] <= cur_b["needed"]
         for it in items:
+            sw = it.get("sweep") or {}
+            if sw.get("variable") in _mem.MEMORY_VARS and it["kind"] == "config":
+                # every value of a sweep, not only the first one the item carries (suite r2 RO-4.ns: 11G was checked, 12G
+                # was not, and OOM-killed mysqld on a 15.6 GiB host without swap)
+                keep = [x for x in sw["values"] if _fits(sw["variable"], x)]
+                if len(keep) < len(sw["values"]):
+                    dropped = [x for x in sw["values"] if x not in keep]
+                    it["rationale"] = (it.get("rationale") or "") + (f" Left out: {', '.join(dropped)} (more than RAM plus free swap"
+                                                                       " on this host).")
+                    if len(keep) >= 2:
+                        sw["values"] = keep
+                    else:
+                        it.pop("sweep", None)
+                    if keep:
+                        for c_ in it["changes"]:
+                            if c_["variable"] == sw["variable"]:
+                                c_["proposed"] = keep[0]
             ch = {c["variable"]: c.get("proposed") for c in it.get("changes") or [] if c["variable"] in _mem.MEMORY_VARS and not c.get("unset")}
             if not ch or it["kind"] not in ("config",):
                 continue

@@ -42,7 +42,10 @@ def generate(hw, variables, flavor, version, opts=None):
     measured = int(opts.get("measured_overhead_bytes") or 0)
     if measured > overhead:  # mysqld's own memory beyond the buffer pool in the last run (PSS + swap) beats the estimate
         overhead = measured
-    bp = min(int(ram * 0.75), int((ram - reserve - overhead) / (1 + memory.COST["bp_control"])))
+    # 2% of RAM left unplanned: sized to exactly 100%, the measured runs (active connections, mysqld above the model,
+    # memory outside mysqld) put the baseline itself over the budget, so every run became a memory trade-off and the best
+    # production-safe configuration fell back to server defaults (h2h W3 on AMD: 0.7 GiB over)
+    bp = min(int(ram * 0.75), int((ram * 0.98 - reserve - overhead) / (1 + memory.COST["bp_control"])))
     bp = max(bp, 128 * MiB)
     # MyRocks holding data shares the memory: its block cache gets the RocksDB share of the data (at least 256 MiB each)
     data = ((opts.get("engines") or {}).get("data")) or {}
