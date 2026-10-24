@@ -135,7 +135,7 @@ async function quickstartPage() {
   setTitle("Quickstart");
   const fresh = ME && !ME.share ? sessionStorage.getItem("newkey") : null;
   const done = '<span class="badge good">done</span>';
-  const shot = (f, alt) => `<figure class="shot"><img src="/static/quickstart/${f}" alt="${esc(alt)}" width="1100"><figcaption>${esc(alt)}</figcaption></figure>`;
+  const shot = (f, alt, w) => `<figure class="shot"${w ? ` style="max-width:${w}px"` : ""}><img src="/static/quickstart/${f}" alt="${esc(alt)}" width="1100"><figcaption>${esc(alt)}</figcaption></figure>`;
   $view.innerHTML = `<h1>Quickstart</h1>
   <p class="sub" style="max-width:760px">Autotune a MySQL server on your VM with sysbench, driven by your AI coding agent (${AGENTS}). About 10 minutes of your time; the tuning itself runs for a few hours.</p>
   <div class="card" style="margin-bottom:18px"><b>You need</b><ul class="tight">
@@ -144,7 +144,7 @@ async function quickstartPage() {
   <ol class="steps">
   <li><h2>Create an account ${ME && !ME.share ? done : ""}</h2>
    ${ME && !ME.share ? `<p>You are logged in as <b>${esc(ME.email || ME.name || "")}</b>.</p>` : `<p><a class="btn primary" href="#/register">Create account</a> Name, email and a password. Free.</p>`}
-   ${shot("qs-register.png", "The Create account form")}</li>
+   ${shot("qs-register.png", "The Create account form", 380)}</li>
   <li><h2>Get an API key</h2>
    <p>Your first key is shown right after you register, once: copy it. More keys (one per host is tidy): <a href="#/connect">Connect agent</a> → <i>Create key</i>.</p>
    ${ME && !ME.share ? `<div class="row" style="gap:8px;margin-bottom:10px"><input id="qkname" placeholder="key name, e.g. my-db-vm" style="max-width:240px" aria-label="Key name"><button id="qkey" class="primary">Create a key now</button></div>` : ""}
