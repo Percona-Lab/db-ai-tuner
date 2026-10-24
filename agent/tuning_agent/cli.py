@@ -2969,10 +2969,9 @@ def _safe_wins_in_tradeoff_phase(sess, best_safe):
                and not str(x["source"])[4:].startswith(("revert", "rollback"))]
         if not own or tradeoffs_in({x["variable"]: x.get("new") for x in own}):
             continue
-        # a lever whose effect depends on the trade-offs it was measured under does not carry over (log writer threads
-        # off: +25% at trx_commit=2, -26% / -41% carried onto durable commits in W1 288 / 285)
-        if any(str(x["source"])[4:] in engine.COMMIT_PATH_DEPENDENT for x in own):
-            continue
+        # levers whose effect depends on the trade-offs (log writer threads off: +25% at trx_commit=2, -26% / -41% on durable
+        # commits in W1 288 / 285) are measured here like any other: judged against best safe, one run when it loses. Left
+        # out, a lever first measured after a trade-off never reached the safe configuration (deploy canary #310)
         for x in own:
             cur = safe_cfg.get(x["variable"])
             cur = cur.get("value") if isinstance(cur, dict) else cur
