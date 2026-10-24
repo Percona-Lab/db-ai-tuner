@@ -1974,8 +1974,24 @@ def http_error(request, exc):
 
 
 @app.get("/")
+@app.get("/quickstart")
 def index():
-    return FileResponse(os.path.join(APP_DIR, "static", "index.html"), headers={"Cache-Control": "no-cache"})
+    # the page carries agent-readable instructions before the app replaces them (agents fetch it without JavaScript)
+    with open(os.path.join(APP_DIR, "static", "index.html")) as f:
+        return HTMLResponse(f.read().replace("__SERVER__", PUBLIC_URL), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/llms.txt")
+def llms_txt():
+    return PlainTextResponse(f"""# AI DB Tuner
+
+> Tune MySQL, Percona Server and MariaDB with an AI coding agent: the agent installs tuning-agent on the database host,
+> runs a benchmark and keeps only configuration changes that beat the measured noise. Results at {PUBLIC_URL}.
+
+- [Agent guide]({PUBLIC_URL}/agent-guide.md): the complete workflow for AI agents (start with "Fastest path").
+- [Quickstart]({PUBLIC_URL}/quickstart): account, API key and the prompt to give the agent.
+- [Installer]({PUBLIC_URL}/install.sh): `curl -fsSL {PUBLIC_URL}/install.sh | sudo bash -s -- --api-key KEY --name NAME`
+""", media_type="text/plain")
 
 
 app.mount("/static", StaticFiles(directory=os.path.join(APP_DIR, "static")), name="static")

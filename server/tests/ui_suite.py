@@ -48,7 +48,9 @@ def api(ctx, base, path):
 
 def pick(ctx, base, max_sessions):
     """Pages to visit: [(name, hash, checks)]. checks: list of (description, js returning true when it holds)."""
-    pages = [("environments", "#/", []), ("studies", "#/studies", []), ("starred and notes", "#/notes", []),
+    pages = [("quickstart", "#/quickstart", [("copyable agent prompt", "!!document.querySelector('[data-copy-from=qprompt]')"),
+                                             ("screenshots loaded", "[...document.querySelectorAll('figure.shot img')].length >= 3 && [...document.querySelectorAll('figure.shot img')].every(i => i.complete && i.naturalWidth > 0)")]),
+             ("environments", "#/", []), ("studies", "#/studies", []), ("starred and notes", "#/notes", []),
              ("policies", "#/policies", []), ("parameters", "#/parameters", []), ("learning", "#/learning", []),
              ("account", "#/account", [("AI mode selector", "!!document.querySelector('select[name=mode]') || !document.querySelector('#lf')")])]
     envs = (api(ctx, base, "/api/environments") or {}).get("environments") or []

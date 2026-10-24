@@ -4,10 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI DB Tuner</title>
+<meta name="description" content="Tune MySQL, Percona Server and MariaDB with your AI coding agent (Claude Code, Codex CLI, Gemini CLI, Cursor, ...): measured benchmark runs, safe by default. Instructions for AI agents: __SERVER__/agent-guide.md">
+<link rel="alternate" type="text/markdown" href="/agent-guide.md" title="Instructions for AI agents">
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/static/favicon-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-<link rel="stylesheet" href="/static/app.css?v=78">
+<link rel="stylesheet" href="/static/app.css?v=79">
 </head>
 <body>
 <header class="top">
@@ -15,7 +17,23 @@
   <nav id="nav"></nav>
   <button id="theme" class="ghost" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
 </header>
-<main id="view"><p class="muted">Loading…</p></main>
+<main id="view">
+<!-- Shown until the app loads, and to tools that read the page without running JavaScript (AI agents fetching it). -->
+<h1>AI DB Tuner: tune MySQL with your AI coding agent</h1>
+<p><b>AI agents reading this page:</b> your instructions are at <a href="/agent-guide.md">__SERVER__/agent-guide.md</a> (Markdown).
+Start with its "Fastest path" section. You need the person's API key: ask them for it (they get one at __SERVER__/quickstart).</p>
+<p>For people: works with Claude Code, Codex CLI, Gemini CLI, Cursor, Aider or any other AI coding agent that can run shell commands on
+the database host (MySQL, Percona Server, MariaDB on Linux).</p>
+<ol>
+<li>Create an account: <a href="/#/register">__SERVER__/#/register</a></li>
+<li>Copy the API key shown after registering (more keys: Connect agent).</li>
+<li>Paste into your agent on the database host: "Tune the MySQL server on this machine for throughput with the AI DB Tuner (__SERVER__).
+Follow the instructions at __SERVER__/agent-guide.md: install tuning-agent with my API key YOUR_API_KEY, create a sysbench
+oltp_read_write data set sized for this machine, and run autotune with automatic warm-up and run length under the safe policy.
+Check on it until it finishes, then tell me the gain over the starting configuration, the settings it kept, and the link to the session page."</li>
+</ol>
+<p>Step by step with screenshots: <a href="/quickstart">__SERVER__/quickstart</a></p>
+</main>
 <footer class="foot">
   <a href="https://github.com/Percona-Lab/db-ai-tuner" target="_blank" rel="noopener">Source on GitHub</a>
   <span aria-hidden="true">·</span>
@@ -23,6 +41,6 @@
 </footer>
 <div id="tip" class="tip" hidden></div>
 <script src="/static/charts.js?v=73"></script>
-<script src="/static/app.js?v=109"></script>
+<script src="/static/app.js?v=110"></script>
 </body>
 </html>

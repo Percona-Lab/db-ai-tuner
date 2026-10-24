@@ -822,3 +822,16 @@ def test_session_ai_off_is_stored_and_shown(admin):
     assert s["ai"] == "off"
     sid2 = admin.start_session(env_id)
     assert admin.ui.get(f"/api/sessions/{sid2}").json()["session"]["ai"] is None
+
+
+def test_home_and_quickstart_carry_agent_instructions(client):
+    # agents fetch the page without JavaScript: the instructions must be in the HTML itself, with the real server URL
+    for path in ("/", "/quickstart"):
+        r = client.get(path)
+        assert r.status_code == 200
+        assert "/agent-guide.md" in r.text and "__SERVER__" not in r.text
+        assert "AI agents reading this page" in r.text
+    g = client.get("/agent-guide.md").text
+    assert "Fastest path" in g and "autotune --bench" in g and "__SERVER__" not in g
+    t = client.get("/llms.txt")
+    assert t.status_code == 200 and "agent-guide.md" in t.text and "quickstart" in t.text

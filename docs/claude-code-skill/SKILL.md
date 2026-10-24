@@ -1,19 +1,85 @@
 ---
 name: mysql-tuning-agent
-description: Tune a MySQL / Percona Server / MariaDB server for throughput or latency with the AI DB Tuner tuning-agent (baseline, measured runs, recommendations, apply/rollback). Use when asked to tune or benchmark-optimise a MySQL-family database on a host where tuning-agent is installed.
+description: Tune a MySQL / Percona Server / MariaDB server for throughput or latency with the AI DB Tuner tuning-agent (benchmark profile + unattended autotune, or step by step: baseline, measured runs, recommendations, apply/rollback). Use when asked to tune or benchmark-optimise a MySQL-family database on a Linux host.
 ---
 
 # Tuning MySQL with tuning-agent
+
+These instructions are for AI coding agents (Claude Code, Codex CLI, Gemini CLI, Cursor, Aider, or any other
+agent that can run shell commands on the database host) and for people.
 
 `tuning-agent` runs on the database host (as root). It measures the server, recommends
 configuration changes with evidence, applies them (writing its own option file and
 restarting mysqld when required) and reports everything to the AI DB Tuner web app
 (__SERVER__), where people see sessions, runs, config diffs, graphs and decision inputs.
+The person you work for needs an account there and an API key (__SERVER__/quickstart);
+ask them for the key if you do not have it. Never print the key back in full or store it outside the agent's config.
+
+## Fastest path: unattended autotune of a sysbench workload
+
+Use this when asked to "tune MySQL on this VM with sysbench" (or any benchmark) and no other workflow is given.
+Run everything as root on the database host. `autotune` takes hours, so start it detached and poll (step 6).
+
+1. **Agent.** `tuning-agent status --json` works → installed. Otherwise:
+   `curl -fsSL __SERVER__/install.sh | sudo bash -s -- --api-key KEY --name "$(hostname)"`
+   (add `--mysql-user U --mysql-password P` when root cannot log in over the local socket).
+2. **sysbench.** `apt-get install -y sysbench` (Debian / Ubuntu) or `dnf install -y sysbench` (EPEL).
+3. **Data set, sized for this host.** In memory by default: about a quarter of RAM, 1M rows ≈ 240 MB.
+   ```bash
+   RAM_GB=$(awk '/MemTotal/ {print int($2/1048576)}' /proc/meminfo); CPUS=$(nproc)
+   TABLES=8; ROWS=$(( RAM_GB * 1024 / 4 / 240 / TABLES * 1000000 )); [ $ROWS -lt 100000 ] && ROWS=100000
+   THREADS=$(( CPUS * 2 )); [ $THREADS -lt 8 ] && THREADS=8
+   mysql -e "CREATE DATABASE IF NOT EXISTS sbtest; CREATE USER IF NOT EXISTS sbtest@localhost IDENTIFIED BY 'sbtest';
+             GRANT ALL ON sbtest.* TO sbtest@localhost"
+   sysbench oltp_read_write --mysql-user=sbtest --mysql-password=sbtest --mysql-db=sbtest \
+     --tables=$TABLES --table-size=$ROWS --threads=$CPUS prepare
+   ```
+   Use the socket path of this server if it is not the default (`--mysql-socket=...`). Larger than memory (I/O-bound):
+   size the data at 2-3x RAM instead.
+4. **Benchmark profile** `/root/sysbench.ini`. `warmup = auto` and `duration = auto` let the agent find the run length
+   this benchmark needs (one probe run); `{total}` is filled in by the agent.
+   ```ini
+   [bench]
+   name = sysbench oltp_read_write 8 x ROWS, THREADS threads
+   run = sysbench oltp_read_write --mysql-user=sbtest --mysql-password=sbtest --mysql-db=sbtest --tables=8 --table-size=ROWS --threads=THREADS --time={total} --report-interval=5 run
+   warmup = auto
+   duration = auto
+   goal_metric = sysbench_tps
+
+   [metrics]
+   sysbench_tps = transactions:\s+\d+\s+\(([\d.]+) per sec
+   sysbench_p95_ms = 95th percentile:\s+([\d.]+)
+
+   [requires]
+   max_connections = THREADS + 50
+   ```
+   Write the numbers in (no shell variables in the file). `[requires]` holds settings the benchmark needs just to run;
+   they are applied before every run and never tuned. A writing benchmark that must start each run from the same data
+   adds `reset = /path/to/restore.sh` (see __SERVER__/agent-guide.md#benchmark-hygiene-important).
+5. **Session and autotune.**
+   ```bash
+   tuning-agent baseline --apply --reserve-mem 1G   # hardware-sized start; 1G kept for the co-located sysbench
+   tuning-agent session start --goal tps --policy safe --name "sysbench oltp_read_write on $(hostname)"
+   nohup tuning-agent autotune --bench /root/sysbench.ini --close > /root/autotune.log 2>&1 &
+   ```
+   `--policy safe` never applies durability or observability trade-offs. Use `--policy benchmark` with
+   `autotune --tradeoffs` only when the person asks for benchmark-only settings (results are then not
+   production-equivalent: say so). Default limits: 3 calibration runs, then up to 10 experiments (`--max-runs N`).
+6. **Watch.** `tuning-agent status --json` (current phase and time left) and `tail /root/autotune.log` every
+   few minutes; the session page in the web app shows every run as it lands. Do not run other load or apply
+   changes while it runs.
+7. **Report.** When autotune ends, `tuning-agent config` shows the settings it kept (it leaves the best
+   production-safe configuration applied). Report the gain over the calibrated start and the noise threshold from
+   `tuning-agent status --json` / the session page, and link the session page.
+
+The rest of this guide is the step-by-step workflow, for when you drive each experiment yourself.
 
 Add `--json` to any command for machine-readable output. Exit code 0 = ok, 2 = usage/state
 error (message in `error`), 3 = server/API error.
 
 ## Install (once per host)
+
+API keys: __SERVER__/#/connect (an account is free; __SERVER__/quickstart walks through it).
 
     curl -fsSL __SERVER__/install.sh | sudo bash -s -- --api-key KEY --name NAME [--mysql-user U --mysql-password P]
 

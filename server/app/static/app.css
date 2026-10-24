@@ -220,3 +220,19 @@ button.star:hover { color: var(--s4); }
 button.small-btn { padding: 2px 8px; font-size: 12px; margin-left: 6px; vertical-align: middle; }
 
 .swatch.su { background: var(--startup); }
+
+/* landing / quickstart */
+.prompt { position: relative; }
+.prompt pre { white-space: pre-wrap; word-break: break-word; padding-right: 74px; font-size: 13.5px; line-height: 1.5; }
+.prompt button { position: absolute; top: 8px; right: 8px; padding: 2px 10px; font-size: 12px; }
+ul.tight, ol.tight { margin: 6px 0 0; padding-left: 20px; }
+ul.tight li, ol.tight li { margin: 3px 0; }
+ol.steps { list-style: none; counter-reset: step; padding: 0; margin: 0; }
+ol.steps > li { counter-increment: step; position: relative; padding: 0 0 26px 46px; border-left: 2px solid var(--axis); margin-left: 15px; }
+ol.steps > li:last-child { border-left-color: transparent; }
+ol.steps > li::before { content: counter(step); position: absolute; left: -16px; top: 0; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: var(--accent-ink, #fff); font-weight: 600; display: flex; align-items: center; justify-content: center; }
+ol.steps > li > h2 { margin-top: 2px; display: flex; gap: 8px; align-items: center; }
+figure.shot { margin: 10px 0 0; max-width: 820px; }
+figure.shot img { width: 100%; height: auto; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.08); display: block; }
+figure.shot figcaption { font-size: 12px; color: var(--muted); margin-top: 5px; }
+@media (max-width: 600px) { ol.steps > li { padding-left: 26px; margin-left: 12px; } ol.steps > li::before { width: 24px; height: 24px; left: -13px; font-size: 13px; } }

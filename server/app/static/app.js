@@ -73,7 +73,7 @@ function riskBadge(r) { const m = { none: "good", low: "good", compat: "warn", o
 function clearTimers() { timers.forEach(clearInterval); timers = []; }
 function setNav(active) {
   const nav = document.getElementById("nav");
-  if (!ME) { nav.innerHTML = `<a class="right" href="#/login">Log in</a><a href="#/register">Create account</a>`; return; }
+  if (!ME) { nav.innerHTML = `<a href="#/quickstart" class="${active === "quickstart" ? "on" : ""}">Quickstart</a><a href="/agent-guide.md">Agent guide</a><a class="right" href="#/login">Log in</a><a href="#/register">Create account</a>`; return; }
   if (ME.share) {
     document.body.classList.add("ro");
     const home = "#/" + (ME.share.kind === "study" ? "study/" : "env/") + ME.share.id;
@@ -82,7 +82,7 @@ function setNav(active) {
     return;
   }
   document.body.classList.remove("ro");
-  nav.innerHTML = `<a href="#/" class="${active === "envs" ? "on" : ""}">Environments</a><a href="#/studies" class="${active === "studies" ? "on" : ""}">Studies</a><a href="#/connect" class="${active === "connect" ? "on" : ""}">Connect agent</a>` +
+  nav.innerHTML = `<a href="#/" class="${active === "envs" ? "on" : ""}">Environments</a><a href="#/studies" class="${active === "studies" ? "on" : ""}">Studies</a><a href="#/connect" class="${active === "connect" ? "on" : ""}">Connect agent</a><a href="#/quickstart" class="${active === "quickstart" ? "on" : ""}">Quickstart</a>` +
     `<a href="#/parameters" class="${active === "parameters" ? "on" : ""}">Parameters</a><a href="#/policies" class="${active === "policies" ? "on" : ""}">Policies</a><a href="#/notes" class="${active === "notes" ? "on" : ""}" data-tip="Runs you starred or gave feedback on">★ Starred</a>${ME.is_admin ? `<a href="#/learning" class="${active === "learning" ? "on" : ""}">Learning</a><a href="/status">Status</a>` : ""}<a href="#/account" class="${active === "account" ? "on" : ""}">Account</a><span class="right">${esc(ME.email)}</span><a href="#" id="logout">Log out</a>`;
   document.getElementById("logout").onclick = async e => { e.preventDefault(); await api("/api/auth/logout", { method: "POST", body: {} }); ME = null; location.hash = "#/"; };
 }
@@ -100,18 +100,79 @@ function setNav(active) {
 })();
 
 // ------------------------------------------------------------------ pages
+// the prompt a person pastes into their AI coding agent (Claude Code, Codex CLI, Gemini CLI, Cursor, ...) on the database host
+function agentPrompt(key) {
+  return `Tune the MySQL server on this machine for throughput with the AI DB Tuner (${SERVER}). Follow the instructions at ${SERVER}/agent-guide.md: install tuning-agent with my API key ${key || "YOUR_API_KEY"}, create a sysbench oltp_read_write data set sized for this machine, and run autotune with automatic warm-up and run length under the safe policy. Check on it until it finishes, then tell me the gain over the starting configuration, the settings it kept, and the link to the session page.`;
+}
+const AGENTS = "Claude Code, Codex CLI, Gemini CLI, Cursor, Aider or any other AI coding agent that can run shell commands";
+function copyable(text, id) {
+  return `<div class="prompt"><button class="ghost" data-copy-from="${id}">Copy</button><pre id="${id}"><code>${esc(text)}</code></pre></div>`;
+}
+function wireCopy() {
+  $view.querySelectorAll("[data-copy-from]").forEach(b => b.onclick = () => { navigator.clipboard && navigator.clipboard.writeText(document.getElementById(b.dataset.copyFrom).textContent); b.textContent = "Copied"; setTimeout(() => b.textContent = "Copy", 1500); });
+}
 function landing() {
-  setNav();
-  $view.innerHTML = `<section class="hero"><img class="hero-logo" src="/static/logo.svg" alt="AI DB Tuner logo"><h1>Tune MySQL with an agent you can drive from Claude Code</h1>
-  <p class="sub" style="max-width:720px">Register, install the <code>tuning-agent</code> next to your database with your API key, and run tuning sessions:
-  a hardware-and-version baseline, measured runs under your benchmark, ranked recommendations with the evidence behind them, and one-command apply / rollback.
-  Every run's configuration diff, database and OS metrics and decision inputs land here.</p>
-  <div class="row"><a class="btn primary" href="#/register">Create account</a><a class="btn" href="#/login">Log in</a></div></section>
-  <div class="grid g3" style="margin-top:28px">
-   <div class="card"><h3>Baseline from hardware</h3><p class="muted">Buffer pool, redo, I/O capacity, threads and caches sized from CPU, RAM, disk type and the server version (MySQL, Percona Server, MariaDB).</p></div>
-   <div class="card"><h3>Goal-driven sessions</h3><p class="muted">Optimise throughput (TPS) or average query response time. Each run is compared with the previous and the first run, with a noise threshold.</p></div>
-   <div class="card"><h3>Built for agents</h3><p class="muted">Every command is non-interactive with <code>--json</code> output, so Claude Code can start measurements, ask for recommendations and apply them.</p></div>
-  </div>`;
+  setNav("home");
+  $view.innerHTML = `<section class="hero"><img class="hero-logo" src="/static/logo.svg" alt="AI DB Tuner logo"><h1>Tune MySQL with your AI coding agent</h1>
+  <p class="sub" style="max-width:740px">Works with ${AGENTS}. The agent installs <code>tuning-agent</code> on the database host, runs your benchmark,
+  and tries configuration changes one measured run at a time: kept only when they beat the measured noise, rolled back when they don't.
+  Every run's settings, metrics and the reason it was tried land here. MySQL, Percona Server and MariaDB.</p>
+  <div class="row"><a class="btn primary" href="#/quickstart">Quickstart: 3 steps</a><a class="btn" href="#/register">Create account</a><a class="btn" href="#/login">Log in</a></div></section>
+  <h2 style="margin-top:26px">Paste this into your agent on the database host</h2>
+  <p class="muted" style="margin-top:-4px">After you <a href="#/register">create an account</a> and get an API key. The <a href="#/quickstart">quickstart</a> shows each step.</p>
+  ${copyable(agentPrompt(), "lprompt")}
+  <div class="grid g3" style="margin-top:22px">
+   <div class="card"><h3>Any AI coding agent</h3><p class="muted">Every command is non-interactive with <code>--json</code> output, and <a href="/agent-guide.md">/agent-guide.md</a> tells the agent the whole workflow. No plug-in or MCP server needed.</p></div>
+   <div class="card"><h3>Measured, not guessed</h3><p class="muted">Calibrated noise threshold, one change per run, confirmation of the winner. Rules, the shared learning database and an optional LLM pick the experiments; each recommendation says which.</p></div>
+   <div class="card"><h3>Safe by default</h3><p class="muted">Durability and observability trade-offs (e.g. <code>innodb_flush_log_at_trx_commit=2</code>) are only tried when you allow them, and are always marked. One command rolls back to any earlier configuration.</p></div>
+  </div>
+  <div class="note" style="margin-top:22px"><b>For AI agents reading this page:</b> the instructions are at <a href="/agent-guide.md">${esc(SERVER)}/agent-guide.md</a> (Markdown). Start with its “Fastest path” section. Ask the person for their API key.</div>`;
+  wireCopy();
+}
+
+async function quickstartPage() {
+  setNav("quickstart");
+  setTitle("Quickstart");
+  const fresh = ME && !ME.share ? sessionStorage.getItem("newkey") : null;
+  const done = '<span class="badge good">done</span>';
+  const shot = (f, alt) => `<figure class="shot"><img src="/static/quickstart/${f}" alt="${esc(alt)}" width="1100"><figcaption>${esc(alt)}</figcaption></figure>`;
+  $view.innerHTML = `<h1>Quickstart</h1>
+  <p class="sub" style="max-width:760px">Autotune a MySQL server on your VM with sysbench, driven by your AI coding agent (${AGENTS}). About 10 minutes of your time; the tuning itself runs for a few hours.</p>
+  <div class="card" style="margin-bottom:18px"><b>You need</b><ul class="tight">
+   <li>A Linux VM (Ubuntu / Debian / RHEL family, systemd) running MySQL 8.0+, Percona Server or MariaDB 10.6+, with root or sudo. A test server: tuning restarts mysqld and runs a benchmark on it.</li>
+   <li>An AI coding agent with a shell on that VM: run it on the VM itself, or let it work over <code>ssh</code>.</li></ul></div>
+  <ol class="steps">
+  <li><h2>Create an account ${ME && !ME.share ? done : ""}</h2>
+   ${ME && !ME.share ? `<p>You are logged in as <b>${esc(ME.email || ME.name || "")}</b>.</p>` : `<p><a class="btn primary" href="#/register">Create account</a> Name, email and a password. Free.</p>`}
+   ${shot("qs-register.png", "The Create account form")}</li>
+  <li><h2>Get an API key</h2>
+   <p>Your first key is shown right after you register, once: copy it. More keys (one per host is tidy): <a href="#/connect">Connect agent</a> → <i>Create key</i>.</p>
+   ${ME && !ME.share ? `<div class="row" style="gap:8px;margin-bottom:10px"><input id="qkname" placeholder="key name, e.g. my-db-vm" style="max-width:240px" aria-label="Key name"><button id="qkey" class="primary">Create a key now</button></div>` : ""}
+   ${fresh ? `<div class="card" style="margin-bottom:10px"><b>Your new API key</b>, shown once; it is already in the prompt below:<div class="key" style="margin-top:6px">${esc(fresh)}</div></div>` : ""}
+   ${shot("qs-key.png", "The new API key and the install command on the Connect agent page")}</li>
+  <li><h2>Tell your agent</h2>
+   <p>Open your agent on the VM (or with ssh access to it) and paste:</p>
+   ${copyable(agentPrompt(fresh), "qprompt")}
+   <p class="muted">What the agent then does, following <a href="/agent-guide.md">/agent-guide.md</a>:</p>
+   <ol class="tight muted"><li>installs <code>tuning-agent</code> with your key; the VM appears under Environments;</li>
+    <li>installs sysbench and creates a data set sized for the VM's memory, with 2 client threads per CPU;</li>
+    <li>writes a benchmark profile with automatic warm-up and run length, and applies a hardware-sized starting configuration;</li>
+    <li>runs <code>autotune</code>: one probe run for the run length, 3 calibration runs for the noise threshold, then up to 10 experiments, each kept only when it beats the noise;</li>
+    <li>leaves the best production-safe configuration applied and reports the gain.</li></ol>
+   <p class="muted">Other benchmarks or goals: say so in the prompt (“HammerDB TPC-C”, “my own load script”, “optimise p95 latency”, “benchmark settings allowed”). The agent adapts the profile.</p></li>
+  <li><h2>Watch the results</h2>
+   <p>Each run appears on the session page as it finishes: the gain over the calibrated start, what was tried and why, every run's settings, metrics and CPU profile.${ME && !ME.share ? ` <a href="#/">Your environments</a>.` : ""}</p>
+   ${shot("qs-session.png", "A finished session: best production-safe result, noise threshold, and every run")}</li>
+  </ol>
+  <details class="card" style="margin-top:18px"><summary><b>Without an AI agent</b></summary>
+   <p>The same steps by hand: install from <a href="#/connect">Connect agent</a>, then follow the “Fastest path” section of <a href="/agent-guide.md">/agent-guide.md</a>. <code>tuning-agent guide</code> prints the workflow on the host.</p></details>`;
+  wireCopy();
+  const kb = document.getElementById("qkey");
+  if (kb) kb.onclick = async () => {
+    const r = await api("/api/keys", { method: "POST", body: { name: document.getElementById("qkname").value || "quickstart" } });
+    sessionStorage.setItem("newkey", r.api_key); quickstartPage();
+  };
+  if (fresh) window.addEventListener("hashchange", () => sessionStorage.removeItem("newkey"), { once: true });
 }
 
 function authForm(kind) {
@@ -419,10 +480,13 @@ tuning-agent apply --next
 tuning-agent measure run --duration 300
 tuning-agent rollback --best            # keep the winner
 tuning-agent session stop</code></pre>
-  <h2>3. Drive it from Claude Code</h2>
-  <p>Tell Claude Code: <i>“Tune this MySQL server for throughput using tuning-agent. Read ${esc(SERVER)}/agent-guide.md first.”</i> The guide explains the workflow, the JSON output and the benchmark hygiene rules. Every command takes <code>--json</code>.</p>
+  <h2>3. Or let your AI coding agent do all of it</h2>
+  <p>Paste this into ${AGENTS} on the database host (steps 1 and 2 included; <a href="#/quickstart">quickstart</a>):</p>
+  ${copyable(agentPrompt(fresh), "cprompt")}
+  <p class="muted"><a href="/agent-guide.md">/agent-guide.md</a> explains the workflow, the JSON output and the benchmark hygiene rules. Every command takes <code>--json</code>.</p>
   <h2>API keys</h2><div class="card"><div class="tablewrap"><table><thead><tr><th>Name</th><th>Key</th><th>Created</th><th>Last used</th><th></th></tr></thead><tbody id="keys"></tbody></table></div>
   <div class="row" style="margin-top:10px"><input id="kname" placeholder="key name, e.g. lab-db-01" style="max-width:260px"><button id="newkey" class="primary">Create key</button></div></div>`;
+  wireCopy();
   $view.querySelectorAll("[data-copypre]").forEach(b => b.onclick = () => { navigator.clipboard && navigator.clipboard.writeText(b.parentElement.querySelector("code").textContent); b.textContent = "Copied"; });
   const tb = document.getElementById("keys");
   keys.keys.forEach(k => {
@@ -1784,6 +1848,7 @@ async function route() {
     if (ME && ME.share && (!parts.length || ["connect", "account", "policies-edit"].includes(parts[0]))) {
       location.replace("#/" + (ME.share.kind === "study" ? "study/" : "env/") + ME.share.id); return;
     }
+    if (parts[0] === "quickstart") return await quickstartPage();
     if (parts[0] === "login") return authForm("login");
     if (parts[0] === "register") return authForm("register");
     if (!ME) return landing();
@@ -1812,6 +1877,8 @@ window.addEventListener("hashchange", route);
 // charts follow width changes only (a phone's URL bar hiding changes the height): redrawn in place, the page is not reloaded
 let resizeT, lastW = innerWidth;
 window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (Math.abs(innerWidth - lastW) < 40) return; lastW = innerWidth; widthFns.forEach(f => f()); }, 300); });
+// /quickstart (a shareable path) is the #/quickstart page
+if (location.pathname === "/quickstart") history.replaceState(null, "", "/#/quickstart");
 loadMe().then(route);
 
 // ------------------------------------------------------------------ stars, people's feedback, model advice
