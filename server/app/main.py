@@ -294,7 +294,7 @@ _SECRETS = [  # as the agent masks the observed benchmark command lines (bench.m
     (re.compile(r"(?m)(\b\w*pass(?:word)?\w*\s*[=:]?\s+)(\S+)\s*$", re.I), r"\1***"),
     (re.compile(r"(\b\w*(?:PASSWORD|PASSWD|PWD)\w*=)\S+"), r"\1***"),
 ]
-_MYSQL_P = re.compile(r"(\s-p)(?=[^\s-])[^\s'\"]+")
+_MYSQL_P = re.compile(r"(\s-p)(?=[^\s-])(?:'[^']*'|\"[^\"]*\"|[^\s'\"]+)")  # -pSECRET, -p'SECRET', -p"SECRET"
 
 
 def mask_secrets(v):
@@ -303,7 +303,7 @@ def mask_secrets(v):
         return v
     for rx, to in _SECRETS:
         v = rx.sub(to, v)
-    return _MYSQL_P.sub(r"\1***", v) if "mysql" in v else v
+    return _MYSQL_P.sub(r"\1***", v) if "mysql" in v or "mariadb" in v else v  # mariadb, mariadb-admin, mariadb-dump too
 
 
 def mask_bench(b):
@@ -1375,8 +1375,9 @@ def agent_experience(workload: str = None, cpus: int = None, conns: int = None, 
         "SELECT r.changes, r.verdict, r.evaluation, json_extract(r.inputs, '$.workload.type') AS wl, "
         "json_extract(e.facts, '$.hardware.cpus') AS cpus, json_extract(r.summary, '$.threads_connected_avg') AS conns, r.session_id, "
         "json_extract(e.facts, '$.db.flavor') AS fl, json_extract(e.facts, '$.db.version') AS ver FROM runs r JOIN tsessions s ON s.id=r.session_id "
-        "JOIN environments e ON e.id=s.env_id WHERE r.status='done' AND r.verdict IN "
-        "('improved','efficiency-gain','neutral','regressed','efficiency-loss') AND COALESCE(s.name,'') NOT LIKE '%canary%'")
+        "JOIN environments e ON e.id=s.env_id LEFT JOIN studies st ON st.id=s.study_id WHERE r.status='done' AND r.verdict IN "
+        "('improved','efficiency-gain','neutral','regressed','efficiency-loss') AND COALESCE(s.name,'') NOT LIKE '%canary%' "
+        "AND LOWER(COALESCE(st.name,'')) <> 'canary'")  # canaries are not evidence (as in the learner: the name or the study)
     series = server_series(flavor, version)
     out, wide, hyp, hyp_wide = {}, {}, {}, {}
     family, other = {}, {}  # similar conditions on the same variant in another series / on another variant
@@ -2251,5 +2252,6 @@ def watchdog_with_cleanup():
 
 
 status.set_watchdog(watchdog_with_cleanup)
-status.start()
-learner.start()  # background learner: observations -> learning.db (docs/design/agentic-saas.md)
+if os.environ.get("TUNER_NO_BACKGROUND") != "1":  # the server tests (server/tests) run the scans and passes themselves
+    status.start()
+    learner.start()  # background learner: observations -> learning.db (docs/design/agentic-saas.md)
