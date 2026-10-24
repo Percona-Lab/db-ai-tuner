@@ -77,7 +77,7 @@ def pick(ctx, base, max_sessions):
         if any((r.get("summary") or {}).get("swap_total_mb") == 0 for r in runs[-1:]):
             checks.append(("'no swap' shown for a session measured without swap", "document.body.innerText.includes('no swap')"))
         if len(runs) >= 2:
-            checks.append(("best configuration tiles", "document.body.innerText.includes('Best safe') || document.body.innerText.includes('Best with trade-offs')"))
+            checks.append(("best configuration tiles", "['Best production-safe', 'Best safe', 'Best with trade-offs'].some(x => document.body.innerText.includes(x))"))
         pages.append((f"session {s['id']}", f"#/session/{s['id']}", checks))
         if runs:
             r = runs[-1]
