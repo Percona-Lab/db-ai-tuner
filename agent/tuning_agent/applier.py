@@ -160,7 +160,20 @@ class Applier:
         return False, "server did not accept connections: " + last
 
     def reapply_runtime(self):
-        """Settings that live only in the running server (resource group thread assignments)."""
+        """Settings that live only in the running server: the benchmark's prerequisites (SET GLOBAL), resource group thread
+        assignments, the performance_schema profile."""
+        for var, want in ((self.state.get("requirements") if self.state else None) or {}).items():
+            try:  # minimums for numbers, exact values otherwise (cli._ensure_requirements)
+                cur = self.db.scalar(f"SELECT @@GLOBAL.{var}")
+                try:
+                    below = float(cur) < float(want)
+                except (TypeError, ValueError):
+                    below = str(cur).lower() != str(want).lower()
+                if below:
+                    self.db.execute(f"SET GLOBAL {var} = %s", (int(want) if str(want).isdigit() else want,))
+                    self.log(f"benchmark requirement re-applied after the restart: {var} {cur} -> {want}")
+            except Exception as e:  # noqa
+                self.log(f"benchmark requirement {var}={want} could not be re-applied: {e}")
         if psprofile.VAR in self.state["managed"]:  # runtime consumer settings are also in the option file; re-assert anyway
             try:
                 psprofile.apply(self.db, self.state["managed"][psprofile.VAR]["value"])

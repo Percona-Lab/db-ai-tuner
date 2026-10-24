@@ -741,6 +741,7 @@ def cmd_session(a):
         if r.get("study"):
             sess["study"] = r["study"]
         c.state.set("session", sess)
+        c.state.set("requirements", {})  # the previous benchmark's prerequisites are not this session's
         emit({"ok": True, "session": sess, "url": r.get("url"), "study": r.get("study")},
              f"Session #{sess['id']} started (goal={a.goal}, policy={a.policy}). {r.get('url', '')}\n"
              + (f"Part of study '{r['study']['name']}': {r['study']['url']}\n" if r.get("study") else "") +
@@ -1367,6 +1368,9 @@ def _ensure_requirements(c, prof):
                 item["error"] = str(e)[:200]
                 log(f"WARNING: benchmark requirement {var}={want} could not be set: {e}")
         out.append(item)
+    # remembered: every restart the agent makes re-applies them (Applier.reapply_runtime) - SET GLOBAL values do not
+    # survive one, and a benchmark connecting right after a restart failed with 'Too many connections' (user report)
+    c.state.set("requirements", {k: str(v) for k, v in (prof.requires or {}).items() if re.fullmatch(r"[a-z_][a-z0-9_]*", k)})
     return out
 
 
@@ -2070,6 +2074,9 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
     hold = lambda el: max(600, 0.25 * el)  # noqa: E731  a settled level has to hold this long to count
     log(f"== run-length probe: one continuous run of up to {max_s // 60} min; each state metric must settle and hold its level "
         f"for at least 10 min (and a quarter of the run); then the measurement length for a ±{target_pct:g}% noise target")
+    # the benchmark's prerequisites after the restart / reset, right before it connects (user report: the 1024-thread probe
+    # failed with 'Too many connections' - max_connections was back at its option-file value after the restart)
+    _ensure_requirements(c, prof)
     t0 = time.time()
     r = bench.Running(prof.command(total_s=max_s + 60), logfile)
     done = False

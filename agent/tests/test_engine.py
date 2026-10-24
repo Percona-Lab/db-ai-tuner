@@ -2215,6 +2215,40 @@ def test_backtest_rule_fixes():
 
 
 
+def test_requirements_survive_restarts():
+    """User report: the run-length probe restarted mysqld and started a 1024-thread sysbench with max_connections back at
+    1000. The probe applies the prerequisites before the benchmark connects, and every agent restart re-applies them."""
+    from tuning_agent import applier, cli
+    log = []
+
+    class DB:
+        vals = {"max_connections": "1000", "max_prepared_stmt_count": "16382"}
+
+        def scalar(self, q):
+            return self.vals[q.split(".")[-1]]
+
+        def execute(self, q, args=None):
+            log.append((q, args))
+            self.vals[q.split()[2]] = str(args[0])
+
+    class St:
+        data = {"requirements": {"max_connections": "1100", "max_prepared_stmt_count": "1048576"}, "managed": {}}
+
+        def get(self, k, d=None):
+            return self.data.get(k, d)
+
+        def __getitem__(self, k):
+            return self.data[k]
+    ap = applier.Applier({"cnf_path": "/tmp/x.cnf", "service_name": "mysql"}, St(), DB(), log=lambda *a: None)
+    ap.reapply_runtime()
+    assert ap.db.vals == {"max_connections": "1100", "max_prepared_stmt_count": "1048576"}, ap.db.vals
+    # the probe calls _ensure_requirements before starting the benchmark
+    import inspect
+    src = inspect.getsource(cli._run_length_probe)
+    assert src.index("_ensure_requirements(c, prof)") < src.index("bench.Running(")
+
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
