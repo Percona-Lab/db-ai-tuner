@@ -113,10 +113,34 @@ def apply(db, value, var=VAR):
     else:
         db.execute(f"CREATE RESOURCE GROUP {group} TYPE = SYSTEM{spec}")
     ensure(db)
-    if var == PURGE_VAR and parse_purge(value).get("prio") and has_cap_sys_nice() is False:
+    want = parse_purge(value).get("prio") if var == PURGE_VAR else None
+    if want and has_cap_sys_nice() is False:
         return ("mysqld lacks CAP_SYS_NICE: Linux ignores the purge threads' priority (only their CPUs apply). "
                 "os:mysqld_cap_sys_nice=ON adds it (takes effect at the next mysqld start).")
+    if want:
+        got = thread_nice(db, PURGE_THREADS)
+        off = [n for n in got if n != want]
+        if got and off:
+            return f"the purge threads' nice values are {sorted(set(got))}, not {want}: the priority did not take effect"
     return None
+
+
+def thread_nice(db, names):
+    """The kernel's nice value of each thread with one of these performance_schema names (THREAD_OS_ID ->
+    /proc/<mysqld>/task/<tid>/stat): what the scheduler really uses, whatever the resource group says."""
+    from .hostinfo import mysqld_pid
+    pid = mysqld_pid()
+    if not pid:
+        return []
+    out = []
+    names_ = ", ".join(f"'{n}'" for n in names)
+    for r in db.dict_rows(f"SELECT THREAD_OS_ID t FROM performance_schema.threads WHERE NAME IN ({names_})"):
+        try:
+            st = open(f"/proc/{pid}/task/{int(r['t'])}/stat").read()
+            out.append(int(st[st.rindex(")") + 2:].split()[16]))  # field 19: nice
+        except (OSError, ValueError, TypeError, IndexError):
+            continue
+    return out
 
 
 def ensure(db):

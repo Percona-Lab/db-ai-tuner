@@ -835,3 +835,15 @@ def test_home_and_quickstart_carry_agent_instructions(client):
     assert "Fastest path" in g and "autotune --bench" in g and "__SERVER__" not in g
     t = client.get("/llms.txt")
     assert t.status_code == 200 and "agent-guide.md" in t.text and "quickstart" in t.text
+
+
+def test_apply_events_name_the_settings():
+    """User: 'stability-triage: applied 1 change(s)' said nothing about what was tried. Events from older agents are
+    shown with the settings and values from their stored result."""
+    from app import main
+    ev = {"type": "apply", "message": "stability-triage: applied 1 change(s)",
+          "data": {"result": {"applied": [{"variable": "innodb_purge_batch_size", "old": "300", "new": "1000",
+                                           "reason": "purge triage: purge batch size 1000"}]}}}
+    m = main.event_view(ev)["message"]
+    assert m == "stability-triage: innodb_purge_batch_size 300 -> 1000 - purge triage: purge batch size 1000", m
+    assert main.event_view({"type": "apply", "message": "x: applied 0 change(s)", "data": {}})["message"] == "x: applied 0 change(s)"

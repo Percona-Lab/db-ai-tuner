@@ -920,6 +920,34 @@ function renderLive(el, m, cpus, hostName, markers, window_) {
   }));
 }
 
+// purge triage (stability first): each online purge setting tried on the running benchmark, its history growth and cost
+function triageCard(events) {
+  const ev = events.filter(e => e.type === "purge_triage").sort((a, b) => a.ts - b.ts);
+  if (!ev.length) return "";
+  const end = ev.filter(e => e.data && e.data.stable != null).pop();
+  let steps = ev.filter(e => e.data && e.data.result);
+  const start = ev.find(e => e.data && e.data.steps_planned);
+  let ref = start ? start.data : (steps[0] && steps[0].data.reference) || null;
+  if (!steps.length && end && (end.data.steps || []).length) {  // agents before per-step events: the summary's steps
+    const kept = new Set((end.data.kept || []).map(k => k.join("=")));
+    ref = ref || end.data.reference || end.data.steps[0];
+    steps = end.data.steps.slice(1).map(x => ({ data: Object.assign({}, x, { result: (x.changes || []).some(c => kept.has(c)) ? "kept" : "reverted" }) }));
+  }
+  const blocked = ev.find(e => e.data && e.data.blocked_by_trx_s);
+  const rate = v => v == null ? "–" : (v > 0 ? "+" : "") + C.fmtNum(v) + "/min";
+  const res = r => `<span class="badge ${/^kept/.test(r) ? "good" : "plain"}">${esc(r)}</span>`;
+  const verdict = blocked ? `<span class="badge warn">purge held back</span> <span class="muted">a transaction open ${Math.round(blocked.data.blocked_by_trx_s / 60)} min: no purge setting can help</span>`
+    : end ? (end.data.stable ? `<span class="badge good">stable</span> <span class="muted">${esc((end.data.kept || []).map(k => k.join("=")).join(", ") || "current configuration")}</span>`
+      : `<span class="badge warn">not stable</span> <span class="muted">no online setting bounds the history; restart-only remedies follow as experiments</span>`)
+    : `<span class="badge info">running</span>`;
+  return `<h2>Purge triage${info("The undo history list grew past 1M without slowing down: purge cannot keep up, so no run length settles and the configuration cannot run in production. Before tuning, each online purge setting runs for 5 minutes on the running benchmark (the first minute not counted). One that alone makes the history stable is kept whatever it costs; one that at least halves the growth is kept when it costs at most 30% throughput. Stability first, then performance.")}</h2>
+  <div class="card"><div style="margin-bottom:8px">${verdict}</div><div class="tablewrap"><table><thead><tr><th>Step</th><th>Setting</th><th class="num">History growth</th><th class="num">Throughput</th><th></th></tr></thead><tbody>
+  ${ref ? `<tr><td>reference</td><td class="muted">current configuration</td><td class="num">${rate(ref.hll_per_min)}</td><td class="num">${num(ref.tps)}</td><td></td></tr>` : ""}
+  ${steps.map(e => { const x = e.data, c = ref && ref.tps && x.tps != null ? 100 * (x.tps - ref.tps) / ref.tps : null;
+    return `<tr><td>${esc(x.label || "")}</td><td class="mono" style="word-break:break-all">${esc((x.changes || []).join(", "))}</td><td class="num">${rate(x.hll_per_min)}</td><td class="num">${num(x.tps)}${c != null ? ` <span class="muted">(${pct(c)})</span>` : ""}</td><td>${res(x.result)}</td></tr>`; }).join("")}
+  </tbody></table></div></div>`;
+}
+
 async function renderEvents(el, _events, _all, scope) {
   // scope: {env} or {session}; shows the latest 10, "Show 20 more" fetches older events on demand
   const q = scope && scope.session ? `session=${scope.session}` : `env=${scope && scope.env}`;
@@ -1065,6 +1093,7 @@ async function sessionPage(id) {
   ${bestSafe || bestTrade ? `<details class="card" id="bestcfg" style="margin-top:10px"><summary style="margin:0;cursor:pointer"><b>Best known configuration</b> <span class="muted">· what differs from the defaults (MySQL and OS)</span></summary><div id="bestcfgBody" class="muted" style="margin-top:8px">Loading…</div></details>` : ""}
   ${empty ? "" : `<div class="card" style="margin-top:14px"><div class="row" id="barScopeRow" hidden><span class="spacer"></span><div class="seg small" role="group" aria-label="Runs in the chart" id="barScope"><button data-b="safe">Production-safe runs</button><button data-b="all">All runs</button></div></div><div id="bars"></div></div>`}
   ${benchCard(d.benchmarks || [])}
+  ${triageCard(d.events || [])}
   ${d.runs.length ? `<h2>Runs</h2><div id="runFlags"></div><div class="card tablewrap"><table class="runs" data-opt="TPS|Avg ms|CPU ms/trx|IOs/trx|Time"><thead><tr><th>#</th><th>Run</th><th class="chg">Changes</th><th class="num">${esc(unit)}</th><th class="num">Δ parent${info("Change of the goal vs the mean of the parent configuration (the configuration this run was changed from). Coloured only beyond the noise threshold." + (lower ? " Faster = lower response time." : ""))}</th><th class="num">vs start${info(`Change vs the ${refName === "calibrated start" ? "calibrated starting configuration (calibration mean)" : refName} = ${num(refVal)}. Bold: the best configuration known at that point of the session (it took the lead by beating the previous best beyond the noise threshold). Changes shown struck through were rolled back afterwards; ↩ marks settings undone before the run.`)}</th><th>Verdict</th>
    ${cols.tps ? '<th class="num">TPS</th>' : ""}${cols.avg ? '<th class="num">Avg ms</th>' : ""}${cols.perTrx ? '<th class="num">CPU ms/trx</th><th class="num">IOs/trx</th>' : ""}<th class="num">Time</th></tr></thead><tbody id="runs"></tbody></table></div>` : ""}
   ${empty ? "" : `<h2>Experiments${info("Your own experiments: try a set of settings, or sweep one variable over several values (e.g. buffer pool 1G, 2G, 3G). They run before the tuner's own ideas, each value measured from the same parent configuration with the session's benchmark. The best value is kept only if it beats the parent beyond the noise threshold.")}</h2><div class="card" id="exps"></div>

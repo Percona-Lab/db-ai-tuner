@@ -2358,6 +2358,35 @@ def test_benchmarks_get_a_high_open_files_limit():
     assert got == "unlimited" or int(got) >= min(hard, bench.BENCH_NOFILE), (got, hard)
 
 
+def test_apply_event_says_what_was_set():
+    from tuning_agent import cli
+    res = {"applied": [{"variable": "rg:purge", "old": "off", "new": "prio=-10", "reason": "purge triage: priority"},
+                       {"variable": "innodb_purge_threads", "old": "1", "new": "4", "reason": ""}], "restarted": True}
+    m = cli.apply_summary("autotune", res)
+    assert m == "autotune: rg:purge off -> prio=-10, innodb_purge_threads 1 -> 4 (restart) - purge triage: priority", m
+    assert cli.apply_summary("x", {"applied": [], "errors": []}) == "x: no change (already set)"
+
+
+def test_purge_priority_brings_purge_workers_with_the_restart():
+    """Canary 2026-10-25: MySQL 8.4 runs 1 purge thread on up to 16 CPUs; priority for one thread against 1024 is not
+    enough (user). When CAP_SYS_NICE needs a restart anyway, the step adds purge workers; with priority already set and
+    few purge threads, more purge threads come next."""
+    from tuning_agent import engine
+    s = dict(OLTP[0], history_list_length_max=4000000, cpu_busy=97, threads_running_avg=900,
+             unbounded_growth=[{"metric": "history_list_length", "label": "h", "start": 1000000, "end": 4000000, "per_hour": 1.2e7}])
+    v = dict(VARS, innodb_purge_threads="1", innodb_max_purge_lag="0", innodb_max_purge_lag_delay="0", innodb_purge_batch_size="300",
+             **{"rg:purge": "off", "os:mysqld_cap_sys_nice": "OFF"})
+    ctx = {"goal": "tps", "policy": "benchmark", "os_tuning": True, "os_facts": {}, "hw": dict(HW, cpus=8), "flavor": "percona",
+           "version": (8, 4, 11), "variables": v, "summary": s, "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}}
+    act = [i for i in engine.run_engine(ctx)["items"] if i["kind"] in ("config", "revert") and i["confidence"] > 0]
+    assert act[0]["id"] == "purge-priority", [i["id"] for i in act[:3]]
+    ch = {c["variable"]: c["proposed"] for c in act[0]["changes"]}
+    assert ch.get("innodb_purge_threads") == "4" and ch.get("rg:purge") == "prio=-10", ch
+    v2 = dict(v, **{"rg:purge": "prio=-10", "os:mysqld_cap_sys_nice": "ON"})
+    act2 = [i for i in engine.run_engine(dict(ctx, variables=v2))["items"] if i["kind"] in ("config", "revert") and i["confidence"] > 0]
+    assert act2[0]["id"] == "sweep-purge-threads", [i["id"] for i in act2[:3]]
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

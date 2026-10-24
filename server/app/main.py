@@ -553,7 +553,7 @@ def environment(env_id: int, request: Request):
             if res.get("best") and not res["best"].get("safe"):
                 d["best_tradeoff_value"], d["best_tradeoff_gain_pct"] = res["best"]["mean"], res["best"].get("gain_pct")
         sessions.append(d)
-    events = [store.row(r, ("data",)) for r in store.q("SELECT * FROM events WHERE env_id=? ORDER BY ts DESC LIMIT 50", (env_id,))]
+    events = [event_view(store.row(r, ("data",))) for r in store.q("SELECT * FROM events WHERE env_id=? ORDER BY ts DESC LIMIT 50", (env_id,))]
     hosts = [host_brief(dict(h)) for h in store.q("SELECT * FROM hosts WHERE env_id=? ORDER BY name", (env_id,))]
     act = next((x for x in sessions if x["status"] == "active"), None)
     if act:
@@ -711,7 +711,22 @@ def events_page(request: Request, env: int = None, session: int = None, offset: 
         where, arg = "env_id=?", env
     total = store.q1(f"SELECT COUNT(*) n FROM events WHERE {where}", (arg,))["n"]
     rows = store.q(f"SELECT * FROM events WHERE {where} ORDER BY ts DESC LIMIT ? OFFSET ?", (arg, min(max(limit, 1), 200), max(offset, 0)))
-    return {"total": total, "events": [store.row(r, ("data",)) for r in rows]}
+    return {"total": total, "events": [event_view(store.row(r, ("data",))) for r in rows]}
+
+
+def event_view(ev):
+    """Events as the UI shows them: an apply event recorded by an older agent ('applied 2 change(s)') names the settings
+    and values from its stored result."""
+    ev = dict(ev)
+    m = re.match(r"^(.*?): applied (\d+) change\(s\)( with restart)?$", ev.get("message") or "")
+    app = ((ev.get("data") or {}).get("result") or {}).get("applied") if m else None
+    if app:
+        parts = [f"{x.get('variable')} {x.get('old') if x.get('old') not in (None, '') else '(default)'} -> {x.get('new') if x.get('new') is not None else '(default)'}"
+                 for x in app[:4]]
+        why = next((x.get("reason") for x in app if x.get("reason")), None)
+        ev["message"] = (f"{m.group(1)}: " + ", ".join(parts) + (f" and {len(app) - 4} more" if len(app) > 4 else "")
+                         + (" (restart)" if m.group(3) else "") + (f" - {why}" if why else ""))[:500]
+    return ev
 
 
 @app.get("/api/sessions/{sid}")
@@ -727,7 +742,7 @@ def session(sid: int, request: Request):
     for r in runs:
         r["starred"] = r["id"] in stars
     recs = [store.row(r, ("items", "diagnosis", "workload", "llm", "decision")) for r in store.q("SELECT * FROM recommendations WHERE session_id=? ORDER BY id DESC", (sid,))]
-    events = [store.row(r, ("data",)) for r in store.q("SELECT * FROM events WHERE session_id=? ORDER BY ts DESC LIMIT 200", (sid,))]
+    events = [event_view(store.row(r, ("data",))) for r in store.q("SELECT * FROM events WHERE session_id=? ORDER BY ts DESC LIMIT 200", (sid,))]
     s["activity"] = session_activity(e, sid) if s.get("status") == "active" else None
     if s["calibration"] and not s["calibration"].get("plan"):
         s["calibration"]["plan"] = noise_breakdown(sid, e["id"], s["calibration"])

@@ -512,9 +512,23 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
         c.hello()
     except Exception as e:  # noqa
         log(f"warning: could not refresh environment facts: {e}")
-    c.event("apply", f"{source}: applied {len(res['applied'])} change(s)" + (" with restart" if res["restarted"] else ""),
-            {"result": res, "requested": changes})
+    c.event("apply", apply_summary(source, res, changes), {"result": res, "requested": changes})
     return res
+
+
+def apply_summary(source, res, requested=None):
+    """'stability-triage: innodb_purge_batch_size 300 -> 1000 (purge triage: purge batch size 1000)' - what was set, not
+    a count (user: 'applied 1 change(s)' said nothing about what was tried)."""
+    app = res.get("applied") or []
+    parts = [f"{x['variable']} {x.get('old') if x.get('old') not in (None, '') else '(default)'} -> "
+             f"{x.get('new') if x.get('new') is not None else '(default)'}" for x in app[:4]]
+    more = f" and {len(app) - 4} more" if len(app) > 4 else ""
+    why = next((x.get("reason") for x in app if x.get("reason")), None) or next((x.get("reason") for x in requested or [] if x.get("reason")), None)
+    if not app:
+        txt = "no change (already set)" if not res.get("errors") else "nothing applied: " + "; ".join(res["errors"])[:200]
+    else:
+        txt = ", ".join(parts) + more
+    return (f"{source}: {txt}" + (" (restart)" if res.get("restarted") else "") + (f" - {why}" if why and app else ""))[:500]
 
 
 def _apply_clients(c, changes, res, timeout=180):
@@ -598,6 +612,26 @@ def _measured_overhead(c):
     return None
 
 
+def _cap_nice_prep(c):
+    """CAP_SYS_NICE for mysqld as host preparation: it only permits thread priorities (no effect on performance by
+    itself), and without it the purge triage cannot try a higher purge priority online - only a restart experiment
+    later (canary 2026-10-25). When OS tuning is allowed, resource groups exist and mysqld lacks it; else None."""
+    from . import resgroups
+    sess = c.session() or {}
+    if not sess.get("os_tuning", c.os_tuning_allowed()) or not engine.STABILITY_FIRST:
+        return None
+    try:
+        if not resgroups.available(c.db) or resgroups.has_cap_sys_nice() is not False:
+            return None
+        if "os:mysqld_cap_sys_nice" not in (c.os_settings() or {}):
+            return None
+    except Exception:
+        return None
+    return {"variable": "os:mysqld_cap_sys_nice", "value": "ON",
+            "reason": "host preparation: lets resource groups raise thread priorities (the purge threads when the undo history "
+                      "grows without bound); no effect until a priority is set"}
+
+
 def _baseline_swap(c, hw):
     """Swap as part of the baseline (best practice): unused swap costs nothing (swap study, 2026-10-21), and without it
     memory pressure is an OOM kill instead of slower pages, so memory settings cannot be explored safely (r2 RO-4.ns, 294,
@@ -651,6 +685,9 @@ def cmd_baseline(a):
     sw = _baseline_swap(c, hw)
     if sw:
         items.append(sw)
+    cn = _cap_nice_prep(c)
+    if cn:
+        items.append(cn)
     osv = None
     for it in items:
         if it["variable"].startswith("os:"):
@@ -2131,6 +2168,7 @@ def _purge_triage(c, running, deadline):
             time.sleep(15)
         seg = _segment(c, t0 + TRIAGE_SETTLE_S, time.time())
         seg["label"] = label
+        seg["changes"] = [f"{k}={x}" for k, x in changes]
         steps.append(seg)
         return seg
 
@@ -2142,6 +2180,9 @@ def _purge_triage(c, running, deadline):
         return {"stable": True, "kept": [], "steps": steps}
     base, cur = ref, ref
     log(f"   reference: history +{ref['hll_per_min']:,}/min at {ref['tps']} tps")
+    c.event("purge_triage", f"purge triage: history +{ref['hll_per_min']:,}/min at {ref['tps']} tps on the current configuration; "
+            f"trying {', '.join(l for l, _ in cands) or 'nothing (no online remedy here)'}, {TRIAGE_SEG_S // 60} min each",
+            dict(ref, steps_planned=[l for l, _ in cands] + [l for l, _ in last]))
 
     def judge(label, changes, stopgap=False):
         nonlocal cur
@@ -2154,6 +2195,10 @@ def _purge_triage(c, running, deadline):
         log(f"   {label:40} history {seg['hll_per_min']:+,}/min, {seg['tps']} tps ({-cost:+.1f}% vs reference): "
             + ("kept: stable" if fixes else "kept" if ok else "reverted (not a substantial cut)" if cost <= evaluate.STABILITY_MAX_COST_PCT
                else "reverted (partial cut, too costly)"))
+        seg["result"] = "kept: stable" if fixes else "kept" if ok else "reverted"
+        c.event("purge_triage", f"purge triage step: {label} ({', '.join(f'{k}={x}' for k, x in changes)}): history "
+                f"{seg['hll_per_min']:+,}/min vs {base['hll_per_min']:+,}/min at the start, {seg['tps']} tps ({-cost:+.1f}%) - {seg['result']}",
+                dict(seg, reference=base))
         if ok:
             kept.extend(changes)
             cur = seg
@@ -2281,7 +2326,9 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
     rec = max(60, int(-(-longest * 1.2 // 60)) * 60)
     ml = collector.measure_length(smp, t0 + longest, "tps", target_pct, evaluate.NOISE_K)
     unsettled = [x["label"] for x in m.values() if x["settled_after_s"] is None and not x["unbounded"]]
-    log("== run-length probe " + ("finished: every metric settled" if done else "stopped at the time limit") + f" after {res['elapsed_s'] // 60} min")
+    log("== run-length probe " + ("finished: every metric settled" if done else "stopped: no stable configuration (purge triage)"
+                                  if triage and not triage.get("stable") else "stopped at the time limit")
+        + f" after {(time.time() - start) // 60:.0f} min")
     for k, x in sorted(m.items(), key=lambda kv: -(kv[1]["settled_after_s"] or 10 ** 9)):
         log(f"   {x['label']:28} " + ("grows without bound - no warm-up settles it (unsustainable configuration)" if x["unbounded"]
             else f"settled after {x['settled_after_s'] // 60} min {x['settled_after_s'] % 60:02d} s at {x['level']:,} (held {x['plateau_s'] // 60} min)"
@@ -3319,6 +3366,10 @@ def _autotune(a):
             probes.ensure_debug_symbols(log)
         except Exception as e:  # profiles still work with exported symbols
             log(f"debug symbols: {e}")
+    cn = _cap_nice_prep(c)
+    if cn and not sess.get("runs"):
+        log("== host preparation: CAP_SYS_NICE for mysqld (thread priorities for the purge triage; a restart, no effect by itself)")
+        _apply_and_record(c, [dict(cn, source="host-prep")], "autotune")
     if "filesystem" in (sess.get("scope") or []) and c.all_settings().get("os:datadir_fs") == "rootfs":
         log("== scope includes filesystem: moving the data directory to ext4 on the experiment device first (fair baseline)")
         _apply_and_record(c, [{"variable": "os:datadir_fs", "value": "ext4", "reason": "filesystem scope: common baseline device",

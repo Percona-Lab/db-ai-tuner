@@ -736,8 +736,15 @@ def recommend(ctx):
                "running ahead of them. Applied after mysqld starts and re-applied after every restart (no option file carries it).")
         if "rg:purge" in v and (nice_cap == "ON" or (ctx.get("os_tuning") and "os:mysqld_cap_sys_nice" in v)):
             ch = [("rg:purge", "prio=-10")] + ([("os:mysqld_cap_sys_nice", "ON")] if nice_cap != "ON" else [])
+            pt_now = _int(v, "innodb_purge_threads", 4)
+            if nice_cap != "ON" and pt_now < 4:
+                # a restart anyway: one purge thread at a higher priority is still one thread against hundreds (MySQL 8.4
+                # defaults to 1 on up to 16 logical CPUs) - give it workers in the same step (user, 2026-10-25)
+                ch.append(("innodb_purge_threads", str(min(4, max(2, cpus // 2)))))
             b.add("purge-priority", "Higher priority for the purge threads", ch,
-                  why + (" mysqld needs CAP_SYS_NICE for thread priorities: added to its service (a restart)." if nice_cap != "ON" else ""),
+                  why + (" mysqld needs CAP_SYS_NICE for thread priorities: added to its service (a restart)." if nice_cap != "ON" else "")
+                  + (f" With the restart, {min(4, max(2, cpus // 2))} purge threads instead of {pt_now}: priority for one thread alone "
+                     "is rarely enough." if nice_cap != "ON" and pt_now < 4 else ""),
                   {"cpu_busy": busy, "cpus": cpus, "threads_running_avg": tr_, "unbounded_growth": unb_hll}, impact=3, confidence=2)
         else:
             b.add("purge-priority", "Higher priority for the purge threads", [],
@@ -2667,6 +2674,9 @@ def run_engine(ctx):
             order = (("purge-priority", "purge-threadpool", "purge-concurrency", "sweep-purge-threads", "purge-batch", "purge-lag")
                      if busy_now >= 85 else
                      ("sweep-purge-threads", "purge-threadpool", "purge-priority", "purge-batch", "purge-concurrency", "purge-lag"))
+            if "prio=" in str((ctx.get("variables") or {}).get("rg:purge") or "") and _int(ctx.get("variables") or {}, "innodb_purge_threads", 4) < 4:
+                # purge already runs at a higher priority but with few threads: more of them next, then the pool
+                order = ("sweep-purge-threads",) + tuple(x for x in order if x != "sweep-purge-threads")
             it["score"] = 100 + (len(order) - order.index(it["id"]))
             it["stability"] = True
             it["score_note"] = "stability first: the undo history grows without bound in the current configuration"
