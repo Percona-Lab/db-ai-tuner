@@ -36,6 +36,17 @@ class ServerDown(Fail):
 
 
 CONFIRM_MARGIN = 3.0  # an improvement this many times the noise threshold is kept without a confirmation run
+FRUITLESS_STOP = 8  # experiments in a row without a gain: hand over to trade-offs, then stop
+
+
+def _fruitless_since_gain(sess):
+    """Experiment runs after the session's last gain (repeats, confirmations, re-checks and the calibration excluded)."""
+    runs = sess.get("runs") or []
+    last = max((i for i, r in enumerate(runs) if r.get("verdict") in ("improved", "efficiency-gain", "reference")), default=-1)
+    skip = ("baseline", "calibration", "re-check", "best safe", "best with")
+    return [r for r in runs[last + 1:] if r.get("verdict") not in ("repeat", "superseded")
+            and not str(r.get("label") or "").startswith(skip) and "(confirm" not in str(r.get("label") or "")
+            and "(repeat" not in str(r.get("label") or "")]
 
 
 class TooSlow(Fail):
@@ -3084,6 +3095,24 @@ def _autotune(a):
             if trade:
                 log(f"== trade-off budget: {measured} of {a.max_runs} runs used, switching to trade-off experiments")
                 item, nxt = trade, trade["id"]
+        fruitless = _fruitless_since_gain(sess)
+        if item and item["kind"] != "revert" and len(fruitless) >= FRUITLESS_STOP:
+            # diminishing returns: 26% of recent runs came after a session's last gain (tails of 18-21 runs) and the ceiling
+            # check rarely trips. Safe ideas that long without a gain hand over to the trade-offs; after that, stop
+            start_ = start_tradeoffs(sess["runs"])
+            trade_tried = any(added_tradeoffs(r, start_) for r in fruitless)
+            tried = {r["label"].split(" ")[0] for r in sess["runs"]}
+            trade = next((i for i in res["items"] if i.get("safety") == "trade-off" and i["kind"] == "config" and i.get("confidence", 0) > 0
+                          and i["id"] not in tried and i["id"] not in blocked), None) if a.tradeoffs and not trade_tried else None
+            if trade and item.get("safety") == "safe":
+                log(f"== {len(fruitless)} experiments since the last gain: switching to trade-off experiments ({trade['id']})")
+                item, nxt = trade, trade["id"]
+            else:
+                why = (f"Diminishing returns: {len(fruitless)} experiments since the last gain (runs "
+                       f"{fruitless[0]['seq']}-{fruitless[-1]['seq']}) without one.")
+                log("== " + why)
+                c.event("stop", why, {"runs": measured})
+                break
         if not item and res.get("stop_reason"):
             log("== " + res["stop_reason"])
             c.event("stop", res["stop_reason"], {"runs": measured})
