@@ -165,8 +165,9 @@ def digest(sid):
     cal = _uj(s["calibration"], {}) if "calibration" in s.keys() else {}
     # free text written by an account (session name, workload description) reaches the model and, through insights, every
     # other account's agents: only the operator's own sessions contribute it
-    own = bool(store.q1("SELECT u.is_admin FROM environments e JOIN users u ON u.id=e.user_id WHERE e.id=?", (s["env_id"],)) or {}).get("is_admin") \
-        if "env_id" in s.keys() else False
+    # (a sqlite Row has no .get: `bool(row or {}).get(...)` failed every digest since 2026-10-20 - 149 sessions never learned)
+    adm = store.q1("SELECT u.is_admin FROM environments e JOIN users u ON u.id=e.user_id WHERE e.id=?", (s["env_id"],)) if "env_id" in s.keys() else None
+    own = bool(adm and adm["is_admin"])
     return {"session": sid, "name": s["name"] if own else None, "workload_text": s["workload"] if own else None, "goal": s["goal"],
             "policy": s["policy"],
             "agent_version": s["agent_version"] if "agent_version" in s.keys() else None,
@@ -273,9 +274,17 @@ def validate(settings, direction, cond):
                    "FROM runs r JOIN tsessions s ON s.id=r.session_id JOIN environments e ON e.id=s.env_id "
                    "WHERE r.status='done' AND r.verdict IN ('improved','efficiency-gain','neutral','regressed','efficiency-loss')")
     per = {}
+    comp = {_norm(k) for k in COMPANIONS}
     for r in rows:
-        ch = {_norm(c.get("variable")): _norm(c.get("new")) for c in _uj(r["changes"], []) or []}
+        chl = _uj(r["changes"], []) or []
+        if any(str(c.get("source") or "").startswith(("rollback", "rec:revert", "rec:drop-")) for c in chl):
+            continue  # a revert measures the way back, not the setting's effect
+        ch = {_norm(c.get("variable")): _norm(c.get("new")) for c in chl}
         if not names or any(k not in ch for k in names):
+            continue
+        # the experiment's own change only (companions allowed): a bundle of eight settings is not evidence for each of
+        # them (same rule as collect_param_evidence)
+        if set(ch) - set(names) - comp:
             continue
         if any(v and ch.get(k) != v for k, v in names.items()):
             continue
@@ -371,8 +380,11 @@ def run_pass(trigger="timer", max_sessions=None):
             admin = store.q1("SELECT id FROM users WHERE is_admin=1 ORDER BY id LIMIT 1")
             day = c.execute("SELECT COALESCE(SUM(calls),0) n FROM learner_runs WHERE started > ?", (time.time() - 86400,)).fetchone()["n"]
             done = {r["session_id"] for r in c.execute("SELECT session_id FROM processed")}
-            todo = [r["id"] for r in store.q("SELECT id, name FROM tsessions WHERE status='closed' ORDER BY id")
-                    if r["id"] not in done and not str(r["name"] or "").lower().startswith("canary")]
+            # canaries (short windows, deliberate test configurations) are not evidence: their study, or "canary" anywhere in
+            # the name ("deploy canary ...", "noise canary ...")
+            todo = [r["id"] for r in store.q("SELECT s.id, s.name, st.name study FROM tsessions s LEFT JOIN studies st ON st.id=s.study_id "
+                                            "WHERE s.status='closed' ORDER BY s.id")
+                    if r["id"] not in done and "canary" not in str(r["name"] or "").lower() and str(r["study"] or "").lower() != "canary"]
             limit = min(MAX_CALLS_PER_PASS if max_sessions is None else max_sessions, MAX_CALLS_PER_PASS, max(0, MAX_CALLS_PER_DAY - day))
             for sid in todo[:limit]:
                 try:
@@ -388,6 +400,8 @@ def run_pass(trigger="timer", max_sessions=None):
                     if n >= MAX_ATTEMPTS:  # given up: recorded as processed, the error stays in `failures` for the admin
                         c.execute("INSERT OR REPLACE INTO processed VALUES (?,?,?)", (sid, time.time(), rid))
                     stats["errors"] = stats.get("errors", 0) + 1
+                    # in the pass record too: passes #6-#19 showed "0 sessions, done" while every digest failed
+                    err = ((err + " | ") if err else "") + f"session {sid}: {str(e)[:160]}"
                     continue
                 stats["calls"] += 1
                 stats["cost"] += cost
@@ -403,7 +417,7 @@ def run_pass(trigger="timer", max_sessions=None):
                     stats["proposals_new"] += 1
                 c.execute("INSERT OR REPLACE INTO processed VALUES (?,?,?)", (sid, time.time(), rid))
         except Exception as e:  # noqa - logged in the pass record
-            err = str(e)[:500]
+            err = ((err + " | ") if err else "") + str(e)[:500]
         try:  # always: expiry and re-counting must not depend on the AI calls succeeding
             revalidate(c)
             stats["archived"] = prune(c)
@@ -412,14 +426,20 @@ def run_pass(trigger="timer", max_sessions=None):
             err = ((err + " | ") if err else "") + str(e)[:300]
         c.execute("UPDATE learner_runs SET ended=?, sessions=?, calls=?, cost=?, insights_new=?, insights_updated=?, proposals_new=?, error=? "
                   "WHERE id=?", (time.time(), stats["sessions"], stats["calls"], round(stats["cost"], 4), stats["insights_new"],
-                                 stats["insights_updated"], stats["proposals_new"], err, rid))
+                                 stats["insights_updated"], stats["proposals_new"], err[:2000] if err else None, rid))
         return dict(c.execute("SELECT * FROM learner_runs WHERE id=?", (rid,)).fetchone())
 
 
 def _store_insight(ins, dg, c):
-    cond = dict(ins.get("conditions") or {})
-    for k in ("workload", "cpu_class", "concurrency_class"):
-        cond[k] = cond.get(k) or dg["conditions"].get(k)
+    # the measured conditions come from the session, not from the model's words: it wrote "sysbench oltp_read_write" where
+    # counting (validate) and serving (matching) compare the engine's classes ("oltp-write"), so no insight ever collected
+    # support or reached an agent. Its own words stay as a note.
+    llm_cond = dict(ins.get("conditions") or {})
+    cond = {k: v for k, v in llm_cond.items() if k not in dg["conditions"] and v not in (None, "")}
+    cond.update({k: v for k, v in dg["conditions"].items() if v not in (None, "")})
+    note = {k: v for k, v in llm_cond.items() if k in dg["conditions"] and v not in (None, "") and v != dg["conditions"].get(k)}
+    if note:
+        cond["model_said"] = note
     settings = [s for s in ins.get("settings") or [] if s.get("variable")]
     if not settings:
         return False

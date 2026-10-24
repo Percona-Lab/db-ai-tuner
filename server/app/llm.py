@@ -75,7 +75,7 @@ def settings(user_id=None):
     r = _service_row()
     if not r:
         return {"configured": False, "model": DEFAULT_MODEL, "mode": "off", "planner_model": PLAN_MODEL, "critic_model": None}
-    return {"configured": bool(r["llm_key_enc"]), "model": r["llm_model"] or DEFAULT_MODEL, "mode": r["llm_mode"] or "when-needed",
+    return {"configured": bool(r["llm_key_enc"]), "model": r["llm_model"] or DEFAULT_MODEL, "mode": r["llm_mode"] or "planner",  # default: rules + learnings + the AI planner
             "planner_model": r["llm_planner_model"] or PLAN_MODEL, "critic_model": r["llm_critic_model"] or None}
 
 

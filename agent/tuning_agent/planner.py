@@ -34,6 +34,11 @@ def _cand(i):
         c["memory_budget_after"] = mb
     if i.get("insights"):
         c["learned"] = [x.get("statement") for x in i["insights"]][:3]
+    b = i.get("basis") or {}
+    if b.get("learned"):  # what earlier sessions (all accounts) say about this idea, with the score each part added
+        c["learned_basis"] = [f"{x['what']} ({x.get('score', 0):+})" for x in b["learned"]][:4]
+    if i.get("known_neutral"):
+        c["known_neutral"] = i["known_neutral"]
     return c
 
 

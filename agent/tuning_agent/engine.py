@@ -2069,6 +2069,37 @@ def _swapfile_bytes(val):
         return 0
 
 
+def basis(it, exp_delta=0):
+    """What this recommendation rests on, for the person auditing it: where the idea came from (a built-in rule, the AI, the
+    user) and each part of its ranking by kind - built-in (the shipped rules and catalog: mechanism vs measured bottleneck,
+    shipped impact), learned (from earlier sessions of every account: experience, hypothesis track record, learned impact,
+    insights from learning.db) - with the score each part added."""
+    src = it.get("source")
+    origin = ("llm" if src in ("llm", "planner") else "user" if src == "requested" else "rule")
+    out = {"origin": origin, "rule": it["id"] if origin == "rule" else None, "built_in": [], "learned": []}
+    if it.get("relevance") is not None:
+        out["built_in"].append({"what": "mechanism vs measured bottleneck" + (f" ({', '.join(it.get('addresses') or [])})" if it.get("addresses") else ""),
+                                "score": 2 * it["relevance"]})
+    pi = it.get("param_impact") or {}
+    if pi:
+        part = {"what": f"parameter impact {pi.get('impact')}", "score": knowledge.IMPACT_SCORE.get(pi.get("impact"), 0)}
+        (out["learned"] if pi.get("source") == "learned" else out["built_in"]).append(part)
+    e = it.get("experience") or {}
+    if e.get("n"):
+        out["learned"].append({"what": f"earlier sessions: {e.get('wins', 0)} wins, {e.get('losses', 0)} losses in {e['n']} runs"
+                                       + (f" ({e['scope']})" if e.get("scope") else "") + (" - known neutral here" if it.get("known_neutral") else ""),
+                               "score": exp_delta})
+    rs = it.get("rescore") or {}
+    if rs.get("delta"):
+        out["learned"].append({"what": "hypothesis track record: " + "; ".join(rs.get("why") or [])[:200], "score": rs["delta"]})
+    for x in it.get("insights") or []:
+        out["learned"].append({"what": f"insight #{x.get('id')} ({x.get('status')}): {str(x.get('statement'))[:160]}",
+                               "insight": x.get("id"),
+                               "score": round(float(x.get("weight") or 1.0) * (1 if x["direction"] == "helps" else -2 if x["direction"] == "hurts" else -1), 2)
+                               if x.get("status") == "repeated" else 0})
+    return out
+
+
 def matching_insights(it, insights):
     """Learned insights about the settings this change sets (the same variable and value, or the same variable)."""
     ch = {str(c["variable"]).lower(): str(c.get("proposed")).lower() for c in it.get("changes") or []}
@@ -2077,7 +2108,7 @@ def matching_insights(it, insights):
         vs = {str(s.get("variable")).lower(): str(s.get("value")).lower() for s in x.get("settings") or []}
         if vs and all(k in ch for k in vs) and all(not v or ch[k] == v for k, v in vs.items()):
             out.append({k: x.get(k) for k in ("id", "statement", "direction", "status", "confidence", "support", "contradict",
-                                               "sessions", "hosts", "caveats")})
+                                               "sessions", "hosts", "caveats", "weight", "scope")})  # weight: same server series counts fully
     return out[:3]
 
 
@@ -2370,6 +2401,7 @@ def run_engine(ctx):
             - (10 if it.get("no_mechanism") else 0) + (it.get("rescore") or {}).get("delta", 0)
         if it.get("relevance") is not None:
             sc += 2 * it["relevance"] if it["relevance"] else (-3 if has_major else 0)
+        sc_before_exp = sc
         if it.get("experience"):
             e = it["experience"]
             w = e.get("weight", 0.5 if e.get("scope") else 1.0)  # less comparable evidence counts less (version, variant, conditions)
@@ -2387,10 +2419,16 @@ def run_engine(ctx):
                 it["confidence"] = min(it["confidence"], 1)
             if e.get("n", 0) >= 5 and e.get("losses", 0) >= 0.7 * e["n"] and not e.get("wins") and not e.get("scope"):
                 sc -= 4  # consistently harmful in comparable sessions (e.g. the thread pool at low concurrency): try it last
+            elif e.get("n", 0) >= 3 and not e.get("wins") and not e.get("scope") and not it.get("retest"):
+                # known neutral here: 3+ comparable runs (any account), none a win - 34 of 39 such repeats were neutral or
+                # worse again. Ranked behind untried ideas; a shifted bottleneck (retest) measures it again
+                sc -= 3
+                it["known_neutral"] = {"n": e["n"], "losses": e.get("losses", 0)}
         # priority (best-practice bundle, reverts) only with evidence: a bundle nothing measured points at goes last
         # priority only for returning to measured configurations; everything else - the best-practice bundle included -
         # ranks by the evidence for what it acts on
         it["score"] = 100 if it.get("priority") and not it.get("no_mechanism") and not it.get("practice") else sc
+        it["basis"] = basis(it, round(sc - sc_before_exp, 2))
     # durability trade-offs in a synchronous cluster: a committed transaction is on other nodes too, so one node crashing
     # loses nothing - only all of them crashing together does. Still a trade-off (the policy decides), but the meaning differs
     cl_ = ctx.get("cluster") or {}
@@ -2491,4 +2529,16 @@ def run_engine(ctx):
         nxt = None
     return {"stop_reason": stop,"workload": ctx["workload"], "diagnosis": ctx["diagnosis"], "breakdown": ctx["breakdown"], "items": items, "next": nxt["id"] if nxt else None,
             "blocked_by_policy": ctx.get("_blocked_items") or [],
-            "phase": "safe" if safe_next else ("trade-offs" if nxt else "done")}
+            "phase": "safe" if safe_next else ("trade-offs" if nxt else "done"),
+            # who chose the next step and which learned data was loaded when it was chosen (the planner overwrites "by")
+            "decision": {"by": "rules", "learning": learning_state(ctx)}}
+
+
+def learning_state(ctx):
+    """What learned data this decision had: comparable earlier runs (all accounts), hypothesis outcomes, learned parameter
+    impacts and insights from learning.db. Zero everywhere means built-in rules only."""
+    exp = ctx.get("experience") or {}
+    return {"experience_ideas": len(exp), "experience_runs": int(sum((e or {}).get("n") or 0 for e in exp.values())),
+            "hypothesis_outcomes": len(ctx.get("hypothesis_experience") or []),
+            "learned_parameters": sum(1 for v in (ctx.get("param_impact") or {}).values() if (v or {}).get("impact")),
+            "insights": len(ctx.get("insights") or [])}

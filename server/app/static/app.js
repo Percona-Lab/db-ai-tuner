@@ -487,7 +487,7 @@ async function accountPage() {
    <form id="lf"><label>OpenRouter API key ${L.configured ? '<span class="badge good">configured</span>' : '<span class="badge plain">not set</span>'}</label>
    <input name="key" type="password" placeholder="${L.configured ? "•••••••• (leave empty to keep)" : "sk-or-…"}" autocomplete="off">
    <div class="grid g2"><div><label>Model</label><select name="model" id="lmodel"><option>${esc(L.model)}</option></select></div>
-   <div><label>Use the model</label><select name="mode">${L.modes.map(m => `<option value="${m}" ${m === L.mode ? "selected" : ""}>${{ off: "never", "when-needed": "only when it adds value", always: "for every recommendation" }[m]}</option>`).join("")}</select></div></div>
+   <div><label>Use the model</label><select name="mode">${L.modes.map(m => `<option value="${m}" ${m === L.mode ? "selected" : ""}>${{ off: "never (built-in rules + learnings)", "when-needed": "for new ideas when the rules run out", always: "for new ideas at every step", planner: "to plan every step (rules + learnings + AI) - default" }[m] || m}</option>`).join("")}</select></div></div>
    <div class="err" id="lerr"></div><div class="row"><button class="primary">Save</button>${L.configured ? '<button type="button" class="ghost danger" id="lrm">Remove key</button>' : ""}
    <span class="spacer"></span><span class="muted" style="font-size:12.5px">your sessions: ${L.usage.calls} calls (${L.usage.cached} cached) · $${L.usage.cost_usd}</span></div></form></div>`
   : `<div class="card" style="max-width:640px;margin-bottom:14px"><h3 style="margin-top:0">AI assistance</h3><p style="margin:0">${L.configured && L.mode !== "off" ? 'Provided by the service <span class="badge good">on</span>' : 'Not enabled on this service <span class="badge plain">off</span>'}${info("The service supplies the AI model; you do not need a key. It is used only where it adds value, and every suggestion is validated and measured like any experiment.")}</p>
@@ -1123,10 +1123,31 @@ async function renderExperiments(el, sess) {
   el.querySelectorAll("[data-cancel]").forEach(b => b.onclick = async () => { await api(`/api/experiments/${b.dataset.cancel}`, { method: "DELETE" }); renderExperiments(el, sess); });
 }
 
+// provenance: who chose the next step, and what each recommendation rests on (built-in rules, learnings, AI)
+function decisionLine(d) {
+  if (!d) return "";
+  const L = d.learning || {};
+  const learned = (L.experience_runs || 0) + (L.hypothesis_outcomes || 0) + (L.learned_parameters || 0) + (L.insights || 0);
+  const tip = `Learned data loaded for this decision: ${L.experience_runs || 0} comparable earlier runs of ${L.experience_ideas || 0} ideas (all accounts), ${L.hypothesis_outcomes || 0} hypothesis outcomes, ${L.learned_parameters || 0} learned parameter impacts, ${L.insights || 0} insights.`
+    + (d.engine_choice ? ` The rules would have chosen ${d.engine_choice}.` : "") + (d.planner_rejected ? ` The planner's choice was not used: ${d.planner_rejected}.` : "");
+  const by = String(d.by || "rules");
+  return ` · decided by <b>${by.startsWith("planner:") ? "AI planner (" + esc(by.slice(8).replace("+reviewer:", ", reviewer ")) + ")" : "rules"}</b>${learned ? " + learnings" : ""}${info(tip)}`;
+}
+function basisLine(it) {
+  const b = it.basis;
+  if (!b) return "";
+  const part = p => `${p.what}${p.score ? ` (${p.score > 0 ? "+" : ""}${p.score})` : ""}`;
+  const origin = b.origin === "llm" ? '<span class="badge info">idea: AI</span>' : b.origin === "user" ? '<span class="badge info">idea: user</span>' : `<span class="badge plain">idea: rule ${esc(b.rule || "")}</span>`;
+  const bi = (b.built_in || []).length ? ` <span class="badge plain" data-tip="${esc("Built-in (shipped rules and catalog): " + b.built_in.map(part).join("; "))}" tabindex="0">built-in ${b.built_in.length}</span>` : "";
+  const le = (b.learned || []).length ? ` <span class="badge good" data-tip="${esc("Learned (earlier sessions, learning database): " + b.learned.map(part).join("; "))}" tabindex="0">learned ${b.learned.length}</span>` : "";
+  const pl = it.planner ? ` <span class="badge info" data-tip="${esc("Chosen by the AI planner " + (it.planner.model || "") + (it.planner.prediction ? ". Predicted: " + it.planner.prediction : ""))}" tabindex="0">chosen by AI</span>` : "";
+  return `<div class="reason" style="margin-top:3px">Based on: ${origin}${bi}${le}${pl}${it.known_neutral ? ` <span class="badge plain" data-tip="${esc(`No win in ${it.known_neutral.n} comparable earlier runs: ranked behind untried ideas.`)}" tabindex="0">known neutral here</span>` : ""}</div>`;
+}
+
 function renderRecs(el, rec, runs, feedback) {
   if (!rec) { el.innerHTML = '<span class="muted">No recommendations yet: run <code>tuning-agent recommend</code> after a measured run.</span>'; return; }
   const run = runs && runs.find(r => r.id === rec.run_id);
-  let h = `<div class="muted" style="margin-bottom:6px">Generated ${fmtTime(rec.created)}${run ? ` from run #${run.seq} <a href="#/run/${run.id}">${esc(run.label)}</a>` : " without a measured run"} · goal ${esc(rec.goal)} · policy ${esc(rec.policy)}${rec.next ? ` · suggested next: <code>${esc(rec.next)}</code>` : ""}</div>`;
+  let h = `<div class="muted" style="margin-bottom:6px">Generated ${fmtTime(rec.created)}${run ? ` from run #${run.seq} <a href="#/run/${run.id}">${esc(run.label)}</a>` : " without a measured run"} · goal ${esc(rec.goal)} · policy ${esc(rec.policy)}${rec.next ? ` · suggested next: <code>${esc(rec.next)}</code>` : ""}${decisionLine(rec.decision)}</div>`;
   (rec.diagnosis || []).forEach(dg => { h += `<div class="diag">${sevBadge(dg.severity)} <b>${esc(dg.type)}</b> — ${esc(dg.text)}</div>`; });
   if (rec.workload && rec.workload.type) h += `<p style="margin:4px 0 8px">Workload: <b>${esc(WORKLOAD[rec.workload.type] || rec.workload.type)}</b>${info(kvText(rec.workload.evidence))}${rec.phase ? ` · Phase: <b>${esc(PHASE[rec.phase] || rec.phase)}</b>` : ""}</p>`;
   if (rec.llm && (rec.llm.analyses || []).length) h += rec.llm.analyses.map(a => a.hypothesis
@@ -1148,6 +1169,7 @@ function renderRecs(el, rec, runs, feedback) {
      ${it.changes.length ? `<div class="mono" style="margin:4px 0">${it.changes.map(c => `${esc(c.variable)}: <span class="diff-old">${esc(val(c.variable, c.current))}</span> → <span class="diff-new">${c.unset ? "(server default)" : esc(val(c.variable, c.proposed))}</span>`).join("<br>")}</div>` : ""}
      ${it.hypothesis ? `<div class="reason"><b>Why:</b> ${esc(it.hypothesis.text)}${it.hypothesis.lead ? ` <span class="muted">Leads (outside reports and learned insights - they motivate the test, the measurements decide): ${esc(it.hypothesis.lead)}</span>` : ""}${(it.rescore || {}).why ? ` <span class="badge ${it.rescore.delta > 0 ? "good" : "warn"}" data-tip="${esc(it.rescore.why.join("; "))}">${it.rescore.delta > 0 ? "+" : ""}${it.rescore.delta} from earlier results</span>` : ""}</div>` : ""}
      <div class="reason">${esc(it.rationale)}${it.note ? " <b>" + esc(it.note) + "</b>" : ""}</div>
+     ${basisLine(it)}
      ${it.relevance != null || it.experience ? `<div class="reason" style="margin-top:3px">${it.relevance != null ? (it.no_mechanism ? `<span class="badge plain">validation only</span>` : it.relevance ? ((a) => `<span class="badge good wrap"${a.length > 3 ? ` data-tip="${esc("Acts on: " + a.join(", "))}" tabindex="0"` : ""}>acts on ${esc(a.slice(0, 3).join(", "))}${a.length > 3 ? ` +${a.length - 3} more` : ""}</span>`)(it.addresses || []) : `<span class="badge plain">not aimed at the current bottleneck</span>`) + info("Mechanism: " + (it.mechanism || "") + (it.no_mechanism ? " Nothing to act on in this workload: " + it.no_mechanism + "." : " Ranked by how much of the database's time (see Where the time went) this change can act on.")) : ""}
        ${it.experience ? ` <span class="badge ${it.experience.wins > it.experience.losses ? "good" : it.experience.losses > it.experience.wins ? "bad" : "plain"}">earlier sessions: ${it.experience.wins} better · ${it.experience.losses} worse · ${it.experience.neutral} no change</span>` + info(`Outcomes of this recommendation in ${it.experience.n} earlier run(s) with a similar workload and CPU count${it.experience.mean_delta_pct != null ? `; average change ${pct(it.experience.mean_delta_pct)}` : ""}. Used to rank experiments.`) : ""}</div>` : ""}
      ${(it.tradeoffs || []).map(t => `<div class="reason"><span class="badge bad">${esc(t.category)}</span> ${esc(t.lost)}</div>`).join("")}

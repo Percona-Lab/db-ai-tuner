@@ -695,7 +695,7 @@ def session(sid: int, request: Request):
     stars = set() if u.get("share") else {x["run_id"] for x in store.q("SELECT run_id FROM stars WHERE user_id=? AND run_id IN (SELECT id FROM runs WHERE session_id=?)", (u["id"], sid))}
     for r in runs:
         r["starred"] = r["id"] in stars
-    recs = [store.row(r, ("items", "diagnosis", "workload", "llm")) for r in store.q("SELECT * FROM recommendations WHERE session_id=? ORDER BY id DESC", (sid,))]
+    recs = [store.row(r, ("items", "diagnosis", "workload", "llm", "decision")) for r in store.q("SELECT * FROM recommendations WHERE session_id=? ORDER BY id DESC", (sid,))]
     events = [store.row(r, ("data",)) for r in store.q("SELECT * FROM events WHERE session_id=? ORDER BY ts DESC LIMIT 200", (sid,))]
     s["activity"] = session_activity(e, sid) if s.get("status") == "active" else None
     if s["calibration"] and not s["calibration"].get("plan"):
@@ -900,7 +900,7 @@ def run_detail(run_id: int, request: Request, vs: int = None):
     cfg = store.uj(r["config"], {})
     changes = store.uj(r["changes"], [])
     diff = config_diff(store.uj(prev["config"], {}) if prev else {}, cfg, changes) if prev else []
-    recs = [store.row(x, ("items", "diagnosis", "workload", "llm")) for x in store.q("SELECT * FROM recommendations WHERE run_id=? ORDER BY id", (run_id,))]
+    recs = [store.row(x, ("items", "diagnosis", "workload", "llm", "decision")) for x in store.q("SELECT * FROM recommendations WHERE run_id=? ORDER BY id", (run_id,))]
     siblings = [{"id": x["id"], "seq": x["seq"], "label": x["label"]} for x in store.q("SELECT id, seq, label FROM runs WHERE session_id=? AND status<>'aborted' ORDER BY seq", (r["session_id"],))]
     out = run_brief(r)
     sib = [run_brief(x) for x in store.q("SELECT * FROM runs WHERE session_id=? AND status='done' ORDER BY seq LIMIT 1", (r["session_id"],))]
@@ -1304,14 +1304,16 @@ def server_series(flavor, version):
 @app.get("/api/v1/agent/experience")
 def agent_experience(workload: str = None, cpus: int = None, conns: int = None, exclude_session: int = None, numa_nodes: int = None,
                      flavor: str = None, version: str = None, cluster: str = None, engine: str = None, key=Depends(auth.agent_key)):
-    """Outcomes of each recommendation in this account's earlier sessions with a similar workload, CPU class and concurrency,
-    in tiers of server closeness: the same variant and release series, the same variant in other series, other variants."""
+    """Outcomes of each recommendation in earlier sessions with a similar workload, CPU class and concurrency, in tiers of
+    server closeness: the same variant and release series, the same variant in other series, other variants. Every
+    account's sessions count (outcome counts per idea, no free text): a user's agent learns from all trial runs, not only
+    its own (user 4's 317 runs and the operator's 2,123 never informed each other)."""
     rows = store.q(
         "SELECT r.changes, r.verdict, r.evaluation, json_extract(r.inputs, '$.workload.type') AS wl, "
         "json_extract(e.facts, '$.hardware.cpus') AS cpus, json_extract(r.summary, '$.threads_connected_avg') AS conns, r.session_id, "
         "json_extract(e.facts, '$.db.flavor') AS fl, json_extract(e.facts, '$.db.version') AS ver FROM runs r JOIN tsessions s ON s.id=r.session_id "
-        "JOIN environments e ON e.id=s.env_id WHERE e.user_id=? AND r.status='done' AND r.verdict IN "
-        "('improved','efficiency-gain','neutral','regressed','efficiency-loss')", (key["user_id"],))
+        "JOIN environments e ON e.id=s.env_id WHERE r.status='done' AND r.verdict IN "
+        "('improved','efficiency-gain','neutral','regressed','efficiency-loss') AND COALESCE(s.name,'') NOT LIKE '%canary%'")
     series = server_series(flavor, version)
     out, wide, hyp, hyp_wide = {}, {}, {}, {}
     family, other = {}, {}  # similar conditions on the same variant in another series / on another variant
@@ -1803,10 +1805,11 @@ def agent_recommendation(body: dict = Body(...), key=Depends(auth.agent_key)):
     s = agent_session(body.get("session_id"), key)
     if body.get("run_id"):
         agent_run(body["run_id"], key)
-    rid = store.ex("INSERT INTO recommendations(session_id, run_id, created, goal, policy, items, diagnosis, next, workload, phase, llm) "
-                   "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    rid = store.ex("INSERT INTO recommendations(session_id, run_id, created, goal, policy, items, diagnosis, next, workload, phase, llm, decision) "
+                   "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                    (s["id"], body.get("run_id"), now(), body.get("goal"), body.get("policy"), store.j(body.get("items")),
-                    store.j(body.get("diagnosis")), body.get("next"), store.j(body.get("workload")), body.get("phase"), store.j(body.get("llm"))))
+                    store.j(body.get("diagnosis")), body.get("next"), store.j(body.get("workload")), body.get("phase"), store.j(body.get("llm")),
+                    store.j(body.get("decision"))))
     store.ex("INSERT INTO events(env_id, session_id, ts, type, message, data) VALUES (?,?,?,?,?,?)",
              (s["env_id"], s["id"], now(), "recommend", f"{len(body.get('items') or [])} recommendation(s); next: {body.get('next') or '-'}",
               store.j({"recommendation_id": rid})))

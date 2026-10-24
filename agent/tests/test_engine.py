@@ -1747,6 +1747,21 @@ def test_benchmark_startup_not_warmup():
 
 
 
+def test_basis_shows_rule_vs_learned():
+    """Every recommendation says what it rests on: the rule that generated it, built-in parts (mechanism, shipped
+    impact) and learned parts (experience across accounts, learned impact, insights) with the score each added."""
+    from tuning_agent import engine
+    it = {"id": "spin-loops", "relevance": 1, "addresses": ["cpu-spin"], "param_impact": {"impact": "high", "source": "learned"},
+          "experience": {"n": 4, "wins": 0, "losses": 1}, "known_neutral": {"n": 4, "losses": 1},
+          "insights": [{"id": 7, "status": "repeated", "direction": "helps", "statement": "x", "weight": 0.6}]}
+    b = engine.basis(it, -3.0)
+    assert b["origin"] == "rule" and b["rule"] == "spin-loops"
+    assert [p["score"] for p in b["built_in"]] == [2]
+    assert {p.get("insight") for p in b["learned"]} >= {7} and any("known neutral" in p["what"] for p in b["learned"])
+    assert engine.basis({"id": "x", "source": "llm"})["origin"] == "llm"
+
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

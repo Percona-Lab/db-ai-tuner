@@ -2352,7 +2352,7 @@ def _recommend(c, sess, llm=False):
     run_id = sess["runs"][-1]["id"] if sess["runs"] else None
     r = c.client.post("/recommendations", {"session_id": sess["id"], "run_id": run_id, "goal": sess["goal"], "policy": sess["policy"],
                                            "items": res["items"], "diagnosis": res["diagnosis"], "next": res["next"],
-                                           "workload": res.get("workload"), "phase": res.get("phase"),
+                                           "workload": res.get("workload"), "phase": res.get("phase"), "decision": res.get("decision"),
                                            "llm": dict(res.get("llm") or {}, **({"analyses": res["analyses"]} if res.get("analyses") else {})) or None})
     sess["last_recommendation"] = {"id": r.get("recommendation_id"), "items": res["items"], "next": res["next"]}
     c.state.set("session", sess)
@@ -2407,11 +2407,15 @@ def _plan(c, sess, ctx, res):
                 it["hypothesis"] = dict(h, kind=h.get("kind") or "planner", text=(h.get("text") or "") + f" Planner: {p.get('rationale', '')[:500]}",
                                         prediction=p.get("prediction"))
         res["planner_decided"] = True
+        res.setdefault("decision", {})["by"] = f"planner:{r.get('model')}" + (f"+reviewer:{r.get('critic_model')}" if r.get("critic") else "")
+        res["decision"]["engine_choice"] = rec["engine_next"]
         log(f"   planner {r.get('model')}: " + ("stop" if p["action"] == "stop" else nxt)
             + (f" (engine: {rec['engine_next']})" if rec["engine_next"] != nxt else "")
             + (f"; reviewer {r.get('critic_model')}: {(r.get('critic') or {}).get('verdict')}" if r.get("critic") else ""))
     else:
         log(f"   planner {r.get('model')} choice not used ({why}); keeping {res.get('next')}")
+        res.setdefault("decision", {})["by"] = "rules"
+        res["decision"]["planner_rejected"] = f"{r.get('model')}: {why}"[:300]
     res.setdefault("llm", {})["planner"] = rec
 
 
