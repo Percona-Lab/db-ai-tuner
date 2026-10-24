@@ -2059,6 +2059,123 @@ def _fmt_cal(cal):
     return "\n".join(lines)
 
 
+TRIAGE_SEG_S = 300     # each online setting runs this long (the first TRIAGE_SETTLE_S not counted): a remedy shows in minutes
+TRIAGE_SETTLE_S = 60
+TRIAGE_HELP = 0.5      # a setting that at least halves the history growth (and costs <= STABILITY_MAX_COST_PCT) is kept
+TRIAGE_FIX = 0.25      # stable with a margin: the growth down to a quarter of where it started, or the history shrinking
+TRIAGE_BUDGET_S = 3600
+PROVISIONAL_WINDOW_S = 600  # measurement length while no stable configuration exists
+
+
+def _segment(c, t0, t1):
+    """History growth per minute and mean throughput of one triage step (samples from t0 to t1)."""
+    smp = SampleStore(c.state.dir).window(t0, t1)
+    pts = [(x.get("ts") or 0, x["db"]["history_list_length"]) for x in smp if (x.get("db") or {}).get("history_list_length") is not None]
+    tps = [x["db"]["tps"] for x in smp if (x.get("db") or {}).get("tps") is not None]
+    sl = collector._slope(pts)
+    return {"hll_per_min": round(sl * 60) if sl is not None else None, "hll_end": int(pts[-1][1]) if pts else None,
+            "tps": round(sum(tps) / len(tps), 1) if tps else None}
+
+
+def _triage_candidates(c):
+    """Purge remedies that apply online, in the order they cost the workload least; the purge lag bound last (a stopgap
+    that throttles every writer). Restart-only remedies (more purge threads in MySQL / Percona, enabling the thread pool)
+    are left to the session's stability experiments."""
+    from .knowledge import dynamic_in, series_of
+    from .mysqldb import flavor_of
+    from . import resgroups
+    v = c.db.variables()
+    fl = flavor_of(v)[0]
+    series = series_of(fl, v.get("version")) if v.get("version") else None
+    cpus = os.cpu_count() or 1
+    out = []
+    if resgroups.available(c.db) and resgroups.has_cap_sys_nice():
+        out.append(("purge threads at a higher priority", [("rg:purge", "prio=-10")]))
+    pt = int(v.get("innodb_purge_threads") or 4)
+    if dynamic_in("innodb_purge_threads", series) and pt < 32:  # MariaDB 10.5+ changes it online
+        out += [(f"purge threads {x}", [("innodb_purge_threads", str(x))]) for x in sorted({min(32, pt * 2), 32}) if x > pt]
+    bs = int(v.get("innodb_purge_batch_size") or 300)
+    out += [(f"purge batch size {x}", [("innodb_purge_batch_size", str(x))]) for x in (1000, 5000) if x > bs]
+    if str(v.get("thread_handling") or "").lower() == "pool-of-threads" and int(v.get("thread_pool_oversubscribe") or 3) > 1:
+        out.append(("thread pool oversubscribe 1", [("thread_pool_oversubscribe", "1")]))
+    elif "innodb_thread_concurrency" in v and int(v.get("innodb_thread_concurrency") or 0) == 0 and fl != "mariadb":
+        out += [(f"innodb_thread_concurrency {x}", [("innodb_thread_concurrency", str(x))]) for x in (4 * cpus, 2 * cpus)]
+    last = []
+    if "innodb_max_purge_lag" in v and int(v.get("innodb_max_purge_lag") or 0) == 0:
+        last.append(("purge lag bound (stopgap)", [("innodb_max_purge_lag", "__HLL__"), ("innodb_max_purge_lag_delay", "300000")]))
+    return out, last
+
+
+def _purge_triage(c, running, deadline):
+    """While the benchmark keeps running: measure how fast the history list grows, then try each online purge remedy for
+    TRIAGE_SEG_S and keep the ones that cut the growth substantially (TRIAGE_HELP) at an acceptable throughput cost, until
+    it is down to TRIAGE_FIX of where it started (stable with a margin). Only then is the purge lag bound tried. Returns
+    {"stable", "kept", "steps"}; kept settings stay applied and are recorded as the session's starting configuration."""
+    cands, last = _triage_candidates(c)
+    steps, kept = [], []
+
+    def step(label, changes):
+        t0 = time.time()
+        if changes:
+            _apply_and_record(c, [{"variable": k, "value": x, "reason": f"purge triage: {label}"} for k, x in changes],
+                              "stability-triage", restart=False)
+        c.activity("purge triage", f"{label} ({TRIAGE_SEG_S // 60} min)")
+        while time.time() - t0 < TRIAGE_SEG_S and running.alive():
+            time.sleep(15)
+        seg = _segment(c, t0 + TRIAGE_SETTLE_S, time.time())
+        seg["label"] = label
+        steps.append(seg)
+        return seg
+
+    log(f"== purge triage: the history list grows past {engine.PURGE_UNBOUNDED_MIN:,} without slowing down; online purge remedies, "
+        f"{TRIAGE_SEG_S // 60} min each, while the benchmark keeps running")
+    ref = step("current configuration", [])
+    if not ref["hll_per_min"] or ref["hll_per_min"] <= 0:
+        log(f"   history not growing now ({ref['hll_per_min']}/min): nothing to fix")
+        return {"stable": True, "kept": [], "steps": steps}
+    base, cur = ref, ref
+    log(f"   reference: history +{ref['hll_per_min']:,}/min at {ref['tps']} tps")
+
+    def judge(label, changes, stopgap=False):
+        nonlocal cur
+        seg = step(label, changes)
+        cost = 100.0 * (base["tps"] - seg["tps"]) / base["tps"] if base.get("tps") and seg.get("tps") is not None else 0.0
+        ok = seg["hll_per_min"] is not None and seg["hll_per_min"] <= TRIAGE_HELP * cur["hll_per_min"] and cost <= evaluate.STABILITY_MAX_COST_PCT
+        log(f"   {label:40} history {seg['hll_per_min']:+,}/min, {seg['tps']} tps ({-cost:+.1f}% vs reference): "
+            + ("kept" if ok else "reverted (not a substantial cut)" if cost <= evaluate.STABILITY_MAX_COST_PCT else "reverted (too costly)"))
+        if ok:
+            kept.extend(changes)
+            cur = seg
+        else:
+            prev = c.state.get("before_triage") or {}  # back to the managed value, or unmanaged (server default / no group)
+            _apply_and_record(c, [{"variable": k, "value": prev.get(k), "reason": f"purge triage: {label} reverted"} for k, _ in changes],
+                              "stability-triage", restart=False)
+        return cur["hll_per_min"] <= max(0, TRIAGE_FIX * base["hll_per_min"])
+
+    c.state.set("before_triage", {k: x.get("value") for k, x in c.state["managed"].items()})
+    stable = False
+    for label, changes in cands:
+        if time.time() + TRIAGE_SEG_S > deadline or not running.alive():
+            break
+        if any(k == kk for k, _ in changes for kk, _ in kept):  # a value of this setting is already kept
+            continue
+        if judge(label, changes):
+            stable = True
+            break
+    if not stable and last and time.time() + TRIAGE_SEG_S <= deadline and running.alive():
+        label, changes = last[0]
+        cap = max(engine.PURGE_UNBOUNDED_MIN, int(cur.get("hll_end") or 0))
+        stable = judge(label, [(k, str(cap) if x == "__HLL__" else x) for k, x in changes])
+    c.state.set("before_triage", None)
+    txt = ("purge triage: stable with " + (", ".join(f"{k}={x}" for k, x in kept) or "the current configuration") if stable else
+           "purge triage: no online remedy bounds the history" + (f" (kept {', '.join(f'{k}={x}' for k, x in kept)})" if kept else "")
+           + "; restart-only remedies (more purge threads, the thread pool) follow as the session's first experiments")
+    log("   " + txt)
+    c.event("purge_triage", txt, {"stable": stable, "kept": kept, "steps": steps, "reference": base})
+    return {"stable": stable, "kept": kept, "steps": steps}
+
+
+
 def _run_length_probe(c, prof, max_s=3600, target_pct=None):
     """One continuous run from the benchmark's clean start until every state metric has settled and held its level
     (warm-up), then the measurement length that keeps the within-run noise inside half the target noise threshold."""
@@ -2091,17 +2208,40 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
     # failed with 'Too many connections' - max_connections was back at its option-file value after the restart)
     _ensure_requirements(c, prof)
     t0 = time.time()
-    r = bench.Running(prof.command(total_s=max_s + 60), logfile)
+    start = t0
+    # room for a purge triage inside the same run: a configuration whose undo history grows without bound never settles,
+    # so its run length is found only after the triage made it stable (user, session 324: 41 + 60 min runs on an unstable one)
+    r = bench.Running(prof.command(total_s=max_s + TRIAGE_BUDGET_S + 60), logfile)
     done = False
+    triage = None
     try:
         while r.alive() and time.time() - t0 < max_s:
             time.sleep(60)
             el = time.time() - t0
             c.activity("run-length probe", f"{el / 60:.0f} of max {max_s // 60} min")
-            if el < 900:
+            if el < 600:
                 continue
-            res = collector.settle_times(SampleStore(c.state.dir).window(t0, time.time()), t0)
+            smp_ = SampleStore(c.state.dir).window(t0, time.time())
+            res = collector.settle_times(smp_, t0)
             m = res["metrics"]
+            if triage is None and engine.STABILITY_FIRST:
+                hmax = max([(x.get("db") or {}).get("history_list_length") or 0 for x in smp_] or [0])
+                omax = max([(x.get("db") or {}).get("oldest_trx_s") or 0 for x in smp_] or [0])
+                unb = engine.unbounded_hll({"unbounded_growth": res["unbounded"], "history_list_length_max": hmax})
+                if unb and engine.purge_blocked({"oldest_trx_s_max": omax}):
+                    triage = {"stable": False, "blocked_by_trx_s": omax, "kept": [], "steps": []}
+                    log(f"   history list unbounded, but a transaction has been open {omax // 60} min: purge is held back, not slow "
+                        "(no purge setting can help); end that transaction")
+                    c.event("purge_triage", f"purge held back by a transaction open {omax // 60} min: no triage", triage)
+                elif unb:
+                    triage = _purge_triage(c, r, start + max_s + TRIAGE_BUDGET_S)
+                    if not triage["stable"]:
+                        log("   no stable configuration: the run length is not measured on an unstable one (it would only measure "
+                            "the drift); a provisional plan follows")
+                        break
+                    log("   stable: the run-length probe starts over on this configuration")
+                    t0 = time.time()
+                    continue
             pending = [k for k, x in m.items() if not x["unbounded"] and (x["settled_after_s"] is None or x["plateau_s"] < hold(el))]
             if int(el) % 300 < 60:
                 log(f"   {el / 60:4.0f} min: " + "; ".join(f"{x['label']} " + (f"settled at {x['settled_after_s'] // 60} min"
@@ -2133,10 +2273,43 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
                 f"of a ±{target_pct:g}% target" + ("" if ml["reaches_target"] else "; the target is not reached within an hour") + ")")
         log("   within-run noise by measurement length: " + ", ".join(f"{w // 60 if w >= 60 else w}{'m' if w >= 60 else 's'} ±{n}%" for w, n in ml["table"][:7]))
     log("   " + txt)
-    out = {"recommended_warmup_s": rec, "recommended_duration_s": (ml or {}).get("recommended_s"), "measure": ml,
-           "complete": done and not unsettled, **res}
+    unstable = bool(triage) and not triage.get("stable")
+    if unstable:
+        # provisional: the settled metrics' warm-up, and a window no longer than PROVISIONAL_WINDOW_S - on a growing history
+        # a longer window measures the drift, not the configuration. Probed again once a stable configuration is found
+        txt += f"; provisional (no stable configuration): measurement {min((ml or {}).get('recommended_s') or 600, PROVISIONAL_WINDOW_S)} s"
+    out = {"recommended_warmup_s": rec,
+           "recommended_duration_s": min((ml or {}).get("recommended_s") or 600, PROVISIONAL_WINDOW_S) if unstable else (ml or {}).get("recommended_s"),
+           "measure": ml, "complete": done and not unsettled and not unstable, "unstable": unstable, "triage": triage, **res}
     c.event("run_length", txt, out)
     return out
+
+
+def cmd_purge_triage(a):
+    """Is the undo history bounded under this benchmark, and which online purge setting makes it so? One benchmark run:
+    a lead-in until the history has grown, then the triage steps."""
+    c = Ctx()
+    prof = bench.Profile(a.bench)
+    if c.state.get("measurement"):
+        raise Fail("a measurement is in progress")
+    if not prof.can_resize():
+        raise Fail("the profile's run command has no {total}/{duration} placeholder: its length cannot be set")
+    logdir = os.path.join(c.state.dir, "bench")
+    os.makedirs(logdir, exist_ok=True)
+    _ensure_requirements(c, prof)
+    r = bench.Running(prof.command(total_s=a.lead + TRIAGE_BUDGET_S + 60), os.path.join(logdir, f"purge-triage-{int(time.time())}.log"))
+    try:
+        t0 = time.time()
+        while r.alive() and time.time() - t0 < a.lead:
+            c.activity("purge triage", f"lead-in {(time.time() - t0) / 60:.0f} of {a.lead // 60} min")
+            time.sleep(30)
+        out = _purge_triage(c, r, time.time() + TRIAGE_BUDGET_S)
+    finally:
+        if r.alive():
+            r.kill()
+        c.activity("idle", "purge triage finished")
+    if getattr(a, "json", False):
+        print(json.dumps(out, default=str))
 
 
 def cmd_run_length(a):
@@ -3141,7 +3314,8 @@ def _autotune(a):
                     "predicted_within_noise_pct": (out.get("measure") or {}).get("predicted_within_noise_pct"),
                     "target_pct": (out.get("measure") or {}).get("target_pct"), "complete": out["complete"],
                     "settling": {k: x["settled_after_s"] for k, x in out["metrics"].items()},
-                    "unbounded": [u["label"] for u in out["unbounded"]]}
+                    "unbounded": [u["label"] for u in out["unbounded"]],
+                    "unstable": bool(out.get("unstable")), "triage_kept": (out.get("triage") or {}).get("kept") or []}
             sess = c.session()
             sess["run_plan"] = plan
             c.state.set("session", sess)
@@ -3852,6 +4026,10 @@ def main(argv=None):
     s.add_argument("--target", type=float, default=None, help="noise threshold to aim for, %% (default: the tuner's target)")
     s.add_argument("--apply", action="store_true", help="write the recommended warm-up into the profile")
     s.set_defaults(fn=cmd_run_length)
+    s = sp.add_parser("purge-triage", help="find an online purge setting that keeps the undo history bounded (one benchmark run)")
+    s.add_argument("--bench", required=True)
+    s.add_argument("--lead", type=int, default=600, help="seconds of benchmark before the first step (the history has to grow)")
+    s.set_defaults(fn=cmd_purge_triage)
     s = sp.add_parser("calibrate", help="measure the current configuration N times to calibrate the noise threshold")
     s.add_argument("--runs", type=int, default=3)
     s.add_argument("--duration", type=int, default=300)

@@ -697,7 +697,17 @@ def recommend(ctx):
     # ---------------- ideas from blogs / benchmarks (docs/research/mysql-tuning-ideas.md) ----------------
     hll = s.get("history_list_length_max") or 0
     unb_hll = unbounded_hll(s)
-    if have_run and (hll > 200000 and wtype in ("oltp-write", "mixed") or unb_hll) and "innodb_max_purge_lag" in v \
+    blocked = purge_blocked(s)
+    if have_run and unb_hll and blocked:
+        # purge is not slow, it is held back: no purge setting helps while a read view this old must stay visible
+        b.add("purge-blocked", "Purge is held back by a long-open transaction", [],
+              f"The history list grew past {PURGE_UNBOUNDED_MIN:,} while a transaction stayed open for {blocked // 60} min: its read view "
+              "keeps every newer undo record visible, so purge cannot remove them however fast it runs. Find it in "
+              "information_schema.innodb_trx (ORDER BY trx_started) and end it, or keep such reads off this server (a replica). "
+              "Purge settings are not tried while it lasts.", {"oldest_trx_s_max": blocked, "unbounded_growth": unb_hll},
+              impact=3, confidence=2, kind="advice")
+        unb_hll = None  # the remedies below act on purge speed: none of them can help
+    if have_run and not blocked and (hll > 200000 and wtype in ("oltp-write", "mixed") or unb_hll) and "innodb_max_purge_lag" in v \
             and _int(v, "innodb_max_purge_lag", 0) == 0:
         # unbounded growth: the cap is the level the window started from, so writers are slowed only beyond what purge
         # handled before (stability first); otherwise 80% of the peak
@@ -737,6 +747,25 @@ def recommend(ctx):
                          " Resource groups are not available on this server (MariaDB, or MySQL before 8.0): pin or renice the purge threads "
                          "by THREAD_OS_ID (taskset / renice) after every start."),
                   {"cpu_busy": busy, "cpus": cpus, "threads_running_avg": tr_}, impact=2, confidence=1, kind="advice")
+    tr_now = s.get("threads_running_avg") or 0
+    if have_run and unb_hll and tr_now > 2 * cpus:
+        # every running user thread creates undo; purge has a few threads. Fewer threads inside InnoDB at a time (or in the
+        # thread pool) leaves purge its share of the CPUs - a stability remedy that costs less than throttling every writer
+        # with innodb_max_purge_lag. Online in MySQL / Percona (innodb_thread_concurrency) and in a running thread pool
+        tp_on = str(v.get("thread_handling") or "").lower() == "pool-of-threads"
+        if tp_on and "thread_pool_oversubscribe" in v and _int(v, "thread_pool_oversubscribe", 3) > 1:
+            ch = [("thread_pool_oversubscribe", "1")]
+        elif not tp_on and "innodb_thread_concurrency" in v and _int(v, "innodb_thread_concurrency", 0) == 0 and flavor != "mariadb":
+            ch = [("innodb_thread_concurrency", str(max(8, 2 * cpus)))]
+        else:
+            ch = []
+        if ch:
+            b.add("purge-concurrency", "Fewer user threads creating undo at once", ch,
+                  f"{tr_now:.0f} user threads run on {cpus} CPUs and each creates undo faster than the purge threads remove it: the history "
+                  "list grows without bound. Capping the threads inside InnoDB (or in the thread pool) at a time leaves purge CPU time. "
+                  "Stability remedy: measured for a bounded history first, throughput second.",
+                  {"threads_running_avg": tr_now, "cpus": cpus, "unbounded_growth": unb_hll, "thread_handling": v.get("thread_handling")},
+                  impact=2, confidence=2)
     if have_run and v.get("log_bin") == "ON" and _int(v, "binlog_transaction_dependency_history_size", 25000) > 1000 and (s.get("cpu_busy") or 0) >= 80 \
             and wtype in ("oltp-write", "mixed") and "binlog_transaction_dependency_history_size" in v:
         b.add("writeset-history", "Smaller WRITESET dependency history", [("binlog_transaction_dependency_history_size", "1000")],
@@ -1437,7 +1466,7 @@ def recommend(ctx):
               f"{100 * ra_ev / ra:.0f}% of read-ahead pages ({ra_ev:.0f}/s) were evicted before use: wasted I/O and buffer pool churn.",
               {"read_ahead_per_s": ra, "read_ahead_evicted_per_s": ra_ev}, impact=2, confidence=2)
     hll_max = s.get("history_list_length_max") or 0
-    if have_run and hll_max > 100000 and "innodb_purge_threads" in v:
+    if have_run and hll_max > 100000 and "innodb_purge_threads" in v and not purge_blocked(s):
         pt = _int(v, "innodb_purge_threads", 4)
         # a large backlog is a strong signal (O4: 1.68 M with 1 purge thread never got to run at impact 1): more threads first
         vals = [str(pt * 2), "8", "1"] if hll_max > 300000 else [x for x in ("1", "8") if x != str(pt)] + [str(pt * 2)]
@@ -1794,13 +1823,27 @@ def _unearned_unsteady(r):
 # in production however fast it measures - while any stable configuration exists, the best one is chosen among them, and
 # the remedies (purge threads, a purge lag bound, larger purge batches) run before tuning experiments
 STABILITY_FIRST = True
-STABILITY_IDS = ("sweep-purge-threads", "purge-lag", "purge-batch", "purge-priority")
+STABILITY_IDS = ("sweep-purge-threads", "purge-lag", "purge-batch", "purge-priority", "purge-concurrency")
+STABILITY_LAST_RESORT = ("purge-lag",)  # throttles every writer: only when the other remedies were tried or cannot run
 STABILITY_TRIES = 2  # remedies that run first; after them the stability candidates rank like any other
 
 
+PURGE_UNBOUNDED_MIN = 1000000  # a history list growing past this without slowing down is a stability problem (below it: settling)
+PURGE_BLOCKED_TRX_S = 300  # a transaction open this long holds a read view purge cannot pass: purge tuning cannot help
+
+
 def unbounded_hll(summary):
-    """The undo history list grew without slowing down in this run (collector.unbounded_growth)."""
-    return next((u for u in (summary or {}).get("unbounded_growth") or [] if u.get("metric") == "history_list_length"), None)
+    """The undo history list grew without slowing down in this run (collector.unbounded_growth) and past
+    PURGE_UNBOUNDED_MIN: purge cannot keep up. Growth that stays below it is a level still settling, not a stability problem."""
+    u = next((u for u in (summary or {}).get("unbounded_growth") or [] if u.get("metric") == "history_list_length"), None)
+    return u if u and max(u.get("end") or 0, (summary or {}).get("history_list_length_max") or 0) >= PURGE_UNBOUNDED_MIN else None
+
+
+def purge_blocked(summary):
+    """The history grows because a transaction stays open (its read view must stay visible), not because purge is too
+    slow: the oldest open transaction's age when it is PURGE_BLOCKED_TRX_S or more, else None."""
+    age = (summary or {}).get("oldest_trx_s_max") or 0
+    return age if age >= PURGE_BLOCKED_TRX_S else None
 
 
 def config_unstable(history, key):
@@ -2469,6 +2512,12 @@ def run_engine(ctx):
                                                                or str(c.get("source") or "").startswith("rec:sweep-purge")
                                                                for c in h.get("changes") or []))
     busy_now = (ctx.get("summary") or {}).get("cpu_busy") or 0
+    # the purge lag bound throttles every writer: a stopgap, measured only when no other stability remedy is left to try
+    tried_ids = {str(c.get("source") or "")[4:] for h in ctx.get("history") or [] for c in h.get("changes") or []}
+    tried_ids |= {"sweep-purge-threads" for x in tried_ids if x.startswith("sweep-purge")}
+    others_left = any(i["id"] in STABILITY_IDS and i["id"] not in STABILITY_LAST_RESORT and i["kind"] == "config"
+                      and i.get("confidence", 0) > 0 and i["id"] not in (ctx.get("failed") or []) and i["id"] not in tried_ids
+                      for i in items)
     for it in items:
         it.setdefault("safety", "safe")
         it.setdefault("tradeoffs", [])
@@ -2551,7 +2600,7 @@ def run_engine(ctx):
         if it["id"] in (ctx.get("failed") or []) and not it.get("retest"):
             it["confidence"] = 0
             it["note"] = (it.get("note", "") + " Failed earlier in this session (apply/restart failure or run too slow).").strip()
-        ob = oversubscription_block(it, ctx)
+        ob = None if it["id"] == "purge-concurrency" else oversubscription_block(it, ctx)  # a stability remedy, judged by the history
         if ob and it["kind"] == "config":
             it["confidence"] = 0
             it["note"] = (it.get("note", "") + " " + ob).strip()
@@ -2593,14 +2642,15 @@ def run_engine(ctx):
         # priority only for returning to measured configurations; everything else - the best-practice bundle included -
         # ranks by the evidence for what it acts on
         it["score"] = 100 if it.get("priority") and not it.get("no_mechanism") and not it.get("practice") else sc
-        if STABILITY_FIRST and unstable_now and stab_tried < STABILITY_TRIES and it["id"] in STABILITY_IDS and it["kind"] == "config" \
-                and it.get("confidence", 0) > 0:
+        last_resort = it["id"] in STABILITY_LAST_RESORT
+        if STABILITY_FIRST and unstable_now and it["id"] in STABILITY_IDS and it["kind"] == "config" and it.get("confidence", 0) > 0 \
+                and (not last_resort and stab_tried < STABILITY_TRIES or last_resort and not others_left and it["id"] not in tried_ids):
             # stability first: while the history grows without bound, its remedies run before tuning experiments. On busy
             # CPUs the purge lag bound first (more purge threads compete with the transactions), else more purge threads
             # on busy CPUs: a higher priority for purge first (costs the user threads least), then the lag bound (slows every
             # writer), then more purge threads (compete for the same CPUs); with CPU to spare more purge threads first
-            order = (("purge-priority", "purge-lag", "sweep-purge-threads", "purge-batch") if busy_now >= 85
-                     else ("sweep-purge-threads", "purge-priority", "purge-lag", "purge-batch"))
+            order = (("purge-priority", "purge-concurrency", "sweep-purge-threads", "purge-batch", "purge-lag") if busy_now >= 85
+                     else ("sweep-purge-threads", "purge-priority", "purge-batch", "purge-concurrency", "purge-lag"))
             it["score"] = 100 + (len(order) - order.index(it["id"]))
             it["stability"] = True
             it["score_note"] = "stability first: the undo history grows without bound in the current configuration"

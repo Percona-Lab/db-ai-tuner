@@ -79,6 +79,11 @@ class DBSampler:
         if self.ps:
             s["stmt"] = self.db.statement_totals()
         s["innodb"] = mysqldb.parse_innodb_status(self.db.innodb_status_text())
+        try:  # the oldest open transaction: one that stays open holds a read view, and purge cannot pass it
+            s["oldest_trx_s"] = self.db.scalar("SELECT IFNULL(MAX(TIMESTAMPDIFF(SECOND, trx_started, NOW())), 0) "
+                                               "FROM information_schema.innodb_trx")
+        except Exception:
+            pass
         return s
 
     def rates(self, a, b):
@@ -152,6 +157,8 @@ class DBSampler:
             out["history_list_length"] = ib["history_list_length"]
         if "ibuf_size" in ib:
             out["ibuf_size"] = ib["ibuf_size"]
+        if b.get("oldest_trx_s") is not None:
+            out["oldest_trx_s"] = int(b["oldest_trx_s"])
         if "os_wait_reservations" in ib and "os_wait_reservations" in a.get("innodb", {}):
             out["innodb_os_waits"] = round((ib["os_wait_reservations"] - a["innodb"]["os_wait_reservations"]) / dt, 1)
         return out
@@ -739,6 +746,7 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None, bench_started
         "bp_dirty_pct_avg": avg("db", "bp_dirty_pct"),
         "history_list_length_max": mx("db", "history_list_length"),
         "ibuf_size_max": mx("db", "ibuf_size"),
+        "oldest_trx_s_max": mx("db", "oldest_trx_s"),
         "tps_cv_pct": stdev_pct("db", "tps"),
         # storage latency, reads and writes apart (window average and the spread of the 10 s samples)
         **{k: os_rates.get(k) for k in ("disk_r_await_ms", "disk_w_await_ms", "disk_flush_await_ms", "disk_flush_per_s")},

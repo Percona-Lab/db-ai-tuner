@@ -1795,7 +1795,7 @@ def test_stability_first():
     """Unbounded undo history (high-concurrency update-only): the best configuration is a stable one when one exists,
     and the change that ended the growth is kept as stabilized even though it cost throughput."""
     from tuning_agent import engine, evaluate
-    unb = {"unbounded_growth": [{"metric": "history_list_length", "start": 600000, "end": 950000, "per_hour": 1e6}]}
+    unb = {"unbounded_growth": [{"metric": "history_list_length", "start": 600000, "end": 1250000, "per_hour": 1e6}]}
     ok = {"unbounded_growth": None}
     hist = [{"seq": 1, "label": "baseline (1/3)", "managed": {"a": "1"}, "goal_value": 100.0, "verdict": "reference", "summary": unb},
             {"seq": 2, "label": "baseline (2/3)", "managed": {"a": "1"}, "goal_value": 100.0, "verdict": "repeat", "summary": unb}]
@@ -1814,19 +1814,26 @@ def test_stability_first():
 
 
 def test_stability_remedies_rank_first():
-    """Unbounded undo history on busy CPUs: the purge lag bound ranks first (stability first), purge batch size and
-    the purge-thread step are stability candidates, pinning purge threads is advice; with stability off they rank as usual."""
-    s = dict(OLTP[0], history_list_length_max=950000, cpu_busy=95,
-             unbounded_growth=[{"metric": "history_list_length", "label": "history list", "start": 600000, "end": 950000, "per_hour": 1000000}])
-    v = dict(VARS, innodb_purge_threads="4", innodb_max_purge_lag="0", innodb_max_purge_lag_delay="0", innodb_purge_batch_size="300")
+    """Unbounded undo history on busy CPUs: fewer user threads creating undo ranks first (stability first), purge batch
+    size and the purge-thread step are stability candidates, the purge lag bound only once they are tried (user: a
+    stopgap that severely limits throughput), pinning purge threads is advice; with stability off they rank as usual."""
+    s = dict(OLTP[0], history_list_length_max=1250000, cpu_busy=95, threads_running_avg=200,
+             unbounded_growth=[{"metric": "history_list_length", "label": "history list", "start": 600000, "end": 1250000, "per_hour": 1000000}])
+    v = dict(VARS, innodb_purge_threads="4", innodb_max_purge_lag="0", innodb_max_purge_lag_delay="0", innodb_purge_batch_size="300",
+             innodb_thread_concurrency="0")
     ctx = {"goal": "tps", "policy": "benchmark", "os_tuning": True, "os_facts": {}, "hw": dict(HW, cpus=16), "flavor": "percona",
            "version": (8, 4, 11), "variables": v, "summary": s, "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}}
     res = engine.run_engine(ctx)
     it = ids(res)
-    assert it["purge-lag"].get("stability") and it["purge-lag"]["score"] > 100, it["purge-lag"]
-    assert it["purge-lag"]["changes"][0]["proposed"] in ("600000", "600K", "600k") or int(float(str(it["purge-lag"]["changes"][0]["proposed"]).rstrip("kK") or 0)) >= 200, it["purge-lag"]["changes"]
+    assert not it["purge-lag"].get("stability"), it["purge-lag"]  # last resort: other remedies are left
     actionable = [i for i in res["items"] if i["kind"] in ("config", "revert") and i["confidence"] > 0]
-    assert actionable[0]["id"] == "purge-lag", [i["id"] for i in actionable[:4]]
+    assert actionable[0]["id"] == "purge-concurrency" and actionable[0].get("stability"), [i["id"] for i in actionable[:4]]
+    assert actionable[0]["changes"][0]["variable"] == "innodb_thread_concurrency"  # 200 threads / 16 vCPUs: not blocked
+    # every other remedy tried: now the purge lag bound
+    tried = [{"seq": i, "verdict": "neutral", "changes": [{"variable": "x", "new": "1", "source": f"rec:{rid}"}]}
+             for i, rid in enumerate(("purge-concurrency", "sweep-purge-threads", "purge-batch"), 5)]
+    it_l = ids(engine.run_engine(dict(ctx, history=tried)))
+    assert it_l["purge-lag"].get("stability") and it_l["purge-lag"]["score"] > 100, it_l["purge-lag"]
     assert it.get("purge-priority", {}).get("kind") == "advice"  # no resource groups in this server's variables: advice
     # resource groups and OS tuning: a higher purge priority (with CAP_SYS_NICE for mysqld) ranks before the lag bound
     v_rg = dict(v, **{"rg:purge": "off", "os:mysqld_cap_sys_nice": "OFF"})
@@ -2201,15 +2208,16 @@ def test_backtest_rule_fixes():
     assert "ahi-on" not in ids(run(s, dict(inp, cpu_profile={"categories": {"spin / mutex wait": 40}}), "safe"))  # no B-tree time
     assert "ahi-on" in ids(run(s, inp, "safe"))  # no profile: CPU busy (95%) stands in
     # stability: priority for two tries, then by score
-    unb = {"unbounded_growth": [{"metric": "history_list_length", "label": "h", "start": 600000, "end": 900000, "per_hour": 1e6}]}
+    unb = {"unbounded_growth": [{"metric": "history_list_length", "label": "h", "start": 600000, "end": 1200000, "per_hour": 1e6}]}
     v = dict(VARS, innodb_purge_threads="4", innodb_max_purge_lag="0", innodb_max_purge_lag_delay="0", innodb_purge_batch_size="300")
     base = {"goal": "tps", "policy": "benchmark", "os_tuning": True, "os_facts": {}, "hw": dict(HW, cpus=16), "flavor": "percona",
-            "version": (8, 4, 11), "variables": v, "summary": dict(OLTP[0], cpu_busy=95, history_list_length_max=900000, **unb),
+            "version": (8, 4, 11), "variables": v, "summary": dict(OLTP[0], cpu_busy=95, history_list_length_max=1200000, **unb),
             "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}}
-    assert ids(engine.run_engine(base))["purge-lag"].get("stability")
+    assert any(i.get("stability") for i in engine.run_engine(base)["items"])
     tried = [{"seq": i, "verdict": "neutral", "changes": [{"variable": "x", "new": "1", "source": f"rec:{rid}"}]}
-             for i, rid in ((5, "purge-lag"), (6, "purge-batch"))]
-    assert not any(i.get("stability") for i in engine.run_engine(dict(base, history=tried))["items"])
+             for i, rid in ((5, "sweep-purge-threads"), (6, "purge-batch"))]
+    left = [i["id"] for i in engine.run_engine(dict(base, history=tried))["items"] if i.get("stability")]
+    assert left in ([], ["purge-lag"]), left  # two tries used; the lag bound alone may follow as the last resort
     # the planner is told what its checks refused
     ctx2 = {"summary": {}, "variables": {}, "history": []}
     assert planner  # packet field is added by cli._plan from sess["planner_rejected"]
@@ -2250,6 +2258,80 @@ def test_requirements_survive_restarts():
 
 
 
+
+def test_purge_unbounded_threshold_and_blocked_purge():
+    """User: a history list past 1M and still growing is unbounded; below that it is still settling. A transaction open
+    for minutes holds purge back: no purge setting can help, so none is tried and the advice names the cause."""
+    from tuning_agent import engine
+    g = lambda end: {"unbounded_growth": [{"metric": "history_list_length", "start": 100000, "end": end, "per_hour": 1e6}]}  # noqa: E731
+    assert engine.unbounded_hll(g(900000)) is None and engine.unbounded_hll(g(1100000))
+    assert engine.purge_blocked({"oldest_trx_s_max": 20}) is None and engine.purge_blocked({"oldest_trx_s_max": 900}) == 900
+    s = dict(OLTP[0], history_list_length_max=3000000, cpu_busy=95, threads_running_avg=200, oldest_trx_s_max=1800,
+             **g(3000000))
+    v = dict(VARS, innodb_purge_threads="4", innodb_max_purge_lag="0", innodb_max_purge_lag_delay="0", innodb_purge_batch_size="300",
+             innodb_thread_concurrency="0")
+    ctx = {"goal": "tps", "policy": "benchmark", "os_tuning": True, "os_facts": {}, "hw": dict(HW, cpus=16), "flavor": "percona",
+           "version": (8, 4, 11), "variables": v, "summary": s, "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}}
+    it = ids(engine.run_engine(ctx))
+    assert it["purge-blocked"]["kind"] == "advice"
+    assert not any(k in it for k in ("purge-lag", "purge-batch", "purge-concurrency"))
+    assert not it.get("sweep-purge-threads", {}).get("stability")
+
+
+def test_purge_triage_keeps_substantial_cuts_and_tries_the_lag_bound_last():
+    """Online purge remedies, 5 min each while the benchmark runs: a setting is kept only when it at least halves the
+    history growth at an acceptable throughput cost; stable once growth is down to a quarter (or shrinking); the purge
+    lag bound only when nothing else got there."""
+    from tuning_agent import cli
+    applied, events = [], []
+
+    class C:
+        state = type("S", (), {"d": {"managed": {}}, "get": lambda self, k, d=None: self.d.get(k, d),
+                                "set": lambda self, k, v: self.d.__setitem__(k, v), "__getitem__": lambda self, k: self.d[k]})()
+        activity = staticmethod(lambda *a: None)
+        event = staticmethod(lambda *a: events.append(a))
+
+    class R:
+        alive = staticmethod(lambda: True)
+
+    saved = {k: getattr(cli, k) for k in ("TRIAGE_SEG_S", "_apply_and_record", "_triage_candidates", "_segment")}
+    saved_sleep = cli.time.sleep
+    cli.time.sleep = lambda s: None
+    cli.TRIAGE_SEG_S = 0
+    cli._apply_and_record = lambda c, ch, src, restart=None: applied.append([(x["variable"], x["value"]) for x in ch])
+
+    def run(cands, segs, last=()):
+        applied.clear()
+        it = iter(segs)
+        cli._triage_candidates = lambda c: (cands, list(last))
+        cli._segment = lambda c, a, b: dict(next(it))
+        return cli._purge_triage(C(), R(), cli.time.time() + 3600)
+
+    try:
+        # batch 1000 cuts growth by 60% (kept), thread concurrency cuts the rest below a quarter: stable, lag never tried
+        out = run([("batch 1000", [("innodb_purge_batch_size", "1000")]), ("prio", [("rg:purge", "prio=-10")]),
+                   ("conc", [("innodb_thread_concurrency", "64")])],
+                  [{"hll_per_min": 10000, "tps": 1000, "hll_end": 2e6}, {"hll_per_min": 4000, "tps": 990, "hll_end": 2.1e6},
+                   {"hll_per_min": 3500, "tps": 980, "hll_end": 2.2e6}, {"hll_per_min": 1500, "tps": 900, "hll_end": 2.2e6}],
+                  last=[("lag", [("innodb_max_purge_lag", "__HLL__")])])
+        assert out["stable"] and out["kept"] == [("innodb_purge_batch_size", "1000"), ("innodb_thread_concurrency", "64")], out
+        assert [("rg:purge", None)] in applied  # the 12% cut was reverted (borderline is not a remedy)
+        assert not any(k == "innodb_max_purge_lag" for a in applied for k, _ in a)
+        # nothing substantial, or too costly: the lag bound last, capped at the history level reached
+        out = run([("conc", [("innodb_thread_concurrency", "64")])],
+                  [{"hll_per_min": 10000, "tps": 1000, "hll_end": 2e6}, {"hll_per_min": 1000, "tps": 500, "hll_end": 2.1e6},
+                   {"hll_per_min": -500, "tps": 800, "hll_end": 2.1e6}],
+                  last=[("lag", [("innodb_max_purge_lag", "__HLL__"), ("innodb_max_purge_lag_delay", "300000")])])
+        assert out["stable"] and out["kept"] == [("innodb_max_purge_lag", "2000000"), ("innodb_max_purge_lag_delay", "300000")], out
+        # the history is not growing now: nothing to do
+        out = run([("conc", [("innodb_thread_concurrency", "64")])], [{"hll_per_min": -20, "tps": 1000, "hll_end": 5e5}])
+        assert out["stable"] and not out["kept"] and not applied
+    finally:
+        cli.time.sleep = saved_sleep
+        for k, x in saved.items():
+            setattr(cli, k, x)
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
@@ -2263,4 +2345,3 @@ if __name__ == "__main__":
                 print("FAIL", name, repr(e))
                 traceback.print_exc()
     sys.exit(1 if fails else 0)
-
