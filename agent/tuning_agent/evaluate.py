@@ -594,28 +594,46 @@ def client_stall(s):
     return None
 
 
-def steal_check(summary, noise_pct=None):
+def steal_check(summary, noise_pct=None, ref=None):
     """Hypervisor CPU steal on the database host or a client during the run. Steal takes CPU away from a CPU-bound
     workload roughly one for one, so its possible effect on the result is about the average steal, scaled down when the
-    host was not CPU-bound. That effect must stay well inside the noise threshold, otherwise a verdict may reflect the
-    neighbours rather than the configuration: flag from a quarter of the threshold (at least 0.25%), or a 5% peak in any
-    10 s sample; unreliable (excluded and re-measured) from half of it (at least 0.5%). Normal on our hosts: < 0.05%."""
+    host was not CPU-bound. A verdict compares runs, so what can bias it is steal that differs from what the compared
+    runs had: ref is the session's usual steal (median of its earlier runs) - a steady 0.4% on every run lowers every
+    result alike and is part of the calibrated noise (session 294: every run flagged at 0.3-0.46%). That difference must
+    stay well inside the noise threshold: flag from a quarter of the threshold (at least 0.25%), or a 5% peak in any 10 s
+    sample; unreliable (excluded and re-measured) from half of it (at least 0.5%). Normal on our hosts: < 0.05%."""
     s = summary or {}
     avg, peak, cli = s.get("cpu_steal") or 0, s.get("cpu_steal_max") or 0, s.get("client_cpu_steal") or 0
+    r = ref or {}
     noise = float(noise_pct or DEFAULT_GOAL_NOISE)
     # steal costs throughput only when the CPUs are needed: scale by how busy the host was (no floor - on a mostly idle
     # host steal is mostly the hypervisor's accounting at low clock speeds, not lost work)
     cpu_factor = min(1.0, (s.get("cpu_busy") if s.get("cpu_busy") is not None else 100) / 70.0)
-    impact = max(avg, cli) * cpu_factor
+    impact = max(abs(avg - (r.get("avg") or 0)), abs(cli - (r.get("client") or 0))) * cpu_factor
+    # a peak is unusual only well above the peaks the compared runs had
+    peak_flag = peak >= max(STEAL_FLAG_PEAK, 2 * (r.get("peak") or 0))
     flag_at, invalid_at = max(0.25, noise / 4), max(0.5, noise / 2)
     if impact >= invalid_at:
         level = "invalid"
-    elif impact >= flag_at or peak >= STEAL_FLAG_PEAK:
+    elif impact >= flag_at or peak_flag:
         level = "flag"
     else:
         return None
     return {"level": level, "avg_pct": round(avg, 2), "peak_pct": round(peak, 2), "client_avg_pct": round(cli, 2) if cli else None,
+            "usual_pct": round(r["avg"], 2) if r.get("avg") else None,
             "est_impact_pct": round(impact, 2), "flag_at_pct": round(flag_at, 2), "invalid_at_pct": round(invalid_at, 2)}
+
+
+def usual_steal(history):
+    """The session's usual steal (median of its earlier runs, unreliable ones included - they measured the host too):
+    what a steady level on this host looks like. None before three runs, so the first runs compare with zero."""
+    ss = [(h.get("summary") or {}) for h in history or [] if not h.get("superseded")]
+    ss = [s for s in ss if s.get("cpu_steal") is not None]
+    if len(ss) < 3:
+        return None
+    med = lambda xs: sorted(xs)[len(xs) // 2]
+    return {"avg": med([s.get("cpu_steal") or 0 for s in ss]), "peak": med([s.get("cpu_steal_max") or 0 for s in ss]),
+            "client": med([s.get("client_cpu_steal") or 0 for s in ss])}
 
 
 def swap_cost(s, noise_pct=None):
@@ -664,10 +682,11 @@ def verdict(run, history, goal, noise):
 def _run_verdict(run, history, goal, noise):
     if run.get("superseded"):
         return "superseded", dict(state_flags(run.get("summary")), note=run["superseded"])
-    st = steal_check(run.get("summary"), (noise or {}).get("noise_pct"))
+    st = steal_check(run.get("summary"), (noise or {}).get("noise_pct"), usual_steal(history))
     if st and st["level"] == "invalid":
         return "unreliable", {"steal": st, "note": f"UNRELIABLE: hypervisor CPU steal averaged {max(st['avg_pct'], st['client_avg_pct'] or 0):.1f}% "
-                                                   "during the run (noisy neighbours on a shared host). The result is kept for reference "
+                                                   + (f"(usually {st['usual_pct']:.1f}% in this session) " if st.get("usual_pct") else "")
+                                                   + "during the run (noisy neighbours on a shared host). The result is kept for reference "
                                                    "but excluded from comparisons."}
     mm = (run.get("summary") or {}).get("config_mismatch")
     if mm:

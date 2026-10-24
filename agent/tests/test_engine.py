@@ -1721,6 +1721,18 @@ def test_neutral_explained_promising_and_latency_gain():
     v2, d2 = evaluate.verdict(run, hist, "tps", dict(noise, long_term_dof=3, noise_pct=0.53))
     assert v2 == "improved" and not d2.get("promising"), (v2, d2)
 
+def test_steal_steady_level_not_flagged():
+    """Session 294: steal held at 0.3-0.46% on every run (CPU ~98% busy) and every run was flagged; a steady level
+    lowers every result alike - only steal that differs from the session's usual level can bias a comparison."""
+    from tuning_agent import evaluate
+    hist = [{"seq": i, "summary": {"cpu_steal": x, "cpu_steal_max": 0.6, "cpu_busy": 98}} for i, x in enumerate((0.41, 0.41, 0.44, 0.42), 1)]
+    s = {"cpu_steal": 0.35, "cpu_steal_max": 0.55, "cpu_busy": 98}
+    assert evaluate.steal_check(s, 0.72, evaluate.usual_steal(hist)) is None
+    assert evaluate.steal_check(s, 0.72)["level"] == "flag"  # against zero, as before three runs exist
+    jump = evaluate.steal_check(dict(s, cpu_steal=1.5), 0.72, evaluate.usual_steal(hist))
+    assert jump and jump["level"] == "invalid" and jump["usual_pct"] == 0.42, jump
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
@@ -1734,3 +1746,4 @@ if __name__ == "__main__":
                 print("FAIL", name, repr(e))
                 traceback.print_exc()
     sys.exit(1 if fails else 0)
+

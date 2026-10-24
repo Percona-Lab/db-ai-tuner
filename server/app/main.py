@@ -237,12 +237,25 @@ def start_tradeoffs(runs):
     return [t for t in (first or {}).get("tradeoffs") or [] if t.get("category") != "memory"] if first else []
 
 
+def added_tradeoffs(r, have):
+    """A run's trade-offs beyond the starting configuration's (have: its (variable, value) pairs). The agent posts the
+    static trade-offs of the settings; a memory budget the host could not hold is in the run's summary
+    (knowledge.run_tradeoffs) - without it the page called a configuration production-safe that the agent's best safe
+    excluded (session 294: buffer pool raised to 51 GiB, 69.1 of 62.8 GiB needed)."""
+    out = [t for t in r.get("tradeoffs") or [] if (t.get("variable"), str(t.get("value"))) not in have]
+    mb = (r.get("summary") or {}).get("memory_budget") or {}
+    if mb.get("over_budget") and not any(t.get("category") == "memory" for t in out):
+        out.append({"variable": "memory", "value": mb.get("text", ""), "category": "memory",
+                    "lost": "Production safety: memory budget exceeded - swapping / OOM under load."})
+    return out
+
+
 def mark_added_tradeoffs(runs):
     """Each run's trade-offs beyond the starting configuration's (tradeoffs_added); returns the start's."""
     start = start_tradeoffs(runs)
     have = {(t.get("variable"), str(t.get("value"))) for t in start}
     for r in runs:
-        r["tradeoffs_added"] = [t for t in r.get("tradeoffs") or [] if (t.get("variable"), str(t.get("value"))) not in have]
+        r["tradeoffs_added"] = added_tradeoffs(r, have)
     return start
 
 
@@ -866,7 +879,7 @@ def run_detail(run_id: int, request: Request, vs: int = None):
     start = start_tradeoffs(sib)
     have = {(t.get("variable"), str(t.get("value"))) for t in start}
     out["start_tradeoffs"] = start
-    out["tradeoffs_added"] = [t for t in out.get("tradeoffs") or [] if (t.get("variable"), str(t.get("value"))) not in have]
+    out["tradeoffs_added"] = added_tradeoffs(out, have)
     out.update({
         "inputs": store.uj(r["inputs"], {}), "diagnosis": store.uj(r["diagnosis"], []), "managed": store.uj(r["managed"], {}),
         "config_count": len(cfg), "diff": diff, "compared_with": run_brief(prev) if prev else None,
@@ -1889,17 +1902,20 @@ def study_get_or_create(user_id, ref, goal="tps", workload=None, kind="compare")
 def session_results(s):
     """Per-session headline numbers: first run (usually server defaults), best configuration and best production-safe
     configuration, each as the mean of the runs of that configuration (repeated runs average out noise)."""
-    runs = [dict(r) for r in store.q("SELECT seq, label, goal_value, managed, tradeoffs, verdict FROM runs WHERE session_id=? "
+    runs = [dict(r) for r in store.q("SELECT seq, label, goal_value, managed, tradeoffs, summary, verdict, status FROM runs WHERE session_id=? "
                                      "AND status<>'aborted' AND goal_value IS NOT NULL AND COALESCE(verdict,'')<>'unreliable' ORDER BY seq", (s["id"],))]
     if not runs:
         return {"runs": 0}
+    for r in runs:
+        r["tradeoffs"], r["summary"] = store.uj(r["tradeoffs"], []) or [], store.uj(r["summary"], {}) or {}
+    mark_added_tradeoffs(runs)  # safe = nothing given up beyond the benchmark setup's own trade-offs
     lat = s["goal"] == "latency"
     groups = {}
     for r in runs:
         m = store.uj(r["managed"], {}) or {}
         g = groups.setdefault(store.j(sorted(m.items())), {"runs": [], "managed": m, "safe": True})
         g["runs"].append(r)
-        if store.uj(r["tradeoffs"]) or []:
+        if r["tradeoffs_added"]:
             g["safe"] = False
     cfgs = [{"mean": sum(x["goal_value"] for x in g["runs"]) / len(g["runs"]), "n": len(g["runs"]), "seq": g["runs"][-1]["seq"],
              "label": g["runs"][0]["label"], "safe": g["safe"], "settings": len(g["managed"])} for g in groups.values()]
