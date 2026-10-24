@@ -1493,7 +1493,7 @@ def recommend(ctx):
         vals = [str(pt * 2), "8", "1"] if hll_max > 300000 else [x for x in ("1", "8") if x != str(pt)] + [str(pt * 2)]
         unb_h = any(u["metric"] == "history_list_length" for u in s.get("unbounded_growth") or [])
         if unb_h:  # purge cannot keep up: more threads only (fewer cannot help), up to the CPUs available
-            vals = [str(x) for x in sorted({min(pt * 2, 32), min(max(4, pt * 4), 32), min(int(hw.get("cpus") or 8), 32)}) if x > pt]
+            vals = [str(x) for x in sorted({min(pt * 2, 32), min(max(4, pt * 4), 32), min(int(hw.get("cpus") or 8), 32), 32}) if x > pt]
         sweep("sweep-purge-threads", "Sweep purge threads", "innodb_purge_threads", vals,
               f"Undo history reached {hll_max:,.0f} entries with {pt} purge thread(s). More purge threads help large I/O-bound boxes "
               "and hurt small CPU-bound ones: the direction depends on the machine, so it is measured.",

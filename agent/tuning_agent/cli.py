@@ -2167,10 +2167,14 @@ def _triage_candidates(c):
         add("thread pool oversubscribe 1", [("thread_pool_oversubscribe", "1")])
     pt = int(v.get("innodb_purge_threads") or 4)
     pt_online = bool(dynamic_in("innodb_purge_threads", series))
-    for x in sorted({min(32, max(4, pt * 2)), min(32, max(8, cpus // 2))}):
+    for x in sorted({min(32, max(4, pt * 2)), min(32, max(8, cpus // 2)), 32}):
         if x > pt:
-            add(f"{x} purge threads" + (" at a higher priority" if prio else ""), [("innodb_purge_threads", str(x))] + prio,
-                restart=not pt_online or (bool(prio) and not cap))
+            # the maximum (32, InnoDB's cap) at the highest priority: the fastest purge InnoDB can run - the upper bound of
+            # what purge alone can do here (user, 2026-10-25)
+            top = x == 32 and bool(prio)
+            p_ = [(k, "prio=-20") if k == "rg:purge" else (k, v_) for k, v_ in prio] if top else prio
+            add(f"{x} purge threads" + (" at the highest priority" if top else " at a higher priority" if prio else ""),
+                [("innodb_purge_threads", str(x))] + p_, restart=not pt_online or (bool(prio) and not cap))
     if "innodb_max_purge_lag" in v and int(v.get("innodb_max_purge_lag") or 0) == 0:
         add("purge lag bound (stopgap)", [("innodb_max_purge_lag", "__HLL__"), ("innodb_max_purge_lag_delay", "300000")], last=True)
     return out

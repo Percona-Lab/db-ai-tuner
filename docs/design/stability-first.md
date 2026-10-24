@@ -32,6 +32,8 @@ reaches a steady state in a benchmark.
    - Candidates, in order of cost to the workload:
      - purge threads at a higher priority (resource group `rg:purge prio=-10`, when mysqld has CAP_SYS_NICE);
      - more purge threads where this is online (MariaDB 10.5+; the maximum is 32 everywhere);
+     - 4, 8 and 32 purge threads at a higher priority; 32 (the cap) at the highest priority (-20) is the fastest purge
+       InnoDB can run, the upper bound of what purge alone can do;
      - `innodb_purge_batch_size` 1000, then 5000;
      - fewer user threads creating undo at once: `thread_pool_oversubscribe=1` when the thread pool is on; on servers
        without a thread pool (MySQL Community), `innodb_thread_concurrency` at 4x then 2x vCPUs;
