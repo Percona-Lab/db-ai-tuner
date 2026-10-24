@@ -847,3 +847,24 @@ def test_apply_events_name_the_settings():
     m = main.event_view(ev)["message"]
     assert m == "stability-triage: innodb_purge_batch_size 300 -> 1000 - purge triage: purge batch size 1000", m
     assert main.event_view({"type": "apply", "message": "x: applied 0 change(s)", "data": {}})["message"] == "x: applied 0 change(s)"
+
+
+def test_steal_profile_from_its_own_table(user):
+    """User: environment pages loaded slowly - the steal line read a week of full metric samples (~120 MB) on every
+    cold load. Steal values are kept apart as they arrive; samples stored before that are backfilled once."""
+    import time
+    from app import main, store
+    env = user.hello(uid="steal-agent")
+    t = time.time()
+    samples = [{"ts": t - 600 + 10 * i, "os": {"cpu_steal": 0.5 if i % 10 else 3.0}, "db": {}} for i in range(40)]
+    assert user.agent.post("/api/v1/agent/metrics", json={"environment_id": env, "samples": samples}).json()["stored"] == 40
+    assert store.q1("SELECT COUNT(*) n FROM steal_samples WHERE env_id=?", (env,))["n"] == 40
+    main._STEAL_CACHE.clear()
+    sp = user.ui.get(f"/api/environments/{env}").json()["steal"]
+    assert sp["samples"] == 40 and sp["max"] == 3.0 and sp["pct_over_1"] == 10.0, sp
+    # an environment whose samples predate the table: backfilled from the metrics once
+    store.ex("DELETE FROM steal_samples WHERE env_id=?", (env,))
+    store.ex("DELETE FROM steal_backfilled WHERE env_id=?", (env,))
+    main._STEAL_CACHE.clear()
+    assert user.ui.get(f"/api/environments/{env}").json()["steal"]["samples"] == 40
+    assert store.q1("SELECT COUNT(*) n FROM steal_backfilled WHERE env_id=?", (env,))["n"] == 1

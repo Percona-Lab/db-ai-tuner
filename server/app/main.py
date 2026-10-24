@@ -5,6 +5,7 @@ import json
 import threading
 import math
 import os
+import random
 import re
 import tarfile
 import time
@@ -654,6 +655,8 @@ def delete_environment(env_id: int, request: Request):
     for s in store.q("SELECT id FROM tsessions WHERE env_id=?", (env_id,)):
         _delete_session(s["id"])
     store.ex("DELETE FROM metrics WHERE env_id=?", (env_id,))
+    store.ex("DELETE FROM steal_samples WHERE env_id=?", (env_id,))
+    store.ex("DELETE FROM steal_backfilled WHERE env_id=?", (env_id,))
     store.ex("DELETE FROM events WHERE env_id=?", (env_id,))
     store.ex("DELETE FROM environments WHERE id=?", (env_id,))
     return {"ok": True}
@@ -1212,6 +1215,14 @@ def agent_metrics(body: dict = Body(...), key=Depends(auth.agent_key)):
     c = store.conn()
     c.execute("BEGIN")
     c.executemany("INSERT OR REPLACE INTO metrics(env_id, ts, data) VALUES (?,?,?)", rows)
+    # CPU steal on its own: the environment page's steal line read a week of full samples (~120 MB) on every cold load
+    steal = [(e["id"], float(x["ts"]), float(x["os"]["cpu_steal"])) for x in (body.get("samples") or [])[:2000]
+             if isinstance(x, dict) and isinstance(x.get("ts"), (int, float)) and isinstance(x.get("os"), dict)
+             and isinstance(x["os"].get("cpu_steal"), (int, float))]
+    if steal:
+        c.executemany("INSERT OR REPLACE INTO steal_samples(env_id, ts, v) VALUES (?,?,?)", steal)
+        if random.random() < 0.01:
+            c.execute("DELETE FROM steal_samples WHERE env_id=? AND ts<?", (e["id"], now() - STEAL_WINDOW_S - 86400))
     c.execute("UPDATE environments SET last_seen=?, agent_state='running', archive_hold=NULL WHERE id=?", (now(), e["id"]))
     c.execute("COMMIT")
     return {"ok": True, "stored": len(rows)}
@@ -1228,6 +1239,7 @@ def agent_activity(body: dict = Body(...), key=Depends(auth.agent_key)):
 
 
 _STEAL_CACHE = {}
+STEAL_WINDOW_S = 7 * 86400
 
 
 def steal_profile(env_id):
@@ -1235,8 +1247,12 @@ def steal_profile(env_id):
     hit = _STEAL_CACHE.get(env_id)
     if hit and now() - hit[0] < 600:
         return hit[1]
-    vals = sorted(r[0] for r in store.q("SELECT json_extract(data, '$.os.cpu_steal') FROM metrics WHERE env_id=? AND ts>?",
-                                        (env_id, now() - 7 * 86400)) if r[0] is not None)
+    if not store.q1("SELECT 1 FROM steal_backfilled WHERE env_id=?", (env_id,)):
+        # once per environment: the samples stored before steal_samples existed (a full read of a week of metrics)
+        store.ex("INSERT OR IGNORE INTO steal_samples(env_id, ts, v) SELECT env_id, ts, json_extract(data, '$.os.cpu_steal') FROM metrics "
+                 "WHERE env_id=? AND ts>? AND json_extract(data, '$.os.cpu_steal') IS NOT NULL", (env_id, now() - STEAL_WINDOW_S))
+        store.ex("INSERT OR IGNORE INTO steal_backfilled(env_id) VALUES (?)", (env_id,))
+    vals = sorted(r[0] for r in store.q("SELECT v FROM steal_samples WHERE env_id=? AND ts>?", (env_id, now() - STEAL_WINDOW_S)))
     out = None
     if len(vals) >= 30:
         q = lambda p: vals[min(len(vals) - 1, int(p * len(vals)))]
