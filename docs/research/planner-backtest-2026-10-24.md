@@ -321,3 +321,70 @@ have been billed without being logged. For comparison, production planner calls 
 - **Fairness rule:** allow experience from sessions that ended before the decision point (needs a `before=` filter on
   `/experience`). Without it, the backtest penalises both rules and planner on repeat workloads such as canaries.
 - **Budget:** check OpenRouter account credits (`/credits`), not only the key limit, before a backtest.
+
+## Follow-up: standing regression check (`tools/dbench/regress.py`)
+
+The backtest is now a check that scores every agent build on the same real decisions, measured outcomes first.
+
+**Corpus** (`ops/dbench/corpus/`, versioned, append-only):
+- v1 holds 409 decision points: the 123 above plus the 286 audited points of `labels.json` (sessions 148-282).
+- Each point stores its engine context as known then (`build.context_at`).
+- `regress.py add` appends every closed session that ended since the last add. Scripted `pipeline:` studies are left
+  out, and points already in the corpus never change.
+- Each add rebuilds the outcome table from production (read-only): every measured experiment's changes against its
+  parent, verdict, goal delta and noise.
+- Comparable sessions are grouped by benchmark and data, threads per vCPU and CPU class. The four groups above are kept
+  explicitly.
+
+**Score** (rule engine, offline, about 10 s for 409 points):
+- A run pick scores the delta of the first exact measurement of its settings: same session after the point, else a
+  comparable session. Deltas are clipped at ±30%. Unreliable runs and unmeasured picks count 0, and the report shows
+  coverage.
+- A STOP scores minus the largest later confirmed win beyond the noise in its session. Runs saved are counted after
+  each session's first STOP.
+- The report also lists picks of options measured as regressions and policy violations (a trade-off chosen under
+  `safe`, or advice run).
+- Outcome score = mean value per decision.
+- The comparison is against the latest accepted baseline (`ops/dbench/regress/<build>.json`). Both builds' choices are
+  rescored on the current outcome table, and every changed decision is listed with its known outcome.
+- A REGRESSION (exit 1) is any one of: an outcome-score drop of more than 0.10 pp, more regressed picks, or new policy
+  violations.
+- `--planner --budget USD` adds the AI planner through `run_remote.py` on the server. Answers are cached per point,
+  packet hash, model, effort and server prompt.
+
+**Today's fixes in measured terms** (HEAD `7e8164b` vs `220de7e`, 409 points; 52 decisions changed, 87% the same):
+
+| | before fixes (`220de7e`) | after (`7e8164b`) |
+|---|---|---|
+| outcome score, pp per decision | −0.07 | **+0.44** (backtest points +0.89, audited +0.25) |
+| measured picks: mean delta | −1.25% (154) | **+1.33%** (147) |
+| improved / regressed picks | 31 / 25 | 36 / 22 |
+| sum of regressed picks | −166% | −145% |
+| STOPs good / bad (missed) | 54 / 3 (8.5%) | 54 / 5 (15.9%) |
+| sessions stopped / runs saved | 9 / 116 | 9 / 123 |
+| policy violations | 0 | 0 |
+| expert agreement (253 audited) | 28% | 26% |
+
+The 35 changed decisions with a measured difference net +209 pp:
+
+- **trx-commit-2 first on commit-bound benchmark loads:**
+  - It now goes first at 310, 313, 314 and 288, where it measured +19.0%, +24.3%, +22.8% and +25.7%. Before:
+    best-practices (+0.1 to +0.4%) and a purge sweep (−1.2%).
+  - It is also chosen at 25 audited points in 148-221, where it was never run. These are unmeasured, so coverage is
+    lower. Two of them had measured wins before: 205 redo-grow +19.3% (verdict neutral) and 220 +12.8%.
+- **ahi-on gated:**
+  - 294: ahi-on (−7.5%) is replaced by spin-loops (−0.2%), os-autogroup (+0.7%) and huge pages (+2.9%).
+  - 299 and 300: other ideas within ±2%, including one regression: 299 os-jemalloc −2.1%.
+- **Swap experiment only with memory pressure:**
+  - 303: replaced by huge pages (+8.7%, neutral), then a good STOP. 28 runs followed with no win.
+  - 294: the session now stops after r16 instead of r20. It misses the AI idea at r21 (+3.7%), which accounts for the 2
+    extra bad STOPs.
+
+Run:
+- `python3 tools/dbench/regress.py score` for the working tree, or `--agent <checkout>/agent --build <name>` for
+  another build.
+- `regress.py add` weekly.
+- `regress.py baselines` lists saved baselines.
+- Unit tests: `python3 tools/dbench/test_regress.py`.
+- Nightly cron: `17 3 * * * $HOME/aituner/tools/dbench/regress_cron.sh`. It scores origin/main in a temporary checkout
+  and writes a line to `ops/alerts.log` only on a regression.
