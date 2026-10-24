@@ -778,12 +778,18 @@ def recommend(ctx):
     selects = rates.get("Com_select", 0)
     writes = sum(rates.get(k, 0) for k in ("Com_insert", "Com_update", "Com_delete", "Com_replace"))
     if have_run and "innodb_adaptive_hash_index" in v:
-        # measured evidence first: B-tree descents in the CPU profile (0 wins in 6 sessions without it, backtest 2026-10-24)
-        btree = ((inp.get("cpu_profile") or {}).get("categories") or {}).get("B-tree / row access")
-        if not _on(v, "innodb_adaptive_hash_index") and selects > writes and (s.get("bp_hit_pct") or 0) > 98 and (btree or 0) >= 15:
+        # no cut-off on the B-tree share (a 15% threshold switched it off at 13-14% on 294 / 299 / 300 and on at 17% on the
+        # canaries): any measured B-tree time makes it a candidate; how much time it acts on (relevance, from the breakdown)
+        # and its record in comparable sessions (294: -7.5%) rank it. Without a CPU profile: a busy CPU stands in for it
+        cats_ = (inp.get("cpu_profile") or {}).get("categories")
+        btree = (cats_.get("B-tree / row access") or 0) if cats_ else None  # profiled: 0 when none of it is B-tree work
+        if not _on(v, "innodb_adaptive_hash_index") and selects > writes and (s.get("bp_hit_pct") or 0) > 98 \
+                and ((btree or 0) > 0 or (btree is None and busy >= 70)):
             b.add("ahi-on", "Try the adaptive hash index", [("innodb_adaptive_hash_index", "ON")],
-                  f"Read-mostly workload with a hot in-memory working set, and {btree:.0f}% of the database CPU in B-tree / row access: "
-                  "AHI can shortcut B-tree descents for point lookups. Experiment: keep only if the goal metric improves.",
+                  "Read-mostly workload with a hot in-memory working set" + (f", {btree:.0f}% of the database CPU in B-tree / row access"
+                                                                             if btree else "") +
+                  ": AHI can shortcut B-tree descents for point lookups (its latches can cost more than it saves at high "
+                  "concurrency or with writes). Experiment: keep only if the goal metric improves.",
                   {"selects_per_s": selects, "writes_per_s": round(writes, 1), "bp_hit_pct": s.get("bp_hit_pct"), "cpu_btree_pct": btree},
                   impact=2, confidence=1)
         ahi_wait = sum(w["time_s"] for w in inp.get("top_waits", []) if "btr_search" in w["event"] or "ahi" in w["event"].lower())

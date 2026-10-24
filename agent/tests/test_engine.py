@@ -2197,8 +2197,9 @@ def test_backtest_rule_fixes():
     # AHI: hot in-memory reads without / with B-tree time
     s = dict(OLTP[0], bp_hit_pct=99.5)
     inp = dict(OLTP[1], status_rates={"Com_select": 5000, "Com_update": 10})
-    assert "ahi-on" not in ids(run(s, inp, "safe"))
-    assert "ahi-on" in ids(run(s, dict(inp, cpu_profile={"categories": {"B-tree / row access": 30}}), "safe"))
+    assert "ahi-on" in ids(run(s, dict(inp, cpu_profile={"categories": {"B-tree / row access": 13}}), "safe"))  # no cut-off
+    assert "ahi-on" not in ids(run(s, dict(inp, cpu_profile={"categories": {"spin / mutex wait": 40}}), "safe"))  # no B-tree time
+    assert "ahi-on" in ids(run(s, inp, "safe"))  # no profile: CPU busy (95%) stands in
     # stability: priority for two tries, then by score
     unb = {"unbounded_growth": [{"metric": "history_list_length", "label": "h", "start": 600000, "end": 900000, "per_hour": 1e6}]}
     v = dict(VARS, innodb_purge_threads="4", innodb_max_purge_lag="0", innodb_max_purge_lag_delay="0", innodb_purge_batch_size="300")
