@@ -19,7 +19,7 @@ OPS = os.path.join(ROOT, "ops")
 STATE = os.path.join(OPS, "pipeline", "state.json")
 FAST_FAIL_S = 20 * 60  # an item failing this soon after its start holds the other items of the same script
 SSH = ["ssh", "-F", os.path.join(OPS, "ssh_config"), "-o", "ConnectTimeout=20", "-o", "BatchMode=yes"]
-SYNC = ["bench/pipeline", "bench/bm2", "bench/queue-common.sh", "bench/session.sh", "bench/reset_datadir.sh"]
+SYNC = ["bench/pipeline", "bench/bm2", "bench/queue-common.sh", "bench/session.sh", "bench/reset_datadir.sh", "bench/tpch.ini", "bench/tpch_warm.sh"]
 
 
 def log(msg):

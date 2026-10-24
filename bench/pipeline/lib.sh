@@ -96,3 +96,27 @@ second_disk() {  # second_disk: mount the box's second (non-system) drive at /di
 }
 
 export -f try cur SB
+
+ab() {  # ab <profile> <name> <pairs> <cmd for B> <cmd back to A>: alternating A/B measured runs for a host state the tuner
+  # does not manage (C-states, SMT): A first, then B, <pairs> times; runs are labelled "<name> A|B (i/n)" for the analysis
+  local p=$1 name=$2 n=$3 on=$4 off=$5 i
+  for i in $(seq 1 $n); do
+    bash -c "$off" || true
+    tuning-agent measure run --bench $p --label "$name A ($i/$n)" || return 0
+    bash -c "$on" || { echo "ab: could not switch to B: $on"; bash -c "$off"; return 0; }
+    tuning-agent measure run --bench $p --label "$name B ($i/$n)" || true
+  done
+  bash -c "$off" || true
+  return 0
+}
+
+gotpc_prep() {  # gotpc_prep <tpcc|tpch> <db> <size>: go-tpc data set (TPC-C warehouses / TPC-H scale factor) unless present
+  local kind=$1 db=$2 n=$3
+  [ -x /opt/go-tpc/go-tpc ] || { echo "QUEUEFAILED: go-tpc missing in /opt/go-tpc"; exit 1; }
+  mysql -e "CREATE USER IF NOT EXISTS 'tpcc'@'localhost' IDENTIFIED BY 'tpcc'; CREATE USER IF NOT EXISTS 'tpcc'@'127.0.0.1' IDENTIFIED BY 'tpcc'; GRANT ALL ON *.* TO 'tpcc'@'localhost'; GRANT ALL ON *.* TO 'tpcc'@'127.0.0.1'"
+  if [ "$(mysql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$db'")" -lt 8 ]; then
+    if [ $kind = tpcc ]; then step /opt/go-tpc/go-tpc tpcc prepare -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D $db --warehouses $n -T 16 --no-check
+    else step /opt/go-tpc/go-tpc tpch prepare -H 127.0.0.1 -P 3306 -U tpcc -p tpcc -D $db --sf $n --analyze; fi
+    rm -f /var/lib/mysql_base.dataset  # the pristine copy must include it: dataset() makes a new one
+  fi
+}

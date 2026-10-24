@@ -572,6 +572,110 @@
    "group": false,
    "est_hours": 26,
    "question": "TODO (script): 24 h of the tuned vs the default configuration on seasoned data (does the gain hold as data ages?)"
+  },
+  {
+   "id": "levers-hot-atvbm",
+   "script": "levers.sh",
+   "args": [
+    "hot"
+   ],
+   "hosts": [
+    "atvbm"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Advanced levers on hot rows (1 x 10k, 256 threads, updates): deadlock detection off, READ-COMMITTED"
+  },
+  {
+   "id": "levers-tpcc-atvbm",
+   "script": "levers.sh",
+   "args": [
+    "tpcc"
+   ],
+   "hosts": [
+    "atvbm"
+   ],
+   "group": false,
+   "est_hours": 4,
+   "question": "Advanced levers on TPC-C 10W, 128 threads (locking reads, hot districts): READ-COMMITTED, deadlock detection off"
+  },
+  {
+   "id": "levers-pool-atvbm2",
+   "script": "levers.sh",
+   "args": [
+    "pool"
+   ],
+   "hosts": [
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 5,
+   "question": "Thread pool parameters at 1024 connections (read-write in memory): size = CPUs / 2 x CPUs, oversubscribe 10, stall limit 50 ms"
+  },
+  {
+   "id": "levers-ahi-atvbm2",
+   "script": "levers.sh",
+   "args": [
+    "ahi"
+   ],
+   "hosts": [
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 4,
+   "question": "Latch levers on hot in-memory reads at 256 threads: AHI on (default / 32 partitions), sync array size, spin pause multiplier"
+  },
+  {
+   "id": "levers-write-atvbmamd",
+   "script": "levers.sh",
+   "args": [
+    "write"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 6,
+   "question": "Commit path, writes > RAM with binary log (NVMe): doublewrite DETECT_ONLY vs OFF, binlog order commits off, binlog compression"
+  },
+  {
+   "id": "levers-trx2-atvbmamd",
+   "script": "levers.sh",
+   "args": [
+    "trx2"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 6,
+   "question": "CPU-bound commit path at trx_commit=2: log writer threads off, redo spin settings, flush log at timeout"
+  },
+  {
+   "id": "levers-tpch-atvbmmia",
+   "script": "levers.sh",
+   "args": [
+    "tpch"
+   ],
+   "hosts": [
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 4,
+   "question": "Analytics TPC-H SF1: TempTable RAM, MEMORY internal tmp tables, TempTable mmap 0, parallel read threads"
+  },
+  {
+   "id": "levers-platform-atvbmmia",
+   "script": "levers.sh",
+   "args": [
+    "platform"
+   ],
+   "hosts": [
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 4,
+   "question": "Host states: C-states (point-select latency), SMT on/off (CPU-bound), buffer pool dump/load warm-up time"
   }
  ]
 }
