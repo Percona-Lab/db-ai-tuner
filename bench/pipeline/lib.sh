@@ -30,22 +30,14 @@ dataset() {  # dataset <tables> <rows>: sysbench sbtest of this shape, and the p
   systemctl start mysql 2>/dev/null || systemctl start mariadb
 }
 
-sb_modern() {  # sysbench with --thread-init-timeout (1.1): Ubuntu's 1.0.20 rejects it, and a variant switch (install_variant)
-  # reinstalls the packaged one (h2h W4 on atvbmmia after MariaDB -> Percona: "invalid option: --thread-init-timeout=600")
-  sysbench --help 2>&1 | grep -q thread-init-timeout && return 0
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get install -yq make automake libtool pkg-config libaio-dev libmysqlclient-dev libssl-dev git >/dev/null \
-    && rm -rf /root/sysbench-src && git clone -q --depth 1 https://github.com/akopytov/sysbench /root/sysbench-src \
-    && (cd /root/sysbench-src && ./autogen.sh >/dev/null && ./configure --quiet >/dev/null && make -j$(nproc) >/dev/null && make install >/dev/null) \
-    && hash -r && sysbench --help 2>&1 | grep -q thread-init-timeout || { echo "QUEUEFAILED: sysbench 1.1 build"; exit 1; }
-}
 sb_profile() {  # sb_profile <file> <name> <test> <tables> <rows> <threads> <rand-type> <warmup s> <duration s> [extra sysbench args]
   local f=$1 name=$2 test=$3 t=$4 r=$5 th=$6 rnd=$7 wu=$8 du=$9; shift 9
-  [ $th -ge 1024 ] && sb_modern
+  # 1.0.20 handles 1024 threads; --thread-init-timeout only where the installed sysbench has it. sysbench 1.1 dropped the
+  # 'special' distribution, so it is not built here (h2h W4 on AMD: "Invalid random numbers distribution: special")
   cat > $f <<INI
 [bench]
 name = $name
-run = ulimit -n 1048576; sysbench $test --tables=$t --table-size=$r --threads=$th --rand-type=$rnd $(SB) $([ $th -ge 1024 ] && echo --thread-init-timeout=600) --time={total} --report-interval=10 --mysql-ignore-errors=all $* run
+run = ulimit -n 1048576; sysbench $test --tables=$t --table-size=$r --threads=$th --rand-type=$rnd $(SB) $([ $th -ge 1024 ] && sysbench --help 2>&1 | grep -q thread-init-timeout && echo --thread-init-timeout=600) --time={total} --report-interval=10 --mysql-ignore-errors=all $* run
 warmup = $wu
 duration = $du
 timeout = $(( (wu + du) * 3 + 600 ))
