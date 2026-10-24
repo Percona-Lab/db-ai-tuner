@@ -723,7 +723,7 @@ def cmd_session(a):
                                         "agent_version": __version__, "allow_stale_agent": bool(getattr(a, "allow_stale_agent", False)),
                                         "agent_time": time.time(), "ntp_synchronized": _ntp_synchronized(),
                                         "noise_pct": a.noise_pct, "notes": a.notes, "workload": a.workload, "os_tuning": os_tuning,
-                                        "study": a.study, "planner": bool(getattr(a, "planner", False))})
+                                        "study": a.study, "planner": bool(getattr(a, "planner", False)), "ai": getattr(a, "ai", None)})
         if r.get("warning"):
             log("WARNING: " + r["warning"])
         warn = _maintenance_tasks(c)
@@ -737,7 +737,7 @@ def cmd_session(a):
             raise Fail("scope 'filesystem' needs a dedicated device: tuning-agent init --fs-device /dev/... --allow-fs-experiments")
         sess = {"id": r["session_id"], "name": a.name or r.get("name"), "goal": a.goal, "policy": a.policy, "scope": scope,
                 "noise_pct": a.noise_pct, "started": time.time(), "runs": [], "best": None, "os_tuning": os_tuning,
-                "stability": getattr(a, "stability", None)}
+                "stability": getattr(a, "stability", None), "ai": getattr(a, "ai", None)}
         if r.get("study"):
             sess["study"] = r["study"]
         c.state.set("session", sess)
@@ -2393,8 +2393,12 @@ def _recommend(c, sess, llm=False):
     c.refresh()
     ctx = _engine_ctx(c, sess)
     res = engine.run_engine(ctx)
-    why = llmassist.trigger(res, explicit=llm)
-    pending = sess.get("llm_pending") or []  # accepted earlier, not measured yet: they stay candidates
+    # a session started with --ai off (rules + learnings only, e.g. the head-to-head's rules arm) asks no model anything
+    ai_off = str(sess.get("ai") or "").lower() == "off"
+    why = None if ai_off else llmassist.trigger(res, explicit=llm)
+    if ai_off:
+        res["llm"] = {"skipped": "AI off for this session (rules + learnings only)"}
+    pending = [] if ai_off else (sess.get("llm_pending") or [])  # accepted earlier, not measured yet: they stay candidates
     fresh, model = [], None
     if why and ctx.get("summary"):
         try:
@@ -2413,7 +2417,7 @@ def _recommend(c, sess, llm=False):
             res["llm"] = {"skipped": r.get("reason"), "trigger": why}
     # measured time no candidate acts on: ask for a bottleneck analysis (hypothesis, changes, mechanism), cached by the
     # conditions so similar situations reuse it
-    if ctx.get("summary"):
+    if ctx.get("summary") and not ai_off:
         analyzed = set(sess.get("analyzed_components") or [])
         for comp in llmassist.uncovered(res):
             if comp["name"] in analyzed:
@@ -2502,7 +2506,7 @@ def _recommend(c, sess, llm=False):
             nxt = next((i for i in res["items"] if i["kind"] in ("config", "revert") and i["confidence"] > 0 and i["id"] not in done_ids
                         and (i.get("safety") == "safe" or ctx.get("policy") == "benchmark")), None)
             res["next"] = nxt["id"] if nxt else None
-    if ctx.get("summary"):
+    if ctx.get("summary") and not ai_off:
         _plan(c, sess, ctx, res)
     res.pop("_ctx", None)
     run_id = sess["runs"][-1]["id"] if sess["runs"] else None
@@ -3789,6 +3793,8 @@ def main(argv=None):
     s.add_argument("--allow-stale-agent", action="store_true", help="kept for older scripts: a build mismatch is only a warning now")
     s.add_argument("--study", help="study (name or id) this session belongs to; created if it does not exist. Studies compare "
                                    "sessions across environments (hardware scaling, minimum hardware for a target)")
+    s.add_argument("--ai", choices=["off"], default=None,
+                   help="off: this session asks no AI model anything (rules + learnings only), whatever the account's AI mode")
     s.add_argument("--stability", choices=["first", "off"], default=None,
                    help="first (default): while the undo history grows without bound, stability remedies run before tuning and the best "
                         "configuration is a stable one; off: rank by the goal only")

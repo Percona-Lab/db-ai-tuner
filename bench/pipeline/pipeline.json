@@ -2,202 +2,6 @@
  "note": "Study pipeline for the Vultr bare-metal boxes, highest priority first. run.py gives each idle box the first pending item it may run; a group item waits for all its hosts (they are held for it). Items without a script are listed for planning only.",
  "items": [
   {
-   "id": "h2h-W1-rules-atvbm",
-   "script": "h2h.sh",
-   "args": [
-    "W1",
-    "rules"
-   ],
-   "hosts": [
-    "atvbm"
-   ],
-   "group": false,
-   "est_hours": 7,
-   "question": "Head-to-head W1 (commit-bound writes): rules arm on atvbm; crossover with the pair box in opposite order"
-  },
-  {
-   "id": "h2h-W1-planner-atvbm",
-   "script": "h2h.sh",
-   "args": [
-    "W1",
-    "planner"
-   ],
-   "hosts": [
-    "atvbm"
-   ],
-   "group": false,
-   "est_hours": 7,
-   "question": "Head-to-head W1 (commit-bound writes): planner arm on atvbm; crossover with the pair box in opposite order"
-  },
-  {
-   "id": "h2h-W2-planner-atvbm",
-   "script": "h2h.sh",
-   "args": [
-    "W2",
-    "planner"
-   ],
-   "hosts": [
-    "atvbm"
-   ],
-   "group": false,
-   "est_hours": 7,
-   "question": "Head-to-head W2 (read-I/O-bound (37 GB > RAM)): planner arm on atvbm; crossover with the pair box in opposite order"
-  },
-  {
-   "id": "h2h-W2-rules-atvbm",
-   "script": "h2h.sh",
-   "args": [
-    "W2",
-    "rules"
-   ],
-   "hosts": [
-    "atvbm"
-   ],
-   "group": false,
-   "est_hours": 7,
-   "question": "Head-to-head W2 (read-I/O-bound (37 GB > RAM)): rules arm on atvbm; crossover with the pair box in opposite order"
-  },
-  {
-   "id": "h2h-W1-planner-atvbm2",
-   "script": "h2h.sh",
-   "args": [
-    "W1",
-    "planner"
-   ],
-   "hosts": [
-    "atvbm2"
-   ],
-   "group": false,
-   "est_hours": 7,
-   "question": "Head-to-head W1 (commit-bound writes): planner arm on atvbm2; crossover with the pair box in opposite order"
-  },
-  {
-   "id": "h2h-W1-rules-atvbm2",
-   "script": "h2h.sh",
-   "args": [
-    "W1",
-    "rules"
-   ],
-   "hosts": [
-    "atvbm2"
-   ],
-   "group": false,
-   "est_hours": 7,
-   "question": "Head-to-head W1 (commit-bound writes): rules arm on atvbm2; crossover with the pair box in opposite order"
-  },
-  {
-   "id": "h2h-W2-rules-atvbm2",
-   "script": "h2h.sh",
-   "args": [
-    "W2",
-    "rules"
-   ],
-   "hosts": [
-    "atvbm2"
-   ],
-   "group": false,
-   "est_hours": 7,
-   "question": "Head-to-head W2 (read-I/O-bound (37 GB > RAM)): rules arm on atvbm2; crossover with the pair box in opposite order"
-  },
-  {
-   "id": "h2h-W2-planner-atvbm2",
-   "script": "h2h.sh",
-   "args": [
-    "W2",
-    "planner"
-   ],
-   "hosts": [
-    "atvbm2"
-   ],
-   "group": false,
-   "est_hours": 7,
-   "question": "Head-to-head W2 (read-I/O-bound (37 GB > RAM)): planner arm on atvbm2; crossover with the pair box in opposite order"
-  },
-  {
-   "id": "h2h-W3-rules-atvbmmia",
-   "script": "h2h.sh",
-   "args": [
-    "W3",
-    "rules"
-   ],
-   "hosts": [
-    "atvbmmia"
-   ],
-   "group": false,
-   "est_hours": 7,
-   "question": "Head-to-head W3 (CPU-bound, 512 threads in memory): rules arm on atvbmmia; crossover with the pair box in opposite order"
-  },
-  {
-   "id": "h2h-W3-planner-atvbmmia",
-   "script": "h2h.sh",
-   "args": [
-    "W3",
-    "planner"
-   ],
-   "hosts": [
-    "atvbmmia"
-   ],
-   "group": false,
-   "est_hours": 7,
-   "question": "Head-to-head W3 (CPU-bound, 512 threads in memory): planner arm on atvbmmia; crossover with the pair box in opposite order"
-  },
-  {
-   "id": "h2h-W4-planner-atvbmmia",
-   "script": "h2h.sh",
-   "args": [
-    "W4",
-    "planner"
-   ],
-   "hosts": [
-    "atvbmmia"
-   ],
-   "group": false,
-   "est_hours": 7,
-   "question": "Head-to-head W4 (standard benchmark (1024 connections, binlog off)): planner arm on atvbmmia; crossover with the pair box in opposite order"
-  },
-  {
-   "id": "h2h-W4-rules-atvbmmia",
-   "script": "h2h.sh",
-   "args": [
-    "W4",
-    "rules"
-   ],
-   "hosts": [
-    "atvbmmia"
-   ],
-   "group": false,
-   "est_hours": 7,
-   "question": "Head-to-head W4 (standard benchmark (1024 connections, binlog off)): rules arm on atvbmmia; crossover with the pair box in opposite order"
-  },
-  {
-   "id": "h2h-W3-planner-atvbmamd",
-   "script": "h2h.sh",
-   "args": [
-    "W3",
-    "planner"
-   ],
-   "hosts": [
-    "atvbmamd"
-   ],
-   "group": false,
-   "est_hours": 7,
-   "question": "Head-to-head W3 (CPU-bound, 512 threads in memory): planner arm on atvbmamd; crossover with the pair box in opposite order"
-  },
-  {
-   "id": "h2h-W3-rules-atvbmamd",
-   "script": "h2h.sh",
-   "args": [
-    "W3",
-    "rules"
-   ],
-   "hosts": [
-    "atvbmamd"
-   ],
-   "group": false,
-   "est_hours": 7,
-   "question": "Head-to-head W3 (CPU-bound, 512 threads in memory): rules arm on atvbmamd; crossover with the pair box in opposite order"
-  },
-  {
    "id": "irdma-off-atvbmamd",
    "script": "irdma-off.sh",
    "args": [],
@@ -207,34 +11,6 @@
    "group": false,
    "est_hours": 0.1,
    "question": "Free the ~5.5 GiB the E810 NIC's RDMA driver (irdma) reserves on the AMD box, between the W3 and W4 head-to-head sessions"
-  },
-  {
-   "id": "h2h-W4-rules-atvbmamd",
-   "script": "h2h.sh",
-   "args": [
-    "W4",
-    "rules"
-   ],
-   "hosts": [
-    "atvbmamd"
-   ],
-   "group": false,
-   "est_hours": 7,
-   "question": "Head-to-head W4 (standard benchmark (1024 connections, binlog off)): rules arm on atvbmamd; crossover with the pair box in opposite order"
-  },
-  {
-   "id": "h2h-W4-planner-atvbmamd",
-   "script": "h2h.sh",
-   "args": [
-    "W4",
-    "planner"
-   ],
-   "hosts": [
-    "atvbmamd"
-   ],
-   "group": false,
-   "est_hours": 7,
-   "question": "Head-to-head W4 (standard benchmark (1024 connections, binlog off)): planner arm on atvbmamd; crossover with the pair box in opposite order"
   },
   {
    "id": "repeat3",
@@ -676,6 +452,230 @@
    "group": false,
    "est_hours": 4,
    "question": "Host states: C-states (point-select latency), SMT on/off (CPU-bound), buffer pool dump/load warm-up time"
+  },
+  {
+   "id": "h2h-W1-rules-atvbm",
+   "script": "h2h.sh",
+   "args": [
+    "W1",
+    "rules"
+   ],
+   "hosts": [
+    "atvbm"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W1 (commit-bound writes): rules + learnings arm (no AI) on atvbm; crossover with the pair box in opposite order"
+  },
+  {
+   "id": "h2h-W1-planner-atvbm",
+   "script": "h2h.sh",
+   "args": [
+    "W1",
+    "planner"
+   ],
+   "hosts": [
+    "atvbm"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W1 (commit-bound writes): planner arm on atvbm; crossover with the pair box in opposite order"
+  },
+  {
+   "id": "h2h-W2-planner-atvbm",
+   "script": "h2h.sh",
+   "args": [
+    "W2",
+    "planner"
+   ],
+   "hosts": [
+    "atvbm"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W2 (read-I/O-bound (37 GB > RAM)): planner arm on atvbm; crossover with the pair box in opposite order"
+  },
+  {
+   "id": "h2h-W2-rules-atvbm",
+   "script": "h2h.sh",
+   "args": [
+    "W2",
+    "rules"
+   ],
+   "hosts": [
+    "atvbm"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W2 (read-I/O-bound (37 GB > RAM)): rules + learnings arm (no AI) on atvbm; crossover with the pair box in opposite order"
+  },
+  {
+   "id": "h2h-W1-planner-atvbm2",
+   "script": "h2h.sh",
+   "args": [
+    "W1",
+    "planner"
+   ],
+   "hosts": [
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W1 (commit-bound writes): planner arm on atvbm2; crossover with the pair box in opposite order"
+  },
+  {
+   "id": "h2h-W1-rules-atvbm2",
+   "script": "h2h.sh",
+   "args": [
+    "W1",
+    "rules"
+   ],
+   "hosts": [
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W1 (commit-bound writes): rules + learnings arm (no AI) on atvbm2; crossover with the pair box in opposite order"
+  },
+  {
+   "id": "h2h-W2-rules-atvbm2",
+   "script": "h2h.sh",
+   "args": [
+    "W2",
+    "rules"
+   ],
+   "hosts": [
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W2 (read-I/O-bound (37 GB > RAM)): rules + learnings arm (no AI) on atvbm2; crossover with the pair box in opposite order"
+  },
+  {
+   "id": "h2h-W2-planner-atvbm2",
+   "script": "h2h.sh",
+   "args": [
+    "W2",
+    "planner"
+   ],
+   "hosts": [
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W2 (read-I/O-bound (37 GB > RAM)): planner arm on atvbm2; crossover with the pair box in opposite order"
+  },
+  {
+   "id": "h2h-W3-rules-atvbmmia",
+   "script": "h2h.sh",
+   "args": [
+    "W3",
+    "rules"
+   ],
+   "hosts": [
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W3 (CPU-bound, 512 threads in memory): rules + learnings arm (no AI) on atvbmmia; crossover with the pair box in opposite order"
+  },
+  {
+   "id": "h2h-W3-planner-atvbmmia",
+   "script": "h2h.sh",
+   "args": [
+    "W3",
+    "planner"
+   ],
+   "hosts": [
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W3 (CPU-bound, 512 threads in memory): planner arm on atvbmmia; crossover with the pair box in opposite order"
+  },
+  {
+   "id": "h2h-W4-planner-atvbmmia",
+   "script": "h2h.sh",
+   "args": [
+    "W4",
+    "planner"
+   ],
+   "hosts": [
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W4 (standard benchmark (1024 connections, binlog off)): planner arm on atvbmmia; crossover with the pair box in opposite order"
+  },
+  {
+   "id": "h2h-W4-rules-atvbmmia",
+   "script": "h2h.sh",
+   "args": [
+    "W4",
+    "rules"
+   ],
+   "hosts": [
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W4 (standard benchmark (1024 connections, binlog off)): rules + learnings arm (no AI) on atvbmmia; crossover with the pair box in opposite order"
+  },
+  {
+   "id": "h2h-W3-planner-atvbmamd",
+   "script": "h2h.sh",
+   "args": [
+    "W3",
+    "planner"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W3 (CPU-bound, 512 threads in memory): planner arm on atvbmamd; crossover with the pair box in opposite order"
+  },
+  {
+   "id": "h2h-W3-rules-atvbmamd",
+   "script": "h2h.sh",
+   "args": [
+    "W3",
+    "rules"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W3 (CPU-bound, 512 threads in memory): rules + learnings arm (no AI) on atvbmamd; crossover with the pair box in opposite order"
+  },
+  {
+   "id": "h2h-W4-rules-atvbmamd",
+   "script": "h2h.sh",
+   "args": [
+    "W4",
+    "rules"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W4 (standard benchmark (1024 connections, binlog off)): rules + learnings arm (no AI) on atvbmamd; crossover with the pair box in opposite order"
+  },
+  {
+   "id": "h2h-W4-planner-atvbmamd",
+   "script": "h2h.sh",
+   "args": [
+    "W4",
+    "planner"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W4 (standard benchmark (1024 connections, binlog off)): planner arm on atvbmamd; crossover with the pair box in opposite order"
   }
  ]
 }

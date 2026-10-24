@@ -1,5 +1,5 @@
 #!/bin/bash
-# session.sh <profile.ini> <name> <goal> [max_runs] : full protocol, unattended (PLANNER=1: an AI planner chooses each step)
+# session.sh <profile.ini> <name> <goal> [max_runs] : full protocol, unattended (PLANNER=1: an AI planner chooses each step; AI_OFF=1: no AI at all)
 PROF=$1; NAME=$2; GOAL=${3:-tps}; MAX=${4:-10}
 set -x
 # the agent must match the server's build (the server refuses stale agents): update it before every session
@@ -16,7 +16,7 @@ if grep -q "^reset.*reset_datadir" $PROF; then
   /root/bench/reset_datadir.sh || exit 1
 fi
 for kv in $PRE_APPLY; do tuning-agent apply --set "$kv" --reason "session setup" || exit 1; done  # e.g. PRE_APPLY="os:datadir_fs=ext4"
-tuning-agent session start --goal $GOAL --policy benchmark ${PLANNER:+--planner} ${SCOPE:+--scope $SCOPE} ${STUDY:+--study "$STUDY"} --name "$NAME" --workload "$(grep '^name' $PROF | cut -d= -f2- | sed 's/^ //')" || exit 1
+tuning-agent session start --goal $GOAL --policy benchmark ${PLANNER:+--planner} ${AI_OFF:+--ai off} ${SCOPE:+--scope $SCOPE} ${STUDY:+--study "$STUDY"} --name "$NAME" --workload "$(grep '^name' $PROF | cut -d= -f2- | sed 's/^ //')" || exit 1
 [ -n "$SKIP_DEFAULTS" ] || tuning-agent measure run --bench $PROF --label "server defaults" || exit 1
 tuning-agent baseline --apply $BASELINE_ARGS || exit 1  # e.g. BASELINE_ARGS="--reserve-mem 1.5G" with a co-located client
 tuning-agent autotune --bench $PROF --calibrate ${CALIBRATE:-3} --max-runs $MAX --tradeoffs || exit 1

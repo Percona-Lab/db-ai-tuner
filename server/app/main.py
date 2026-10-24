@@ -1291,10 +1291,11 @@ def agent_session_start(body: dict = Body(...), key=Depends(auth.agent_key)):
     store.ex("UPDATE tsessions SET status='abandoned', ended=? WHERE env_id=? AND status='active'", (now(), e["id"]))
     n = store.q1("SELECT COUNT(*) n FROM tsessions WHERE env_id=?", (e["id"],))["n"] + 1
     name = (body.get("name") or f"Session {n} ({'TPS' if goal == 'tps' else 'latency'})")[:500]
-    sid = store.ex("INSERT INTO tsessions(env_id, name, goal, policy, noise_pct, workload, notes, created, os_tuning, planner, agent_version) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    sid = store.ex("INSERT INTO tsessions(env_id, name, goal, policy, noise_pct, workload, notes, created, os_tuning, planner, agent_version, ai) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                    (e["id"], name, goal, body.get("policy") or "safe", body.get("noise_pct") or 2.0, body.get("workload"), body.get("notes"), now(),
                     1 if body.get("os_tuning", True) else 0, 1 if body.get("planner") else 0,
-                    ((str(body.get("agent_version") or "")[:40] + (" stale" if want not in ("", "unknown") and have != want else "")) or None)))
+                    ((str(body.get("agent_version") or "")[:40] + (" stale" if want not in ("", "unknown") and have != want else "")) or None),
+                    "off" if str(body.get("ai") or "").lower() == "off" else None))
     store.ex("INSERT INTO events(env_id, session_id, ts, type, message, data) VALUES (?,?,?,?,?,?)",
              (e["id"], sid, now(), "session", f"session started: goal={goal}, policy={body.get('policy') or 'safe'}", store.j(body)))
     study = None

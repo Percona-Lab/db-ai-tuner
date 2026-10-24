@@ -122,6 +122,7 @@ MIGRATIONS = [
     ("users", "llm_critic_model", "TEXT"),
     ("tsessions", "planner", "INTEGER DEFAULT 0"),
     ("recommendations", "decision", "TEXT"),
+    ("tsessions", "ai", "TEXT"),
 ]
 
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # h2h.sh <W1|W2|W3|W4> <rules|planner>: head-to-head of the AI planner (Opus 5.5, no reviewer) against the rule engine on
-# the same workload and hardware (2026-10-23). Each workload runs once per arm on both boxes of a pair, in opposite order
+# the same workload and hardware (2026-10-23; rerun 2026-10-25 with the rules arm without AI). Each workload runs once per arm on both boxes of a pair, in opposite order
 # (crossover), so box and order effects cancel. Same agent build, profile, run cap and noise handling; only the choice of
 # the next step differs. Percona Server 8.4, benchmark policy (production-safe first, then trade-offs), 16 runs.
 W=$1; ARM=$2
@@ -21,6 +21,8 @@ case $W in
       PRE="disable_log_bin=ON" ;;
   *) echo "QUEUEFAILED: unknown workload $W"; exit 1 ;;
 esac
+# planner arm: rules + learnings + the AI planner; rules arm: rules + learnings, no AI at all (2026-10-25 rerun, choice B)
 [ $ARM = planner ] && export PLANNER=1
-STUDY="head-to-head: planner vs rules 2026-10-23" PRE_APPLY="$PRE" run_session $P "h2h $W $ARM ($(hostname))" tps 16
+[ $ARM = rules ] && export AI_OFF=1
+STUDY="${H2H_STUDY:-head-to-head: planner vs rules + learnings 2026-10-25}" PRE_APPLY="$PRE" run_session $P "h2h $W $ARM ($(hostname))" tps 16
 echo PIPEOK

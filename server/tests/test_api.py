@@ -812,3 +812,13 @@ def test_param_policy(user, admin):
 def test_healthz_and_index(client):
     assert client.get("/healthz").json() == {"ok": True}
     assert client.get("/").status_code == 200
+
+
+def test_session_ai_off_is_stored_and_shown(admin):
+    """session start --ai off (the head-to-head's rules arm): the session records that it ran without AI."""
+    env_id = admin.hello()
+    sid = admin.start_session(env_id, ai="off")
+    s = admin.ui.get(f"/api/sessions/{sid}").json()["session"]
+    assert s["ai"] == "off"
+    sid2 = admin.start_session(env_id)
+    assert admin.ui.get(f"/api/sessions/{sid2}").json()["session"]["ai"] is None
