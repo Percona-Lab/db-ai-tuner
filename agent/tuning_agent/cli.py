@@ -595,6 +595,36 @@ def _measured_overhead(c):
     return None
 
 
+def _baseline_swap(c, hw):
+    """Swap as part of the baseline (best practice): unused swap costs nothing (swap study, 2026-10-21), and without it
+    memory pressure is an OOM kill instead of slower pages, so memory settings cannot be explored safely (r2 RO-4.ns, 294,
+    299). About 1x RAM (at most 64 GiB, at most half the free disk), before calibration so every run has it. Not when OS
+    tuning is off or the host is configured without swap (agent.ini swap = none): then the session runs without, flagged."""
+    GiB = 1024 ** 3
+    sess = c.session() or {}
+    if not sess.get("os_tuning", c.os_tuning_allowed()) or str(c.cfg.get("swap", "allowed")).strip().lower() in ("none", "no", "off", "false"):
+        return None
+    ram, have = int(hw.get("ram_bytes") or 0), int(hw.get("swap_bytes") or 0)
+    if ram < 2 * GiB or have >= engine.swap_target(ram) * 0.9:
+        return None
+    try:
+        osv = c.os_settings() or {}
+    except Exception:
+        return None
+    if "os:swapfile" not in osv:
+        return None
+    own = engine._swapfile_bytes(osv.get("os:swapfile"))
+    size = (engine.swap_target(ram) - (have - own)) // GiB * GiB
+    free = int(hw.get("disk_free_bytes") or 0)
+    if free:
+        size = min(size, max(0, int((free - 2 * GiB) * 0.5)) // GiB * GiB)
+    if size < GiB or size <= own:
+        return None
+    return {"variable": "os:swapfile", "value": engine.fmt_size(size),
+            "reason": f"Best practice: a {human_size(size)} swap file ({human_size(have)} swap now, {human_size(ram)} RAM). Unused swap "
+                      "costs nothing; with it, memory pressure shows as swapping (measured) instead of an OOM kill."}
+
+
 def cmd_baseline(a):
     c = Ctx()
     v = c.variables
@@ -615,7 +645,16 @@ def cmd_baseline(a):
         pass
     opts["host_other_bytes"] = _host_other_now()
     items, calc = baseline.generate(hw, v, flavor, vt, opts)
+    sw = _baseline_swap(c, hw)
+    if sw:
+        items.append(sw)
+    osv = None
     for it in items:
+        if it["variable"].startswith("os:"):
+            osv = osv if osv is not None else (c.os_settings() or {})
+            it["current"] = osv.get(it["variable"])
+            it["change"] = True
+            continue
         it["current"] = v.get(it["variable"])
         it["change"] = normalize(it["variable"], it["current"]) != normalize(it["variable"], it["value"])
     out = {"flavor": flavor, "version": ver, "hardware": {k: hw[k] for k in ("cpus", "ram_bytes", "disk_rotational", "disk_free_bytes")},
