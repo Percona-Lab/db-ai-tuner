@@ -231,31 +231,49 @@ def at_compiled_default(cfg, meta):
     return {k for k, m in (meta or {}).items() if isinstance(m, dict) and m.get("default") is not None and k in cfg and norm(cfg[k]) == norm(m["default"])}
 
 
+def _memory_tradeoff(r):
+    """The memory trade-off of a run over the budget (from its summary), with what the run measured next to the model."""
+    s = r.get("summary") or {}
+    mb = s.get("memory_budget") or {}
+    if not mb.get("over_budget"):
+        return None
+    seen = ""
+    if s.get("mem_available_mb") is not None and mb.get("ram"):
+        # the model is a conservative bound (reserves, every allowed connection, temporary tables at their cap):
+        # what this workload actually used is the evidence next to it
+        seen = (f"; measured under this benchmark: {(mb['ram'] / 2 ** 20 - s['mem_available_mb']) / 1024:.1f} GiB in use, "
+                f"{s['mem_available_mb'] / 1024:.1f} GiB available, "
+                + (f"{s['swap_used_mb'] / 1024:.1f} GiB swap used" if s.get("swap_total_mb") else "no swap configured")
+                + (f", {s['swap_in_mbs']} MB/s swapped in" if (s.get("swap_in_mbs") or 0) > 0 else ""))
+    return {"variable": "memory", "value": mb.get("text", "") + seen, "category": "memory", "needed": mb.get("needed"),
+            "lost": "Production safety: memory budget exceeded - swapping / OOM under load."}
+
+
 def start_tradeoffs(runs):
-    """Trade-offs of the session's starting configuration (its first run): the benchmark setup's, not the tuner's."""
+    """Trade-offs of the session's starting configuration (its first run): the benchmark setup's, not the tuner's -
+    including a setup already over the memory budget."""
     first = min((r for r in runs if r.get("status") == "done"), key=lambda r: r.get("seq") or 0, default=None)
-    return [t for t in (first or {}).get("tradeoffs") or [] if t.get("category") != "memory"] if first else []
+    if not first:
+        return []
+    out = [t for t in first.get("tradeoffs") or [] if t.get("category") != "memory"]
+    m = _memory_tradeoff(first)
+    return out + [m] if m else out
 
 
-def added_tradeoffs(r, have):
-    """A run's trade-offs beyond the starting configuration's (have: its (variable, value) pairs). The agent posts the
-    static trade-offs of the settings; a memory budget the host could not hold is in the run's summary
-    (knowledge.run_tradeoffs) - without it the page called a configuration production-safe that the agent's best safe
-    excluded (session 294: buffer pool raised to 51 GiB, 69.1 of 62.8 GiB needed)."""
-    out = [t for t in r.get("tradeoffs") or [] if (t.get("variable"), str(t.get("value"))) not in have]
-    mb = (r.get("summary") or {}).get("memory_budget") or {}
-    if mb.get("over_budget") and not any(t.get("category") == "memory" for t in out):
-        s = r.get("summary") or {}
-        seen = ""
-        if s.get("mem_available_mb") is not None and mb.get("ram"):
-            # the model is a conservative bound (reserves, every allowed connection, temporary tables at their cap):
-            # what this workload actually used is the evidence next to it
-            seen = (f"; measured under this benchmark: {(mb['ram'] / 2 ** 20 - s['mem_available_mb']) / 1024:.1f} GiB in use, "
-                    f"{s['mem_available_mb'] / 1024:.1f} GiB available, "
-                    + (f"{s['swap_used_mb'] / 1024:.1f} GiB swap used" if s.get("swap_total_mb") else "no swap configured")
-                    + (f", {s['swap_in_mbs']} MB/s swapped in" if (s.get("swap_in_mbs") or 0) > 0 else ""))
-        out.append({"variable": "memory", "value": mb.get("text", "") + seen, "category": "memory",
-                    "lost": "Production safety: memory budget exceeded - swapping / OOM under load."})
+MEM_SLACK = 0.01  # as the agent (knowledge.MEM_SLACK): the tuner's memory trade-off only beyond this share of RAM more
+
+
+def added_tradeoffs(r, have, start_mem=None):
+    """A run's trade-offs beyond the starting configuration's (have: its (variable, value) pairs; start_mem: the start's
+    memory trade-off). The agent posts the static trade-offs of the settings; a memory budget the host could not hold is
+    in the run's summary (knowledge.run_tradeoffs) - without it the page called a configuration production-safe that
+    the agent's best safe excluded (session 294: buffer pool raised to 51 GiB, 69.1 of 62.8 GiB needed). A start already
+    over the budget (session 299) marks a run only when it needs more memory than the start did."""
+    out = [t for t in r.get("tradeoffs") or [] if t.get("category") != "memory" and (t.get("variable"), str(t.get("value"))) not in have]
+    m = _memory_tradeoff(r)
+    ram = (((r.get("summary") or {}).get("memory_budget") or {}).get("ram")) or 0
+    if m and not (start_mem and start_mem.get("needed") and m.get("needed") is not None and m["needed"] <= start_mem["needed"] + MEM_SLACK * ram):
+        out.append(m)
     return out
 
 
@@ -263,8 +281,9 @@ def mark_added_tradeoffs(runs):
     """Each run's trade-offs beyond the starting configuration's (tradeoffs_added); returns the start's."""
     start = start_tradeoffs(runs)
     have = {(t.get("variable"), str(t.get("value"))) for t in start}
+    sm = next((t for t in start if t.get("category") == "memory"), None)
     for r in runs:
-        r["tradeoffs_added"] = added_tradeoffs(r, have)
+        r["tradeoffs_added"] = added_tradeoffs(r, have, sm)
     return start
 
 
@@ -888,7 +907,7 @@ def run_detail(run_id: int, request: Request, vs: int = None):
     start = start_tradeoffs(sib)
     have = {(t.get("variable"), str(t.get("value"))) for t in start}
     out["start_tradeoffs"] = start
-    out["tradeoffs_added"] = added_tradeoffs(out, have)
+    out["tradeoffs_added"] = added_tradeoffs(out, have, next((t for t in start if t.get("category") == "memory"), None))
     out.update({
         "inputs": store.uj(r["inputs"], {}), "diagnosis": store.uj(r["diagnosis"], []), "managed": store.uj(r["managed"], {}),
         "config_count": len(cfg), "diff": diff, "compared_with": run_brief(prev) if prev else None,

@@ -967,7 +967,7 @@ function cfgTile(title, cfg, firstCfg, lower, goal, trade, sess) {
 function startTradeoffNote(s) {  // the benchmark setup itself is not production-safe: said once, not on every run
   const t = s.start_tradeoffs || [];
   if (!t.length) return "";
-  return `<div class="note" style="margin-bottom:10px"><span class="badge warn">not production-safe setup</span> The starting configuration of this session already gives up ${t.map(x => `<b>${esc(x.category)}</b> (<code>${esc(x.variable)}=${esc(x.value)}</code>)`).join(", ")}${info(t.map(x => `${x.variable}=${x.value}: ${x.lost}`).join(" · ") + " Every run inherits this from the benchmark setup, so results compare configurations under it. Runs are marked as trade-offs only for what the tuner added on top, and the best production-safe configuration is the best one without added trade-offs.")}.</div>`;
+  return `<div class="note" style="margin-bottom:10px"><span class="badge warn">not production-safe setup</span> The starting configuration of this session already gives up ${t.map(x => x.category === "memory" ? "<b>memory</b> (over the memory budget)" : `<b>${esc(x.category)}</b> (<code>${esc(x.variable)}=${esc(x.value)}</code>)`).join(", ")}${info(t.map(x => `${x.variable}=${x.value}: ${x.lost}`).join(" · ") + " Every run inherits this from the benchmark setup, so results compare configurations under it. Runs are marked as trade-offs only for what the tuner added on top (for memory: needing more than the starting configuration), and the best production-safe configuration is the best one without added trade-offs.")}.</div>`;
 }
 
 function tradeBadge(t) {

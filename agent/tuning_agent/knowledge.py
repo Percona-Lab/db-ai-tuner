@@ -539,15 +539,37 @@ def run_tradeoffs(run):
 
 def start_tradeoffs(runs):
     """What the session's starting configuration already gives up (the first run's; e.g. a benchmark defined without a
-    binary log). Every run inherits these: they say the benchmark setup is not production-safe, not what the tuner did."""
+    binary log, or a setup already over the memory budget). Every run inherits these: they say the benchmark setup is
+    not production-safe, not what the tuner did."""
     first = min((r for r in runs or [] if r.get("managed") is not None), key=lambda r: r.get("seq") or 0, default=None)
-    return [t for t in run_tradeoffs(first) if t.get("category") != "memory"] if first else []
+    if not first:
+        return []
+    out = run_tradeoffs(first)
+    for t in out:
+        if t.get("category") == "memory":  # compared by size below, not by its text
+            t["needed"] = (((first.get("summary") or {}).get("memory_budget") or {}).get("needed"))
+    return out
+
+
+MEM_SLACK = 0.01  # a memory trade-off is the tuner's only when the run needs this share of RAM more than the start
 
 
 def added_tradeoffs(run, start):
-    """The trade-offs of a run beyond those of the starting configuration: what the tuner's changes gave up."""
-    have = {(t.get("variable"), str(t.get("value"))) for t in start or []}
-    return [t for t in run_tradeoffs(run) if (t.get("variable"), str(t.get("value"))) not in have]
+    """The trade-offs of a run beyond those of the starting configuration: what the tuner's changes gave up. A start
+    already over the memory budget (session 299: 62.8 of 62.8 GiB at 1100 connections) marks a run only when it needs
+    more memory than the start did."""
+    have = {(t.get("variable"), str(t.get("value"))) for t in start or [] if t.get("category") != "memory"}
+    sm = next((t for t in start or [] if t.get("category") == "memory"), None)
+    mb = ((run or {}).get("summary") or {}).get("memory_budget") or {}
+    out = []
+    for t in run_tradeoffs(run):
+        if t.get("category") == "memory":
+            if sm and sm.get("needed") and mb.get("needed") is not None and mb["needed"] <= sm["needed"] + MEM_SLACK * (mb.get("ram") or 0):
+                continue
+        elif (t.get("variable"), str(t.get("value"))) in have:
+            continue
+        out.append(t)
+    return out
 
 
 def response_shape(variable):
