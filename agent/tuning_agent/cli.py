@@ -3474,7 +3474,19 @@ def cmd_rollback(a):
     if not changes:
         emit({"ok": True, "result": None}, "Already at " + what)
         return
+    try:  # mysqld down (an interrupted session stopped it mid-restart): start it with the option file as it is, then roll back
+        c.db.connect(retries=1, delay=0)
+    except Exception:
+        ap = Applier(c.cfg, c.state, c.db, log=log)
+        log(f"mysqld is not running: starting {ap.service} before the rollback")
+        subprocess.run(["systemctl", "start", ap.service], capture_output=True)
+        c.db.connect(retries=30, delay=2)
     res = _apply_and_record(c, changes, "rollback")
+    hard = [e for e in res.get("errors") or [] if not str(e).startswith("client")]  # an offline client host keeps its settings
+    if hard or res.get("rolled_back"):
+        # never report a rollback that did not happen: the next session measured "server defaults" with the previous
+        # session's whole configuration (deploy canary #308 after #307 was stopped mid-restart)
+        raise Fail(f"rollback to {what} failed: " + "; ".join(hard or ["apply rolled back"]))
     emit({"ok": True, "result": res}, f"Rolled back to {what}:\n" + _print_apply(res))
 
 
