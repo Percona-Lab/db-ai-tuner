@@ -919,9 +919,37 @@ def run_detail(run_id: int, request: Request, vs: int = None):
         "at_default": sorted(at_compiled_default(cfg, store.uj(r["config_meta"], {}) or {}) & set(store.uj(r["managed"], {}) or {})),
         "recommendations": recs, "runs": siblings, "feedback": _feedback_view(_feedback("f.run_id=?", (run_id,)), u),
         "starred": bool(store.q1("SELECT 1 FROM stars WHERE user_id=? AND run_id=?", (u["id"], run_id))),
+        "vs_baseline": vs_baseline(r),
         "environment": {"id": s["env_id"], "name": (store.q1("SELECT name FROM environments WHERE id=?", (s["env_id"],)) or {"name": ""})["name"]},
     })
     return out
+
+
+def vs_baseline(r):
+    """Every agent-managed setting of this run that differs from the session's baseline (its first baseline / calibration
+    run, else its first run), with the run that set it - a run's own change is one line of its configuration diff, the
+    changes it inherited from earlier experiments are the rest. None for the baseline itself."""
+    rows = [dict(x) for x in store.q("SELECT id, seq, label, managed, changes FROM runs WHERE session_id=? AND status='done' AND seq<=? ORDER BY seq",
+                                     (r["session_id"], r["seq"]))]
+    base = next((x for x in rows if str(x["label"] or "").lower().startswith(("baseline", "calibration"))), rows[0] if rows else None)
+    if not base or base["seq"] >= r["seq"]:
+        return None
+    bm, cm = store.uj(base["managed"], {}) or {}, store.uj(r["managed"], {}) or {}
+    norm = lambda v: str(v).strip().lower() if v is not None else None  # noqa: E731
+    out = []
+    for k in sorted(set(bm) | set(cm)):
+        if norm(bm.get(k)) == norm(cm.get(k)):
+            continue
+        # the run that last set this value (this run's own change, or an earlier experiment it inherited)
+        setter = None
+        for x in reversed(rows):
+            if any(c.get("variable") == k and norm(c.get("new")) == norm(cm.get(k)) for c in store.uj(x["changes"], []) or []):
+                setter = x
+                break
+        out.append({"variable": k, "baseline": bm.get(k), "value": cm.get(k),
+                    "set_in": {"id": setter["id"], "seq": setter["seq"], "label": setter["label"]} if setter else None,
+                    "this_run": bool(setter and setter["id"] == r["id"])})
+    return {"baseline": {"id": base["id"], "seq": base["seq"], "label": base["label"]}, "settings": out}
 
 
 FEEDBACK_VERDICTS = ("reasonable", "questionable", "not-reasonable", "agree", "disagree")
