@@ -2344,6 +2344,20 @@ def test_purge_triage_keeps_substantial_cuts_and_tries_the_lag_bound_last():
             setattr(cli, k, x)
 
 
+def test_benchmarks_get_a_high_open_files_limit():
+    """Canary 2026-10-25: 1024 sysbench threads failed with "Can't create UNIX socket (24)" under the default 1024 open
+    files. Run commands start with the hard limit (raised when the agent may)."""
+    import resource
+    import tempfile
+    from tuning_agent import bench
+    f = tempfile.mktemp()
+    r = bench.Running("ulimit -n", f)
+    r.wait(10)
+    got = open(f).read().strip()
+    hard = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
+    assert got == "unlimited" or int(got) >= min(hard, bench.BENCH_NOFILE), (got, hard)
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

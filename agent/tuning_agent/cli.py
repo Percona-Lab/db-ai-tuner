@@ -2261,8 +2261,18 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
                 done = True
                 break
     finally:
+        early = not r.alive() and time.time() - start < min(300, max_s / 4)
         if r.alive():
             r.kill()
+    if early:
+        # the benchmark died before it measured anything (canary 2026-10-25: 1024 sysbench threads, open-files limit): a
+        # failed probe, never a run-length plan
+        try:
+            tail = open(logfile).read()[-800:]
+        except OSError:
+            tail = ""
+        raise BenchFailed(f"the benchmark exited after {time.time() - start:.0f} s, before the run-length probe could measure "
+                          f"anything (exit code {r.p.returncode}); its output ends with:\n{tail}")
     smp = SampleStore(c.state.dir).window(t0, time.time())
     res = collector.settle_times(smp, t0)
     m = res["metrics"]

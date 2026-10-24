@@ -228,7 +228,7 @@ def tool_version(exe):
 
 
 def run_shell(cmd, timeout, log=None):
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout, preexec_fn=_raise_nofile)
     if log:
         with open(log, "a") as f:
             f.write(f"$ {cmd}\n{r.stdout}{r.stderr}\n")
@@ -245,13 +245,32 @@ def _proc_start(stat):
         return None
 
 
+BENCH_NOFILE = 1048576
+
+
+def _raise_nofile():
+    """Benchmarks open a socket (and more) per client connection: the default 1024 open files made a 1024-thread sysbench
+    fail with "Can't create UNIX socket (24)", then misleadingly "Cannot find benchmark" (canary, 2026-10-25). Run commands
+    get the hard limit (raised to BENCH_NOFILE when the agent may)."""
+    import resource
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    for want in ((BENCH_NOFILE, BENCH_NOFILE), (hard, hard)):
+        try:
+            if want[0] == resource.RLIM_INFINITY or want[0] > soft:
+                resource.setrlimit(resource.RLIMIT_NOFILE, want)
+            return
+        except (ValueError, OSError):
+            continue
+
+
 class Running:
     """A benchmark run command in the background."""
 
     def __init__(self, cmd, logfile):
         self.logfile = logfile
         self.fh = open(logfile, "w")
-        self.p = subprocess.Popen(cmd, shell=True, stdout=self.fh, stderr=subprocess.STDOUT, start_new_session=True)
+        self.p = subprocess.Popen(cmd, shell=True, stdout=self.fh, stderr=subprocess.STDOUT, start_new_session=True,
+                                  preexec_fn=_raise_nofile)
         self.t0 = time.time()
 
     def alive(self):
