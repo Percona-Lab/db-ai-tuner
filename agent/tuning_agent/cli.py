@@ -2061,7 +2061,8 @@ def _fmt_cal(cal):
 
 TRIAGE_SEG_S = 300     # each online setting runs this long (the first TRIAGE_SETTLE_S not counted): a remedy shows in minutes
 TRIAGE_SETTLE_S = 60
-TRIAGE_HELP = 0.5      # a setting that at least halves the history growth (and costs <= STABILITY_MAX_COST_PCT) is kept
+TRIAGE_HELP = 0.5      # a setting that at least halves the history growth (and costs <= STABILITY_MAX_COST_PCT) is kept;
+                       # one that alone makes it stable (TRIAGE_FIX) is kept whatever it costs
 TRIAGE_FIX = 0.25      # stable with a margin: the growth down to a quarter of where it started, or the history shrinking
 TRIAGE_BUDGET_S = 3600
 PROVISIONAL_WINDOW_S = 600  # measurement length while no stable configuration exists
@@ -2096,12 +2097,18 @@ def _triage_candidates(c):
         out += [(f"purge threads {x}", [("innodb_purge_threads", str(x))]) for x in sorted({min(32, pt * 2), 32}) if x > pt]
     bs = int(v.get("innodb_purge_batch_size") or 300)
     out += [(f"purge batch size {x}", [("innodb_purge_batch_size", str(x))]) for x in (1000, 5000) if x > bs]
-    if str(v.get("thread_handling") or "").lower() == "pool-of-threads" and int(v.get("thread_pool_oversubscribe") or 3) > 1:
+    tp_on = str(v.get("thread_handling") or "").lower() == "pool-of-threads"
+    if tp_on and int(v.get("thread_pool_oversubscribe") or 3) > 1:
         out.append(("thread pool oversubscribe 1", [("thread_pool_oversubscribe", "1")]))
-    elif "innodb_thread_concurrency" in v and int(v.get("innodb_thread_concurrency") or 0) == 0 and fl != "mariadb":
+    elif not tp_on and "thread_pool_size" not in v and "innodb_thread_concurrency" in v and int(v.get("innodb_thread_concurrency") or 0) == 0 \
+            and fl != "mariadb":
+        # no thread pool in this server (MySQL Community): the cruder cap on threads inside InnoDB is the online stand-in
         out += [(f"innodb_thread_concurrency {x}", [("innodb_thread_concurrency", str(x))]) for x in (4 * cpus, 2 * cpus)]
+    # restart-only remedies left (the thread pool, more purge threads): they come first as the session's experiments, and
+    # the purge lag bound - a stopgap throttling every writer - only after them (run_engine ranks it last)
+    restart_left = (not tp_on and "thread_pool_size" in v) or (pt < 32 and not dynamic_in("innodb_purge_threads", series))
     last = []
-    if "innodb_max_purge_lag" in v and int(v.get("innodb_max_purge_lag") or 0) == 0:
+    if not restart_left and "innodb_max_purge_lag" in v and int(v.get("innodb_max_purge_lag") or 0) == 0:
         last.append(("purge lag bound (stopgap)", [("innodb_max_purge_lag", "__HLL__"), ("innodb_max_purge_lag_delay", "300000")]))
     return out, last
 
@@ -2140,9 +2147,13 @@ def _purge_triage(c, running, deadline):
         nonlocal cur
         seg = step(label, changes)
         cost = 100.0 * (base["tps"] - seg["tps"]) / base["tps"] if base.get("tps") and seg.get("tps") is not None else 0.0
-        ok = seg["hll_per_min"] is not None and seg["hll_per_min"] <= TRIAGE_HELP * cur["hll_per_min"] and cost <= evaluate.STABILITY_MAX_COST_PCT
+        fixes = seg["hll_per_min"] is not None and seg["hll_per_min"] <= max(0, TRIAGE_FIX * base["hll_per_min"])
+        # stable with a margin: kept whatever it costs (stability first, then performance); a partial cut only when cheap
+        ok = fixes or (seg["hll_per_min"] is not None and seg["hll_per_min"] <= TRIAGE_HELP * cur["hll_per_min"]
+                       and cost <= evaluate.STABILITY_MAX_COST_PCT)
         log(f"   {label:40} history {seg['hll_per_min']:+,}/min, {seg['tps']} tps ({-cost:+.1f}% vs reference): "
-            + ("kept" if ok else "reverted (not a substantial cut)" if cost <= evaluate.STABILITY_MAX_COST_PCT else "reverted (too costly)"))
+            + ("kept: stable" if fixes else "kept" if ok else "reverted (not a substantial cut)" if cost <= evaluate.STABILITY_MAX_COST_PCT
+               else "reverted (partial cut, too costly)"))
         if ok:
             kept.extend(changes)
             cur = seg

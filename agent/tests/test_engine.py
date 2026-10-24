@@ -1829,6 +1829,14 @@ def test_stability_remedies_rank_first():
     actionable = [i for i in res["items"] if i["kind"] in ("config", "revert") and i["confidence"] > 0]
     assert actionable[0]["id"] == "purge-concurrency" and actionable[0].get("stability"), [i["id"] for i in actionable[:4]]
     assert actionable[0]["changes"][0]["variable"] == "innodb_thread_concurrency"  # 200 threads / 16 vCPUs: not blocked
+    # Percona Server with its thread pool available: the pool before the cruder concurrency cap (user), even at 1024
+    # connections where the plain thread-pool experiment had lost
+    v_tp = dict(v, thread_handling="one-thread-per-connection", thread_pool_size="16")
+    act = [i for i in engine.run_engine(dict(ctx, variables=v_tp, summary=dict(s, threads_connected_avg=1024)))["items"]
+           if i["kind"] in ("config", "revert") and i["confidence"] > 0]
+    assert act[0]["id"] == "purge-threadpool" and act[0].get("stability"), [i["id"] for i in act[:4]]
+    assert {c["variable"]: c["proposed"] for c in act[0]["changes"]}.get("thread_handling") == "pool-of-threads", act[0]["changes"]
+    assert "thread-pool" not in [i["id"] for i in act]
     # every other remedy tried: now the purge lag bound
     tried = [{"seq": i, "verdict": "neutral", "changes": [{"variable": "x", "new": "1", "source": f"rec:{rid}"}]}
              for i, rid in enumerate(("purge-concurrency", "sweep-purge-threads", "purge-batch"), 5)]
@@ -2317,12 +2325,16 @@ def test_purge_triage_keeps_substantial_cuts_and_tries_the_lag_bound_last():
         assert out["stable"] and out["kept"] == [("innodb_purge_batch_size", "1000"), ("innodb_thread_concurrency", "64")], out
         assert [("rg:purge", None)] in applied  # the 12% cut was reverted (borderline is not a remedy)
         assert not any(k == "innodb_max_purge_lag" for a in applied for k, _ in a)
-        # nothing substantial, or too costly: the lag bound last, capped at the history level reached
+        # a partial cut that costs half the throughput is reverted; the lag bound last, capped at the history level reached
         out = run([("conc", [("innodb_thread_concurrency", "64")])],
-                  [{"hll_per_min": 10000, "tps": 1000, "hll_end": 2e6}, {"hll_per_min": 1000, "tps": 500, "hll_end": 2.1e6},
+                  [{"hll_per_min": 10000, "tps": 1000, "hll_end": 2e6}, {"hll_per_min": 4000, "tps": 500, "hll_end": 2.1e6},
                    {"hll_per_min": -500, "tps": 800, "hll_end": 2.1e6}],
                   last=[("lag", [("innodb_max_purge_lag", "__HLL__"), ("innodb_max_purge_lag_delay", "300000")])])
         assert out["stable"] and out["kept"] == [("innodb_max_purge_lag", "2000000"), ("innodb_max_purge_lag_delay", "300000")], out
+        # a step that alone makes the history stable is kept whatever it costs (stability first, then performance)
+        out = run([("conc", [("innodb_thread_concurrency", "32")])],
+                  [{"hll_per_min": 10000, "tps": 1000, "hll_end": 2e6}, {"hll_per_min": -100, "tps": 450, "hll_end": 2e6}])
+        assert out["stable"] and out["kept"] == [("innodb_thread_concurrency", "32")], out
         # the history is not growing now: nothing to do
         out = run([("conc", [("innodb_thread_concurrency", "64")])], [{"hll_per_min": -20, "tps": 1000, "hll_end": 5e5}])
         assert out["stable"] and not out["kept"] and not applied
