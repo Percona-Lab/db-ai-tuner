@@ -289,10 +289,33 @@ SERIES = [("CPU busy %", ["cpu_busy", "cpu_iowait", "cpu_steal"], "%"), ("Load (
           ("Disk read / write MiB/s", ["disk_read_mbs", "disk_write_mbs"], "MiB/s"), ("Disk utilisation %", ["disk_util"], "%"),
           ("Disk free GiB", ["disk_free_gb"], "GiB"), ("Database + WAL MiB", ["db_mb", "db_wal_mb"], "MiB"),
           ("Database probe ms", ["db_probe_ms"], "ms")]
-COLORS = ["#2f6fdb", "#e08a1e", "#c0392b"]
+COLORS = ["var(--s1)", "var(--s2)", "var(--crit)"]  # the app's theme tokens (app.css)
+
+
+def _thin(series, n=300):
+    """At most n points per line: bucket means (a 7-day view has about 20k samples)."""
+    if len(series) <= n:
+        return series
+    step, out = len(series) / n, []
+    for i in range(n):
+        b = series[int(i * step):int((i + 1) * step)] or series[int(i * step):int(i * step) + 1]
+        row = {"ts": b[-1]["ts"]}
+        for k in b[0]:
+            vs = [x.get(k) for x in b if isinstance(x.get(k), (int, float))]
+            if k != "ts" and vs:
+                row[k] = sum(vs) / len(vs)
+        out.append(row)
+    return out
+
+
+def _range(series, keys):
+    """Min and max of the plotted values, written under the sparkline (its y scale)."""
+    vals = [s.get(k) for s in series for k in keys if isinstance(s.get(k), (int, float))]
+    return f'min {min(0, min(vals)):,.3g} · max {max(vals):,.3g}' if vals else ""
 
 
 def _spark(series, keys, w=320, h=56):
+    series = _thin(series)
     pts = [(s["ts"], [s.get(k) for k in keys]) for s in series]
     vals = [v for _, vs in pts for v in vs if v is not None]
     if len(pts) < 2 or not vals:
@@ -373,14 +396,14 @@ def _ai_section(a, h_):
     ]
     info = lambda tip: ' <span class="i" title="%s">ⓘ</span>' % h_.escape(tip) if tip else ""
     tl = "".join(f'<div class="t"><div class="k">{h_.escape(k)}{info(tip)}</div><div class="v">{v}</div></div>' for k, v, tip in tiles)
-    mcol = ["#e08a1e", "#8e44ad", "#16a085", "#d35400", "#2c3e50", "#b7950b"]
+    mcol = ["var(--s2)", "var(--s5)", "var(--s3)", "var(--s7)", "var(--s8)", "var(--s4)"]
     mstack = [("cost:" + m["model"], mcol[i % len(mcol)]) for i, m in enumerate(a["by_model"])]
     mleg = " ".join(f'<i style=background:{c}></i>{h_.escape(k[5:].split("/")[-1])}' for k, c in mstack)
     unit = "hour" if a["bucket_s"] == 3600 else "day" if a["bucket_s"] == 86400 else "6 h"
-    charts = (f'<div class="g2"><div class="t"><div class="k">Calls per {unit}</div>{_bars(a["series"], [("live", "#2f6fdb"), ("cached", "#9bbcf0"), ("errors", "#c0392b")])}'
-              f'<div class="lg"><i style=background:#2f6fdb></i>live <i style=background:#9bbcf0></i>cached <i style=background:#c0392b></i>errors</div></div>'
-              f'<div class="t"><div class="k">Cost per {unit} by model (bars) and cumulative (line)</div>{_bars(a["series"], mstack, line=("cum_cost", "#6b6b70"))}'
-              f'<div class="lg">{mleg} <i style=background:#6b6b70></i>cumulative {money(t["cost"])}</div></div></div>')
+    charts = (f'<div class="g2"><div class="t"><div class="k">Calls per {unit}</div>{_bars(a["series"], [("live", "var(--s1)"), ("cached", "var(--s6)"), ("errors", "var(--crit)")])}'
+              f'<div class="lg"><i style=background:var(--s1)></i>live <i style=background:var(--s6)></i>cached <i style=background:var(--crit)></i>errors</div></div>'
+              f'<div class="t"><div class="k">Cost per {unit} by model (bars) and cumulative (line)</div>{_bars(a["series"], mstack, line=("cum_cost", "var(--ink-2)"))}'
+              f'<div class="lg">{mleg} <i style=background:var(--ink-2)></i>cumulative {money(t["cost"])}</div></div></div>')
 
     def table(rows, first, label):
         if not rows:
@@ -391,7 +414,7 @@ def _ai_section(a, h_):
                        f'<td class=x>{fmt(r["latency_p50_s"], 1)} / {fmt(r["latency_p95_s"], 1)}</td></tr>' for r in rows)
         return (f'<div class="w"><table><tr><th class=n>{label}</th><th>live</th><th>cached</th><th class=x>errors</th><th class=x>tokens in</th><th class=x>tokens out</th>'
                 f'<th>cost</th><th>per call</th><th class=x>latency p50 / p95 s</th></tr>{body}</table></div>')
-    sess = "".join(f'<tr><td class=m><a href="/#/sessions/{s["session_id"]}">#{s["session_id"]}</a> {h_.escape(s.get("name") or "")}</td>'
+    sess = "".join(f'<tr><td class=m><a href="/#/session/{s["session_id"]}">#{s["session_id"]}</a> {h_.escape(s.get("name") or "")}</td>'
                    f'<td class=m>{h_.escape(s.get("env") or "")}</td><td>{fmt(s["calls"])}</td><td>{fmt(s["cached"])}</td><td>{money(s["cost"])}</td></tr>'
                    for s in a["top_sessions"])
     sess_t = (f'<h3>Sessions with the highest AI cost</h3><div class="w"><table><tr><th class=m>session</th><th class=m>environment</th>'
@@ -416,7 +439,8 @@ def html(hours=24):
     tiles = "".join(
         f'<div class="t"><div class="k">{h_.escape(title)}</div><div class="v">{" / ".join(fmt(last.get(k)) for k in keys)}'
         f'<span class="u"> {unit}</span></div>{_spark(r["series"], keys)}'
-        f'<div class="lg">{" ".join(f"<i style=background:{COLORS[i % 3]}></i>{h_.escape(k)}" for i, k in enumerate(keys)) if len(keys) > 1 else ""}</div></div>'
+        f'<div class="lg">{" ".join(f"<i style=background:{COLORS[i % 3]}></i>{h_.escape(k)}" for i, k in enumerate(keys)) if len(keys) > 1 else ""}'
+        f'<span class="rg">{_range(r["series"], keys)}</span></div></div>'
         for title, keys, unit in SERIES)
     rows = "".join(f"<tr><td class=m>{h_.escape(x['route'])}</td><td>{x['count']}</td><td>{fmt(x['p50_ms'])}</td><td>{fmt(x['p95_ms'])}</td>"
                    f"<td>{fmt(x['max_ms'])}</td><td>{x['errors']}</td></tr>" for x in r["slowest_routes"])
@@ -433,26 +457,30 @@ def html(hours=24):
     state = '<span class="ok">healthy</span>' if r["ok"] else '<span class="bad">' + h_.escape("; ".join(r["warnings"])) + "</span>"
     up = r["uptime_s"]
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Tuner Server Status</title><meta http-equiv="refresh" content="60"><style>
-:root{{--bg:#fafafa;--fg:#1d1d1f;--mut:#6b6b70;--card:#fff;--line:#e4e4e7}}
-@media (prefers-color-scheme:dark){{:root{{--bg:#151517;--fg:#e8e8ea;--mut:#9a9aa0;--card:#1e1e21;--line:#2e2e33}}}}
-body{{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif;margin:0;padding:16px;max-width:1100px;margin:auto}}
-h1{{font-size:20px;margin:0 0 4px}}.sub{{color:var(--mut);margin:0 0 14px}}.ok{{color:#1e8e3e;font-weight:600}}.bad{{color:#c0392b;font-weight:600}}
+<title>Tuner Server Status</title><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/app.css?v=76">
+<script>try {{ const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; }} catch (e) {{ }}
+setTimeout(() => {{ try {{ sessionStorage.setItem("statusY", String(scrollY)); }} catch (e) {{ }} location.reload(); }}, 60000);
+addEventListener("load", () => {{ try {{ const y = sessionStorage.getItem("statusY"); if (y) {{ scrollTo(0, +y); sessionStorage.removeItem("statusY"); }} }} catch (e) {{ }} }});</script><style>
+:root{{--bg:var(--page);--fg:var(--ink);--mut:var(--muted);--card:var(--surface);--line:var(--border)}}
+body{{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}}main.st{{padding:16px;max-width:1100px;margin:auto}}
+h1{{font-size:20px;margin:0 0 4px}}.sub{{color:var(--mut);margin:0 0 14px}}.ok{{color:var(--good-text);font-weight:600}}.bad{{color:var(--crit);font-weight:600}}
 .g{{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}}.t{{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:hidden}}
 .t svg{{width:100%;height:56px}}.k{{color:var(--mut);font-size:12px}}.v{{font-size:18px;font-weight:600}}.u{{font-size:12px;color:var(--mut);font-weight:400}}
-.lg{{font-size:11px;color:var(--mut)}}.lg i{{display:inline-block;width:9px;height:9px;border-radius:2px;margin:0 3px 0 6px}}
+.lg{{font-size:11px;color:var(--mut)}}.lg .rg{{float:right}}.lg i{{display:inline-block;width:9px;height:9px;border-radius:2px;margin:0 3px 0 6px}}
 table{{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:8px;font-size:13px}}
 td,th{{padding:5px 8px;border-bottom:1px solid var(--line);text-align:right}}td.m,th.m{{text-align:left;font-family:ui-monospace,monospace;word-break:break-all}}
 .w{{overflow-x:auto}}h2{{font-size:15px;margin:18px 0 8px}}h3{{font-size:13px;margin:12px 0 6px;color:var(--mut)}}
 .g2{{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px;margin-top:10px}}.g2 svg{{width:100%;height:90px}}.i{{cursor:help;color:var(--mut)}}
-a{{color:#2f6fdb}}td.n,th.n{{text-align:left;font-family:ui-monospace,monospace;white-space:nowrap}}
+main a{{color:var(--accent)}}td.n,th.n{{text-align:left;font-family:ui-monospace,monospace;white-space:nowrap}}
 @media (max-width:640px){{.x{{display:none}}}}</style></head><body>
-<h1>Tuner server status</h1><p class="sub">{state} · up {up // 3600} h {up % 3600 // 60} min · last {hours} h, sampled every {INTERVAL} s ·
+<header class="top"><a class="brand" href="/#/"><img class="logo" src="/static/logo.svg" alt="">AI DB Tuner</a>
+<nav id="nav"><a href="/#/">Environments</a><a href="/#/studies">Studies</a><a href="/#/learning">Learning</a><a href="/status" class="on">Status</a></nav></header>
+<main class="st"><h1>Tuner server status</h1><p class="sub">{state} · up {up // 3600} h {up % 3600 // 60} min · last {hours} h, sampled every {INTERVAL} s ·
 requests last hour: {rq['count']} · p50 {fmt(rq['p50_ms'])} ms · p95 {fmt(rq['p95_ms'])} ms · p99 {fmt(rq['p99_ms'])} ms · 5xx {rq['errors']}
-· <a href="/status.json">JSON</a> · <a href="?h=1">1 h</a> <a href="?h=24">24 h</a> <a href="?h=168">7 d</a> <a href="?h=720">30 d</a></p>
+· <a href="/status.json">JSON</a> · <a href="?h=1">1 h</a> <a href="?h=24">24 h</a> <a href="?h=168">7 d</a></p>
 <h2>Stall watchdog</h2><p class="sub" style="margin:0 0 8px">{wd_line}</p>
 <div class="w"><table><tr><th class=m>state</th><th class=m>severity</th><th class=m>alert</th><th>since</th></tr>{arows}</table></div>
 {ai}
 <h2>Host</h2><div class="g">{tiles}</div>
 <h2>Slowest endpoints, last hour</h2><div class="w"><table><tr><th class=m>endpoint</th><th>requests</th><th>p50 ms</th><th>p95 ms</th><th>max ms</th><th>5xx</th></tr>{rows}</table></div>
-</body></html>"""
+</main></body></html>"""

@@ -1,8 +1,11 @@
 /* Minimal SVG charts: time-series lines with crosshair tooltip, and per-run bars. */
 (function () {
   const NS = "http://www.w3.org/2000/svg";
-  const SLOTS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)"];
+  const SLOTS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)", "var(--s7)", "var(--s8)"];
+  // more series than colours: the colours repeat with a dashed line
+  const slot = i => SLOTS[i % SLOTS.length], dash = i => i >= SLOTS.length ? "5 3" : null;
   const tip = () => document.getElementById("tip");
+  const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
   function el(tag, attrs, parent) {
     const e = document.createElementNS(NS, tag);
@@ -24,6 +27,7 @@
     if (v == null || !isFinite(v)) return "–";
     if (v === 0) return "0";
     const a = Math.abs(v);
+    if (Number.isInteger(v) && a < 1e4) return String(v);
     if (a >= 1e6) return (v / 1e6).toFixed(a >= 1e7 ? 0 : 1) + "M";
     if (a >= 1e4) return (v / 1e3).toFixed(a >= 1e5 ? 0 : 1) + "k";
     if (a >= 100) return v.toFixed(0);
@@ -69,7 +73,7 @@
     wrap.appendChild(title);
     if (series.length > 1) {
       const lg = document.createElement("div"); lg.className = "legend";
-      series.forEach((s, i) => { const sp = document.createElement("span"); sp.innerHTML = `<i style="background:${SLOTS[i]}"></i>`; sp.appendChild(document.createTextNode(s.name)); lg.appendChild(sp); });
+      series.forEach((s, i) => { const sp = document.createElement("span"); sp.innerHTML = dash(i) ? `<i class="dash" style="border-color:${slot(i)}"></i>` : `<i style="background:${slot(i)}"></i>`; sp.appendChild(document.createTextNode(s.name)); lg.appendChild(sp); });
       wrap.appendChild(lg);
     }
     container.appendChild(wrap);
@@ -91,12 +95,15 @@
     const lo = ticks[0], hi = ticks[ticks.length - 1];
     const X = t => m.l + (W - m.l - m.r) * (t - x0) / Math.max(x1 - x0, 1);
     const Y = v => m.t + (H - m.t - m.b) * (1 - (v - lo) / Math.max(hi - lo, 1e-9));
-    (opts.markers || []).forEach(mk => {
-      if (mk.t < x0 || mk.t > x1) return;
+    // session start / end markers: a label only where it does not run into the previous one, never past the plot's edge
+    let lastLab = -Infinity;
+    (opts.markers || []).filter(mk => mk.t >= x0 && mk.t <= x1).sort((a, b) => a.t - b.t).forEach(mk => {
       const x = X(mk.t);
       el("line", { x1: x, x2: x, y1: m.t, y2: H - m.b, stroke: "var(--ink-2)", "stroke-dasharray": "3 3", "stroke-width": 1, opacity: 0.7 }, svg);
-      const lab = el("text", { x: x + (mk.end ? -3 : 3), y: m.t + 9, "text-anchor": mk.end ? "end" : "start", "font-size": 10, fill: "var(--ink-2)" }, svg);
-      lab.textContent = mk.label;
+      if (x - lastLab < 48) return;
+      const right = mk.end || x > W - m.r - 60;
+      const lab = el("text", { x: x + (right ? -3 : 3), y: m.t + 9, "text-anchor": right ? "end" : "start", "font-size": 10, fill: "var(--ink-2)" }, svg);
+      lab.textContent = mk.label; lastLab = x;
     });
     if (opts.warmup && opts.warmup[0]) {  // warm-up before the measured window: its own (amber) band
       const a = X(Math.max(opts.warmup[0], x0)), b = X(Math.min(opts.warmup[1] || x1, x1));
@@ -124,10 +131,11 @@
         d += (pen ? "L" : "M") + X(ts[k]).toFixed(1) + "," + Y(v).toFixed(1);
         pen = true;
       });
-      el("path", { d, fill: "none", stroke: SLOTS[i], "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+      const p = el("path", { d, fill: "none", stroke: slot(i), "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+      if (dash(i)) p.setAttribute("stroke-dasharray", dash(i));
     });
     const cross = el("line", { y1: m.t, y2: H - m.b, stroke: "var(--axis)", "stroke-width": 1, visibility: "hidden" }, svg);
-    const dots = series.map((s, i) => el("circle", { r: 4, fill: SLOTS[i], stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" }, svg));
+    const dots = series.map((s, i) => el("circle", { r: 4, fill: slot(i), stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" }, svg));
     // value label for the linked cross-hair (when another chart is under the pointer): this chart's values at that moment
     const vlab = el("text", { y: m.t + 10, "font-size": 11, "font-weight": 600, visibility: "hidden", "paint-order": "stroke", stroke: "var(--surface)", "stroke-width": 3 }, svg);
     const hit = el("rect", { x: m.l, y: 0, width: W - m.l - m.r, height: H, fill: "transparent", style: "touch-action:pan-y" }, svg);
@@ -151,7 +159,7 @@
         while (vlab.firstChild) vlab.removeChild(vlab.firstChild);
         series.forEach((s, i) => {
           if (s.values[k] == null) return;
-          const sp = el("tspan", { fill: SLOTS[i] }, vlab);
+          const sp = el("tspan", { fill: slot(i) }, vlab);
           sp.textContent = (vlab.childNodes.length > 1 ? " · " : "") + fmtV(s.values[k]);
         });
         const x = X(ts[k]), right = x > (m.l + W - m.r) / 2;
@@ -171,8 +179,8 @@
       place(k);
       let html = `<div class="t">${hhmm(ts[k], true)}</div>`;
       series.forEach((s, i) => {
-        const v = s.values[k];
-        html += `<div><i style="background:${SLOTS[i]}"></i>${s.name}<b>${fmtV(v)}${opts.unit && opts.unit.length <= 3 ? " " + opts.unit : ""}</b></div>`;
+        const v = s.values[k], u = s.unit != null ? s.unit : opts.unit;
+        html += `<div><i style="background:${slot(i)}"></i>${esc(s.name)}<b>${fmtV(v)}${u && v != null ? " " + esc(u) : ""}</b></div>`;
       });
       showTip(html, ev.clientX, ev.clientY);
       syncAll(me, ts[k]);
@@ -182,7 +190,8 @@
     hit.addEventListener("pointerleave", () => { hide(); hideTip(); syncAll(me, null); });
   }
 
-  /* opts: {title, bars:[{label, value, sub, highlight, href}], unit, lowerBetter, ref} */
+  /* opts: {title, bars:[{label, short, value, sub, highlight, href, mark, tip}], unit, metric, subLabel, ref, refLabel,
+     legend:[[fill, label] | ["mark", label]], diverging (bars around 0, negatives in red)} */
   function barChart(container, opts) {
     const wrap = document.createElement("div");
     wrap.className = "chart";
@@ -191,54 +200,65 @@
     container.appendChild(wrap);
     const bars = opts.bars.filter(b => b.value != null);
     if (!bars.length) { const p = document.createElement("div"); p.className = "muted"; p.textContent = "No measured runs yet."; wrap.appendChild(p); return; }
+    const lg = (opts.legend || []).map(([f, l]) => f === "mark" ? `<span>▲ ${esc(l)}</span>` : `<span><span class="sw" style="background:${f}"></span>${esc(l)}</span>`);
+    if (opts.ref != null) lg.push(`<span><span class="ref"></span>${esc(opts.refLabel || "first run")}</span>`);
+    if (lg.length) { const k = document.createElement("div"); k.className = "legend"; k.innerHTML = lg.join(""); wrap.appendChild(k); }
     const W = Math.max(wrap.clientWidth || 300, 240), H = opts.height || 220;
     const m = { l: 48, r: 8, t: 26, b: (W - 56) / Math.max(bars.length, 1) < 70 ? 24 : 34 };
-    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": opts.title });
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "group", "aria-label": opts.title });
     wrap.appendChild(svg);
-    const ticks = niceTicks(0, Math.max(...bars.map(b => b.value), opts.ref != null ? opts.ref : 0), 4);
-    const hi = ticks[ticks.length - 1];
-    const Y = v => m.t + (H - m.t - m.b) * (1 - v / hi);
+    const vals = bars.map(b => b.value).concat(opts.ref != null ? [opts.ref] : []);
+    const ticks = niceTicks(Math.min(0, ...vals), Math.max(0, ...vals), 4);
+    const lo = ticks[0], hi = ticks[ticks.length - 1];
+    const Y = v => m.t + (H - m.t - m.b) * (1 - (v - lo) / Math.max(hi - lo, 1e-9));
     ticks.forEach(v => {
       el("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: v === 0 ? "var(--axis)" : "var(--grid)" }, svg);
       const t = el("text", { x: m.l - 6, y: Y(v) + 4, "text-anchor": "end", "font-size": 11, fill: "var(--muted)" }, svg); t.textContent = fmtNum(v);
     });
-    const slot = (W - m.l - m.r) / bars.length;
-    const bw = Math.min(56, slot - 2 - Math.min(slot * 0.3, 20));
+    const slotW = (W - m.l - m.r) / bars.length;
+    const bw = Math.min(56, slotW - 2 - Math.min(slotW * 0.3, 20));
+    const tipHtml = b => `<div class="t">${esc(b.label)}</div><div>${esc(opts.metric || "value")}<b>${fmtNum(b.value)} ${esc(opts.unit || "")}</b></div>${b.sub ? `<div>${esc(opts.subLabel || "change")}<b>${esc(b.sub)}</b></div>` : ""}${b.tip || ""}${b.mark ? '<div class="t">▲ best configuration known at this point</div>' : ""}${b.href ? '<div class="t" style="margin:4px 0 0">tap again or press Enter to open</div>' : ""}`;
+    let armed = null;  // touch: the first tap shows the values, a second tap on the same bar opens it
     bars.forEach((b, i) => {
-      const cx = m.l + slot * (i + 0.5), y = Y(b.value), h = Y(0) - y;
+      const cx = m.l + slotW * (i + 0.5), y0 = Y(0), y = Y(b.value), neg = b.value < 0;
+      const top = Math.min(y, y0), h = Math.abs(y0 - y);
       const r = Math.min(4, bw / 2, h);
       const x = cx - bw / 2;
-      const d = `M${x},${Y(0)} V${y + r} Q${x},${y} ${x + r},${y} H${x + bw - r} Q${x + bw},${y} ${x + bw},${y + r} V${Y(0)} Z`;
-      const p = el("path", { d, fill: b.highlight ? "var(--s1)" : "var(--axis)" }, svg);
-      if (b.highlight === "best") p.setAttribute("fill", "var(--s3)");
-      if (b.highlight === "trade") p.setAttribute("fill", "var(--s2)");
+      const d = neg ? `M${x},${y0} V${y - r} Q${x},${y} ${x + r},${y} H${x + bw - r} Q${x + bw},${y} ${x + bw},${y - r} V${y0} Z`
+        : `M${x},${y0} V${y + r} Q${x},${y} ${x + r},${y} H${x + bw - r} Q${x + bw},${y} ${x + bw},${y + r} V${y0} Z`;
+      const fill = neg && opts.diverging ? "var(--crit)" : b.highlight === "best" ? "var(--s3)" : b.highlight === "trade" ? "var(--s2)" : b.highlight ? "var(--s1)" : "var(--axis)";
+      el("path", { d, fill }, svg);
       // dense charts (many runs): short labels only, thinned so they never overlap; details are in the tooltip
-      const dense = slot < 70;
-      const every = dense ? Math.max(1, Math.ceil(28 / slot)) : 1;
-      if (i % every === 0 || i === bars.length - 1 && slot * ((bars.length - 1) % every) >= 28) {
+      const dense = slotW < 70;
+      const every = dense ? Math.max(1, Math.ceil(28 / slotW)) : 1;
+      if (i % every === 0 || i === bars.length - 1 && slotW * ((bars.length - 1) % every) >= 28) {
         const lab = el("text", { x: cx, y: H - 18, "text-anchor": "middle", "font-size": 11, fill: "var(--ink-2)" }, svg);
         const text = dense ? (b.short || b.label) : b.label;
-        const maxc = Math.max(3, Math.floor((slot * every - 6) / 6.3));
+        const maxc = Math.max(3, Math.floor((slotW * every - 6) / 6.3));
         lab.textContent = text.length > maxc ? text.slice(0, maxc - 1) + "…" : text;
       }
       if (b.sub && !dense) { const s2 = el("text", { x: cx, y: H - 5, "text-anchor": "middle", "font-size": 10.5, fill: "var(--muted)" }, svg); s2.textContent = b.sub; }
-      const showVal = b.highlight && slot > 40;
+      const showVal = b.highlight && slotW > 40;
+      const vy = neg ? y + 13 : y - 4;
       if (b.mark) {  // above the value label when there is one, never on top of it
-        const tw = Math.min(9, bw), base = y - (showVal ? 17 : 3);
+        const tw = Math.min(9, bw), base = neg ? top - 3 : y - (showVal ? 17 : 3);
         el("path", { d: `M${cx - tw / 2},${base} L${cx + tw / 2},${base} L${cx},${base - tw * 0.8} Z`, fill: "var(--ink)" }, svg);
       }
-      if (showVal) { const v = el("text", { x: cx, y: y - 4, "text-anchor": "middle", "font-size": 11, fill: "var(--ink)" }, svg); v.textContent = fmtNum(b.value); }
-      const hit = el("rect", { x: cx - slot / 2, y: m.t, width: slot, height: H - m.t, fill: "transparent", style: b.href ? "cursor:pointer" : "" }, svg);
-      hit.addEventListener("mousemove", ev => showTip(`<div class="t">${b.label}</div><div>${opts.metric || "value"}<b>${fmtNum(b.value)} ${opts.unit || ""}</b></div>${b.sub ? `<div>${opts.subLabel || "change"}<b>${b.sub}</b></div>` : ""}${b.mark ? "<div><b>best configuration known at this point</b></div>" : ""}${b.tip || ""}`, ev.clientX, ev.clientY));
-      hit.addEventListener("mouseleave", hideTip);
-      if (b.href) hit.addEventListener("click", () => { hideTip(); location.hash = b.href; });
+      if (showVal) { const v = el("text", { x: cx, y: vy, "text-anchor": "middle", "font-size": 11, fill: "var(--ink)" }, svg); v.textContent = fmtNum(b.value); }
+      const hit = el("rect", { x: cx - slotW / 2, y: m.t, width: slotW, height: H - m.t, fill: "transparent", style: b.href ? "cursor:pointer" : "", tabindex: 0,
+        role: b.href ? "link" : "img", "aria-label": `${b.label}: ${fmtNum(b.value)} ${opts.unit || ""}${b.sub ? ", " + b.sub : ""}` }, svg);
+      const open = () => { hideTip(); location.hash = b.href; };
+      hit.addEventListener("pointermove", ev => { if (ev.pointerType === "mouse") showTip(tipHtml(b), ev.clientX, ev.clientY); });
+      hit.addEventListener("pointerleave", ev => { if (ev.pointerType === "mouse") hideTip(); });
+      hit.addEventListener("click", ev => {
+        if (ev.pointerType && ev.pointerType !== "mouse" && armed !== i) { ev.stopPropagation(); armed = i; showTip(tipHtml(b), ev.clientX, ev.clientY); return; }
+        if (b.href) open();
+      });
+      hit.addEventListener("focus", () => { const r = hit.getBoundingClientRect(); showTip(tipHtml(b), r.left + r.width / 2, r.top + 20); });
+      hit.addEventListener("blur", hideTip);
+      hit.addEventListener("keydown", ev => { if (ev.key === "Enter" && b.href) open(); });
     });
-    if (opts.ref != null) {
-      el("line", { x1: m.l, x2: W - m.r, y1: Y(opts.ref), y2: Y(opts.ref), stroke: "var(--ink-2)", "stroke-dasharray": "4 3", "stroke-width": 1 }, svg);
-      const key = document.createElement("div"); key.className = "muted"; key.style.cssText = "font-size:12px;margin:-2px 0 4px";
-      key.innerHTML = `<span style="display:inline-block;width:22px;border-top:1px dashed currentColor;vertical-align:middle;margin-right:4px"></span>${opts.refLabel || "first run"}`;
-      wrap.insertBefore(key, svg);
-    }
+    if (opts.ref != null) el("line", { x1: m.l, x2: W - m.r, y1: Y(opts.ref), y2: Y(opts.ref), stroke: "var(--ink-2)", "stroke-dasharray": "4 3", "stroke-width": 1 }, svg);
   }
 
   // flame graph (root at the bottom) from folded stacks [["a;b;c", count], ...]; click a frame to zoom, click it again to reset
@@ -252,7 +272,8 @@
     });
     const H = 17, wrap = document.createElement("div"); wrap.className = "chart flame";
     container.appendChild(wrap);
-    const depthOf = n => 1 + Math.max(0, ...Object.values(n.children).map(depthOf));
+    // depth of the frames wide enough to draw (narrower ones are skipped), so no empty band sits above the stacks
+    const depthOf = (n, px) => px < 0.6 ? 0 : 1 + Math.max(0, ...Object.values(n.children).map(c => depthOf(c, px * c.value / n.value)));
     let focus = root;
     const color = name => {
       if (/^\[|\.so/.test(name)) return "var(--grid)";
@@ -261,7 +282,13 @@
     };
     function draw() {
       wrap.innerHTML = "";
-      const W = Math.max(wrap.clientWidth || 600, 300), D = Math.min(depthOf(focus), opts.maxDepth || 60), Ht = D * H;
+      if (focus !== root) {
+        const c = document.createElement("div"); c.className = "flame-crumb";
+        c.innerHTML = `<a href="#" role="button">all</a> ▸ ${esc(focus.name)}`;
+        c.querySelector("a").onclick = ev => { ev.preventDefault(); focus = root; draw(); };
+        wrap.appendChild(c);
+      }
+      const W = Math.max(wrap.clientWidth || 600, 300), D = Math.max(1, Math.min(depthOf(focus, W), opts.maxDepth || 60)), Ht = D * H;
       const svg = el("svg", { viewBox: `0 0 ${W} ${Ht}`, height: Ht, width: "100%", role: "img", "aria-label": "CPU flame graph" });
       wrap.appendChild(svg);
       const total = focus.value;
@@ -269,14 +296,15 @@
         const w = node.value / total * W;
         if (w < 0.6 || depth >= D) return;
         const y = Ht - (depth + 1) * H;
-        const g = el("g", { "data-tip": `${node.name} — ${(100 * node.value / root.value).toFixed(1)}% of database CPU samples`, style: "cursor:pointer" }, svg);
+        const g = el("g", { "data-tip": `${node.name} — ${(100 * node.value / root.value).toFixed(1)}% of database CPU samples`, style: "cursor:pointer", tabindex: w > 6 ? 0 : -1, role: "button" }, svg);
         el("rect", { x, y, width: Math.max(w - 0.5, 0.5), height: H - 1, fill: color(node.name), rx: 2 }, g);
         if (w > 40) {
-          const t = el("text", { x: x + 4, y: y + 12, "font-size": 11, fill: "#222" }, g);
+          const t = el("text", { x: x + 4, y: y + 12, "font-size": 11, fill: "var(--on-warm)" }, g);
           const fit = Math.max(1, Math.floor((w - 8) / 6.3));
           t.textContent = node.name.length > fit ? node.name.slice(0, fit - 1) + "…" : node.name;
         }
         g.addEventListener("click", () => { focus = node === focus ? root : node; draw(); });
+        g.addEventListener("keydown", ev => { if (ev.key === "Enter") { focus = node === focus ? root : node; draw(); } });
         let cx = x;
         Object.values(node.children).sort((a, b) => b.value - a.value).forEach(ch => { walk(ch, cx, depth + 1); cx += ch.value / total * W; });
       })(focus, 0, 0);

@@ -289,6 +289,35 @@ def mark_added_tradeoffs(runs):
     return start
 
 
+_SECRETS = [  # as the agent masks the observed benchmark command lines (bench.mask), plus mysql's -pSECRET
+    (re.compile(r"(--?[\w-]*pass(?:word)?[= ])\S+", re.I), r"\1***"),
+    (re.compile(r"(?m)(\b\w*pass(?:word)?\w*\s*[=:]?\s+)(\S+)\s*$", re.I), r"\1***"),
+    (re.compile(r"(\b\w*(?:PASSWORD|PASSWD|PWD)\w*=)\S+"), r"\1***"),
+]
+_MYSQL_P = re.compile(r"(\s-p)(?=[^\s-])[^\s'\"]+")
+
+
+def mask_secrets(v):
+    """Passwords out of a benchmark command, reset command, profile or script text (also shown on read-only share links)."""
+    if not isinstance(v, str) or not v:
+        return v
+    for rx, to in _SECRETS:
+        v = rx.sub(to, v)
+    return _MYSQL_P.sub(r"\1***", v) if "mysql" in v else v
+
+
+def mask_bench(b):
+    """A run's or session's benchmark record with its command lines and scripts masked (the observed tool is masked by the agent)."""
+    if not isinstance(b, dict):
+        return b
+    b = dict(b)
+    for k in ("command", "run", "reset", "profile_text"):
+        b[k] = mask_secrets(b.get(k)) if b.get(k) is not None else b.get(k)
+    if isinstance(b.get("scripts"), dict):
+        b["scripts"] = {k: mask_secrets(v) for k, v in b["scripts"].items()}
+    return b
+
+
 def run_brief(r):
     d = {k: r[k] for k in RUN_LIST_FIELDS}
     d["summary"] = store.uj(r["summary"], {})
@@ -514,15 +543,15 @@ def environment(env_id: int, request: Request):
     for s in store.q("SELECT * FROM tsessions WHERE env_id=? ORDER BY id DESC", (env_id,)):
         d = dict(s)
         d["summary"] = store.uj(d["summary"])
-        runs = [dict(r) for r in store.q("SELECT seq, label, goal_value, status, verdict, started, ended FROM runs WHERE session_id=? AND status<>'aborted' ORDER BY seq", (s["id"],))]
-        d["runs"] = len(runs)
-        done = [r for r in runs if r["goal_value"] is not None and r["verdict"] not in ("unreliable", "superseded")]
-        if done:
-            first = done[0]["goal_value"]
-            best = (min if s["goal"] == "latency" else max)(r["goal_value"] for r in done)
-            d["first_value"], d["best_value"] = first, best
-            if first:
-                d["best_gain_pct"] = round(100 * ((first - best) / first if s["goal"] == "latency" else (best - first) / first), 2)
+        d["runs"] = store.q1("SELECT COUNT(*) n FROM runs WHERE session_id=? AND status<>'aborted'", (s["id"],))["n"]
+        # same reference as the session page: gains of the best production-safe configuration over the calibrated start
+        res = session_results(d) if d["runs"] else {"runs": 0}
+        if res.get("runs"):
+            bs = res.get("best_safe") or {}
+            d["first_value"], d["start_value"], d["start_basis"] = res["first"]["value"], res["start"]["value"], res["start"]["basis"]
+            d["best_value"], d["best_gain_pct"], d["best_gain_vs_first_pct"] = bs.get("mean"), bs.get("gain_pct"), bs.get("gain_vs_first_pct")
+            if res.get("best") and not res["best"].get("safe"):
+                d["best_tradeoff_value"], d["best_tradeoff_gain_pct"] = res["best"]["mean"], res["best"].get("gain_pct")
         sessions.append(d)
     events = [store.row(r, ("data",)) for r in store.q("SELECT * FROM events WHERE env_id=? ORDER BY ts DESC LIMIT 50", (env_id,))]
     hosts = [host_brief(dict(h)) for h in store.q("SELECT * FROM hosts WHERE env_id=? ORDER BY name", (env_id,))]
@@ -723,7 +752,7 @@ def session_benchmarks(sid):
         if key not in by:
             spec = {k: b.get(k) for k in ("name", "profile", "command", "run", "reset", "warmup", "duration", "phases", "goal_metric",
                                           "data_state", "requires", "profile_text", "scripts", "spec_sha", "restart_before_run", "observed")}
-            by[key] = dict(spec, runs=[])
+            by[key] = dict(mask_bench(spec), runs=[])
             out.append(by[key])
         by[key]["runs"].append(r["seq"])
     return out
@@ -910,8 +939,12 @@ def run_detail(run_id: int, request: Request, vs: int = None):
     have = {(t.get("variable"), str(t.get("value"))) for t in start}
     out["start_tradeoffs"] = start
     out["tradeoffs_added"] = added_tradeoffs(out, have, next((t for t in start if t.get("category") == "memory"), None))
+    inputs = store.uj(r["inputs"], {}) or {}
+    if inputs.get("bench"):
+        inputs["bench"] = mask_bench(inputs["bench"])
     out.update({
-        "inputs": store.uj(r["inputs"], {}), "diagnosis": store.uj(r["diagnosis"], []), "managed": store.uj(r["managed"], {}),
+        "start": session_results(s).get("start"),
+        "inputs": inputs, "diagnosis": store.uj(r["diagnosis"], []), "managed": store.uj(r["managed"], {}),
         "config_count": len(cfg), "diff": diff, "compared_with": run_brief(prev) if prev else None,
         "session": {**{k: s[k] for k in ("id", "name", "goal", "policy", "noise_pct", "env_id", "status", "goal_metric")},
                     "calibration": store.uj(s.get("calibration"))},
@@ -1257,7 +1290,7 @@ def agent_session_start(body: dict = Body(...), key=Depends(auth.agent_key)):
     goal = body.get("goal") if body.get("goal") in ("tps", "latency") else "tps"
     store.ex("UPDATE tsessions SET status='abandoned', ended=? WHERE env_id=? AND status='active'", (now(), e["id"]))
     n = store.q1("SELECT COUNT(*) n FROM tsessions WHERE env_id=?", (e["id"],))["n"] + 1
-    name = (body.get("name") or f"Session {n} ({'TPS' if goal == 'tps' else 'latency'})")[:120]
+    name = (body.get("name") or f"Session {n} ({'TPS' if goal == 'tps' else 'latency'})")[:500]
     sid = store.ex("INSERT INTO tsessions(env_id, name, goal, policy, noise_pct, workload, notes, created, os_tuning, planner, agent_version) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                    (e["id"], name, goal, body.get("policy") or "safe", body.get("noise_pct") or 2.0, body.get("workload"), body.get("notes"), now(),
                     1 if body.get("os_tuning", True) else 0, 1 if body.get("planner") else 0,
@@ -1961,10 +1994,13 @@ def study_get_or_create(user_id, ref, goal="tps", workload=None, kind="compare")
 
 
 def session_results(s):
-    """Per-session headline numbers: first run (usually server defaults), best configuration and best production-safe
-    configuration, each as the mean of the runs of that configuration (repeated runs average out noise)."""
+    """Per-session headline numbers: the starting configuration (the reference for every gain), the first run (usually
+    server defaults), best configuration and best production-safe configuration, each as the mean of the runs of that
+    configuration (repeated runs average out noise). Start = the calibrated starting configuration (calibration mean),
+    else the first run labelled baseline / calibration, else run #1 - the same reference as the session page."""
     runs = [dict(r) for r in store.q("SELECT seq, label, goal_value, managed, tradeoffs, summary, verdict, status FROM runs WHERE session_id=? "
-                                     "AND status<>'aborted' AND goal_value IS NOT NULL AND COALESCE(verdict,'')<>'unreliable' ORDER BY seq", (s["id"],))]
+                                     "AND status<>'aborted' AND goal_value IS NOT NULL AND COALESCE(verdict,'') NOT IN ('unreliable','superseded') "
+                                     "ORDER BY seq", (s["id"],))]
     if not runs:
         return {"runs": 0}
     for r in runs:
@@ -1976,6 +2012,7 @@ def session_results(s):
         m = store.uj(r["managed"], {}) or {}
         g = groups.setdefault(store.j(sorted(m.items())), {"runs": [], "managed": m, "safe": True})
         g["runs"].append(r)
+        r["_group"] = g
         if r["tradeoffs_added"]:
             g["safe"] = False
     cfgs = [{"mean": sum(x["goal_value"] for x in g["runs"]) / len(g["runs"]), "n": len(g["runs"]), "seq": g["runs"][-1]["seq"],
@@ -1985,12 +2022,22 @@ def session_results(s):
     safe = [c for c in cfgs if c["safe"]]
     best_safe = pick(safe, key=lambda c: c["mean"]) if safe else None
     first = runs[0]
+    cal = store.uj(s.get("calibration")) if isinstance(s.get("calibration"), str) else s.get("calibration")
+    base = next((r for r in runs if str(r["label"] or "").lower().startswith(("baseline", "calibration"))), first)
+    if (cal or {}).get("goal_mean"):
+        start = {"value": cal["goal_mean"], "basis": "calibration", "runs": cal.get("runs")}
+    else:
+        g = base["_group"]["runs"]
+        start = {"value": sum(x["goal_value"] for x in g) / len(g), "basis": "baseline" if base is not first or str(first["label"] or "").lower().startswith(("baseline", "calibration")) else "first",
+                 "runs": [x["seq"] for x in g]}
     out = {"runs": len(runs), "first": {"value": first["goal_value"], "label": first["label"], "seq": first["seq"]},
-           "best": best, "best_safe": best_safe}
+           "start": start, "best": best, "best_safe": best_safe}
+    gain = lambda f, b: round(100 * ((f - b) / f if lat else (b - f) / f), 2)  # noqa: E731
     for k in ("best", "best_safe"):
+        if out[k] and start["value"]:
+            out[k]["gain_pct"] = gain(start["value"], out[k]["mean"])
         if out[k] and first["goal_value"]:
-            f, b = first["goal_value"], out[k]["mean"]
-            out[k]["gain_pct"] = round(100 * ((f - b) / f if lat else (b - f) / f), 2)
+            out[k]["gain_vs_first_pct"] = gain(first["goal_value"], out[k]["mean"])
     return out
 
 
@@ -2029,6 +2076,12 @@ def env_cost(e):
             "destroyed": bool(e.get("destroyed_at"))}
 
 
+def env_dedicated(e, study_id):
+    """Was the machine used only for this study (no session outside it)? Only then is its whole lifetime the study's cost;
+    a long-lived lab host is charged the time of the study's sessions."""
+    return not store.q1("SELECT 1 FROM tsessions WHERE env_id=? AND (study_id IS NULL OR study_id<>?) LIMIT 1", (e["id"], study_id))
+
+
 def study_view(st, user_id):
     sessions = []
     for s in store.q("SELECT s.*, e.name env_name FROM tsessions s JOIN environments e ON e.id=s.env_id "
@@ -2038,7 +2091,7 @@ def study_view(st, user_id):
         sessions.append({"id": s["id"], "name": s["name"], "status": s["status"], "goal": s["goal"], "policy": s["policy"],
                          "goal_metric": s.get("goal_metric"), "noise_pct": s["noise_pct"], "workload": s["workload"],
                          "created": s["created"], "environment": env_brief(e), "results": session_results(s),
-                         "cost": session_costs(s, e), "env_cost": env_cost(e),
+                         "cost": session_costs(s, e), "env_cost": env_cost(e), "env_dedicated": env_dedicated(e, st["id"]),
                          "activity": session_activity(e, s["id"]) if s["status"] == "active" else None})
     return sessions
 
@@ -2092,11 +2145,14 @@ def study_costs(study_id: int, request: Request, format: str = "json"):
     rows, envs = [], {}
     for x in study_view(st, u["id"]):
         e = x["environment"]
-        envs[e["id"]] = {"environment": e["name"], "plan": e.get("plan"), "rate_hourly": (x["cost"] or {}).get("rate_hourly"), "machine": x["env_cost"]}
+        v = envs.setdefault(e["id"], {"environment": e["name"], "plan": e.get("plan"), "rate_hourly": (x["cost"] or {}).get("rate_hourly"),
+                                      "machine": x["env_cost"], "dedicated": x["env_dedicated"], "sessions_usd": 0})
+        v["sessions_usd"] = round(v["sessions_usd"] + ((x["cost"] or {}).get("total") or 0), 3)
         for r in store.q("SELECT id, seq, label, goal_value, verdict FROM runs WHERE session_id=? ORDER BY seq", (x["id"],)):
             rows.append({"environment": e["name"], "session": x["id"], "run": r["seq"], "label": r["label"], "goal": r["goal_value"],
                          "verdict": r["verdict"], "cost_usd": ((x["cost"] or {}).get("per_run") or {}).get(r["id"])})
-    total = round(sum((v["machine"] or {}).get("total") or 0 for v in envs.values()), 3)
+    # a machine created for the study: its whole lifetime (setup and data load included); a shared host: its sessions' time
+    total = round(sum(((v["machine"] or {}).get("total") or 0) if v["dedicated"] and v["machine"] else v["sessions_usd"] for v in envs.values()), 3)
     if format == "csv":
         from fastapi.responses import PlainTextResponse
         lines = ["environment,session,run,label,goal,verdict,cost_usd"] + [
