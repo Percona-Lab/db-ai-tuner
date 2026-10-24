@@ -397,4 +397,22 @@ class Applier:
                 result["mismatches"].append({"variable": var, "wanted": c["value"], "actual": after.get(var)})
             if normalize(var, entry["old"]) != normalize(var, entry["new"]) or var in result["needs_restart"]:
                 result["applied"].append(entry)
+        rg_now = [c for c in changes if c["variable"].startswith("rg:") and c.get("value") is not None]
+        if rg_now and result.get("restarted"):
+            # the restart may have granted what the group needs (CAP_SYS_NICE in the same batch): check again on the running
+            # server - the note written before the restart said the priority was ignored (canary 2026-10-25)
+            result["notes"] = [n for n in result.get("notes") or [] if not n.startswith("rg:")]
+            for c in rg_now:
+                try:
+                    note = resgroups.apply(self.db, c["value"], c["variable"])
+                    if note:
+                        result["notes"].append(f"{c['variable']}: {note}")
+                except pymysql.MySQLError as e:
+                    result["errors"].append(f"{c['variable']}: {e.args[-1] if e.args else e}")
+        for c in rg_now:  # what the kernel really applies to the purge threads, for the record
+            if c["variable"] == resgroups.PURGE_VAR and resgroups.parse_purge(c["value"]).get("prio"):
+                try:
+                    result["purge_thread_nice"] = resgroups.thread_nice(self.db, resgroups.PURGE_THREADS)
+                except Exception:
+                    pass
         return result

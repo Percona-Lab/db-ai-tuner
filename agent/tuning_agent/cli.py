@@ -2250,13 +2250,20 @@ def _purge_triage(c, running, deadline, start_bench=None):
                    for k, x in cand["changes"]]
         switch(changes, cand["label"])
         seg = measure(cand["label"], changes)
+        if any(k == "rg:purge" for k, _ in changes):  # did the kernel really give the purge threads the priority?
+            from . import resgroups
+            try:
+                seg["purge_nice"] = sorted(set(resgroups.thread_nice(c.db, resgroups.PURGE_THREADS)))
+            except Exception:
+                pass
         cost = 100.0 * (ref["tps"] - seg["tps"]) / ref["tps"] if ref.get("tps") and seg.get("tps") is not None else 0.0
         stable = seg["hll_per_min"] is not None and seg["hll_per_min"] <= max(0, TRIAGE_FIX * ref["hll_per_min"])
         # partial: judged per committed transaction - lower growth from lower throughput is no purge improvement
         # (env 56: batch size 1000 "cut" growth 40% at -38% tps, the same ~1 undo log per transaction)
         partial = not stable and _per_trx(seg) is not None and _per_trx(ref) and _per_trx(seg) <= TRIAGE_HELP * _per_trx(ref)
         seg.update(cost_pct=round(cost, 1), result="stable" if stable else "partial" if partial else "no effect", _changes=changes)
-        log(f"   {cand['label']:42} history {seg['hll_per_min']:+,}/min, {seg['tps']} tps ({-cost:+.1f}%): {seg['result']}")
+        log(f"   {cand['label']:42} history {seg['hll_per_min']:+,}/min, {seg['tps']} tps ({-cost:+.1f}%): {seg['result']}"
+            + (f" (purge threads' nice: {seg['purge_nice']})" if "purge_nice" in seg else ""))
         c.event("purge_triage", f"purge triage step: {cand['label']} ({', '.join(f'{k}={x}' for k, x in changes)}): history "
                 f"{seg['hll_per_min']:+,}/min vs {ref['hll_per_min']:+,}/min, {seg['tps']} tps ({-cost:+.1f}%) - {seg['result']}",
                 dict({k: x for k, x in seg.items() if k != "_changes"}, reference=ref))
