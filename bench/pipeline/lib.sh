@@ -24,8 +24,16 @@ dataset() {  # dataset <tables> <rows>: sysbench sbtest of this shape, and the p
   mysql -e "DROP DATABASE IF EXISTS sbtest; CREATE DATABASE sbtest; CREATE USER IF NOT EXISTS sbtest@localhost IDENTIFIED BY 'sbtest'; GRANT ALL ON *.* TO sbtest@localhost"
   step sysbench oltp_read_write $(SB) --tables=$1 --table-size=$2 --threads=16 prepare
   mysql -N -e "SELECT CONCAT('dataset ', ROUND(SUM(data_length+index_length)/1073741824,1), ' GB') FROM information_schema.tables WHERE table_schema='sbtest'"
+  # the pristine copy is the whole datadir: binary logs and other studies' databases would be copied too (h2h W4 on AMD,
+  # 2026-10-24: 212 GB of swap-study binlogs + its 102 GB database doubled into a 371 GB copy and filled the disk)
+  purge_binlogs
+  mysql -N -e "SELECT CONCAT('other databases in the copy: ', GROUP_CONCAT(s, ' ', g, ' GB')) FROM (SELECT table_schema s, ROUND(SUM(data_length+index_length)/1073741824) g FROM information_schema.tables WHERE table_schema NOT IN ('sbtest','mysql','sys','performance_schema','information_schema') GROUP BY 1 HAVING g >= 1) x" 2>/dev/null
   systemctl stop mysql 2>/dev/null || systemctl stop mariadb
-  rm -rf /var/lib/mysql_base && mkdir -p /var/lib/mysql_base && rsync -a /var/lib/mysql/ /var/lib/mysql_base/ || { echo "QUEUEFAILED: pristine copy"; exit 1; }
+  rm -rf /var/lib/mysql_base
+  local need=$(du -sk /var/lib/mysql | cut -f1) free=$(df -k --output=avail /var/lib | tail -1) size=$(df -k --output=size /var/lib | tail -1)
+  # keep 10% of the disk free after the copy: the benchmark grows the data and logs
+  [ $((free - need)) -ge $((size / 10)) ] || { systemctl start mysql 2>/dev/null; echo "QUEUEFAILED: disk - the pristine copy needs $((need / 1048576)) GB, $((free / 1048576)) GB free (keeping 10% of the disk)"; exit 1; }
+  mkdir -p /var/lib/mysql_base && rsync -a /var/lib/mysql/ /var/lib/mysql_base/ || { echo "QUEUEFAILED: pristine copy"; exit 1; }
   echo "$want" > /var/lib/mysql_base.dataset
   systemctl start mysql 2>/dev/null || systemctl start mariadb
 }

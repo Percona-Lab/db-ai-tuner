@@ -50,6 +50,37 @@ def ssh(host, cmd, timeout=120):
     return r.returncode, r.stdout
 
 
+PREFLIGHT = ("df -k --output=avail,size /var/lib | tail -1; "
+             "(systemctl is-active -q mysql || systemctl is-active -q mariadb) && echo DB_UP; "
+             "ls /swapstudy.img /etc/mysql/mysql.conf.d/zzz-swapstudy.cnf 2>/dev/null")
+
+
+def preflight(host):
+    """None when the box can take an item, else why not: little free disk, the database server down, a study's
+    leftovers (h2h W4 on AMD, 2026-10-24: the swap study left a full disk and its swap file; the next item failed in
+    15 min and held every h2h item for hours)."""
+    try:
+        rc, out = ssh(host, PREFLIGHT, timeout=60)
+    except subprocess.TimeoutExpired:
+        return "unreachable"
+    if rc not in (0, 1, 2) or not out.strip():
+        return "unreachable"
+    lines = out.strip().splitlines()
+    try:
+        avail, size = (int(x) for x in lines[0].split())
+    except ValueError:
+        return "cannot read free disk space"
+    why = []
+    if avail < max(50 * 2 ** 20, size // 10):
+        why.append(f"disk {avail // 2 ** 20} GB free of {size // 2 ** 20} GB")
+    if "DB_UP" not in out:
+        why.append("database server not running")
+    left = [l for l in lines[1:] if l.startswith("/")]
+    if left:
+        why.append("leftovers: " + " ".join(left))
+    return "; ".join(why) or None
+
+
 def start(it, hosts, st):
     for h in hosts:
         subprocess.run(["rsync", "-a", "-e", " ".join(SSH)] + [os.path.join(ROOT, p) for p in SYNC] + [f"{h}:/root/bench/"],
@@ -125,6 +156,17 @@ def tick():
         save(st)
         return
     free = {h for it in items for h in it["hosts"]} - busy
+    blocked = st.setdefault("_blocked", {})
+    for h in sorted(free):
+        why = preflight(h)
+        if why:
+            free.discard(h)
+            if blocked.get(h) != why:  # logged once per reason; checked again every tick
+                log(f"PREFLIGHT {h}: {why} - no items started there until fixed")
+            blocked[h] = why
+        elif h in blocked:
+            log(f"PREFLIGHT {h}: ok again")
+            del blocked[h]
     for it in items:
         if not it.get("script") or st.get(it["id"], {}).get("status") in ("running", "done", "failed"):
             continue

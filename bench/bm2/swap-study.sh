@@ -91,7 +91,14 @@ for ph in $PHASES; do
     done
   }
 done
-# back to the host's own state
-swapoff $SWF 2>/dev/null; rm -f $SWF; swapon -a
-rm -f $CNF; systemctl restart mysql
+# back to the host's own state: mysqld down first - swapoff has to bring every swapped page back into RAM, and with
+# mysqld's pool still there it was OOM-killed and left the swap file (and its 30 GB) behind (AMD, 2026-10-24); the
+# study's database and binary logs go too (they filled the disk under the next item's pristine copy)
+rm -f $CNF
+systemctl stop mysql
+swapoff $SWF || log "WARNING: swapoff $SWF failed"; rm -f $SWF; swapon -a
+systemctl start mysql
+mysql -e "DROP DATABASE IF EXISTS swapstudy"
+mysql -e "FLUSH BINARY LOGS; PURGE BINARY LOGS BEFORE NOW() + INTERVAL 1 SECOND" 2>/dev/null || true
+[ -e $SWF ] && log "STUDYFAILED: $SWF still present" && exit 1
 log "STUDYDONE"
