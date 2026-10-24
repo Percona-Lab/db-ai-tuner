@@ -1827,7 +1827,13 @@ def test_stability_remedies_rank_first():
     assert it["purge-lag"]["changes"][0]["proposed"] in ("600000", "600K", "600k") or int(float(str(it["purge-lag"]["changes"][0]["proposed"]).rstrip("kK") or 0)) >= 200, it["purge-lag"]["changes"]
     actionable = [i for i in res["items"] if i["kind"] in ("config", "revert") and i["confidence"] > 0]
     assert actionable[0]["id"] == "purge-lag", [i["id"] for i in actionable[:4]]
-    assert it.get("purge-cpus", {}).get("kind") == "advice"
+    assert it.get("purge-priority", {}).get("kind") == "advice"  # no resource groups in this server's variables: advice
+    # resource groups and OS tuning: a higher purge priority (with CAP_SYS_NICE for mysqld) ranks before the lag bound
+    v_rg = dict(v, **{"rg:purge": "off", "os:mysqld_cap_sys_nice": "OFF"})
+    res_rg = engine.run_engine(dict(ctx, variables=v_rg))
+    first = [i for i in res_rg["items"] if i["kind"] in ("config", "revert") and i["confidence"] > 0][0]
+    assert first["id"] == "purge-priority" and first.get("stability"), first["id"]
+    assert {c["variable"]: c["proposed"] for c in first["changes"]} == {"rg:purge": "prio=-10", "os:mysqld_cap_sys_nice": "ON"}
     engine.STABILITY_FIRST = False
     try:
         it2 = ids(engine.run_engine(dict(ctx, variables=dict(v))))
@@ -1973,6 +1979,57 @@ def test_memory_sweep_values_checked_against_ram_and_swap():
     some = sweep(1024)
     assert not some.get("sweep") and [c["proposed"] for c in some["changes"]] == ["2560M"] and "Left out: 3G" in some["rationale"], some
     assert sweep(8192)["sweep"]["values"] == ["2560M", "3G"]
+
+
+
+def test_resource_groups_purge_and_background():
+    """rg:purge puts the purge threads in their own SYSTEM group (priority / CPUs), the other InnoDB background threads stay
+    in ta_bg; assignments are re-applied by ensure() (they do not survive a restart)."""
+    from tuning_agent import resgroups as rg
+    assert rg.parse_purge("cpus=6-7,prio=-5") == {"cpus": "6-7", "prio": -5} and rg.parse_purge("prio=-30") == {"prio": -20}
+    assert rg.format_purge(None, -10) == "prio=-10" and rg.format_purge() == "off"
+
+    class DB:
+        def __init__(self):
+            self.groups, self.sql = {}, []
+            self.threads = {1: "thread/innodb/srv_purge_thread", 2: "thread/innodb/srv_worker_thread", 3: "thread/innodb/page_flush_coordinator_thread"}
+            self.member = {}
+
+        def execute(self, q):
+            self.sql.append(q)
+            if q.startswith("CREATE RESOURCE GROUP"):
+                self.groups[q.split()[3]] = {"v": b"0-7", "p": 0, "e": 1}
+            elif q.startswith("SET RESOURCE GROUP"):
+                g = q.split()[3]
+                for i in q.split(" FOR ")[1].split(","):
+                    self.member[int(i)] = g
+            elif q.startswith("DROP RESOURCE GROUP"):
+                g = q.split()[3]
+                self.groups.pop(g, None)
+                self.member = {k: v for k, v in self.member.items() if v != g}
+
+        def dict_rows(self, q):
+            if "RESOURCE_GROUPS" in q:
+                g = q.split("RESOURCE_GROUP_NAME='")[1].split("'")[0]
+                return [self.groups[g]] if g in self.groups else []
+            if "TYPE='BACKGROUND'" in q:
+                return [{"THREAD_ID": i} for i in self.threads]
+            if "NAME IN" in q:
+                return [{"THREAD_ID": i} for i, n in self.threads.items() if n.endswith(("srv_purge_thread", "srv_worker_thread"))]
+            if "WHERE RESOURCE_GROUP=" in q:
+                g = q.split("RESOURCE_GROUP='")[1].split("'")[0]
+                return [{"THREAD_ID": i} for i, x in self.member.items() if x == g]
+            return []
+    db = DB()
+    rg.apply(db, "6-7", rg.VAR)
+    assert db.member == {1: "ta_bg", 2: "ta_bg", 3: "ta_bg"}
+    rg.apply(db, "prio=-10", rg.PURGE_VAR)
+    assert any("THREAD_PRIORITY = -10" in q for q in db.sql)
+    assert db.member[1] == db.member[2] == "ta_purge" and db.member[3] == "ta_bg", db.member
+    db.member = {}  # mysqld restarted: assignments are gone
+    assert rg.ensure(db) == 3 and db.member == {1: "ta_purge", 2: "ta_purge", 3: "ta_bg"}
+    rg.apply(db, "off", rg.PURGE_VAR)
+    assert db.member == {1: "ta_bg", 2: "ta_bg", 3: "ta_bg"}, db.member
 
 
 

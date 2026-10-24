@@ -1,14 +1,32 @@
-"""CPU binding of InnoDB background threads with MySQL resource groups (MySQL / Percona Server 8.0+, not MariaDB).
+"""CPU binding and priority of InnoDB background threads with MySQL resource groups (MySQL / Percona Server 8.0+, not
+MariaDB). Settings applied after mysqld starts: no option file can carry them.
 
-Pseudo-variable rg:innodb_bg_cpus = off | CPU list. A SYSTEM resource group `ta_bg` with that VCPU set is created and
-every InnoDB background thread (page cleaners, purge, log writer/flusher, I/O threads) is assigned to it, so flushing
-bursts stay off the CPUs that serve queries. Thread assignments do not survive a restart: the agent re-applies them
-after its own restarts and the daemon checks them every minute.
+Two pseudo-variables:
+- rg:innodb_bg_cpus = off | CPU list. A SYSTEM resource group `ta_bg` with that VCPU set holds every InnoDB background
+  thread (page cleaners, purge, log writer/flusher, I/O threads), so flushing bursts stay off the CPUs that serve queries.
+- rg:purge = off | cpus=<list> | prio=<-20..0> | cpus=<list>,prio=<n>. A SYSTEM group `ta_purge` for the purge coordinator
+  and workers only: their own CPUs, a higher priority, or both. Raising purge's priority keeps it running when user
+  threads saturate the CPUs (a history list that grows without bound); starving it would make that worse. A purge group
+  takes the purge threads out of `ta_bg`.
+
+Thread assignments do not survive a restart: the agent re-applies them after its own restarts and the daemon checks them
+every minute (ensure). THREAD_PRIORITY needs CAP_SYS_NICE for mysqld (systemd AmbientCapabilities, os:mysqld_cap_sys_nice);
+without it Linux ignores the priority silently and only the CPU binding takes effect.
 """
+import os
+import re
+
 GROUP = "ta_bg"
 VAR = "rg:innodb_bg_cpus"
+PURGE_GROUP = "ta_purge"
+PURGE_VAR = "rg:purge"
+VARS = (VAR, PURGE_VAR)
 RG_KB = {VAR: ("CPUs for InnoDB background threads via a MySQL resource group (off / CPU list); keeps flushing bursts off the "
-               "query CPUs.", False, "cpu")}
+               "query CPUs.", False, "cpu"),
+         PURGE_VAR: ("Purge threads in their own MySQL resource group (off / cpus=list / prio=-20..0 / both): own CPUs or a higher "
+                     "priority, so purge keeps up while user threads saturate the CPUs. Re-applied after every mysqld start.",
+                     False, "cpu")}
+PURGE_THREADS = ("thread/innodb/srv_purge_thread", "thread/innodb/srv_worker_thread")
 
 
 def available(db):
@@ -19,17 +37,50 @@ def available(db):
         return False
 
 
+def _row(db, group):
+    r = db.dict_rows(f"SELECT VCPU_IDS v, THREAD_PRIORITY p, RESOURCE_GROUP_ENABLED e FROM information_schema.RESOURCE_GROUPS "
+                     f"WHERE RESOURCE_GROUP_NAME='{group}'")
+    return r[0] if r else None
+
+
+def _s(v):
+    return v.decode() if isinstance(v, bytes) else str(v)
+
+
+def parse_purge(value):
+    """'cpus=6-7,prio=-5' -> {'cpus': '6-7', 'prio': -5}; 'off' -> {}."""
+    out = {}
+    for part in str(value or "").replace(" ", "").split(","):
+        k, _, x = part.partition("=")
+        if k == "cpus" and x:
+            out["cpus"] = x
+        elif k == "prio" and x:
+            out["prio"] = max(-20, min(0, int(x)))
+    return out
+
+
+def format_purge(cpus=None, prio=None):
+    parts = ([f"cpus={cpus}"] if cpus else []) + ([f"prio={prio}"] if prio else [])
+    return ",".join(parts) or "off"
+
+
 def current(db):
     if not available(db):
         return {}
+    out = {}
     try:
-        row = db.dict_rows(f"SELECT VCPU_IDS FROM information_schema.RESOURCE_GROUPS WHERE RESOURCE_GROUP_NAME='{GROUP}'")
+        r = _row(db, GROUP)
+        out[VAR] = _s(r["v"]) if r else "off"
+        p = _row(db, PURGE_GROUP)
+        if not p:
+            out[PURGE_VAR] = "off"
+        else:
+            all_cpus = f"0-{(os.cpu_count() or 1) - 1}"
+            cpus = _s(p["v"])
+            out[PURGE_VAR] = format_purge(None if cpus == all_cpus else cpus, int(p["p"] or 0))
     except Exception:
-        return {}
-    if not row:
-        return {VAR: "off"}
-    v = list(row[0].values())[0]
-    return {VAR: v.decode() if isinstance(v, bytes) else str(v)}
+        return out
+    return out
 
 
 def _bg_threads(db):
@@ -37,39 +88,77 @@ def _bg_threads(db):
                                               "WHERE TYPE='BACKGROUND' AND NAME LIKE 'thread/innodb/%'")]
 
 
-def apply(db, value):
-    if str(value).lower() in ("off", "", "none"):
-        if db.dict_rows(f"SELECT 1 FROM information_schema.RESOURCE_GROUPS WHERE RESOURCE_GROUP_NAME='{GROUP}'"):
-            db.execute(f"DROP RESOURCE GROUP {GROUP} FORCE")  # FORCE moves its threads back to SYS_default
-        return
-    cpus = str(value).replace(" ", "")
-    if db.dict_rows(f"SELECT 1 FROM information_schema.RESOURCE_GROUPS WHERE RESOURCE_GROUP_NAME='{GROUP}'"):
-        db.execute(f"ALTER RESOURCE GROUP {GROUP} VCPU = {cpus}")
+def _purge_threads(db):
+    names = ", ".join(f"'{n}'" for n in PURGE_THREADS)
+    return [r["THREAD_ID"] for r in db.dict_rows(f"SELECT THREAD_ID FROM performance_schema.threads WHERE NAME IN ({names})")]
+
+
+def apply(db, value, var=VAR):
+    """Create / alter / drop the group of `var`. Returns a note when part of it cannot take effect (priority without
+    CAP_SYS_NICE), else None."""
+    group = PURGE_GROUP if var == PURGE_VAR else GROUP
+    off = str(value).lower() in ("off", "", "none")
+    if off:
+        if _row(db, group):
+            db.execute(f"DROP RESOURCE GROUP {group} FORCE")  # FORCE moves its threads back to SYS_default
+        ensure(db)  # purge threads go back to ta_bg when that group exists
+        return None
+    if var == PURGE_VAR:
+        p = parse_purge(value)
+        spec = (f" VCPU = {p['cpus']}" if p.get("cpus") else "") + (f" THREAD_PRIORITY = {p['prio']}" if p.get("prio") else "")
     else:
-        db.execute(f"CREATE RESOURCE GROUP {GROUP} TYPE = SYSTEM VCPU = {cpus}")
+        spec = f" VCPU = {str(value).replace(' ', '')}"
+    if _row(db, group):
+        db.execute(f"ALTER RESOURCE GROUP {group}{spec}")
+    else:
+        db.execute(f"CREATE RESOURCE GROUP {group} TYPE = SYSTEM{spec}")
     ensure(db)
+    if var == PURGE_VAR and parse_purge(value).get("prio") and has_cap_sys_nice() is False:
+        return ("mysqld lacks CAP_SYS_NICE: Linux ignores the purge threads' priority (only their CPUs apply). "
+                "os:mysqld_cap_sys_nice=ON adds it (takes effect at the next mysqld start).")
+    return None
 
 
 def ensure(db):
-    """(Re)assign InnoDB background threads to the group; returns how many were moved.
-    mysqld disables a group at startup when its CPUs are not all usable (e.g. the process affinity was narrowed)."""
-    row = db.dict_rows(f"SELECT RESOURCE_GROUP_ENABLED e, VCPU_IDS v FROM information_schema.RESOURCE_GROUPS WHERE RESOURCE_GROUP_NAME='{GROUP}'")
-    if not row:
-        return 0
-    if not int(row[0]["e"]):
+    """(Re)assign threads to the groups that exist; returns how many were moved. Purge threads go to ta_purge when it
+    exists, else with the other InnoDB background threads to ta_bg. mysqld disables a group at startup when its CPUs are
+    not all usable (e.g. the process affinity was narrowed)."""
+    moved = 0
+    purge = set(_purge_threads(db)) if _row(db, PURGE_GROUP) else set()
+    for group, ids in ((PURGE_GROUP, sorted(purge)), (GROUP, None)):
+        row = _row(db, group)
+        if not row:
+            continue
+        if not int(row["e"]):
+            try:
+                db.execute(f"ALTER RESOURCE GROUP {group} ENABLE")
+            except Exception as e:
+                raise RuntimeError(f"resource group {group} (CPUs {_s(row['v'])}) is disabled and cannot be enabled: {e}. "
+                                   "Its CPUs must be within the CPUs mysqld may use (os:cpu_affinity).")
+        if ids is None:
+            ids = [i for i in _bg_threads(db) if i not in purge]
+        if not ids:
+            continue
         try:
-            db.execute(f"ALTER RESOURCE GROUP {GROUP} ENABLE")
-        except Exception as e:
-            raise RuntimeError(f"resource group {GROUP} (CPUs {row[0]['v']}) is disabled and cannot be enabled: {e}. "
-                               "Its CPUs must be within the CPUs mysqld may use (os:cpu_affinity).")
-    ids = _bg_threads(db)
-    if not ids:
-        return 0
+            inside = {r["THREAD_ID"] for r in db.dict_rows(f"SELECT THREAD_ID FROM performance_schema.threads WHERE RESOURCE_GROUP='{group}'")}
+        except Exception:
+            inside = set()
+        todo = [i for i in ids if i not in inside]
+        if todo:
+            db.execute(f"SET RESOURCE GROUP {group} FOR {', '.join(str(i) for i in todo)}")
+            moved += len(todo)
+    return moved
+
+
+def has_cap_sys_nice(pid=None):
+    """Whether mysqld may raise thread priorities (CAP_SYS_NICE in its effective capabilities); None when unknown."""
     try:
-        inside = {r["THREAD_ID"] for r in db.dict_rows(f"SELECT THREAD_ID FROM performance_schema.threads WHERE RESOURCE_GROUP='{GROUP}'")}
-    except Exception:
-        inside = set()
-    todo = [i for i in ids if i not in inside]
-    if todo:
-        db.execute(f"SET RESOURCE GROUP {GROUP} FOR {', '.join(str(i) for i in todo)}")
-    return len(todo)
+        if pid is None:
+            from .hostinfo import mysqld_pid
+            pid = mysqld_pid()
+        if not pid:
+            return None
+        m = re.search(r"^CapEff:\s*([0-9a-f]+)", open(f"/proc/{pid}/status").read(), re.M)
+        return bool(int(m.group(1), 16) & (1 << 23)) if m else None
+    except OSError:
+        return None

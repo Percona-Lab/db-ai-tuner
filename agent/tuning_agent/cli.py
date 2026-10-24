@@ -3531,12 +3531,12 @@ def cmd_daemon(a):
                 time.sleep(1)
             s = sampler.sample()
             st = c.state.load()
-            if "rg:innodb_bg_cpus" in (st.get("managed") or {}) and time.time() - last_rg > 60:
+            if any(v in (st.get("managed") or {}) for v in ("rg:innodb_bg_cpus", "rg:purge")) and time.time() - last_rg > 60:
                 last_rg = time.time()
                 from . import resgroups
                 try:
                     if resgroups.ensure(c.db):  # mysqld was restarted outside the agent (e.g. a benchmark reset)
-                        log("re-assigned InnoDB background threads to their resource group")
+                        log("re-assigned InnoDB background / purge threads to their resource groups")
                 except Exception as e:  # never let it break sampling
                     if str(e) != rg_err:
                         log(f"resource group: {e}")

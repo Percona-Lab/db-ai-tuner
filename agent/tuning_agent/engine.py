@@ -701,8 +701,8 @@ def recommend(ctx):
             and _int(v, "innodb_max_purge_lag", 0) == 0:
         # unbounded growth: the cap is the level the window started from, so writers are slowed only beyond what purge
         # handled before (stability first); otherwise 80% of the peak
-        cap = max(200000, int(unb_hll["start"])) if unb_hll else max(200000, int(hll * 0.8))
-        b.add("purge-lag", "Throttle DML when purge falls behind", [("innodb_max_purge_lag", nice_value("innodb_max_purge_lag", str(cap))),
+        lag_cap = max(200000, int(unb_hll["start"])) if unb_hll else max(200000, int(hll * 0.8))
+        b.add("purge-lag", "Throttle DML when purge falls behind", [("innodb_max_purge_lag", nice_value("innodb_max_purge_lag", str(lag_cap))),
                                                                      ("innodb_max_purge_lag_delay", "1000000")],
               f"History list peaked at {hll:,.0f} undo records: purge cannot keep up, so reads walk ever longer version chains. "
               "A purge lag limit slows writers slightly to keep history bounded. "
@@ -716,13 +716,27 @@ def recommend(ctx):
               f"The history list grows without slowing down ({unb_hll['start']:,} -> {unb_hll['end']:,} in the window): larger batches let "
               "each purge pass free more undo per round of coordination. Stability remedy, measured.",
               {"unbounded_growth": unb_hll, "innodb_purge_batch_size": v.get("innodb_purge_batch_size")}, impact=2, confidence=1)
-    if have_run and unb_hll and busy >= 85 and cpus >= 8:
-        b.add("purge-cpus", "Give the purge threads their own CPUs", [],
-              f"Purge cannot keep up on {cpus} CPUs that are {busy:.0f}% busy: purge threads compete with {(s.get("threads_running_avg") or 0):.0f} running user threads "
-              "for the same cores. Pinning the purge threads (performance_schema.threads: thread/innodb/srv_purge_thread and "
-              "srv_worker_thread, THREAD_OS_ID) to one or two cores the user threads do not use (taskset -p -c) keeps purge running. "
-              "Advice: the agent does not pin threads yet.", {"cpu_busy": busy, "cpus": cpus, "threads_running_avg": s.get("threads_running_avg")},
-              impact=2, confidence=1, kind="advice")
+    if have_run and unb_hll and busy >= 70:
+        # purge competes with the user threads for the CPUs: a higher priority for the purge threads (their own MySQL resource
+        # group, re-applied after every start) keeps purge running - safer than starving it or slowing every writer
+        tr_ = s.get("threads_running_avg") or 0
+        nice_cap = str(v.get("os:mysqld_cap_sys_nice") or "").upper()
+        why = (f"Purge cannot keep up on {cpus} CPUs that are {busy:.0f}% busy: the purge threads compete with {tr_:.0f} running user "
+               "threads. A resource group with a higher priority (THREAD_PRIORITY -10) for the purge coordinator and workers keeps purge "
+               "running ahead of them. Applied after mysqld starts and re-applied after every restart (no option file carries it).")
+        if "rg:purge" in v and (nice_cap == "ON" or (ctx.get("os_tuning") and "os:mysqld_cap_sys_nice" in v)):
+            ch = [("rg:purge", "prio=-10")] + ([("os:mysqld_cap_sys_nice", "ON")] if nice_cap != "ON" else [])
+            b.add("purge-priority", "Higher priority for the purge threads", ch,
+                  why + (" mysqld needs CAP_SYS_NICE for thread priorities: added to its service (a restart)." if nice_cap != "ON" else ""),
+                  {"cpu_busy": busy, "cpus": cpus, "threads_running_avg": tr_, "unbounded_growth": unb_hll}, impact=3, confidence=2)
+        else:
+            b.add("purge-priority", "Higher priority for the purge threads", [],
+                  why + (" mysqld lacks CAP_SYS_NICE and OS tuning is off: add AmbientCapabilities=CAP_SYS_NICE to the mysqld service, then "
+                         "CREATE RESOURCE GROUP rg_purge TYPE=SYSTEM THREAD_PRIORITY=-10 and SET RESOURCE GROUP rg_purge FOR <THREAD_IDs of "
+                         "thread/innodb/srv_purge_thread and srv_worker_thread> after every start." if "rg:purge" in v else
+                         " Resource groups are not available on this server (MariaDB, or MySQL before 8.0): pin or renice the purge threads "
+                         "by THREAD_OS_ID (taskset / renice) after every start."),
+                  {"cpu_busy": busy, "cpus": cpus, "threads_running_avg": tr_}, impact=2, confidence=1, kind="advice")
     if have_run and v.get("log_bin") == "ON" and _int(v, "binlog_transaction_dependency_history_size", 25000) > 1000 and (s.get("cpu_busy") or 0) >= 80 \
             and wtype in ("oltp-write", "mixed") and "binlog_transaction_dependency_history_size" in v:
         b.add("writeset-history", "Smaller WRITESET dependency history", [("binlog_transaction_dependency_history_size", "1000")],
@@ -1768,7 +1782,7 @@ def _unearned_unsteady(r):
 # in production however fast it measures - while any stable configuration exists, the best one is chosen among them, and
 # the remedies (purge threads, a purge lag bound, larger purge batches) run before tuning experiments
 STABILITY_FIRST = True
-STABILITY_IDS = ("sweep-purge-threads", "purge-lag", "purge-batch")
+STABILITY_IDS = ("sweep-purge-threads", "purge-lag", "purge-batch", "purge-priority")
 
 
 def unbounded_hll(summary):
@@ -2525,7 +2539,10 @@ def run_engine(ctx):
         if STABILITY_FIRST and unstable_now and it["id"] in STABILITY_IDS and it["kind"] == "config" and it.get("confidence", 0) > 0:
             # stability first: while the history grows without bound, its remedies run before tuning experiments. On busy
             # CPUs the purge lag bound first (more purge threads compete with the transactions), else more purge threads
-            order = (("purge-lag", "sweep-purge-threads", "purge-batch") if busy_now >= 85 else ("sweep-purge-threads", "purge-lag", "purge-batch"))
+            # on busy CPUs: a higher priority for purge first (costs the user threads least), then the lag bound (slows every
+            # writer), then more purge threads (compete for the same CPUs); with CPU to spare more purge threads first
+            order = (("purge-priority", "purge-lag", "sweep-purge-threads", "purge-batch") if busy_now >= 85
+                     else ("sweep-purge-threads", "purge-priority", "purge-lag", "purge-batch"))
             it["score"] = 100 + (len(order) - order.index(it["id"]))
             it["stability"] = True
             it["score_note"] = "stability first: the undo history grows without bound in the current configuration"

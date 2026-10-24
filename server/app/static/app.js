@@ -1144,7 +1144,7 @@ function bestConfigHtml(title, run, c, start) {
   const isDef = k => isDefault(meta[k]) || atDef.has(k);
   const mine = Object.keys(managed).filter(k => !/^(os|rg|client):/.test(k) && !isDef(k)).sort();
   const others = Object.keys(cfg).filter(k => !/^(os|rg):/.test(k) && !(k in managed) && meta[k] && meta[k].default != null && !isDef(k) && !NOT_TUNING.test(k)).sort();
-  const os = Object.keys(managed).filter(k => /^(os|rg):/.test(k)).sort();
+  const os = Object.keys(managed).filter(k => /^os:/.test(k)).sort(), rt = Object.keys(managed).filter(k => /^rg:/.test(k) && !/^off$/i.test(String(managed[k]))).sort();
   const sc = (start && start.config) || {};
   const unsafe = unsafeMap(run.tradeoffs);
   const row = (k, v, d, key) => `<tr${unsafe[key || k] ? ` class="unsafe" data-tip="${esc(unsafe[key || k])}" tabindex="0"` : ""}><td class="mono">${esc(k)}</td><td class="mono"><b>${esc(val(k, v))}</b></td><td class="mono muted">${d != null ? esc(val(k, d)) : "–"}</td></tr>`;
@@ -1155,6 +1155,8 @@ function bestConfigHtml(title, run, c, start) {
     ${mine.length ? tbl("Compiled default", mine.map(k => row(k, cfg[k] != null ? cfg[k] : managed[k], (meta[k] || {}).default)).join("")) : '<p class="muted" style="margin:0">Nothing differs from the compiled defaults.</p>'}
     ${myCnf ? `<details style="margin-top:6px"><summary style="cursor:pointer">Option file (copy into my.cnf)</summary><pre><code>${myCnf}</code></pre></details>` : ""}
     ${os.length ? `<h4 style="margin:10px 0 4px">Operating system (${os.length})</h4>${tbl("Host at session start", os.map(k => row(k.replace(/^os:/, ""), managed[k], sc[k], k)).join(""))}` : ""}
+    ${rt.length ? `<h4 style="margin:10px 0 4px">Applied after MySQL starts (${rt.length})${info("MySQL resource groups: thread CPU binding and priority. No option file can carry them - the group definitions survive a restart, the thread assignments do not. The agent re-applies them after every start; without the agent run the SQL below after each start (for example from an init_file). Thread priorities need CAP_SYS_NICE for mysqld (systemd AmbientCapabilities=CAP_SYS_NICE).")}</h4>${tbl("Host at session start", rt.map(k => row(k.replace(/^rg:/, ""), managed[k], sc[k], k)).join(""))}
+      <details style="margin-top:6px"><summary style="cursor:pointer">SQL to apply after each start</summary><pre><code>${esc(rgSql(Object.fromEntries(rt.map(k => [k, managed[k]]))))}</code></pre></details>` : ""}
     ${others.length ? `<details style="margin-top:8px"><summary style="cursor:pointer">Other non-default MySQL settings on this server, not set by the tuner (${others.length})${info("From the server's own option files or the benchmark prerequisites (e.g. max_connections for many client threads). Paths, ports, identities and certificates are left out.")}</summary>${tbl("Compiled default", others.map(k => row(k, cfg[k], meta[k].default)).join(""))}</details>` : ""}`;
 }
 
@@ -1282,11 +1284,30 @@ function cnfBlock(managed, unsafe) {
   const line = (k, v) => esc(k) + (v === "" ? "" : " = " + esc(v));
   return my.length ? `[mysqld]\n${my.map(([k, v]) => unsafe && unsafe[k] ? `<span class="unsafe" data-tip="${esc(unsafe[k])}" tabindex="0">${line(k, v)}</span>` : line(k, v)).join("\n")}` : "";
 }
+// resource groups as SQL (thread assignments do not survive a restart: run after every start)
+function rgSql(rg) {
+  const out = [];
+  const val = x => x && typeof x === "object" ? x.value : x;
+  const bg = val(rg["rg:innodb_bg_cpus"]), pu = val(rg["rg:purge"]);
+  if (bg && !/^off$/i.test(bg)) out.push(`CREATE RESOURCE GROUP ta_bg TYPE = SYSTEM VCPU = ${bg};  -- once`,
+    "-- after every start: InnoDB background threads" + (pu && !/^off$/i.test(pu) ? " (purge excluded)" : ""),
+    "SELECT GROUP_CONCAT(THREAD_ID) FROM performance_schema.threads WHERE TYPE = 'BACKGROUND' AND NAME LIKE 'thread/innodb/%'"
+      + (pu && !/^off$/i.test(pu) ? " AND NAME NOT IN ('thread/innodb/srv_purge_thread', 'thread/innodb/srv_worker_thread')" : "") + ";",
+    "SET RESOURCE GROUP ta_bg FOR <the thread ids above>;");
+  if (pu && !/^off$/i.test(pu)) {
+    const cpus = (pu.match(/cpus=([^,]+)/) || [])[1], prio = (pu.match(/prio=(-?\d+)/) || [])[1];
+    out.push(`CREATE RESOURCE GROUP ta_purge TYPE = SYSTEM${cpus ? ` VCPU = ${cpus}` : ""}${prio ? ` THREAD_PRIORITY = ${prio}` : ""};  -- once`,
+      "-- after every start: purge coordinator and workers",
+      "SELECT GROUP_CONCAT(THREAD_ID) FROM performance_schema.threads WHERE NAME IN ('thread/innodb/srv_purge_thread', 'thread/innodb/srv_worker_thread');",
+      "SET RESOURCE GROUP ta_purge FOR <the thread ids above>;");
+  }
+  return out.join("\n");
+}
 function otherChanges(managed) {
   const e = Object.entries(managed || {});
   return [
     ["Operating system (database host)", e.filter(([k]) => k.startsWith("os:")), k => k.slice(3)],
-    ["MySQL resource groups (runtime)", e.filter(([k]) => k.startsWith("rg:")), k => k.slice(3)],
+    ["Applied after MySQL starts (resource groups)", e.filter(([k]) => k.startsWith("rg:")), k => k.slice(3)],
     ["Operating system (client hosts)", e.filter(([k]) => k.startsWith("client:")), k => k.replace(/^client:os:/, "")],
   ].filter(g => g[1].length);
 }

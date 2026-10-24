@@ -14,7 +14,7 @@ SUMMARY_KEYS = ("tps", "qps", "avg_latency_ms", "p95_latency_ms", "cpu_busy", "m
                 "psi_memory_some", "mysqld_cpu_ms_per_trx", "disk_ios_per_trx", "mem_available_mb", "swap_in", "swap_out",
                 "history_list_length_max", "threads_connected_avg", "rows_changed_per_s", "dbproc_runq_wait_pct")
 # pseudo-variables the agent can apply even when the server does not report them yet: name -> allowed values (None = any)
-PSEUDO = {"ps:profile": ("full", "lite"), "rg:innodb_bg_cpus": None}
+PSEUDO = {"ps:profile": ("full", "lite"), "rg:innodb_bg_cpus": None, "rg:purge": None}
 
 
 def _pseudo_available(ctx):
@@ -24,6 +24,7 @@ def _pseudo_available(ctx):
         out["ps:profile"] = "performance_schema scope: full (stock instruments) or lite (keeps digests, histograms, wait summaries)"
     if flavor != "mariadb" and ver >= (8, 0):
         out["rg:innodb_bg_cpus"] = "CPU list (e.g. 0-1) for InnoDB background threads via a resource group"
+        out["rg:purge"] = "purge threads' own resource group: off, cpus=<list>, prio=<-20..0> or both (e.g. prio=-10)"
     return out
 
 

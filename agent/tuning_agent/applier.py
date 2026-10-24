@@ -150,7 +150,7 @@ class Applier:
                 psprofile.apply(self.db, self.state["managed"][psprofile.VAR]["value"])
             except Exception:
                 pass
-        if resgroups.VAR in self.state["managed"]:
+        if any(v in self.state["managed"] for v in resgroups.VARS):
             try:
                 resgroups.ensure(self.db)
             except Exception as e:  # noqa
@@ -266,7 +266,9 @@ class Applier:
             if var not in originals:
                 originals[var] = before_vars.get(var)
             try:
-                resgroups.apply(self.db, originals.get(var) or "off" if val is None else val)
+                note = resgroups.apply(self.db, originals.get(var) or "off" if val is None else val, var)
+                if note:
+                    result.setdefault("notes", []).append(f"{var}: {note}")
             except pymysql.MySQLError as e:
                 result["errors"].append(f"{var}: {e.args[-1] if e.args else e}")
         from .mysqldb import flavor_of
