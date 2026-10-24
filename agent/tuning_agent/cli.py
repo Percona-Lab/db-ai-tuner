@@ -2115,6 +2115,13 @@ def _segment(c, t0, t1):
             "tps": round(sum(tps) / len(tps), 1) if tps else None}
 
 
+def _per_trx(seg):
+    """History growth per committed transaction in a triage step: what purge fails to remove, independent of throughput."""
+    if seg.get("hll_per_min") is None or not seg.get("tps"):
+        return None
+    return seg["hll_per_min"] / (seg["tps"] * 60.0)
+
+
 def _triage_candidates(c):
     """Purge remedies that apply online, in the order they cost the workload least; the purge lag bound last (a stopgap
     that throttles every writer). Restart-only remedies (more purge threads in MySQL / Percona, enabling the thread pool)
@@ -2189,8 +2196,10 @@ def _purge_triage(c, running, deadline):
         seg = step(label, changes)
         cost = 100.0 * (base["tps"] - seg["tps"]) / base["tps"] if base.get("tps") and seg.get("tps") is not None else 0.0
         fixes = seg["hll_per_min"] is not None and seg["hll_per_min"] <= max(0, TRIAGE_FIX * base["hll_per_min"])
-        # stable with a margin: kept whatever it costs (stability first, then performance); a partial cut only when cheap
-        ok = fixes or (seg["hll_per_min"] is not None and seg["hll_per_min"] <= TRIAGE_HELP * cur["hll_per_min"]
+        # stable with a margin: kept whatever it costs (stability first, then performance). A partial cut is judged per
+        # transaction: fewer transactions create less undo, so lower growth from lower throughput is no purge improvement
+        # (env 56: batch size 1000 "cut" growth 40% at -38% tps - the same ~1 undo log per transaction, purge still stalled)
+        ok = fixes or (_per_trx(seg) is not None and _per_trx(cur) and _per_trx(seg) <= TRIAGE_HELP * _per_trx(cur)
                        and cost <= evaluate.STABILITY_MAX_COST_PCT)
         log(f"   {label:40} history {seg['hll_per_min']:+,}/min, {seg['tps']} tps ({-cost:+.1f}% vs reference): "
             + ("kept: stable" if fixes else "kept" if ok else "reverted (not a substantial cut)" if cost <= evaluate.STABILITY_MAX_COST_PCT

@@ -2316,7 +2316,8 @@ def test_purge_triage_keeps_substantial_cuts_and_tries_the_lag_bound_last():
         return cli._purge_triage(C(), R(), cli.time.time() + 3600)
 
     try:
-        # batch 1000 cuts growth by 60% (kept), thread concurrency cuts the rest below a quarter: stable, lag never tried
+        # batch 1000 cuts growth by 60% at the same throughput (kept), thread concurrency cuts the rest below a quarter:
+        # stable, lag never tried
         out = run([("batch 1000", [("innodb_purge_batch_size", "1000")]), ("prio", [("rg:purge", "prio=-10")]),
                    ("conc", [("innodb_thread_concurrency", "64")])],
                   [{"hll_per_min": 10000, "tps": 1000, "hll_end": 2e6}, {"hll_per_min": 4000, "tps": 990, "hll_end": 2.1e6},
@@ -2335,6 +2336,10 @@ def test_purge_triage_keeps_substantial_cuts_and_tries_the_lag_bound_last():
         out = run([("conc", [("innodb_thread_concurrency", "32")])],
                   [{"hll_per_min": 10000, "tps": 1000, "hll_end": 2e6}, {"hll_per_min": -100, "tps": 450, "hll_end": 2e6}])
         assert out["stable"] and out["kept"] == [("innodb_thread_concurrency", "32")], out
+        # lower growth only because throughput fell (same growth per transaction): not a purge improvement
+        out = run([("conc", [("innodb_thread_concurrency", "64")])],
+                  [{"hll_per_min": 333000, "tps": 5574, "hll_end": 1e7}, {"hll_per_min": 201000, "tps": 3460, "hll_end": 1.1e7}])
+        assert not out["stable"] and not out["kept"], out
         # the history is not growing now: nothing to do
         out = run([("conc", [("innodb_thread_concurrency", "64")])], [{"hll_per_min": -20, "tps": 1000, "hll_end": 5e5}])
         assert out["stable"] and not out["kept"] and not applied
