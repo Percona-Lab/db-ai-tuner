@@ -2396,6 +2396,30 @@ def test_purge_priority_brings_purge_workers_with_the_restart():
     assert act2[0]["id"] == "sweep-purge-threads", [i["id"] for i in act2[:3]]
 
 
+def test_data_loads_are_reported():
+    """User: the agent showed nothing while the benchmark's data was created for hours. The daemon recognises loaders
+    and reports what loads, the growth of the data file system and the time left when the size is known."""
+    from tuning_agent import loaddetect
+    procs = [(10, ["sysbench", "oltp_read_write", "--tables=64", "--table-size=10000000", "--threads=32", "prepare"]),
+             (11, ["sysbench", "oltp_read_write", "--tables=64", "--time=600", "run"]), (12, ["bash"])]
+    ld = loaddetect.loaders(procs)
+    assert [x["pid"] for x in ld] == [10] and ld[0]["expected_bytes"] == 64 * 10000000 * loaddetect.SYSBENCH_ROW_BYTES
+    assert loaddetect.loaders([(5, ["/opt/go-tpc/go-tpc", "tpcc", "prepare", "--warehouses", "100"])])[0]["name"] == "go-tpc prepare"
+    tr = loaddetect.Tracker("/")
+    used = iter([100e9, 106e9])
+    loaddetect.used_bytes = lambda p: next(used)
+    try:
+        assert tr.report(0, procs=procs)[0] == "loading data"
+        ph, d = tr.report(60, procs=procs)
+        assert ph == "loading data" and "6.00 GB/min" in d and "min left" in d and "64 tables x 10,000,000 rows" in d, d
+        ph, d = tr.report(120, procs=[(12, ["bash"])])
+        assert ph == "idle" and "grew 6.0 GB" in d, d
+        assert tr.report(180, procs=[(12, ["bash"])]) is None
+    finally:
+        import importlib
+        importlib.reload(loaddetect)
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

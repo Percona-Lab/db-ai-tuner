@@ -36,6 +36,9 @@ Run everything as root on the database host. `autotune` takes hours, so start it
    ```
    Use the socket path of this server if it is not the default (`--mysql-socket=...`). Larger than memory (I/O-bound):
    size the data at 2-3x RAM instead.
+   Loading can take hours on large data sets. The agent's daemon reports common loaders (sysbench / go-tpc `prepare`,
+   BenchBase, myloader, dump loads) on the web page by itself; for other steps say what is happening:
+   `tuning-agent activity "loading data" "TPC-C 1000 warehouses" --seconds 7200`.
 4. **Benchmark profile** `/root/sysbench.ini`. `warmup = auto` and `duration = auto` let the agent find the run length
    this benchmark needs (one probe run); `{total}` is filled in by the agent.
    ```ini

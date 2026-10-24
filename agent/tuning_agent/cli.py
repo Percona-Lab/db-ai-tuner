@@ -3971,8 +3971,10 @@ def cmd_daemon(a):
     last_hello = 0
     device = None
     sampler = None
-    last_prune = last_rg = 0
+    last_prune = last_rg = last_load = 0
     rg_err = None
+    from . import loaddetect
+    loads = None
     log(f"tuning-agent {__version__} daemon: sampling every {interval:.0f}s, server {c.cfg['server']}")
     while not stop["flag"]:
         t0 = time.time()
@@ -4017,6 +4019,16 @@ def cmd_daemon(a):
                 store.mark_sent([b["ts"] for b in batch])
         except (APIError, Exception) as e:
             log(f"upload error: {e}")
+        if time.time() - last_load > 60:
+            # a data load (the benchmark's prepare step, a dump restore) can take hours before any session: say so
+            last_load = time.time()
+            try:
+                loads = loads or loaddetect.Tracker(c.datadir())
+                rep = loads.report(time.time(), c.db if sampler is not None else None)
+                if rep:
+                    c.activity(rep[0], rep[1])
+            except Exception as e:  # never let it break sampling
+                log(f"load detection: {e}")
         if time.time() - last_prune > 3600:
             store.prune()
             last_prune = time.time()
