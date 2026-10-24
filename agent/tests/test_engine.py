@@ -2098,6 +2098,16 @@ def test_seasoning_stops_on_a_failing_benchmark():
 
 
 
+def test_baseline_redo_in_whole_mib():
+    """r2 RO-4: redo sized at 5% of the free disk (993309900 bytes) was rounded by the server -> config mismatch."""
+    from tuning_agent import baseline
+    hw = {"ram_bytes": 16 * GiB, "cpus": 8, "disk_rotational": False, "disk_free_bytes": 19866198000}
+    items, _ = baseline.generate(hw, dict(VARS), "percona", "8.4.11")
+    redo = next(parse_size(i["value"]) for i in items if i["variable"] == "innodb_redo_log_capacity")
+    assert redo % (1024 * 1024) == 0, redo
+
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

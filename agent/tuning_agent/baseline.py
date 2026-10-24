@@ -85,7 +85,9 @@ def generate(hw, variables, flavor, version, opts=None):
     free = hw.get("disk_free_bytes") or 0
     if free:
         redo = min(redo, max(512 * MiB, int(free * 0.05)))
-    redo = _round_down(redo, 512 * MiB) if redo >= GiB else redo
+    # whole MiB at least: the server rounds innodb_redo_log_capacity down, and a run then measures a configuration other than
+    # the one it is labelled with (r2 RO-4: 993309900 requested, 993001472 running -> the first calibration run unreliable)
+    redo = _round_down(redo, 512 * MiB) if redo >= GiB else _round_down(redo, MiB)
     if "innodb_redo_log_capacity" in variables:
         add("innodb_redo_log_capacity", fmt_size(redo),
             "Redo sized at ~25% of RAM (1-16 GiB) so checkpoints are not forced under write bursts.")
