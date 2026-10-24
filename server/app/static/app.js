@@ -545,7 +545,7 @@ async function envPage(id) {
   ${d.activity ? `<div class="card" style="margin-bottom:10px;padding:10px 14px"><span class="muted" style="font-size:12px">Now${d.activity.session_id ? `: session <a href="#/session/${d.activity.session_id}">#${d.activity.session_id} ${esc(d.activity.session_name || "")}</a>` : ""}</span>${activityLine(d.activity)}</div>` : ""}
   <div class="card"><div class="row" style="gap:6px 18px">
     <span><b>${hw.cpus} vCPU</b> <span class="muted">${esc((hw.cpu_model || "").replace(/\s+\d+-Core Processor/, "").replace(/\(R\)|\(TM\)/g, ""))}</span></span>
-    <span><b>${bytes(hw.ram_bytes)}</b> RAM</span>
+    <span><b>${bytes(hw.ram_bytes)}</b> RAM${hw.swap_bytes === 0 ? ` <span class="badge warn" data-tip="No swap configured. Memory beyond RAM is not slowed down by swapping but ends in the OOM killer, so the tuner keeps every configuration inside the memory budget and cannot look for the practical buffer pool size where active swapping starts. Add swap to explore that range." tabindex="0">no swap</span>` : ""}</span>
     <span>${hw.disk_rotational ? "HDD" : "SSD"} ${esc(hw.filesystem || "")} · ${bytes(hw.disk_free_bytes)} free</span>
     <span>${esc((hw.os || "").replace(/ LTS$/, ""))}</span>
     <span><b>${esc(e.db_short || e.db)}</b></span>
