@@ -23,6 +23,18 @@ else
       exit 1
     fi
     tail -1 "$TT/tests.log"
+    # the agent ships from this server too (install.sh): its tests on the same revision, in a venv of its own (PyMySQL)
+    AV=/opt/aituner/agent-test-venv
+    [ -x $AV/bin/python ] || python3 -m venv $AV
+    $AV/bin/python -c "import pymysql" 2>/dev/null || $AV/bin/pip install -q "PyMySQL>=1.0"
+    git archive "$REV" agent | tar -x -C "$TT"
+    echo "agent tests on ${REV:0:7} ..."
+    if ! (cd "$TT/agent" && timeout 300 $AV/bin/python tests/test_engine.py > "$TT/agent-tests.log" 2>&1); then
+      grep -E "^FAIL|Error" "$TT/agent-tests.log" | tail -40
+      echo "AGENT TESTS FAILED on ${REV:0:7}: not deployed; the running version keeps serving (full log: $TT/agent-tests.log)"
+      exit 1
+    fi
+    echo "agent tests: $(grep -c '^ok' "$TT/agent-tests.log") passed"
     rm -rf "$TT"
   else
     echo "WARNING: pytest / httpx could not be installed into /opt/aituner/venv - server tests SKIPPED for ${REV:0:7}"
