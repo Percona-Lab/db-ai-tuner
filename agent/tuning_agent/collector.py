@@ -626,9 +626,39 @@ def _errors_and_space(a, b, dt):
     return out
 
 
-def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None):
-    """Summary + decision inputs for a measurement window between snapshots a and b."""
+STARTUP_MAX_SHARE = 0.10  # at most this share of the window is set aside as the benchmark's start-up
+
+
+def startup_samples(samples, started_at, window_s):
+    """How many leading samples of the window belong to the benchmark's own start-up: a benchmark whose measured phase is
+    a new process (warm-up and measurement as two invocations) connects and prepares its threads again inside the window
+    (session 299: 1024 sysbench threads, the first 10 s sample 30% low on every run - read as a warm-up still settling).
+    Counted only when that process started at or after the window opened, from its start until throughput is back to 90%
+    of the window median, at most 10% of the window."""
+    if not started_at or not samples or (samples[0].get("ts") or 0) > started_at + 30:
+        return 0
+    tps = sorted(s["db"]["tps"] for s in samples if (s.get("db") or {}).get("tps") is not None)
+    if len(tps) < 6:
+        return 0
+    med = tps[len(tps) // 2]
+    n = 0
+    for s in samples:
+        if (s.get("ts") or 0) - started_at > STARTUP_MAX_SHARE * window_s:
+            break
+        if (s.get("ts") or 0) >= started_at and ((s.get("db") or {}).get("tps") or 0) >= 0.9 * med:
+            break
+        n += 1
+    return n if n < len(samples) // 2 else 0
+
+
+def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None, bench_started_at=None):
+    """Summary + decision inputs for a measurement window between snapshots a and b. bench_started_at: start of the
+    benchmark process that runs the measured phase, when it started with the window (its start-up is left out of the
+    sample-based analyses; the counters still cover the whole window, as the benchmark's own result does)."""
     dt = max(b["t"] - a["t"], 1e-6)
+    skip = startup_samples(samples, bench_started_at, dt)
+    startup_s = round((samples[skip]["ts"] - samples[0]["ts"]), 1) if skip else None
+    samples = samples[skip:]
     sa, sb = a["status"], b["status"]
     deltas = {}
     for k, v in sb.items():
@@ -679,6 +709,7 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None):
 
     summary = {
         "duration_s": round(dt, 1),
+        "startup_excluded_s": startup_s,
         "tps": db_rates.get("tps"),
         "within_se_pct": batch_se_pct("db", "tps") or batch_se_pct("db", "qps"),
         "rows_changed_per_s": avg("db", "rows_changed"),

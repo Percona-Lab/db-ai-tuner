@@ -912,7 +912,12 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     wu_s = ((extra_inputs or {}).get("bench") or {}).get("warmup_s")
     # the last ~15% of the warm-up (at least a minute): an adequate warm-up ends in the state the window measures
     tail = SampleStore(c.state.dir).window(a_snap["t"] - max(60, 0.15 * wu_s), a_snap["t"]) if wu_s else None
-    summary, inputs = collector.analyze_window(a_snap, b_snap, samples, wu_s, tail)
+    # the process running the measured phase, when the benchmark started a new one with the window (warm-up and
+    # measurement as separate invocations): its start-up is not the configuration warming up
+    win0 = a_snap["t"]
+    started = [o.get("started_at") for o in ((extra_inputs or {}).get("bench") or {}).get("observed") or []
+               if o.get("started_at") and win0 - 5 <= o["started_at"] <= win0 + 30]
+    summary, inputs = collector.analyze_window(a_snap, b_snap, samples, wu_s, tail, min(started) if started else None)
     try:  # who holds swapped-out memory at the end of the window
         top = hostinfo.swap_top()
         if top:

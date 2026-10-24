@@ -1733,6 +1733,20 @@ def test_steal_steady_level_not_flagged():
     assert jump and jump["level"] == "invalid" and jump["usual_pct"] == 0.42, jump
 
 
+def test_benchmark_startup_not_warmup():
+    """Session 299: warm-up and measurement are two sysbench invocations; the measuring one reconnects 1024 threads
+    and the first 10 s sample of every window was 30% low - flagged as a warm-up still settling. That start-up is left
+    out of the sample analyses; a single invocation that started before the window keeps every sample."""
+    from tuning_agent import collector
+    tps = [11774, 16845, 16900, 17118, 17077, 16707, 17220, 17143] + [17050] * 22
+    smp = [{"ts": 1006 + 10 * i, "db": {"tps": x}} for i, x in enumerate(tps)]
+    assert collector.startup_samples(smp, 999, 300) == 1
+    assert collector.startup_samples(smp, 700, 300) == 0 and collector.startup_samples(smp, None, 300) == 0
+    slow = [{"ts": 1006 + 10 * i, "db": {"tps": 5000 + 400 * i}} for i in range(30)]  # a real warm-up: not cut
+    assert collector.startup_samples(slow, 999, 300) <= 3
+
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

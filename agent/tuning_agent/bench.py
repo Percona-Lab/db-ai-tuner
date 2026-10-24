@@ -232,6 +232,16 @@ def run_shell(cmd, timeout, log=None):
     return r.returncode, (r.stdout + r.stderr)[-2000:]
 
 
+def _proc_start(stat):
+    """A process's start time (epoch seconds) from its /proc/<pid>/stat line, or None."""
+    try:
+        ticks = int(stat[stat.rindex(")") + 2:].split()[19])
+        btime = next(int(x.split()[1]) for x in open("/proc/stat") if x.startswith("btime"))
+        return round(btime + ticks / os.sysconf("SC_CLK_TCK"), 1)
+    except (OSError, ValueError, IndexError, StopIteration):
+        return None
+
+
 class Running:
     """A benchmark run command in the background."""
 
@@ -296,7 +306,7 @@ class Running:
             used = {k: v for k, v in env.items() if re.search(r"\b" + re.escape(k) + r"\b", text) and not SECRET.search(k)}
             used.update({k: v for k, v in env.items() if k.startswith(("HDB_", "SB_", "SYSBENCH_", "BENCH_")) and not SECRET.search(k)})
             out.append({"argv": [mask(a) for a in argv], "exe": exe, "cwd": cwd, "version": tool_version(exe),
-                        "scripts": scripts, "env": dict(sorted(used.items()))})
+                        "scripts": scripts, "env": dict(sorted(used.items())), "started_at": _proc_start(st)})
         return out
 
     def output(self):
