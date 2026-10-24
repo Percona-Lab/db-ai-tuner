@@ -1562,6 +1562,13 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
         # with the time it takes, instead of 'measuring' going stale (user session 311: 15 min overdue alerts)
         t_exit, last_ = time.time(), 0
         limit_ = max(10, prof.timeout - (time.time() - r.t0))
+        # a benchmark told its length (placeholders) that keeps running well past it never ends by itself: sysbench treats
+        # --time=0 as "no limit" (a script that passes {warmup}=0 through as a time, user report) - stopped with a warning
+        # instead of holding the session until the profile's timeout
+        planned_end = r.t0 + (waited or 0) + max(prof.duration, 0) + 30
+        grace = max(120, 0.2 * max(prof.duration, 0))
+        if prof.can_resize() and prof.duration > 0:
+            limit_ = min(limit_, max(10, planned_end + grace - time.time()))
         while r.alive() and time.time() - t_exit < limit_:
             if time.time() - last_ >= 60:
                 c.activity("waiting for the benchmark to exit", f"run #{m['seq']}: measured window done "
@@ -1569,6 +1576,12 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
                            limit_ - (time.time() - t_exit))
                 last_ = time.time()
             time.sleep(2)
+        if r.alive() and prof.can_resize() and prof.duration > 0 and time.time() >= planned_end + grace - 5:
+            msg = (f"the benchmark was still running {int(time.time() - planned_end)} s after its planned end (warm-up {waited or 0} s + "
+                   f"{prof.duration} s): stopped. Check that the run command ends by itself - e.g. sysbench --time=0 means no limit, "
+                   "so a {warmup} of 0 must skip the warm-up step, not run without a time limit.")
+            log("WARNING: " + msg)
+            c.event("benchmark", msg, {"run_seq": m.get("seq")})
         rc = r.wait(max(1, limit_ - (time.time() - t_exit)))
     except BaseException as exc:
         r.kill()

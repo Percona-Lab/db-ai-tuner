@@ -22,7 +22,10 @@ Profile (INI):
     max_duration = 1200                 ; upper limit for that (default: 4 x duration, at most 30 min)
 
     The run command may use {duration} {warmup} {total} (seconds) and {duration_min} {warmup_min} {total_min}
-    (whole minutes); they follow run-length changes. Without them the run length is fixed.
+    (whole minutes); they follow run-length changes. Without them the run length is fixed. {warmup} can be 0 - the
+    seasoning and run-length probes are one continuous run of {total} with no separate warm-up - and must then mean
+    "no warm-up step", never "no time limit" (sysbench --time=0 runs forever). A run that goes well past its planned end
+    is stopped with a warning.
 
     [requires]                          ; benchmark prerequisites: set before every run (numbers are minimums), never tuned
     max_connections = 1100
