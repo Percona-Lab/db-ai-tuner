@@ -100,6 +100,9 @@ class Ctx:
         self.client = Client(self.cfg["server"], self.cfg["api_key"]) if need_server else None
         self._vars = None
         self._hosts = None
+        # stability first unless this session or the agent turned it off (agent.ini stability = off / session --stability off)
+        sess = self.state.get("session") or {}
+        engine.STABILITY_FIRST = str(sess.get("stability") or self.cfg.get("stability", "first")).strip().lower() not in ("off", "no", "false")
 
     @property
     def variables(self):
@@ -733,7 +736,8 @@ def cmd_session(a):
         if "filesystem" in scope and not (c.cfg.get("fs_device") and str(c.cfg.get("allow_fs_experiments")).lower() == "true"):
             raise Fail("scope 'filesystem' needs a dedicated device: tuning-agent init --fs-device /dev/... --allow-fs-experiments")
         sess = {"id": r["session_id"], "name": a.name or r.get("name"), "goal": a.goal, "policy": a.policy, "scope": scope,
-                "noise_pct": a.noise_pct, "started": time.time(), "runs": [], "best": None, "os_tuning": os_tuning}
+                "noise_pct": a.noise_pct, "started": time.time(), "runs": [], "best": None, "os_tuning": os_tuning,
+                "stability": getattr(a, "stability", None)}
         if r.get("study"):
             sess["study"] = r["study"]
         c.state.set("session", sess)
@@ -3672,6 +3676,9 @@ def main(argv=None):
     s.add_argument("--allow-stale-agent", action="store_true", help="kept for older scripts: a build mismatch is only a warning now")
     s.add_argument("--study", help="study (name or id) this session belongs to; created if it does not exist. Studies compare "
                                    "sessions across environments (hardware scaling, minimum hardware for a target)")
+    s.add_argument("--stability", choices=["first", "off"], default=None,
+                   help="first (default): while the undo history grows without bound, stability remedies run before tuning and the best "
+                        "configuration is a stable one; off: rank by the goal only")
     s.add_argument("--planner", action="store_true", help="an AI planner chooses each next step (the rules still check it); "
                                                          "this session only, whatever the account's AI mode")
     s.add_argument("--force", action="store_true")

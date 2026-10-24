@@ -72,6 +72,12 @@ def packet(ctx, res, meta=None):
     p["managed_now"] = ctx.get("managed") or {}
     # the tuner's memory budget: the planner sized a 51 GiB pool as "51.4 of 62.8 GiB" while the budget (reserves, every
     # allowed connection) said 69.1 - a memory trade-off it did not know it was choosing (session 294)
+    from .engine import STABILITY_FIRST, unbounded_hll
+    u = unbounded_hll(ctx.get("summary"))
+    if STABILITY_FIRST and u:
+        p["stability_first"] = {"unbounded_history": u, "rule": "the current configuration is unsustainable (undo history grows without "
+                                "bound): choose a stability remedy (purge lag bound, purge threads, purge batch size) before any tuning "
+                                "experiment; a change that ends the growth is kept even at some cost in throughput"}
     mb = (ctx.get("summary") or {}).get("memory_budget") or {}
     if mb:
         p["memory_budget_now"] = {"text": mb.get("text"), "over_budget": mb.get("over_budget"),

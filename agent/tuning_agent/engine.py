@@ -696,13 +696,33 @@ def recommend(ctx):
 
     # ---------------- ideas from blogs / benchmarks (docs/research/mysql-tuning-ideas.md) ----------------
     hll = s.get("history_list_length_max") or 0
-    if have_run and hll > 200000 and "innodb_max_purge_lag" in v and _int(v, "innodb_max_purge_lag", 0) == 0 and wtype in ("oltp-write", "mixed"):
-        b.add("purge-lag", "Throttle DML when purge falls behind", [("innodb_max_purge_lag", nice_value("innodb_max_purge_lag", str(max(200000, int(hll * 0.8))))),
+    unb_hll = unbounded_hll(s)
+    if have_run and (hll > 200000 and wtype in ("oltp-write", "mixed") or unb_hll) and "innodb_max_purge_lag" in v \
+            and _int(v, "innodb_max_purge_lag", 0) == 0:
+        # unbounded growth: the cap is the level the window started from, so writers are slowed only beyond what purge
+        # handled before (stability first); otherwise 80% of the peak
+        cap = max(200000, int(unb_hll["start"])) if unb_hll else max(200000, int(hll * 0.8))
+        b.add("purge-lag", "Throttle DML when purge falls behind", [("innodb_max_purge_lag", nice_value("innodb_max_purge_lag", str(cap))),
                                                                      ("innodb_max_purge_lag_delay", "1000000")],
               f"History list peaked at {hll:,.0f} undo records: purge cannot keep up, so reads walk ever longer version chains. "
               "A purge lag limit slows writers slightly to keep history bounded. "
-              "Experiment: it trades write throughput for stable read latency.", {"history_list_length_max": hll}, impact=1, confidence=1)
+              + ("Stability first: the history grows without bound, so this configuration cannot run in production as it is - a "
+                 "bounded history at some cost in write throughput is the better configuration." if unb_hll else
+                 "Experiment: it trades write throughput for stable read latency."),
+              {"history_list_length_max": hll, "unbounded_growth": unb_hll}, impact=3 if unb_hll else 1, confidence=2 if unb_hll else 1)
         b.items[-1]["lead"] = "Practitioners report it for insert-heavy benchmarks; unverified here."
+    if have_run and unb_hll and "innodb_purge_batch_size" in v and _int(v, "innodb_purge_batch_size", 300) < 1000:
+        b.add("purge-batch", "Larger purge batches", [("innodb_purge_batch_size", "1000")],
+              f"The history list grows without slowing down ({unb_hll['start']:,} -> {unb_hll['end']:,} in the window): larger batches let "
+              "each purge pass free more undo per round of coordination. Stability remedy, measured.",
+              {"unbounded_growth": unb_hll, "innodb_purge_batch_size": v.get("innodb_purge_batch_size")}, impact=2, confidence=1)
+    if have_run and unb_hll and busy >= 85 and cpus >= 8:
+        b.add("purge-cpus", "Give the purge threads their own CPUs", [],
+              f"Purge cannot keep up on {cpus} CPUs that are {busy:.0f}% busy: purge threads compete with {tr:.0f} running user threads "
+              "for the same cores. Pinning the purge threads (performance_schema.threads: thread/innodb/srv_purge_thread and "
+              "srv_worker_thread, THREAD_OS_ID) to one or two cores the user threads do not use (taskset -p -c) keeps purge running. "
+              "Advice: the agent does not pin threads yet.", {"cpu_busy": busy, "cpus": cpus, "threads_running_avg": tr}, impact=2, confidence=1)
+        b.items[-1]["kind"] = "advice"
     if have_run and v.get("log_bin") == "ON" and _int(v, "binlog_transaction_dependency_history_size", 25000) > 1000 and (s.get("cpu_busy") or 0) >= 80 \
             and wtype in ("oltp-write", "mixed") and "binlog_transaction_dependency_history_size" in v:
         b.add("writeset-history", "Smaller WRITESET dependency history", [("binlog_transaction_dependency_history_size", "1000")],
@@ -1405,7 +1425,13 @@ def recommend(ctx):
               lead="Published results disagree between large and small machines; unverified here.")
         if b.items and b.items[-1]["id"] == "sweep-purge-threads":
             it_ = b.items[-1]
-            if busy >= 85:
+            if busy >= 85 and unb_h and STABILITY_FIRST:
+                # unsustainable: stability before throughput - one step up is measured even on saturated CPUs, after the
+                # purge lag bound (run_engine orders the stability remedies)
+                it_["sweep"]["values"] = it_["sweep"]["values"][:1]
+                it_["rationale"] = ("Purge cannot keep up: the history list grows without slowing down. Stability first: more purge "
+                                    "threads are measured even though the CPUs are busy. " + it_["rationale"])
+            elif busy >= 85:
                 # no CPU for more purge threads: 23 sweep runs, 0 wins, 17 losses (mean -10%, worst -51%), and its +6 priority
                 # put it ahead of trx-commit-2 (h2h 283/285/288). On saturated CPUs a growing backlog is advice, not a run
                 it_["kind"] = "advice"
@@ -1738,6 +1764,24 @@ def _unearned_unsteady(r):
     return bool(ev.get("not_steady")) and not ev.get("not_steady_beyond_bias")
 
 
+# stability first (unless the session turns it off): a configuration whose undo history grows without bound cannot run
+# in production however fast it measures - while any stable configuration exists, the best one is chosen among them, and
+# the remedies (purge threads, a purge lag bound, larger purge batches) run before tuning experiments
+STABILITY_FIRST = True
+STABILITY_IDS = ("sweep-purge-threads", "purge-lag", "purge-batch")
+
+
+def unbounded_hll(summary):
+    """The undo history list grew without slowing down in this run (collector.unbounded_growth)."""
+    return next((u for u in (summary or {}).get("unbounded_growth") or [] if u.get("metric") == "history_list_length"), None)
+
+
+def config_unstable(history, key):
+    """Every measured run of this configuration had unbounded history growth."""
+    rs = [r for r in history if config_key(r.get("managed")) == key and r.get("summary")]
+    return bool(rs) and all(unbounded_hll(r.get("summary")) for r in rs)
+
+
 def best_config(history, goal="tps", noise=2.0):
     """Highest mean wins when it beats the others beyond noise (scaled for the number of runs in each mean). Within
     noise: a configuration confirmed better than another tied one wins over it (an improvement kept over its parent),
@@ -1745,6 +1789,10 @@ def best_config(history, goal="tps", noise=2.0):
     scores = config_scores(history, goal)
     if not scores:
         return None
+    if STABILITY_FIRST:
+        stable = [c for c in scores if not config_unstable(history, c["key"])]
+        if stable and len(stable) < len(scores):
+            scores = stable
     # candidates: configurations that earned their place (kept: confirmed improvement, efficiency gain, reference,
     # accepted best practice) or were measured at least twice and beat the best kept one beyond noise. A single
     # neutral run (e.g. one sweep point) that happens to have the highest number is not a candidate.
@@ -1759,6 +1807,8 @@ def best_config(history, goal="tps", noise=2.0):
         # an improvement / efficiency gain is earned once its repeats confirmed it; a single unconfirmed run is not
         # (canary #202: one unconfirmed sweep point became the best safe configuration)
         conf = lambda r: (r.get("evaluation") or {}).get("confirmed")  # noqa: E731
+        if STABILITY_FIRST and any((r.get("evaluation") or {}).get("stabilized") for r in rs):
+            return True  # removed unbounded growth: kept for stability whatever it cost (within stability_max_cost)
         return any((r.get("verdict") == "reference" or (r.get("verdict") in KEEP and (conf(r) is True or (conf(r) is None and len(rs) >= 2))))
                    and not (r.get("verdict") == "improved" and _unearned_unsteady(r))
                    or (is_practice_run(r) and r.get("verdict") == "neutral") for r in rs)
@@ -1863,7 +1913,8 @@ def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
     # the server defaults it can come out "neutral" (not steady) and was reverted to the defaults, then rolled back, in a
     # loop that ended RW-3 and WI-1 without a single experiment (suite r1)
     calibration = any(str(r.get("label") or "").startswith("baseline") for r in cur_runs)
-    if just_measured and first_eval and not practice_kept and not calibration and not verdicts & {"improved", "efficiency-gain"} \
+    stabilized_ = STABILITY_FIRST and any((r.get("evaluation") or {}).get("stabilized") for r in cur_runs)
+    if just_measured and first_eval and not practice_kept and not calibration and not stabilized_ and not verdicts & {"improved", "efficiency-gain"} \
             and verdicts & {"neutral", "efficiency-loss"}:
         parent_run = next((r for r in history if r["seq"] == first_eval["parent_runs"][-1]), None)
         if parent_run is not None:
@@ -1918,7 +1969,7 @@ def _unearned(history, managed):
                      or (is_practice_run(r) and r.get("verdict") in ("neutral", "efficiency-gain", "improved"))
                      # a gain of twice the threshold it was measured against is not noise however the threshold moves later
                      # (12 drops, 0 gains, 7 losses: binlog-off dropped for -25% / -28% in 249 / 271, log writers for -18%)
-                     or _big_gain(r) for r in setters)
+                     or _big_gain(r) or (STABILITY_FIRST and (r.get("evaluation") or {}).get("stabilized")) for r in setters)
         if not earned:
             out.add(k)
     # the chunk size is the companion of the instance count / pool size (it keeps the pool at the intended size): it goes
@@ -2349,6 +2400,8 @@ def run_engine(ctx):
     benchmark = ctx.get("policy") == "benchmark"
     has_major = any(d.get("severity") in ("high", "medium") and d["type"] != "none" for d in ctx["diagnosis"])
     exp = ctx.get("experience") or {}
+    unstable_now = bool(unbounded_hll(ctx.get("summary")))
+    busy_now = (ctx.get("summary") or {}).get("cpu_busy") or 0
     for it in items:
         it.setdefault("safety", "safe")
         it.setdefault("tradeoffs", [])
@@ -2469,6 +2522,13 @@ def run_engine(ctx):
         # priority only for returning to measured configurations; everything else - the best-practice bundle included -
         # ranks by the evidence for what it acts on
         it["score"] = 100 if it.get("priority") and not it.get("no_mechanism") and not it.get("practice") else sc
+        if STABILITY_FIRST and unstable_now and it["id"] in STABILITY_IDS and it["kind"] == "config" and it.get("confidence", 0) > 0:
+            # stability first: while the history grows without bound, its remedies run before tuning experiments. On busy
+            # CPUs the purge lag bound first (more purge threads compete with the transactions), else more purge threads
+            order = (("purge-lag", "sweep-purge-threads", "purge-batch") if busy_now >= 85 else ("sweep-purge-threads", "purge-lag", "purge-batch"))
+            it["score"] = 100 + (len(order) - order.index(it["id"]))
+            it["stability"] = True
+            it["score_note"] = "stability first: the undo history grows without bound in the current configuration"
         it["basis"] = basis(it, round(sc - sc_before_exp, 2))
     # durability trade-offs in a synchronous cluster: a committed transaction is on other nodes too, so one node crashing
     # loses nothing - only all of them crashing together does. Still a trade-off (the policy decides), but the meaning differs

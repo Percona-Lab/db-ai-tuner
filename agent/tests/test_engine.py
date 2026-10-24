@@ -1791,6 +1791,28 @@ def test_parent_hint_overrides_netted_changes():
 
 
 
+def test_stability_first():
+    """Unbounded undo history (high-concurrency update-only): the best configuration is a stable one when one exists,
+    and the change that ended the growth is kept as stabilized even though it cost throughput."""
+    from tuning_agent import engine, evaluate
+    unb = {"unbounded_growth": [{"metric": "history_list_length", "start": 600000, "end": 950000, "per_hour": 1e6}]}
+    ok = {"unbounded_growth": None}
+    hist = [{"seq": 1, "label": "baseline (1/3)", "managed": {"a": "1"}, "goal_value": 100.0, "verdict": "reference", "summary": unb},
+            {"seq": 2, "label": "baseline (2/3)", "managed": {"a": "1"}, "goal_value": 100.0, "verdict": "repeat", "summary": unb}]
+    run = {"seq": 3, "label": "purge-lag", "managed": {"a": "1", "innodb_max_purge_lag": "600000"}, "goal_value": 90.0, "summary": ok,
+           "changes": [{"variable": "innodb_max_purge_lag", "old": "0", "new": "600000", "source": "rec:purge-lag"}]}
+    v, d = evaluate.verdict(run, hist, "tps", {"noise_pct": 1.0, "runs": [1, 2]})
+    assert d.get("stabilized"), (v, d)
+    b = engine.best_config(hist + [dict(run, verdict=v, evaluation=d)], "tps", 1.0)
+    assert b["managed"].get("innodb_max_purge_lag") == "600000", b
+    engine.STABILITY_FIRST = False
+    try:
+        assert engine.best_config(hist + [dict(run, verdict=v, evaluation=d)], "tps", 1.0)["managed"] == {"a": "1"}
+    finally:
+        engine.STABILITY_FIRST = True
+
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

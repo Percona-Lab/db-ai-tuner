@@ -652,6 +652,23 @@ def swap_cost(s, noise_pct=None):
     return share is None or share >= float(noise_pct or DEFAULT_GOAL_NOISE)
 
 
+STABILITY_MAX_COST_PCT = 30.0  # a stabilizing change is kept unless it costs more of the goal than this
+
+
+def stabilized(run, history, d, goal):
+    """The parent configuration's undo history grew without bound and this run's did not: stability first, so the change
+    is kept even when it costs some throughput (up to STABILITY_MAX_COST_PCT). None otherwise."""
+    from .engine import STABILITY_FIRST, unbounded_hll
+    par = [h for h in history if h.get("seq") in ((d or {}).get("parent_runs") or [])]
+    s = run.get("summary") or {}
+    if not STABILITY_FIRST or not par or not all(unbounded_hll(h.get("summary")) for h in par) or unbounded_hll(s) or "unbounded_growth" not in s:
+        return None
+    dg = (d or {}).get("goal_delta_pct")
+    if dg is not None and dg < -STABILITY_MAX_COST_PCT:
+        return None
+    return {"parent_runs": [h["seq"] for h in par], "goal_delta_pct": dg}
+
+
 def state_flags(s):
     """What the run's own samples say about the state it measured (kept even when the run is superseded or unreliable,
     so the run list still shows it): deferred work still growing at the end, state that settled only inside the window,
@@ -747,6 +764,12 @@ def _run_verdict(run, history, goal, noise):
     if st:
         d = dict(d)
         d["steal"] = st
+    stab = stabilized(run, history, d, goal)
+    if stab:
+        d = dict(d, stabilized=stab)
+        d["note"] = (f"Stabilized: the undo history list no longer grows without bound (it did with the parent configuration, runs "
+                     f"{stab['parent_runs']}). Kept for stability" + (f" at a cost of {-stab['goal_delta_pct']:.1f}% on the goal." if (stab.get("goal_delta_pct") or 0) < 0 else ".")
+                     + (" " + d["note"] if d.get("note") else ""))
     # only meaningful for a run compared with another configuration (not the first run, not calibration repeats)
     shift = environment_shift(run.get("summary"), noise) if v in ("improved", "regressed", "neutral", "efficiency-gain", "efficiency-loss") else None
     if shift:
