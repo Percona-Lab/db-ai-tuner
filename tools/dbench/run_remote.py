@@ -2,7 +2,8 @@
 """Decision benchmark, step 2 (runs on the tuner server, where the OpenRouter key is): ask planner variants for each
 decision point. Calls go through app.llm (logged in llm_calls with purpose 'dbench', so the status page counts them).
 
-usage: run_remote.py <points.jsonl> <out.jsonl> --variant name=planner_model[,critic_model] ... [--limit N] [--ids rec_ids]
+usage: run_remote.py <points.jsonl> <out.jsonl> --variant name=planner_model[,critic_model] ... [--ids rec_ids]
+                     [--effort high|xhigh] [--packet packet|packet_full]
 """
 import argparse
 import json
@@ -22,6 +23,8 @@ def main():
     ap.add_argument("--ids")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--budget", type=float, default=20.0, help="stop when this many USD were spent by this run")
+    ap.add_argument("--effort", default="high", help="reasoning effort passed to the model")
+    ap.add_argument("--packet", default="packet", help="which packet of the point to send (packet_full: build.py --full)")
     a = ap.parse_args()
     pts = [json.loads(x) for x in open(a.points)]
     if a.ids:
@@ -49,10 +52,11 @@ def main():
         if spent[0] >= a.budget:
             return None
         t0 = time.time()
-        r = llm.plan(admin, None, p["label"]["session"], p["packet"], model=pm, critic_model=cm, purpose="dbench")
+        r = llm.plan(admin, None, p["label"]["session"], p.get(a.packet) or p["packet"], model=pm, critic_model=cm,
+                     effort=a.effort, purpose="dbench")
         cost = sum(float((r.get(k) or {}).get("cost") or 0) for k in ("usage", "critic_usage"))
         spent[0] += cost
-        return {"rec_id": p["label"]["rec_id"], "session": p["label"]["session"], "variant": name, "model": pm, "critic_model": cm,
+        return {"rec_id": p["label"]["rec_id"], "session": p["label"]["session"], "variant": name, "model": pm, "critic_model": cm, "effort": a.effort, "packet": a.packet,
                 "result": {k: r.get(k) for k in ("plan", "critic", "final", "error", "critic_error", "enabled", "reason")},
                 "cost": round(cost, 4), "s": round(time.time() - t0, 1)}
 
