@@ -1711,6 +1711,14 @@ def _set_calibration(c, sess, cal):
 SEASON_SAMPLE_S = 300
 
 
+def _datadir_free_pct(c):
+    try:
+        st = os.statvfs(c.datadir())
+        return 100.0 * st.f_bavail / st.f_blocks if st.f_blocks else None
+    except Exception:
+        return None
+
+
 def _season(c, prof):
     """data_state = seasoned: run the benchmark (unmeasured) until its throughput stops trending - the data set has
     reached a steady state, so a series of tuning runs will not move it much - or until season_hours. One continuous run
@@ -1730,6 +1738,17 @@ def _season(c, prof):
     chk = {}
     if prof.reset:
         log("   note: the profile also has a reset command; seasoning runs once, before any reset")
+    # the benchmark's own prerequisites (max_connections, max_prepared_stmt_count ...): seasoning runs the same benchmark
+    # (user report, POP2: it failed on both hosts until they were set by hand)
+    _ensure_requirements(c, prof)
+    zero, quick = 0, 0
+
+    def failing(why, r):
+        tail = (r.output() or "")[-1500:] if r else ""
+        free = _datadir_free_pct(c)
+        c.event("season", f"seasoning stopped: {why}", {"tail": tail[-800:], "datadir_free_pct": free})
+        raise Fail(f"seasoning stopped: {why}" + (f" (data disk {free:.1f}% free)" if free is not None and free < 10 else "")
+                   + (f"; benchmark output:\n{tail}" if tail else ""))
 
     def commits():
         st = c.db.status()
@@ -1745,9 +1764,18 @@ def _season(c, prof):
             if time.time() - ta < SEASON_SAMPLE_S:
                 continue
             b, tb = commits()
+            rate = (b - a) / max(tb - ta, 1)
             if not (first and not continuous):  # an iteration's first sample holds its ramp-up
-                pts.append(((tb - t0) / 3600, (b - a) / max(tb - ta, 1)))
+                pts.append(((tb - t0) / 3600, rate))
             first, a, ta = False, b, tb
+            # a benchmark that is running but doing nothing (every statement failing: missing prerequisites, a full disk)
+            # is not seasoning: two samples in a row with no commits stop it with the benchmark's own error output
+            zero = zero + 1 if rate < 0.5 else 0
+            if zero >= 2:
+                failing(f"no transactions for {2 * SEASON_SAMPLE_S // 60} min while the benchmark runs", r)
+            free = _datadir_free_pct(c)
+            if free is not None and free < 2:
+                failing(f"the data disk is full ({free:.1f}% free)", r)
             h = pts[-1][0] if pts else 0
             c.activity("seasoning", f"steady-state pre-run, {h:.1f} of max {prof.season_hours:g} h"
                        + (f", trend {chk['trend_pct_per_hour']:+.2f}%/h (allowed {chk['allowed_pct_per_hour']:.2f})" if chk.get("trend_pct_per_hour") is not None else ""), None)
@@ -1760,6 +1788,13 @@ def _season(c, prof):
                     break
         if r.alive():
             r.kill()
+        elif not chk.get("stop") and time.time() - t0 < limit:
+            # the benchmark ended by itself: an iteration that fails or ends within 2 min, three times in a row, is a
+            # benchmark that cannot run (it was retried for an hour with zero throughput)
+            rc = r.p.returncode
+            quick = quick + 1 if (rc not in (0, None) or time.time() - r.t0 < 120) else 0
+            if quick >= 3:
+                failing(f"the benchmark exited {quick} times in a row (exit code {rc})", r)
     steady = bool(chk.get("stop"))
     slope = chk.get("trend_pct_per_hour")
     if slope is None and len(pts) >= 3:

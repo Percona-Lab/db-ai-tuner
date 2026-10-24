@@ -2033,6 +2033,71 @@ def test_resource_groups_purge_and_background():
 
 
 
+def test_seasoning_stops_on_a_failing_benchmark():
+    """User report (POP2): seasoning retried a failing benchmark for an hour with zero throughput and never said so; it
+    also ignored the benchmark's prerequisites. Now: prerequisites first, and three quick / failed exits in a row stop it
+    with the benchmark's own error output."""
+    from tuning_agent import cli
+    calls = {"req": 0, "events": []}
+
+    class R:
+        def __init__(self, cmd, log):
+            self.t0 = __import__("time").time()
+            self.p = type("P", (), {"returncode": 1})()
+
+        def alive(self):
+            return False
+
+        def output(self):
+            return "FATAL: Can't create more than max_prepared_stmt_count statements"
+
+        def kill(self):
+            pass
+
+    class Prof:
+        season_hours, season_min_hours, warmup, duration, reset, requires = 1, 0, "10", 10, None, {"max_prepared_stmt_count": "100000"}
+
+        def can_resize(self):
+            return False
+
+        def command(self, total_s=None):
+            return "sysbench run"
+
+    class C:
+        class state:
+            dir = "/tmp"
+
+        class db:
+            @staticmethod
+            def status():
+                return {"Com_commit": 0}
+
+        def event(self, *a, **k):
+            calls["events"].append(a[1])
+
+        def activity(self, *a, **k):
+            pass
+
+        def session(self):
+            return {}
+
+        def datadir(self):
+            return "/tmp"
+    saved = (cli.bench.Running, cli._ensure_requirements)
+    cli.bench.Running = R
+    cli._ensure_requirements = lambda c, prof: calls.__setitem__("req", calls["req"] + 1) or []
+    try:
+        try:
+            cli._season(C(), Prof())
+            raise AssertionError("a benchmark that cannot run must stop seasoning")
+        except cli.Fail as e:
+            assert "exited 3 times" in str(e) and "max_prepared_stmt_count" in str(e), e
+        assert calls["req"] == 1 and calls["events"] and "seasoning stopped" in calls["events"][-1]
+    finally:
+        cli.bench.Running, cli._ensure_requirements = saved
+
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
