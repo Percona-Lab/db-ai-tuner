@@ -216,3 +216,5 @@ button.star:hover { color: var(--s4); }
 .flame-crumb { font-size: 12px; margin-bottom: 4px; }
 .m-only { display: none; }
 @media (max-width: 760px) { .m-only { display: block; } }
+
+button.small-btn { padding: 2px 8px; font-size: 12px; margin-left: 6px; vertical-align: middle; }

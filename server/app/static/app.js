@@ -191,33 +191,62 @@ async function envList() {
   const nActive = allEnvs.filter(e => !e.archived).length;
   let envs = scope === "all" ? allEnvs : allEnvs.filter(e => !e.archived);
   $view.innerHTML = `<div class="row"><div><h1>Environments</h1><p class="sub">Database servers with a connected tuning-agent.</p></div><span class="spacer"></span>
+    <button class="ghost mut" id="archGone" hidden></button>
     ${allEnvs.length > nActive ? `<div class="seg" role="group" aria-label="Show" id="scopeSeg"><button data-s="active">Recent (${nActive})</button><button data-s="all">All (${allEnvs.length})</button></div>` : ""}
-    <div class="seg" role="group" aria-label="View" id="viewSeg"><button data-v="list">List</button><button data-v="cards">Cards</button></div><a class="btn" href="#/connect">Connect another</a></div><div id="envs"></div>`;
+    <div class="seg" role="group" aria-label="View" id="viewSeg"><button data-v="list">List</button><button data-v="cards">Cards</button></div><a class="btn" href="#/connect">Connect another</a></div><div id="archNote" class="note" hidden style="margin-bottom:10px"></div><div id="envs"></div>`;
   const box = document.getElementById("envs");
+  // environments that are gone: host shut down, agent stopped, or silent for a day, with no active session - one click
+  // (or one for all) archives them; archiving is undone from All -> the environment's Unarchive, or the Undo link here
+  const gone = e => !e.archived && !e.active_session && (["stopped", "shutdown"].includes(e.agent_state) && (e.agent_state_at || 0) >= (e.last_seen || 0)
+    || (!e.online && Date.now() / 1000 - (e.last_seen || 0) > 86400));
+  const archive = async (list, on = true) => {
+    await Promise.all(list.map(e => api("/api/environments/" + e.id, { method: "PATCH", body: { archived: on } })));
+    list.forEach(e => { e.archived = on; if (on) e.archived_how = "manual"; });
+    envs = scope === "all" ? allEnvs : allEnvs.filter(e => !e.archived);
+    const note = document.getElementById("archNote");
+    if (on) {
+      note.hidden = false;
+      note.innerHTML = `Archived ${list.length === 1 ? `<b>${esc(list[0].name)}</b>` : `${list.length} environments`}: listed under All, sessions and results kept. <a href="#" id="archUndo">Undo</a>`;
+      document.getElementById("archUndo").onclick = ev => { ev.preventDefault(); archive(list, false); };
+    } else note.hidden = true;
+    draw();
+  };
+  const archBtn = e => gone(e) ? ` <button class="ghost mut small-btn" data-arch="${e.id}" data-tip="Archive: hide it from Recent. Sessions, runs and metrics are kept; Undo or Unarchive brings it back." tabindex="0">Archive</button>` : "";
   const metrics = e => { const l = (e.latest && e.latest.db) || {}, o = (e.latest && e.latest.os) || {};
     const dmb = o.disk_r_mbs != null ? (o.disk_r_mbs || 0) + (o.disk_w_mbs || 0) : null;
     return { tps: e.online ? num(l.tps) : "–", lat: e.online && l.avg_latency_ms != null ? num(l.avg_latency_ms) + " ms" : "–", cpu: e.online && o.cpu_busy != null ? Math.round(o.cpu_busy) + "%" : "–",
       disk: e.online && dmb != null ? num(dmb) + " MB/s" : "–", diskTip: e.online && dmb != null ? `read ${num(o.disk_r_mbs)} MB/s · write ${num(o.disk_w_mbs)} MB/s · ${num((o.disk_r_iops || 0) + (o.disk_w_iops || 0))} IOPS` : "" }; };
   const clients = e => (e.clients || []).length ? `<div class="muted" style="font-size:12px" tabindex="0" data-tip="Client hosts linked to this database server: ${esc(e.clients.map(c => c.name + (c.online ? " (online)" : " (offline)")).join(", "))}">+ ${e.clients.length} client${e.clients.length > 1 ? "s" : ""}: ${esc(e.clients.map(c => c.name).join(", "))}</div>` : "";
   const status = e => envStatus(e);
-  const draw = () => {
+  let draw = () => {
     box.parentElement.querySelectorAll("#viewSeg button").forEach(b => b.classList.toggle("on", b.dataset.v === mode));
     box.parentElement.querySelectorAll("#scopeSeg button").forEach(b => b.classList.toggle("on", b.dataset.s === scope));
     if (mode === "list") {
       box.innerHTML = `<div class="card tablewrap"><table data-opt="Database|Hardware|Data|TPS|Avg latency|Disk|Sessions"><thead><tr><th>Name</th><th>Status</th><th>Database</th><th>Hardware</th><th class="num">Data</th><th class="num">TPS</th><th class="num">Avg latency</th><th class="num">CPU</th><th class="num">Disk</th><th>Active session</th><th class="num">Sessions</th></tr></thead><tbody>${envs.map(e => {
         const m = metrics(e);
-        return `<tr class="click" data-href="#/env/${e.id}"><td><a href="#/env/${e.id}" class="envname"><b>${esc(e.name)}</b></a>${clients(e)}</td><td>${status(e)}</td><td>${esc(e.db_short || e.db)}</td><td>${e.cpus || "?"} CPU · ${bytes(e.ram_bytes)} · ${e.disk}</td><td class="num">${bytes(e.data_bytes)}</td>
+        return `<tr class="click" data-href="#/env/${e.id}"><td><a href="#/env/${e.id}" class="envname"><b>${esc(e.name)}</b></a>${clients(e)}</td><td>${status(e)}${archBtn(e)}</td><td>${esc(e.db_short || e.db)}</td><td>${e.cpus || "?"} CPU · ${bytes(e.ram_bytes)} · ${e.disk}</td><td class="num">${bytes(e.data_bytes)}</td>
           <td class="num">${m.tps}</td><td class="num">${m.lat}</td><td class="num">${m.cpu}</td><td class="num"${m.diskTip ? ` data-tip="${m.diskTip}" tabindex="0"` : ""}>${m.disk}</td><td>${e.active_session ? `<a href="#/session/${e.active_session.id}" class="sname" data-tip="${esc(e.active_session.name)}">#${e.active_session.id} ${esc(e.active_session.name)}</a>${activityLine(e.active_session.activity)}` : '<span class="muted">–</span>'}</td><td class="num">${e.sessions}</td></tr>`; }).join("")}</tbody></table></div>`;
-      box.querySelectorAll("tr[data-href]").forEach(tr => tr.onclick = ev => { if (!ev.target.closest("a")) location.hash = tr.dataset.href; });
+      box.querySelectorAll("tr[data-href]").forEach(tr => tr.onclick = ev => { if (!ev.target.closest("a, button")) location.hash = tr.dataset.href; });
     } else {
       box.innerHTML = `<div class="grid g3">${envs.map(e => { const m = metrics(e);
-        return `<a class="card" href="#/env/${e.id}" style="color:inherit;text-decoration:none"><div class="row"><b style="font-size:15px">${esc(e.name)}</b><span class="spacer"></span>${status(e)}</div>
+        return `<a class="card" href="#/env/${e.id}" style="color:inherit;text-decoration:none"><div class="row"><b style="font-size:15px">${esc(e.name)}</b><span class="spacer"></span>${status(e)}${archBtn(e)}</div>
           <div class="muted" style="margin:4px 0 10px">${esc(e.db_short || e.db)}${(e.clients || []).length ? ` · + ${e.clients.length} client${e.clients.length > 1 ? "s" : ""}` : ""}<br>${e.cpus || "?"} CPUs · ${bytes(e.ram_bytes)} RAM · ${e.disk} · data ${bytes(e.data_bytes)}</div>
           <div class="row" style="gap:18px"><div><div class="muted" style="font-size:12px">TPS</div><b>${m.tps}</b></div><div><div class="muted" style="font-size:12px">Avg latency</div><b>${m.lat}</b></div>
           <div><div class="muted" style="font-size:12px">CPU busy</div><b>${m.cpu}</b></div><div${m.diskTip ? ` data-tip="${m.diskTip}" tabindex="0"` : ""}><div class="muted" style="font-size:12px">Disk</div><b>${m.disk}</b></div><div><div class="muted" style="font-size:12px">Sessions</div><b>${e.sessions}</b></div></div>
           ${e.active_session ? `<div style="margin-top:10px;font-size:13px;overflow-wrap:anywhere"><span class="muted">Session</span> #${e.active_session.id} ${esc(e.active_session.name)}${activityLine(e.active_session.activity)}</div>` : ""}</a>`; }).join("")}</div>`;
     }
   };
+  const wireArch = () => {
+    box.querySelectorAll("[data-arch]").forEach(b => b.onclick = ev => { ev.preventDefault(); ev.stopPropagation(); archive(allEnvs.filter(e => e.id === +b.dataset.arch)); });
+    const g = allEnvs.filter(gone), bb = document.getElementById("archGone");
+    bb.hidden = !g.length;
+    bb.textContent = `Archive all stopped (${g.length})`;
+    bb.dataset.tip = "Archive every environment whose host shut down, whose agent was stopped, or that has been silent for a day - none with an active session: " + g.map(e => e.name).join(", ");
+    bb.tabIndex = 0;
+    bb.onclick = () => { if (g.length && confirm(`Archive ${g.length} environment(s)? ${g.map(e => e.name).join(", ")}\nSessions and results are kept; Undo brings them back.`)) archive(g); };
+  };
+  const draw0 = draw;
+  draw = () => { draw0(); wireArch(); };
   box.parentElement.querySelectorAll("#viewSeg button").forEach(b => b.onclick = () => { mode = b.dataset.v; try { localStorage.setItem("envView", mode); } catch (e) { } draw(); });
   box.parentElement.querySelectorAll("#scopeSeg button").forEach(b => b.onclick = () => {
     scope = b.dataset.s; try { localStorage.setItem("envScope", scope); } catch (e) { }
