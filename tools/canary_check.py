@@ -61,12 +61,14 @@ def main():
         check("Traceback" not in log, "no Python traceback in the session log")
     stops = re.findall(r"^== (.*(?:stopping|no further experiments).*)$", log, re.M)
     exp = [r for r in runs if not r["label"].startswith(SKIP)]
+    # re-checks are runs like any other for the agent's budget (cli: measured += 1): 9 experiments + 1 re-check = 10 (#313)
+    budget_runs = exp + [r for r in runs if r["label"].startswith("re-check")]
     if a.budget:
         legit = any("nothing else is left" in x or "no further experiments" in x for x in stops)
         # the agent's own count (sweep points rejected before a run count against the budget too)
         used = [int(x) for x, n in re.findall(r"trade-off budget: (\d+) of (\d+) runs used", log) if int(n) == a.budget]
         legit = legit or (bool(used) and max(used) >= a.budget - 1)
-        check(len(exp) >= a.budget or legit, f"budget used: {len(exp)} of {a.budget} experiment runs (stops: {stops or 'no log'})")
+        check(len(budget_runs) >= a.budget or legit, f"budget used: {len(budget_runs)} of {a.budget} runs (experiments and re-checks; stops: {stops or 'no log'})")
 
     # 2) verdicts: recompute every comparison with the current evaluate code; parents must match
     hist = []
