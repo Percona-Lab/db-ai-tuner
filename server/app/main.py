@@ -963,7 +963,6 @@ def cancel_experiment(eid: int, request: Request):
     return {"ok": True}
 
 
-@app.get("/api/runs/{run_id}")
 CHOICE_KEYS = ("rank", "id", "title", "kind", "safety", "score", "score_parts", "score_override", "confidence", "impact", "note",
                "known_neutral", "restart", "risk", "relevance", "addresses", "stability", "source")
 
@@ -1003,6 +1002,7 @@ def chosen_by(r, changes):
     return None
 
 
+@app.get("/api/runs/{run_id}")
 def run_detail(run_id: int, request: Request, vs: int = None):
     u = auth.current_user(request)
     r = own_run(run_id, u["id"])
