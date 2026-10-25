@@ -910,3 +910,23 @@ def test_repeat_run_shows_the_profile_of_its_configuration(tuned, user):
     store.ex("UPDATE runs SET inputs='{}' WHERE id=?", (rid,))
     cp = user.ui.get(f"/api/runs/{rid}").json()["inputs"].get("cpu_profile")
     assert cp and cp["borrowed_from"]["seq"] == prev["seq"], cp
+
+
+def test_learner_daily_cap_counts_timer_passes_and_says_why(user):
+    """A 97-call admin backlog pass blocked every timer pass for 24 h, and those passes said only '0 sessions' while 30
+    finished sessions waited. Only timer passes count against the daily cap, and a capped pass records why."""
+    import time
+    from app import learner, store
+    c = learner.db()
+    c.execute("DELETE FROM learner_runs")
+    c.execute("INSERT INTO learner_runs(started, ended, trigger, calls) VALUES (?,?,?,?)", (time.time() - 3600, time.time() - 3500, "admin-backlog", 97))
+    env = user.hello(uid="learner-agent")
+    sid = user.start_session(env)
+    store.ex("UPDATE tsessions SET status='closed' WHERE id=?", (sid,))
+    r = learner.run_pass("timer", max_sessions=0)  # nothing processed, by request
+    row = dict(c.execute("SELECT * FROM learner_runs ORDER BY id DESC LIMIT 1").fetchone())
+    assert not (row.get("error") or "").startswith("daily cap"), row  # the admin pass does not count
+    c.execute("INSERT INTO learner_runs(started, ended, trigger, calls) VALUES (?,?,?,?)", (time.time() - 1800, time.time() - 1700, "timer", 60))
+    learner.run_pass("timer")
+    row = dict(c.execute("SELECT * FROM learner_runs ORDER BY id DESC LIMIT 1").fetchone())
+    assert (row.get("error") or "").startswith("daily cap reached"), row

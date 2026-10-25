@@ -378,14 +378,20 @@ def run_pass(trigger="timer", max_sessions=None):
         err = None
         try:
             admin = store.q1("SELECT id FROM users WHERE is_admin=1 ORDER BY id LIMIT 1")
-            day = c.execute("SELECT COALESCE(SUM(calls),0) n FROM learner_runs WHERE started > ?", (time.time() - 86400,)).fetchone()["n"]
+            # the daily cap is for the timer's passes: an admin backlog pass (97 calls on 2026-10-24) used to block every timer
+            # pass for the next 24 h while 30 finished sessions waited
+            day = c.execute("SELECT COALESCE(SUM(calls),0) n FROM learner_runs WHERE started > ? AND trigger='timer'",
+                            (time.time() - 86400,)).fetchone()["n"]
             done = {r["session_id"] for r in c.execute("SELECT session_id FROM processed")}
             # canaries (short windows, deliberate test configurations) are not evidence: their study, or "canary" anywhere in
             # the name ("deploy canary ...", "noise canary ...")
             todo = [r["id"] for r in store.q("SELECT s.id, s.name, st.name study FROM tsessions s LEFT JOIN studies st ON st.id=s.study_id "
                                             "WHERE s.status='closed' ORDER BY s.id")
                     if r["id"] not in done and "canary" not in str(r["name"] or "").lower() and str(r["study"] or "").lower() != "canary"]
-            limit = min(MAX_CALLS_PER_PASS if max_sessions is None else max_sessions, MAX_CALLS_PER_PASS, max(0, MAX_CALLS_PER_DAY - day))
+            limit = min(MAX_CALLS_PER_PASS if max_sessions is None else max_sessions, MAX_CALLS_PER_PASS,
+                        max(0, MAX_CALLS_PER_DAY - day) if trigger == "timer" else MAX_CALLS_PER_PASS)
+            if todo and not limit:  # say why nothing is processed (passes #24-#27 showed "0 sessions" without a reason)
+                err = f"daily cap reached: {day} of {MAX_CALLS_PER_DAY} AI calls in the last 24 h; {len(todo)} session(s) waiting"
             for sid in todo[:limit]:
                 try:
                     dg = digest(sid)
