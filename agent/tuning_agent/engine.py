@@ -1772,7 +1772,10 @@ def config_scores(history, goal="tps"):
 KEEP = ("improved", "efficiency-gain", "reference")
 
 # rules whose changes are best practices: applied as a bundle and kept unless they regress
-PRACTICE_IDS = {"flush-neighbors", "o-direct", "os-swappiness", "os-thp-off", "os-scheduler", "os-noatime", "os-numa", "os-zone-reclaim-off", "os-aio", "os-governor"}
+# hygiene only: settings with no plausible downside for a database server. Workload-dependent ones (NUMA balancing off
+# can help or hurt: em-b212x 342 bundled it with swappiness / noatime / governor, the bundle regressed 3.7% and all four
+# were reverted unexplained - user, 2026-10-25) are experiments of their own
+PRACTICE_IDS = {"flush-neighbors", "o-direct", "os-swappiness", "os-thp-off", "os-scheduler", "os-noatime", "os-zone-reclaim-off", "os-aio", "os-governor"}
 BUNDLE = "best-practices"
 
 
@@ -2710,6 +2713,9 @@ def run_engine(ctx):
         # priority only for returning to measured configurations; everything else - the best-practice bundle included -
         # ranks by the evidence for what it acts on
         it["score"] = 100 if it.get("priority") and not it.get("no_mechanism") and not it.get("practice") else sc
+        if it["id"] == BUNDLE + "-bisect":
+            # a regressed hygiene bundle is split next: otherwise its harmless members stay reverted unexplained (342)
+            it["score"] = max(it["score"], 99)
         last_resort = it["id"] in STABILITY_LAST_RESORT
         if STABILITY_FIRST and unstable_now and it["id"] in STABILITY_IDS and it["kind"] == "config" and it.get("confidence", 0) > 0 \
                 and (not last_resort and stab_tried < STABILITY_TRIES or last_resort and not others_left and it["id"] not in tried_ids):

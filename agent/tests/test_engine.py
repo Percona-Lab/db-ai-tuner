@@ -1257,9 +1257,10 @@ def test_numa_detection_and_rules():
     ids = {i["id"]: i for i in res["items"]}
     assert any(d["type"] == "numa" for d in res["diagnosis"])
     assert "numa-interleave" in ids and ids["numa-interleave"]["changes"][0]["proposed"] == "ON"
-    assert "numa-interleave-all" in ids and "best-practices" in ids  # zone reclaim + balancing go into the bundle
+    assert "numa-interleave-all" in ids and "best-practices" in ids  # zone reclaim goes into the bundle; balancing does not
     bundle = {c["variable"] for c in ids["best-practices"]["changes"]}
-    assert {"os:vm.zone_reclaim_mode", "os:kernel.numa_balancing"} <= bundle
+    assert "os:vm.zone_reclaim_mode" in bundle and "os:kernel.numa_balancing" not in bundle
+    assert "os-numa" in ids  # NUMA balancing off: its own experiment (can help or hurt)
     assert "numa-single-node" not in ids  # 9 CPUs / 60 GB do not fit node 0 comfortably
     # uniform host: nothing NUMA
     ctx1 = dict(ctx, os_facts={"os:numa_nodes": 1})
@@ -2571,6 +2572,24 @@ def test_undersized_buffer_pool_start_is_flagged():
         assert not events
     finally:
         cli.log = saved
+
+
+def test_numa_balancing_is_not_in_the_hygiene_bundle_and_a_bad_bundle_is_bisected_next():
+    """User (em-b212x 342, run 4783): NUMA balancing off can help or hurt; bundled with swappiness / noatime / governor
+    the bundle regressed and all were reverted. It is an experiment of its own, and a regressed bundle is bisected next."""
+    from tuning_agent import engine
+    assert "os-numa" not in engine.PRACTICE_IDS
+    prac = lambda i, var, val: {"id": i, "kind": "config", "safety": "safe", "confidence": 2, "changes": [{"variable": var, "proposed": val}],  # noqa: E731
+                                "rationale": i, "risk": "low"}
+    items = [prac("os-swappiness", "os:vm.swappiness", "1"), prac("os-noatime", "os:mount_noatime", "ON"),
+             prac("os-governor", "os:cpu_governor", "performance"), prac("os-numa", "os:kernel.numa_balancing", "0")]
+    out = engine.practice_bundle(items, [])
+    b = next(i for i in out if i["id"] == engine.BUNDLE)
+    assert {c["variable"] for c in b["changes"]} == {"os:vm.swappiness", "os:mount_noatime", "os:cpu_governor"}
+    assert any(i["id"] == "os-numa" for i in out)
+    hist = [{"seq": 5, "label": "best-practices", "verdict": "regressed", "changes": [{"variable": c["variable"], "source": "rec:best-practices"} for c in b["changes"]]}]
+    out2 = engine.practice_bundle(items, hist)
+    assert any(i["id"] == engine.BUNDLE + "-bisect" for i in out2)
 
 
 if __name__ == "__main__":
