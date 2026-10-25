@@ -929,6 +929,23 @@ def _improvement(goal, new, old):
     return round(100.0 * (new - old) / old, 2)
 
 
+PREPARED_EVERY_S = 30
+
+
+def _prepared_tail(c, last):
+    """The benchmark's server-side prepared statements, read every PREPARED_EVERY_S during the window: they live with
+    its connections, and a benchmark that exits at the end of its window takes them along before the end snapshot
+    (em-b212x 342: 'top statements' showed only BEGIN - sysbench's statements are all prepared)."""
+    now = time.time()
+    if last and now - last[0] < PREPARED_EVERY_S:
+        return last
+    try:
+        rows = c.db.prepared()
+    except Exception:
+        return last
+    return (now, rows) if rows else last
+
+
 def _end_snapshot(c):
     c.refresh()
     return collector.full_snapshot(c.db, hostinfo.device_for_path(c.datadir()))
@@ -1583,6 +1600,7 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
             profiler = _maybe_profile(c, c.session(), prof, 0, in_window=True)
         if offcpu is None and not waited:
             offcpu = _maybe_offcpu(c, c.session(), 0, profiler.seconds if profiler else 0, in_window=True)
+        prep_tail = None
         if prof.duration > 0:
             # the window ends when the benchmark's measured phase ends, not duration seconds after the agent's own setup
             # (snapshot, eBPF probes): on a 32-CPU host the setup took ~140 s and the window ran past the end of HammerDB's
@@ -1598,6 +1616,7 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
             c.activity("measuring", f"run #{m['seq']} {label or ''}", prof.duration)
             while time.time() < deadline and r.alive():
                 time.sleep(1)
+                prep_tail = _prepared_tail(c, prep_tail)
         else:
             # early abort (OtterTune lesson): a configuration that makes the run take far longer than usual is a failure
             durs = sorted(x["summary"].get("duration_s") for x in sess["runs"] if (x.get("summary") or {}).get("duration_s"))
@@ -1608,6 +1627,7 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
             deadline = t_start + limit
             while time.time() < deadline and r.alive():
                 time.sleep(2)
+                prep_tail = _prepared_tail(c, prep_tail)
             if r.alive():
                 raise TooSlow(f"run exceeded {limit:.0f}s (2.5x the typical run time): configuration rejected")
         observed = _observe(r, observed)  # tools that started later (no warm-up, multi-stage drivers)
@@ -1616,6 +1636,7 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
             if getattr(probes, "block", None):
                 probes.block.stop()
         b_snap = _end_snapshot(c)
+        collector.use_prepared_tail(b_snap, prep_tail)
         # after the measured window the benchmark still has to exit (1024 threads disconnecting, a final report): said so,
         # with the time it takes, instead of 'measuring' going stale (user session 311: 15 min overdue alerts)
         t_exit, last_ = time.time(), 0

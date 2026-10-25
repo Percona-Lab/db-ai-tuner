@@ -256,6 +256,8 @@ def full_snapshot(db, device):
         snap["hist"] = db.statement_histogram()
         snap["digests"] = [d for d in db.digests() if not _own_query(d.get("DIGEST_TEXT"))]
         for d in db.prepared():
+            if _own_query(d.get("DIGEST_TEXT")):
+                continue
             d["DIGEST"] = "prepared:" + hashlib.md5((d["DIGEST_TEXT"] or "").encode()).hexdigest()[:16]
             d["SCHEMA_NAME"] = d.get("SCHEMA_NAME") or ""
             snap["digests"].append(d)
@@ -371,11 +373,37 @@ def db_wait_coverage(snap):
     return snap.get("wait_coverage")
 
 
+OWN_MARKERS = ("SUM_TIMER_", "COUNT_EXECUTE", "COUNT_STAR", "_BYTES_USED", "EVENT_NAME", "RESOURCE_GROUP", "THREAD_OS_ID",
+               "TRX_STARTED", "VARIABLE_VALUE")
+
+
 def _own_query(text):
-    """Monitoring statements issued by the agent itself."""
+    """Monitoring statements issued by the agent itself. Digest texts are cut at 400 characters, so the
+    performance_schema table name can be past the cut: the agent's own column names count too (342: its query on
+    prepared_statements_instances showed as a top statement)."""
     t = (text or "").upper()
     return (t.startswith("SHOW ") or t.startswith("SELECT @@") or "PERFORMANCE_SCHEMA" in t
-            or "INFORMATION_SCHEMA" in t or t.startswith("SET GLOBAL"))
+            or "INFORMATION_SCHEMA" in t or t.startswith("SET GLOBAL") or any(m in t for m in OWN_MARKERS))
+
+
+def use_prepared_tail(snap, tail):
+    """Replace the end snapshot's prepared statements with the last reading taken while the benchmark was still
+    connected, when that reading holds more executions (the benchmark exited and took its statements along)."""
+    if not tail or not snap or snap.get("digests") is None:
+        return
+    ts, rows = tail
+    have = sum(int(d.get("COUNT_STAR") or 0) for d in snap["digests"] if str(d.get("DIGEST", "")).startswith("prepared:"))
+    if sum(int(d.get("COUNT_STAR") or 0) for d in rows) <= have:
+        return
+    snap["digests"] = [d for d in snap["digests"] if not str(d.get("DIGEST", "")).startswith("prepared:")]
+    for d in rows:
+        if _own_query(d.get("DIGEST_TEXT")):
+            continue
+        d = dict(d)
+        d["DIGEST"] = "prepared:" + hashlib.md5((d["DIGEST_TEXT"] or "").encode()).hexdigest()[:16]
+        d["SCHEMA_NAME"] = d.get("SCHEMA_NAME") or ""
+        snap["digests"].append(d)
+    snap["prepared_at"] = ts
 
 
 def _percentile_from_hist(hist_a, hist_b, q):
@@ -935,9 +963,12 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None, bench_started
             def dd(k):
                 return int(d[k] or 0) - int(p.get(k, 0) or 0)
 
+            prep = d["DIGEST"].startswith("prepared:")
+            # a prepared-statement reading taken before the benchmark exited covers less than the whole window
+            dt_ = max(1e-6, b["prepared_at"] - a["t"]) if prep and b.get("prepared_at") and b["prepared_at"] > a["t"] else dt
             top.append({
-                "schema": d["SCHEMA_NAME"], "digest": d["DIGEST"], "prepared": d["DIGEST"].startswith("prepared:"), "query": d["DIGEST_TEXT"],
-                "count": cnt, "per_s": round(cnt / dt, 2), "total_s": round(tm / 1e12, 3),
+                "schema": d["SCHEMA_NAME"], "digest": d["DIGEST"], "prepared": prep, "query": d["DIGEST_TEXT"],
+                "count": cnt, "per_s": round(cnt / dt_, 2), "total_s": round(tm / 1e12 * dt / dt_, 3),
                 "avg_ms": round(tm / cnt / 1e9, 3), "lock_ms_avg": round(dd("SUM_LOCK_TIME") / cnt / 1e9, 3),
                 "rows_examined_avg": round(dd("SUM_ROWS_EXAMINED") / cnt, 1),
                 "rows_sent_avg": round(dd("SUM_ROWS_SENT") / cnt, 1),

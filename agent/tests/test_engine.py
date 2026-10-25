@@ -2592,6 +2592,27 @@ def test_numa_balancing_is_not_in_the_hygiene_bundle_and_a_bad_bundle_is_bisecte
     assert any(i["id"] == engine.BUNDLE + "-bisect" for i in out2)
 
 
+def test_prepared_statements_read_before_the_benchmark_exits():
+    """em-b212x 342: 'top statements' showed BEGIN at 100% and the agent's own query - sysbench's statements are all
+    server-side prepared and live with its connections, gone by the end snapshot. The last reading taken while the
+    benchmark was connected is used, and the agent's own monitoring queries are left out even when their text is cut."""
+    from tuning_agent import collector
+    own = ("SELECT LEFT ( `SQL_TEXT` , ? ) AS `DIGEST_TEXT` , SUM ( `COUNT_EXECUTE` ) AS `COUNT_STAR` , SUM ( `SUM_TIMER_EXECUTE` ) "
+           "AS `SUM_TIMER_WAIT`")
+    assert collector._own_query(own)
+    begin = {"SCHEMA_NAME": "sbtest", "DIGEST": "d1", "DIGEST_TEXT": "BEGIN", "COUNT_STAR": 1000, "SUM_TIMER_WAIT": 10 ** 9}
+    snap_b = {"t": 1450.0, "digests": [dict(begin, COUNT_STAR=6000, SUM_TIMER_WAIT=6 * 10 ** 9)]}
+    rows = [{"DIGEST_TEXT": "SELECT c FROM sbtest1 WHERE id=?", "COUNT_STAR": 50000, "SUM_TIMER_WAIT": 50 * 10 ** 12, "SCHEMA_NAME": "sbtest"},
+            {"DIGEST_TEXT": own, "COUNT_STAR": 3, "SUM_TIMER_WAIT": 10 ** 9, "SCHEMA_NAME": ""}]
+    collector.use_prepared_tail(snap_b, (1440.0, rows))
+    kinds = [d["DIGEST_TEXT"] for d in snap_b["digests"]]
+    assert "SELECT c FROM sbtest1 WHERE id=?" in kinds and own not in kinds and snap_b["prepared_at"] == 1440.0
+    # a reading with fewer executions than the end snapshot already has changes nothing
+    snap2 = {"t": 1450.0, "digests": [{"SCHEMA_NAME": "", "DIGEST": "prepared:x", "DIGEST_TEXT": "q", "COUNT_STAR": 99999}]}
+    collector.use_prepared_tail(snap2, (1440.0, rows))
+    assert "prepared_at" not in snap2
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
