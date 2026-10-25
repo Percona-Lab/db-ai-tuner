@@ -126,6 +126,7 @@ MIGRATIONS = [
     ("tsessions", "planner", "INTEGER DEFAULT 0"),
     ("recommendations", "decision", "TEXT"),
     ("tsessions", "ai", "TEXT"),
+    ("tsessions", "run_plan", "TEXT"),
 ]
 
 

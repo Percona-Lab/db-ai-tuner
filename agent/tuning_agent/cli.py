@@ -1945,6 +1945,14 @@ def _queue_promising_retests(c):
     return did
 
 
+def _post_run_plan(c, sess):
+    """The run length chosen for the session, shown in the session header (user: where do I see it?)."""
+    try:
+        c.client.post(f"/sessions/{sess['id']}/update", {"run_plan": sess.get("run_plan")})
+    except Exception as e:  # noqa
+        log(f"warning: could not record the run-length plan: {e}")
+
+
 def _review_run_plan(c, runs):
     """How the run-length probe's predictions held up in calibration (kept for the data review): the measured within-run
     noise against the predicted one, and whether the warm-up reached the state the window measured."""
@@ -1963,6 +1971,7 @@ def _review_run_plan(c, runs):
     plan["review"] = review
     sess["run_plan"] = plan
     c.state.set("session", sess)
+    _post_run_plan(c, sess)
     txt = (f"run-length plan held up: within-run noise ±{measured}% measured vs ±{plan.get('predicted_within_noise_pct')}% predicted; "
            f"warm-up {'adequate' if review['warmup_adequate'] else 'NOT adequate'}")
     log("   " + txt)
@@ -3497,6 +3506,7 @@ def _autotune(a):
             sess = c.session()
             sess["run_plan"] = plan
             c.state.set("session", sess)
+            _post_run_plan(c, sess)
         if plan.get("unstable") and not getattr(a, "allow_unstable", False):
             # no configuration found whose undo history stays bounded: every run would measure the drift, and the best
             # of them could not run this load in production (user, session 328: 40 + 10 min runs destined to be useless)

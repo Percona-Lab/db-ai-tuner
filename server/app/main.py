@@ -717,6 +717,19 @@ def events_page(request: Request, env: int = None, session: int = None, offset: 
     return {"total": total, "events": [event_view(store.row(r, ("data",))) for r in rows]}
 
 
+def run_plan_from_event(sid):
+    """Sessions from agents that did not record the plan: the run-length probe's own event (the plan autotune used)."""
+    r = store.q1("SELECT data FROM events WHERE session_id=? AND type='run_length' ORDER BY ts DESC LIMIT 1", (sid,))
+    d = store.uj(r["data"]) if r else None
+    if not d or d.get("recommended_warmup_s") is None:
+        return None
+    m = d.get("measure") or {}
+    return {"warmup_s": d["recommended_warmup_s"], "duration_s": d.get("recommended_duration_s") or m.get("recommended_s") or 600,
+            "auto": ["warmup", "duration"], "predicted_within_noise_pct": m.get("predicted_within_noise_pct"), "target_pct": m.get("target_pct"),
+            "unstable": bool(d.get("unstable")), "settling": {k: x.get("settled_after_s") for k, x in (d.get("metrics") or {}).items()},
+            "unbounded": [u.get("label") for u in d.get("unbounded") or []], "source": "event"}
+
+
 def event_view(ev):
     """Events as the UI shows them: an apply event recorded by an older agent ('applied 2 change(s)') names the settings
     and values from its stored result."""
@@ -738,6 +751,7 @@ def session(sid: int, request: Request):
     s = own_session(sid, u["id"])
     s["summary"] = store.uj(s["summary"])
     s["calibration"] = store.uj(s.get("calibration"))
+    s["run_plan"] = store.uj(s.get("run_plan")) or run_plan_from_event(sid)
     e = own_env(s["env_id"], u["id"])
     runs = [run_brief(r) for r in store.q("SELECT * FROM runs WHERE session_id=? ORDER BY seq, id", (sid,))]
     s["start_tradeoffs"] = mark_added_tradeoffs(runs)
@@ -1371,6 +1385,8 @@ def agent_session_update(sid: int, body: dict = Body(...), key=Depends(auth.agen
         store.ex("UPDATE tsessions SET goal_metric=? WHERE id=?", (str(body["goal_metric"])[:40], sid))
     if "calibration" in body:
         store.ex("UPDATE tsessions SET calibration=? WHERE id=?", (store.j(body["calibration"]), sid))
+    if isinstance(body.get("run_plan"), dict):  # warm-up and window chosen by the run-length probe (auto run length)
+        store.ex("UPDATE tsessions SET run_plan=? WHERE id=?", (store.j(body["run_plan"]), sid))
     return {"ok": True}
 
 

@@ -868,3 +868,13 @@ def test_steal_profile_from_its_own_table(user):
     main._STEAL_CACHE.clear()
     assert user.ui.get(f"/api/environments/{env}").json()["steal"]["samples"] == 40
     assert store.q1("SELECT COUNT(*) n FROM steal_backfilled WHERE env_id=?", (env,))["n"] == 1
+
+
+def test_run_plan_is_shown_with_the_session(user):
+    """User: with an automatic run length, where do I see the warm-up and window chosen? The agent records the plan."""
+    env = user.hello(uid="plan-agent")
+    sid = user.start_session(env)
+    plan = {"warmup_s": 2400, "duration_s": 600, "auto": ["warmup", "duration"], "predicted_within_noise_pct": 5.4, "target_pct": 3.0,
+            "unstable": True, "settling": {"checkpoint_age_pct": 2003}}
+    assert user.agent.post(f"/api/v1/agent/sessions/{sid}/update", json={"run_plan": plan}).status_code == 200
+    assert user.ui.get(f"/api/sessions/{sid}").json()["session"]["run_plan"] == plan

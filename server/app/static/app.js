@@ -920,6 +920,24 @@ function renderLive(el, m, cpus, hostName, markers, window_) {
   }));
 }
 
+// warm-up and measured window of the session's runs: chosen by the run-length probe (auto) or set in the profile
+function runLengthChip(s, runs) {
+  const p = s.run_plan, dur = x => x >= 120 && x % 60 === 0 ? `${x / 60} min` : `${Math.round(x)} s`;
+  if (p && p.warmup_s != null) {
+    const auto = p.auto || [];
+    const settle = Object.entries(p.settling || {}).filter(([, v]) => v != null).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k.replace(/_/g, " ")} ${dur(v)}`).join(", ");
+    const tip = (auto.length ? `Chosen by the run-length probe (${auto.join(" and ")} automatic; one continuous run of the benchmark before calibration). ` : "Set in the benchmark profile. ")
+      + (auto.includes("warmup") ? `Warm-up: the longest time a state metric needed to settle, plus 20%${settle ? ` (slowest: ${settle})` : ""}. ` : "")
+      + (auto.includes("duration") && p.predicted_within_noise_pct != null ? `Window: long enough for a predicted within-run noise of ±${p.predicted_within_noise_pct}% (target ±${p.target_pct}%). ` : "")
+      + (p.unstable ? "Provisional: no configuration with a bounded undo history was found (see Purge triage), so the window is capped at 10 min - a longer one would only measure the drift. " : "")
+      + ((p.unbounded || []).length && !p.unstable ? `Growing without bound in the probe: ${p.unbounded.join(", ")}. ` : "")
+      + (p.review ? `In calibration: within-run noise ±${p.review.measured_within_noise_pct}% measured vs ±${p.review.predicted_within_noise_pct}% predicted; warm-up ${p.review.warmup_adequate ? "adequate" : "not adequate"}.` : "");
+    return `<span><span class="k">Run length</span>${dur(p.warmup_s)} warm-up + ${dur(p.duration_s)}${auto.length ? ' <span class="muted">(auto)</span>' : ""}${p.unstable ? ' <span class="badge warn">provisional</span>' : ""}${info(tip)}</span>`;
+  }
+  const last = runs.slice().reverse().find(r => (r.summary || {}).duration_s);
+  return last ? `<span><span class="k">Run length</span>${dur(last.summary.duration_s)} measured${info(`The measured window of the latest run (#${last.seq}). The warm-up of each run is on its page.`)}</span>` : "";
+}
+
 // purge triage (stability first): each online purge setting tried on the running benchmark, its history growth and cost
 function triageCard(events) {
   const ev = events.filter(e => e.type === "purge_triage").sort((a, b) => a.ts - b.ts);
@@ -1079,7 +1097,7 @@ async function sessionPage(id) {
    <span><span class="k">Policy</span><a href="#/policies"><b>${esc(s.policy)}</b></a>${info(s.policy === "benchmark" ? "Trade-offs allowed after the production-safe experiments." : "Production-safe changes only.")}</span>
    <span><span class="k">Planner</span>${s.planner ? `<span class="badge info" data-tip="An AI planner chose each next step from the evidence (the rules still checked every choice). The Recommendations of each run show what the planner and the rules would have done." tabindex="0">AI planner</span>` : s.ai === "off" ? `<span data-tip="This session asked no AI model anything: built-in rules plus learnings from earlier sessions only (session start --ai off)." tabindex="0">rules + learnings, no AI</span>` : "rules"}</span>
    <span><span class="k">OS tuning</span>${s.os_tuning === 0 ? "off" : "on"}${info("When on, the agent may also change operating-system settings (swappiness, transparent huge pages, I/O scheduler, mount options, dirty writeback, memory allocator, huge pages). OS changes are recorded per run and rolled back like MySQL settings. Disable with --no-os-tuning.")}</span>
-   <span><span class="k">Noise</span>±${s.noise_pct}%</span>
+   <span><span class="k">Noise</span>±${s.noise_pct}%</span>${runLengthChip(s, d.runs || [])}
    <span><span class="k">Started</span>${fmtTime(s.created)}</span>${lastSwap && noSwapBadge(lastSwap.summary) ? `<span>${noSwapBadge(lastSwap.summary)}</span>` : ""}</div>
   ${s.workload ? `<p class="sub wl">workload: ${esc(s.workload)}</p>` : ""}
   ${s.activity ? `<div style="margin:0 0 10px">${activityLine(s.activity)}</div>` : ""}
