@@ -1551,10 +1551,14 @@ def recommend(ctx):
         # a cap that keeps the undo history bounded (the purge triage's remedy) is a start, not the answer: its value is
         # tuned here - every value measured, and only stable configurations can win (user, 2026-10-25)
         sweep("tune-concurrency-cap", "Tune the InnoDB thread concurrency cap", "innodb_thread_concurrency",
-              [str(x) for x in sorted({max(1, tc_now // 2), tc_now * 3 // 2, tc_now * 2}) if x != tc_now],
+              [str(x) for x in sorted({max(1, tc_now // 2), tc_now * 3 // 2, tc_now * 2}) if x != tc_now] + ["0"],
               f"innodb_thread_concurrency={tc_now} is set (by the purge triage or earlier tuning) and the history is bounded: values "
-              "around it measured for throughput; a value that lets the history grow again cannot win.",
+              "around it - and no cap (0): other changes since, e.g. a larger buffer pool, may have made it unnecessary - measured "
+              "for throughput; a value that lets the history grow again cannot win.",
               {"innodb_thread_concurrency": tc_now, "threads_running_avg": s.get("threads_running_avg"), "cpus": cpus}, impact=2)
+        if b.items and b.items[-1]["id"] == "tune-concurrency-cap" and "0" in b.items[-1]["sweep"]["values"]:
+            vs_ = b.items[-1]["sweep"]["values"]  # no cap first: the most telling point once other settings changed
+            b.items[-1]["sweep"]["values"] = ["0"] + [x for x in vs_ if x != "0"]
         # its companions, like the thread pool's settings (user): how long a thread keeps its slot (tickets: row operations
         # before it queues again) and how waiting threads back off (sleep delay; adaptive up to its max)
         if "innodb_concurrency_tickets" in v:

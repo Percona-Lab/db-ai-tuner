@@ -68,7 +68,13 @@ history bounded can win:
 - **The thread pool:** `thread_pool_size` (half, 1.5x, 2x) and `thread_pool_oversubscribe` (1 / 2 / 3 / 5).
 
 The oversubscription block (no new concurrency limiter at 16+ connections per vCPU) does not stop tuning a limiter
-already in place. Canary 2026-10-25, 1024 threads on 8 vCPUs:
+already in place. The sweep includes no cap (0), first: other changes since, such as a larger buffer pool, may have
+made the cap unnecessary.
+
+**Caveat for the table below.** These canary runs (2026-10-25, 1024 threads on 8 vCPUs) had a 128 MB buffer pool
+(server defaults) for about 1 GB of data. Purge waited on reads, and with an 896 MB pool the same load ran at 26.8k tps
+with a history of 244. The remedies' ranking is being re-measured from a hardware-sized start. Autotune now warns
+before measuring from such a start.
 
 | Setting | Throughput | History |
 |---|---|---|

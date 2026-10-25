@@ -2437,7 +2437,7 @@ def test_concurrency_cap_from_the_triage_is_tuned_not_blocked():
            "version": (8, 4, 11), "variables": v, "summary": s, "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}}
     it = ids(engine.run_engine(ctx))
     assert "tune-concurrency-cap" in it and it["tune-concurrency-cap"]["confidence"] > 0, it.get("tune-concurrency-cap")
-    assert it["tune-concurrency-cap"]["sweep"]["values"] and "0" not in it["tune-concurrency-cap"]["sweep"]["values"]
+    assert "0" in it["tune-concurrency-cap"]["sweep"]["values"]  # no cap: a larger buffer pool may have made it unnecessary
     assert "tune-concurrency-tickets" in ids(engine.run_engine(dict(ctx, variables=dict(v, innodb_concurrency_tickets="5000"))))
     # introducing a cap at 128 connections per vCPU is still blocked
     assert engine.oversubscription_block({"changes": [{"variable": "innodb_thread_concurrency", "proposed": "16"}]},
@@ -2543,6 +2543,34 @@ def test_thread_pool_statement_times_not_compared():
     d2 = {}
     evaluate._secondary_latency(d2, run["summary"], [dict(p, managed={"thread_handling": "pool-of-threads"}) for p in par], 3.8, 4.15, run)
     assert d2.get("secondary_gain"), d2  # both under the pool: compared as before
+
+
+def test_undersized_buffer_pool_start_is_flagged():
+    """Canary 2026-10-25: the purge study ran on a 128 MB pool for ~1 GB of data (server defaults after a reset): purge
+    waited on reads, and the remedies were judged on an I/O-starved server. Autotune says so before measuring."""
+    from tuning_agent import cli
+    logs, events = [], []
+
+    class DB:
+        variables = staticmethod(lambda: {"innodb_buffer_pool_size": str(128 * 1024 ** 2)})
+        table_sizes = staticmethod(lambda: (1100 * 1024 ** 2, {}))
+
+    class C:
+        db = DB()
+        event = staticmethod(lambda *a: events.append(a))
+
+    saved = cli.log
+    cli.log = logs.append
+    try:
+        cli._warn_undersized_start(C(), {"runs": []})
+        assert events and "baseline --apply" in events[0][1], events
+        events.clear()
+        C.db = type("D", (), {"variables": staticmethod(lambda: {"innodb_buffer_pool_size": str(23 * 1024 ** 3)}),
+                              "table_sizes": staticmethod(lambda: (1100 * 1024 ** 2, {}))})()
+        cli._warn_undersized_start(C(), {"runs": []})
+        assert not events
+    finally:
+        cli.log = saved
 
 
 if __name__ == "__main__":

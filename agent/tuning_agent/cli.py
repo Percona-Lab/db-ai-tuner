@@ -612,6 +612,27 @@ def _measured_overhead(c):
     return None
 
 
+def _warn_undersized_start(c, sess):
+    """A starting configuration with a buffer pool far below the data (server defaults: 128 MB) makes every run read the
+    data - and purge read its undo - from disk: tuning would first discover the buffer pool, and a purge triage would
+    judge an I/O-starved server (canary 2026-10-25: 128 MB pool for ~1 GB, 3.9k tps; 896 MB: 26.8k tps, history 244).
+    Said once, before anything is measured: the hardware baseline sizes it."""
+    if sess.get("runs"):
+        return
+    try:
+        v = c.db.variables()
+        bp = int(v.get("innodb_buffer_pool_size") or 0)
+        data = int(c.db.table_sizes()[0] or 0)
+    except Exception:
+        return
+    if bp and data and bp <= 256 * 1024 ** 2 and data > 4 * bp:
+        msg = (f"The starting configuration has a {bp // 1024 ** 2} MB buffer pool for {data / 1024 ** 3:.1f} GB of data: runs will read "
+               "most pages from disk, and a purge triage would judge an I/O-starved server. Apply the hardware baseline first "
+               "(tuning-agent baseline --apply), unless measuring the defaults is the point.")
+        log("   WARNING: " + msg)
+        c.event("warmup", msg, {"innodb_buffer_pool_size": bp, "data_bytes": data})
+
+
 def _cap_nice_prep(c):
     """CAP_SYS_NICE for mysqld as host preparation: it only permits thread priorities (no effect on performance by
     itself), and without it the purge triage cannot try a higher purge priority online - only a restart experiment
@@ -2132,13 +2153,14 @@ PROVISIONAL_WINDOW_S = 600  # measurement length while no stable configuration e
 
 
 def _segment(c, t0, t1):
-    """History growth per minute and mean throughput of one triage step (samples from t0 to t1)."""
+    """History growth per minute, mean throughput and buffer pool hit rate of one triage step (samples from t0 to t1)."""
     smp = SampleStore(c.state.dir).window(t0, t1)
     pts = [(x.get("ts") or 0, x["db"]["history_list_length"]) for x in smp if (x.get("db") or {}).get("history_list_length") is not None]
     tps = [x["db"]["tps"] for x in smp if (x.get("db") or {}).get("tps") is not None]
+    hit = [x["db"]["bp_hit_pct"] for x in smp if (x.get("db") or {}).get("bp_hit_pct") is not None]
     sl = collector._slope(pts)
     return {"hll_per_min": round(sl * 60) if sl is not None else None, "hll_end": int(pts[-1][1]) if pts else None,
-            "tps": round(sum(tps) / len(tps), 1) if tps else None}
+            "tps": round(sum(tps) / len(tps), 1) if tps else None, "bp_hit_pct": round(sum(hit) / len(hit), 2) if hit else None}
 
 
 def _per_trx(seg):
@@ -2281,7 +2303,10 @@ def _purge_triage(c, running, deadline, start_bench=None, measure_all=False):
     if not ref["hll_per_min"] or ref["hll_per_min"] <= 0:
         log(f"   history not growing now ({ref['hll_per_min']}/min): nothing to fix")
         return {"stable": True, "kept": [], "steps": steps, "running": running}
-    log(f"   reference: history +{ref['hll_per_min']:,}/min at {ref['tps']} tps")
+    log(f"   reference: history +{ref['hll_per_min']:,}/min at {ref['tps']} tps" + (f", buffer pool hit {ref['bp_hit_pct']}%" if ref.get("bp_hit_pct") is not None else ""))
+    if ref.get("bp_hit_pct") is not None and ref["bp_hit_pct"] < 99:
+        log(f"   NOTE: buffer pool hit rate {ref['bp_hit_pct']}%: purge may be waiting on reads, not on CPU - a larger buffer pool "
+            "can be the real remedy (the session's experiments measure it)")
     c.event("purge_triage", f"purge triage: history +{ref['hll_per_min']:,}/min at {ref['tps']} tps on the current configuration; "
             f"trying {', '.join(x['label'] for x in cands) or 'nothing (no remedy available here)'}, {TRIAGE_SEG_S // 60} min each",
             dict(ref, steps_planned=[x["label"] for x in cands]))
@@ -3518,6 +3543,7 @@ def _autotune(a):
             probes.ensure_debug_symbols(log)
         except Exception as e:  # profiles still work with exported symbols
             log(f"debug symbols: {e}")
+    _warn_undersized_start(c, sess)
     cn = _cap_nice_prep(c)
     if cn and not sess.get("runs"):
         log("== host preparation: CAP_SYS_NICE for mysqld (thread priorities for the purge triage; a restart, no effect by itself)")
