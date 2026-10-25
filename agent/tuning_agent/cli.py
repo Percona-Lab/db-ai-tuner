@@ -383,9 +383,19 @@ def _config_mismatches(c):
     out = []
     try:
         now_vars = c.db.variables()
+        req = c.state.get("requirements") or {}
         for var, m in (c.state.get("managed") or {}).items():
             if ":" in var or var not in now_vars or var in KOPTIONS:
                 continue
+            if var in req:
+                # raised on purpose by the benchmark's [requires] (a minimum, e.g. max_connections 1100 for 1024 threads):
+                # not a mismatch (em-b212x 357 run 4887 was excluded as 'unreliable' for it)
+                try:
+                    if float(now_vars.get(var)) >= float(req[var]) >= float(m.get("value")):
+                        continue
+                except (TypeError, ValueError):
+                    if str(now_vars.get(var)).lower() == str(req[var]).lower():
+                        continue
             if normalize(var, now_vars.get(var)) != normalize(var, m.get("value")):
                 out.append({"variable": var, "configured": m.get("value"), "running": now_vars.get(var)})
                 log(f"WARNING: {var} is {now_vars.get(var)}, configured {m.get('value')} - the run does not measure the configuration")

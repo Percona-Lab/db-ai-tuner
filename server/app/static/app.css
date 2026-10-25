@@ -236,3 +236,8 @@ figure.shot { margin: 10px 0 0; max-width: 820px; }
 figure.shot img { width: 100%; height: auto; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.08); display: block; }
 figure.shot figcaption { font-size: 12px; color: var(--muted); margin-top: 5px; }
 @media (max-width: 600px) { ol.steps > li { padding-left: 26px; margin-left: 12px; } ol.steps > li::before { width: 24px; height: 24px; left: -13px; font-size: 13px; } }
+
+/* a run's problem, easy to spot: unreliable reason box, flagged metric tiles */
+.note.alert { background: color-mix(in srgb, var(--serious) 12%, var(--surface)); border-left: 3px solid var(--serious); }
+.tile.alert { border-color: var(--crit); background: color-mix(in srgb, var(--crit) 8%, var(--surface)); }
+.tile.caution { border-color: var(--serious); background: color-mix(in srgb, var(--serious) 8%, var(--surface)); }

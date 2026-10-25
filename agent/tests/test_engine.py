@@ -2651,6 +2651,32 @@ def test_sync_binlog_before_binlog_off():
     assert "binlog-off" in it2 and "sync-binlog" not in it2, list(it2)
 
 
+def test_requirement_raised_value_is_not_a_config_mismatch():
+    """em-b212x 357 run 4887: max_connections managed at 1000, raised to 1100 by the benchmark's [requires] before the run
+    - flagged 'unreliable: configuration mismatch'. A value the requirement raised on purpose is not a mismatch."""
+    from tuning_agent import cli
+
+    class DB:
+        variables = staticmethod(lambda: {"max_connections": "1100", "innodb_io_capacity": "1500"})
+
+    class St:
+        d = {"managed": {"max_connections": {"value": "1000"}, "innodb_io_capacity": {"value": "2000"}},
+             "requirements": {"max_connections": "1100"}}
+        get = lambda self, k, d=None: self.d.get(k, d)  # noqa: E731
+
+    class C:
+        db = DB()
+        state = St()
+
+    saved = cli.log
+    cli.log = lambda *a: None
+    try:
+        mm = cli._config_mismatches(C())
+    finally:
+        cli.log = saved
+    assert [x["variable"] for x in mm] == ["innodb_io_capacity"], mm
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
