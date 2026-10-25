@@ -666,7 +666,7 @@ def _cap_nice_prep(c):
 def _baseline_swap(c, hw):
     """Swap as part of the baseline (best practice): unused swap costs nothing (swap study, 2026-10-21), and without it
     memory pressure is an OOM kill instead of slower pages, so memory settings cannot be explored safely (r2 RO-4.ns, 294,
-    299). About 1x RAM (at most 64 GiB, at most half the free disk), before calibration so every run has it. Not when OS
+    299). 20% of RAM, 4-16 GiB (at most half the free disk; a larger swap already there is kept), before calibration so every run has it. Not when OS
     tuning is off or the host is configured without swap (agent.ini swap = none): then the session runs without, flagged."""
     GiB = 1024 ** 3
     sess = c.session() or {}

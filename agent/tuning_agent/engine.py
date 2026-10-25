@@ -22,13 +22,14 @@ from .knowledge import KB, OPTIONS, flags_subset, fmt_size, human_size, normaliz
 
 GiB = 1024 ** 3
 MiB = 1024 ** 2
-SWAP_CAP = 64 * GiB  # safety swap: enough room for cold pages and a margin before an OOM kill; beyond it, swap only
-                     # postpones the kill on large hosts (a 256 GB host would get a 251 GB file)
+SWAP_MIN, SWAP_CAP = 4 * GiB, 16 * GiB  # swap the agent aims for: room for cold memory and a margin before an OOM kill
+SWAP_SHARE = 0.20  # of RAM (user, 2026-10-25: 1x RAM took a lot of a small drive for no reason; 20% leaves room to swap out
+                   # memory nothing uses, bounded 4-16 GiB). A larger swap already on the host is never shrunk.
 
 
 def swap_target(ram):
-    """Total swap the agent aims for: about 1x RAM, at most SWAP_CAP."""
-    return min(ram, SWAP_CAP)
+    """Total swap the agent aims for: 20% of RAM, at least 4 GiB, at most 16 GiB."""
+    return int(min(max(ram * SWAP_SHARE, SWAP_MIN), SWAP_CAP))
 
 
 def _v(vars_, name, default=None):
@@ -1403,7 +1404,7 @@ def recommend(ctx):
         swap_after = swap_free
         swap_total = (s.get("swap_total_mb") or 0) * MiB
         if ctx.get("os_tuning") and swap_total < swap_target(ram) * 0.9 and ram >= 2 * GiB:
-            # extra OS tuning, part of this experiment: swap up to about 1x RAM, at most 64 GiB (the agent's swap file
+            # extra OS tuning, part of this experiment: swap up to 20% of RAM, 4-16 GiB (the agent's swap file
             # replaces an earlier one), so a buffer pool that outgrows memory shows as swapping instead of an OOM kill
             own = _swapfile_bytes(v.get("os:swapfile"))
             size = max(1 * GiB, (swap_target(ram) - (swap_total - own)) // GiB * GiB)
@@ -1425,7 +1426,7 @@ def recommend(ctx):
                   {"bp_hit_pct": s.get("bp_hit_pct"), "mem_available": human_size(mem_avail), "inactive_anon": human_size(cold),
                    "swap_free": human_size(swap_free), "swap_in": s.get("swap_in")}, impact=2, confidence=1)
     # Swap as OS protection: without it (Scaleway hosts come with 0) memory pressure ends in an OOM kill of mysqld instead
-    # of slower pages, and every memory-using setting is sized against a hard wall. About 1x RAM (common practice), on the
+    # of slower pages, and every memory-using setting is sized against a hard wall. 20% of RAM, 4-16 GiB, on the
     # free disk; measured on its own and kept unless it costs throughput (a protective change, like the best practices).
     # Memory settings measured before the swap state changed are measured again after it (apply_history).
     swap_total = (s.get("swap_total_mb") or 0) * MiB
@@ -1438,7 +1439,7 @@ def recommend(ctx):
             size = min(size, max(0, int((free - 2 * GiB) * 0.5)) // GiB * GiB)  # at most half of the free disk
         pressure = mem_avail <= max(768 * MiB, ram * 0.10) or bool(diag_types & {"memory", "swap"})
         if size >= GiB and size > own_swap and pressure:  # the baseline adds swap as a practice; an experiment only with pressure
-            b.add("best-practices-swap", "Add swap (about 1x RAM, at most 64 GiB): memory pressure slows instead of OOM-killing mysqld",
+            b.add("best-practices-swap", "Add swap (20% of RAM, 4-16 GiB): memory pressure slows instead of OOM-killing mysqld",
                   [("os:swapfile", fmt_size(size))],
                   f"{'No swap' if not swap_total else human_size(swap_total) + ' of swap'} on a host with {human_size(ram)} RAM: when memory "
                   "runs out the kernel kills mysqld instead of moving cold pages out, so memory settings are sized against a hard "
@@ -1730,7 +1731,7 @@ COMMIT_PATH_DEPENDENT = {"log-writer-threads-off"}
 
 def apply_history(items, history, swap_now_mb=None, managed_now=None):
     """Mark/skip items already tried. A memory-using setting tried while the swap state was different (no swap -> a swap
-    file of about 1x RAM, or back) is tried again: its best value depends on whether pressure means slower or killed."""
+    file of 20% of RAM, or back) is tried again: its best value depends on whether pressure means slower or killed."""
     tried = {}
     tried_ids = {}
     swept = {}  # variable -> last run of an agent sweep over it (screening skips points: the first value may never run)
@@ -2622,7 +2623,7 @@ def run_engine(ctx):
             margin = max(GiB, int(0.05 * nb["ram"])) if swap_free < GiB else 0
             if (nb["over_budget"] or nb["needed"] + margin > nb["ram"]) and nb["needed"] > cur_b["needed"]:
                 # beyond RAM + free swap the kernel OOM-kills mysqld (suite RO-4: a 12 GB pool on 16 GB with 0.5 GB swap):
-                # that is a crash, not a trade-off. With OS tuning the experiment brings a swap file of about 1x RAM (64 GiB at most)
+                # that is a crash, not a trade-off. With OS tuning the experiment brings a swap file of 20% of RAM (4-16 GiB)
                 # (pressure then shows as swapping in the run); without it the change is not run.
                 if nb["needed"] + margin > nb["ram"] + swap_free:
                     size = max(nb["needed"] - nb["ram"] - swap_free + GiB, swap_target(nb["ram"]) // GiB * GiB)

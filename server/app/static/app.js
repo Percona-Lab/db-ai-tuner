@@ -1585,7 +1585,7 @@ async function renderExperiments(el, sess) {
   el.querySelectorAll("[data-cancel]").forEach(b => b.onclick = async () => { await api(`/api/experiments/${b.dataset.cancel}`, { method: "DELETE" }); renderExperiments(el, sess); });
 }
 
-const NO_SWAP_TIP = "No swap on the database host during this run. Memory pressure ends in an OOM kill of mysqld instead of slower pages, so memory settings are kept inside RAM and the buffer pool range the tuner can explore is limited. Best practice (applied by the baseline when OS tuning is allowed): a swap file of about 1x RAM - unused swap costs nothing.";
+const NO_SWAP_TIP = "No swap on the database host during this run. Memory pressure ends in an OOM kill of mysqld instead of slower pages, so memory settings are kept inside RAM and the buffer pool range the tuner can explore is limited. Best practice (applied by the baseline when OS tuning is allowed): swap of 20% of RAM, 4-16 GiB - room to move memory nothing uses out of RAM; a larger swap already on the host is kept.";
 function noSwapBadge(sm) { return sm && sm.swap_total_mb === 0 ? ` <span class="badge warn" data-tip="${esc(NO_SWAP_TIP)}" tabindex="0">no swap</span>` : ""; }
 // provenance: who chose the next step, and what each recommendation rests on (built-in rules, learnings, AI)
 function decisionLine(d) {

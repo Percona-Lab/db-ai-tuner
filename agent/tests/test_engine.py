@@ -1097,7 +1097,7 @@ def test_flat_sweep_retested_after_bottleneck_shift():
 
 
 def test_swap_protection_and_memory_retest():
-    # Scaleway hosts come with 0 swap: with OS tuning the agent tests a swap file (~1x RAM, capped by free disk) as a
+    # Scaleway hosts come with 0 swap: with OS tuning the agent tests a swap file (20% of RAM, 4-16 GiB, capped by free disk) as a
     # protective change, and memory settings tried before the swap state changed are tried again
     def items(swap_mb, free=200 * GiB, os_tuning=True, ram=16 * GiB):
         ctx = {"goal": "tps", "policy": "safe", "os_tuning": os_tuning, "os_facts": {"os:filesystem": "ext4"},
@@ -1107,12 +1107,12 @@ def test_swap_protection_and_memory_retest():
                "noise_pct": 2.0, "managed": {}}
         return {i["id"]: i for i in engine.run_engine(ctx)["items"]}
     it = items(0).get("best-practices-swap")
-    assert it and it["changes"][0]["proposed"] == "16G" and it["impact"] == 3, it and it["changes"]
-    assert items(0, free=12 * GiB)["best-practices-swap"]["changes"][0]["proposed"] == "5G"  # half of the free disk
-    assert "best-practices-swap" not in items(16 * 1024) and "best-practices-swap" not in items(0, os_tuning=False)
+    assert it and it["changes"][0]["proposed"] == "4G" and it["impact"] == 3, it and it["changes"]
+    assert items(0, free=8 * GiB)["best-practices-swap"]["changes"][0]["proposed"] == "3G"  # half of the free disk
+    assert "best-practices-swap" not in items(4 * 1024) and "best-practices-swap" not in items(0, os_tuning=False)
     assert engine.is_practice_run({"label": "best-practices-swap"})  # kept unless it regresses
-    # large hosts: 64 GiB is enough safety (a 251 GB host was offered a 251 GB file), and 64 GiB of swap already is enough
-    assert items(0, free=2000 * GiB, ram=251 * GiB)["best-practices-swap"]["changes"][0]["proposed"] == "64G"
+    # large hosts: 16 GiB is enough safety (a 251 GB host was offered a 251 GB file); a larger swap already there is kept
+    assert items(0, free=2000 * GiB, ram=251 * GiB)["best-practices-swap"]["changes"][0]["proposed"] == "16G"
     assert "best-practices-swap" not in items(64 * 1024, free=2000 * GiB, ram=251 * GiB)
     from tuning_agent.memory import MEMORY_VARS
     ranked = items(0)
@@ -1140,7 +1140,7 @@ def test_over_budget_beyond_swap_is_a_crash_not_a_tradeoff():
         return next(i for i in engine.run_engine(ctx)["items"] if i["id"] == "bp-grow")
     with_os = grow(True)
     ch = {c["variable"]: c["proposed"] for c in with_os["changes"]}
-    assert ch["innodb_buffer_pool_size"] == "12G" and engine._swapfile_bytes(ch.get("os:swapfile")) >= 15 * GiB
+    assert ch["innodb_buffer_pool_size"] == "12G" and engine._swapfile_bytes(ch.get("os:swapfile")) >= 4 * GiB  # covers the 1.1 GiB over RAM
     without = grow(False)
     assert without["confidence"] == 0 and "OOM-killed" in without["note"]
     ctx_ns = {"goal": "tps", "policy": "benchmark", "hw": d["hw"], "variables": v, "summary": d["summary"], "inputs": d["inputs"],
@@ -1930,7 +1930,8 @@ def test_baseline_adds_swap_unless_opted_out():
     from tuning_agent import cli
     hw = {"ram_bytes": 32 * GiB, "swap_bytes": 0, "disk_free_bytes": 500 * GiB}
     sw = cli._baseline_swap(_FakeCtx({"os_tuning": True}), hw)
-    assert sw and sw["variable"] == "os:swapfile" and parse_size(sw["value"]) == 32 * GiB, sw
+    assert sw and sw["variable"] == "os:swapfile" and parse_size(sw["value"]) == 6 * GiB, sw  # 20% of 32 GiB, whole GiB
+    assert cli._baseline_swap(_FakeCtx({"os_tuning": True}), dict(hw, swap_bytes=32 * GiB)) is None  # larger swap: kept
     assert cli._baseline_swap(_FakeCtx({"os_tuning": True}, {"swap": "none"}), hw) is None  # host without swap by design
     assert cli._baseline_swap(_FakeCtx({"os_tuning": False}), hw) is None  # no OS tuning
     assert cli._baseline_swap(_FakeCtx({"os_tuning": True}), dict(hw, swap_bytes=31 * GiB)) is None  # already about 1x RAM
@@ -2742,6 +2743,20 @@ def test_steal_judged_by_consistency_and_clock_by_throttling():
     assert evaluate.clock_check({"cpu_mhz": 3490, "cpu_busy": 95}, 2.0, {"mhz": 3500})["level"] == "ok"
     v, ev = evaluate.verdict({"seq": 9, "summary": hot}, [], "tps", {"noise_pct": 2.0})
     assert v != "unreliable" and ev["clock"]["level"] == "flag", (v, ev)
+
+
+def test_swap_target_is_a_fifth_of_ram_within_4_to_16_gib():
+    """User (2026-10-25): 1x RAM swap took a lot of a small drive for no reason. 20% of RAM, at least 4 GiB, at most 16 GiB;
+    a larger swap already on the host is never shrunk."""
+    from tuning_agent import engine
+    G = 1024 ** 3
+    assert engine.swap_target(8 * G) == 4 * G and engine.swap_target(32 * G) == int(6.4 * G) and engine.swap_target(256 * G) == 16 * G
+    s = dict(OLTP[0], swap_total_mb=32 * 1024, mem_available_mb=300)
+    ctx = {"goal": "tps", "policy": "benchmark", "os_tuning": True, "os_facts": {}, "hw": dict(HW, ram_bytes=32 * G), "flavor": "percona",
+           "version": (8, 4, 11), "variables": dict(VARS, **{"os:swapfile": "0"}), "summary": s, "inputs": OLTP[1],
+           "history": [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}], "noise_pct": 2.0, "managed": {}}
+    its = engine.run_engine(ctx)["items"]
+    assert not any(c["variable"] == "os:swapfile" for i in its for c in i.get("changes") or []), [i["id"] for i in its]
 
 
 if __name__ == "__main__":

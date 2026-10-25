@@ -82,7 +82,7 @@ Measured mysqld memory (PSS + swap PSS) under controlled load; raw data in
 Hosts without swap (Scaleway instances come with 0) turn memory pressure into an OOM kill of mysqld rather than slower
 pages, so every memory-using setting is effectively sized against a hard wall, and its best value can differ from a
 host with swap. With OS tuning allowed and swap below 0.9 x RAM, the engine proposes `best-practices-swap`: a swap
-file of about 1x RAM, at most 64 GiB (and at most half the free disk), measured on its own and kept unless it costs throughput, like the
+file bringing swap to 20% of RAM, at least 4 GiB and at most 16 GiB (and at most half the free disk; a larger swap already on the host is kept), measured on its own and kept unless it costs throughput, like the
 best practices. With no swap at all, memory-setting experiments rank after it, so they are measured with swap in
 place; memory settings tried before the swap state changed by 1 GiB or more are tried again (`apply_history`).
 
