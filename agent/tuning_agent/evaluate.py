@@ -406,21 +406,23 @@ def noise_plan(runs, cal, duration, max_duration=None, target=NOISE_TARGET, over
     if cv is None or not ses:
         return dict(out, action="unknown", text="No per-run sample data to separate within-run and between-run noise.")
     within = (sum(x * x for x in ses) / len(ses)) ** 0.5
-    ramps = [(r.get("summary") or {}).get("startup_ramp_s") for r in runs]
-    ramps = [x for x in ramps if x]
-    if replan and ramps and duration and STARTUP_RAMP_SHARE * duration < max(ramps):
+    # the typical ramp of the valid runs, not the worst one (em-b212x 342: 42 s in an early run later marked unreliable,
+    # ~16 s afterwards)
+    ramps = sorted(x for x in ((r.get("summary") or {}).get("startup_ramp_s") for r in runs if r.get("verdict") not in EXCLUDED) if x)
+    ramp = ramps[len(ramps) // 2] if ramps else None
+    if replan and ramp and duration and STARTUP_RAMP_SHARE * duration < ramp:
         # the measured phase starts its own benchmark process: its connect / ramp-up is inside every window and varies
         # from run to run (em-b212x 337: ~30 s of 2 min windows, ±4.15% threshold). Windows long enough to dilute it
         from .collector import MEASURE_CANDIDATES_S, WINDOW_CAP_S
-        need = max(ramps) / STARTUP_RAMP_SHARE
+        need = ramp / STARTUP_RAMP_SHARE
         cap_ = max_duration or WINDOW_CAP_S
         sec = next((w for w in MEASURE_CANDIDATES_S if w >= need), cap_)
         sec = min(sec, cap_)
         if sec > duration:
-            out.update(within_cv_pct=round(within, 2), startup_ramp_s=max(ramps))
+            out.update(within_cv_pct=round(within, 2), startup_ramp_s=ramp)
             return dict(out, action="longer-runs", seconds=sec, capped=sec < need, expected_noise_pct=None,
-                        text=f"Each window starts with the benchmark's own start-up ({max(ramps):.0f} s until throughput is back to 90%: "
-                             f"a new benchmark process connects for the measured phase) - {100 * max(ramps) / duration:.0f}% of a "
+                        text=f"Each window starts with the benchmark's own start-up (typically {ramp:.0f} s until throughput is back to 90%: "
+                             f"a new benchmark process connects for the measured phase) - {100 * ramp / duration:.0f}% of a "
                              f"{duration // 60 or 1} min window, and it varies from run to run. {sec // 60} min windows keep it under "
                              f"{int(100 * STARTUP_RAMP_SHARE)}%.")
     if within > cv and (cal.get("noise_pct") or 0) <= target:

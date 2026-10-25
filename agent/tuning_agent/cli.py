@@ -2059,7 +2059,7 @@ def _noise_plan(c, prof, runs, n):
         log(f"   WARNING: {ds['text']}")
         c.event("data-state", ds["text"], ds)
     plan = evaluate.noise_plan(runs, cal, prof.duration, prof.max_duration, overhead_s=_run_overhead(c, prof))
-    if ds["status"] == "drifting" and plan["action"] in ("between-runs", "longer-runs"):
+    if ds["status"] == "drifting" and plan["action"] in ("between-runs", "longer-runs") and not plan.get("startup_ramp_s"):
         plan["text"] += " Likely cause: the data set is not restored between runs (set reset = ..., or data_state = seasoned)."
     cl = [x for x in (evaluate.client_saturated(r.get("summary") or {}) for r in runs) if x]
     if cl and str(c.cfg.get("allow_noisy_environment", "false")).lower() != "true":
