@@ -878,3 +878,19 @@ def test_run_plan_is_shown_with_the_session(user):
             "unstable": True, "settling": {"checkpoint_age_pct": 2003}}
     assert user.agent.post(f"/api/v1/agent/sessions/{sid}/update", json={"run_plan": plan}).status_code == 200
     assert user.ui.get(f"/api/sessions/{sid}").json()["session"]["run_plan"] == plan
+
+
+def test_waits_share_of_database_time(user):
+    """User: 10 threads waiting on disk among ~1024 running is ~1% of database time - the waits view says so, and row
+    access (io/table/sql/handler: CPU plus every wait inside it) is not counted as a wait."""
+    import time
+    env = user.hello(uid="waits-agent")
+    t = time.time()
+    samples = [{"ts": t - 100 + 10 * i, "db": {"threads_running": 1000},
+                "waits": {"wait/io/file/innodb/innodb_data_file": 10.0, "wait/io/table/sql/handler": 900.0, "wait/lock/metadata/sql/mdl": 0.1}}
+               for i in range(5)]
+    assert user.agent.post("/api/v1/agent/metrics", json={"environment_id": env, "samples": samples}).status_code == 200
+    w = user.ui.get(f"/api/environments/{env}/waits", params={"start": t - 200, "end": t}).json()
+    assert w["active_threads"] == 1000 and abs(w["wait_threads"] - 10.1) < 0.01, w
+    ev = {e["event"]: e for e in w["events"]}
+    assert ev["wait/io/table/sql/handler"]["pct"] is None and ev["wait/io/file/innodb/innodb_data_file"]["pct"] > 98

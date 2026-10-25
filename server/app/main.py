@@ -683,17 +683,26 @@ def env_waits(env_id: int, request: Request, start: float = None, end: float = N
     own_env(env_id, u["id"])
     end = end or now()
     start = start or end - 3600
-    tot, n = {}, 0
+    tot, n, run_sum, run_n = {}, 0, 0.0, 0
     for r in store.q("SELECT data FROM metrics WHERE env_id=? AND ts>=? AND ts<=?", (env_id, start, end)):
-        w = (store.uj(r["data"], {}) or {}).get("waits")
+        d = store.uj(r["data"], {}) or {}
+        tr = (d.get("db") or {}).get("threads_running")
+        if tr is not None:
+            run_sum, run_n = run_sum + tr, run_n + 1
+        w = d.get("waits")
         if not w:
             continue
         n += 1
         for k, v in w.items():
             tot[k] = tot.get(k, 0) + v
     rows = sorted(tot.items(), key=lambda x: -x[1])[:limit]
-    allw = sum(tot.values()) or 1
-    return {"samples": n, "events": [{"event": k, "avg_threads": round(v / n, 4), "pct": round(100 * v / allw, 1)} for k, v in rows] if n else []}
+    # row access (wait/io/table) contains the other waits and CPU work: not a wait of its own, kept out of the totals
+    real = {k: v for k, v in tot.items() if not k.startswith("wait/io/table/")}
+    allw = sum(real.values()) or 1
+    return {"samples": n, "active_threads": round(run_sum / run_n, 2) if run_n else None,
+            "wait_threads": round(sum(real.values()) / n, 3) if n else None,
+            "events": [{"event": k, "avg_threads": round(v / n, 4), "pct": None if k.startswith("wait/io/table/") else round(100 * v / allw, 1)}
+                       for k, v in rows] if n else []}
 
 
 def _delete_session(sid):

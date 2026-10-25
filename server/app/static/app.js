@@ -908,8 +908,11 @@ function renderLive(el, m, cpus, hostName, markers, window_) {
   const dbGrid = el.querySelector('[data-grid="db"]');
   if (dbGrid && m._waits && m._waits.events && m._waits.events.length) {
     const card = document.createElement("div"); card.className = "card";
-    card.innerHTML = `<div class="chart"><div class="title">Top wait events (selected range)${info("Average number of threads waiting on each performance_schema wait event over the selected range, and its share of all wait time.")}</div>
-      <table class="kvt"><tbody>${m._waits.events.slice(0, 10).map(w => `<tr><td class="mono" style="word-break:break-all">${esc(w.event.replace(/^wait\//, ""))}</td><td class="num">${num(w.avg_threads)}</td><td class="num muted">${w.pct}%</td></tr>`).join("")}</tbody></table></div>`;
+    const act = m._waits.active_threads;
+    card.innerHTML = `<div class="chart"><div class="title">Top wait events (selected range)${info("Threads waiting on each performance_schema wait event on average over the selected range, and that as a share of the threads active (Threads_running). Row access (io/table/sql/handler) contains CPU work and all the waits inside it: shown grey, not a wait itself.")}</div>
+      ${act ? `<div class="muted" style="font-size:12px;margin:2px 0 4px">${num(m._waits.wait_threads)} threads waiting of ${num(act)} active = ${(100 * m._waits.wait_threads / act).toFixed(1)}% of database time</div>` : ""}
+      <table class="kvt"><tbody>${m._waits.events.slice(0, 10).map(w => { const nest = /^wait\/io\/table\//.test(w.event);
+        return `<tr${nest ? ' class="muted"' : ""}><td><span class="mono" style="word-break:break-all">${esc(w.event.replace(/^wait\//, ""))}</span><div class="muted" style="font-size:11px">${esc(waitWhat(w.event))}</div></td><td class="num">${num(w.avg_threads)}</td><td class="num muted">${act && !nest ? (100 * w.avg_threads / act).toFixed(1) + "% of DB" : "–"}</td></tr>`; }).join("")}</tbody></table></div>`;
     dbGrid.insertBefore(card, dbGrid.children[3] || null);
   }
   };
@@ -1399,6 +1402,22 @@ function autoSized(k, v, d) {
 }
 function isDefault(m) { return m && (m.source === "COMPILED" || m.source === "COMPILE-TIME" || m.source === "OS"); }
 const WAIT_CLASS_NAMES = { table_io: "table I/O", data_io: "data file I/O", redo_io: "redo I/O", binlog_io: "binlog I/O", sync: "mutex / rwlock", table_lock: "table lock", metadata_lock: "metadata lock", socket: "socket", other_file_io: "other files", other: "other" };
+// what a wait event is, in plain words (user: io/table/sql/handler is not a wait - it contains everything)
+function waitWhat(ev) {
+  const e = String(ev || "").replace(/^wait\//, "");
+  if (/^io\/table\//.test(e)) return "row access: CPU + every wait inside it (not a wait itself)";
+  if (/innodb_data_file/.test(e)) return "data file reads / writes (disk)";
+  if (/innodb_log_file/.test(e)) return "redo log writes / fsync (disk)";
+  if (/innodb_dblwr_file/.test(e)) return "doublewrite writes (disk)";
+  if (/innodb_temp_file|innodb_tmp/.test(e)) return "temporary tablespace (disk)";
+  if (/binlog|relaylog/.test(e)) return "binary log (disk)";
+  if (/^io\/file\//.test(e)) return "other file I/O (disk)";
+  if (/^lock\/table\//.test(e)) return "table locks";
+  if (/^lock\/metadata\//.test(e)) return "metadata locks (DDL, LOCK TABLES)";
+  if (/^synch\//.test(e)) return "contention: mutex / rwlock";
+  if (/^io\/socket\//.test(e)) return "network";
+  return "";
+}
 // categorical colours for the stacked bars: the first 8 categories distinct, everything after them one grey "other"
 const WAIT_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)", "var(--s7)", "var(--s8)"];
 const catColor = i => i < WAIT_COLORS.length ? WAIT_COLORS[i] : "var(--axis)";
@@ -1421,10 +1440,16 @@ function waitsTable(inp, r) {
   const bar = classes.length ? `<div class="waitbar">${segs.map(([n, v, c, t]) => `<span style="width:${(100 * v / tot).toFixed(2)}%;background:${c}" data-tip="${esc(t)}" tabindex="0"></span>`).join("")}</div>
     <div class="row" style="gap:4px 14px;font-size:12px;margin:4px 0 8px">${segs.map(([n, v, c]) => `<span><i class="dot" style="background:${c}"></i>${esc(n)} ${(100 * v / tot).toFixed(0)}%</span>`).join("")}</div>` : "";
   const rowNote = rowCalls ? `<p class="muted" style="font-size:12px;margin:0 0 8px">Row access through the storage engine (table I/O): ${num(rowCalls)} s${dur ? ` (${num(rowCalls / dur)} threads busy)` : ""} - CPU work plus the waits above, so not added to them.</p>` : "";
+  // how much of the database's time the waits are: threads waiting / threads active (sampled Threads_running)
+  const active = (r && r.summary && r.summary.threads_running_avg) || null;
+  const waitThr = dur ? tot / dur : null;
+  const ofDb = x => active && dur ? (100 * x / dur / active) : null;
+  const covNote = active && waitThr != null ? `<p style="font-size:12.5px;margin:0 0 8px">Instrumented waits: <b>${num(waitThr)}</b> threads of <b>${num(active)}</b> active on average = <b>${(100 * waitThr / active).toFixed(1)}%</b> of database time${info("Threads waiting (wait time / window) against the threads running inside the server (Threads_running, sampled every 10 s). The rest is CPU work, waiting for a CPU, and anything not instrumented. Background threads (page cleaners, the log writer) wait too, so a share can exceed what connections experience.")}</p>` : "";
   return `<h3>Where threads waited${info("performance_schema wait events during the run window. Threads waiting = total wait time / run duration; it includes background threads (redo writes are mostly the log writer, data file writes the page cleaners), so it is not all time connections waited. Table I/O (row calls into the storage engine) contains the file I/O, mutex and lock waits that happen inside it and its own CPU work: it is shown separately and not counted in the percentages." +
     (cov ? ` Instrumentation: ${cov.enabled} of ${cov.instruments} wait instruments timed${cov.sync_enabled ? "" : "; mutex/rwlock waits are not timed (enable with tuning-agent diag waits on)"}.` : ""))}</h3>
-    <div class="card">${bar}${rowNote}<div class="tablewrap"><table><thead><tr><th>Event</th><th>Class</th><th class="num">% of wait time</th><th class="num">threads waiting</th><th class="num">count</th><th class="num">avg µs</th></tr></thead><tbody>` +
-    inp.top_waits.slice(0, 15).map(w => `<tr><td class="mono" style="word-break:break-all">${esc(w.event.replace(/^wait\//, ""))}</td><td>${esc(NESTING.has(w.class) ? "row access (contains the waits)" : (WAIT_CLASS_NAMES[w.class] || w.class || ""))}</td><td class="num">${NESTING.has(w.class) ? "–" : (w.time_s != null ? (100 * w.time_s / tot).toFixed(1) : (w.pct != null ? w.pct : "–"))}</td><td class="num">${dur ? num(w.time_s / dur) : "–"}</td><td class="num">${num(w.count)}</td><td class="num">${w.avg_us != null ? num(w.avg_us) : num(w.time_s * 1e6 / Math.max(w.count, 1))}</td></tr>`).join("") + "</tbody></table></div></div>";
+    <div class="card">${covNote}${bar}${rowNote}<div class="tablewrap"><table><thead><tr><th>Event</th><th>What it is</th><th class="num">threads waiting</th><th class="num">% of DB time${info("Threads waiting on this event / threads active on average.")}</th><th class="num">% of wait time</th><th class="num">count</th><th class="num">avg µs</th></tr></thead><tbody>` +
+    inp.top_waits.slice(0, 15).map(w => { const nest = NESTING.has(w.class), od = nest ? null : ofDb(w.time_s);
+      return `<tr${nest ? ' class="muted"' : ""}><td class="mono" style="word-break:break-all">${esc(w.event.replace(/^wait\//, ""))}</td><td>${esc(waitWhat(w.event) || WAIT_CLASS_NAMES[w.class] || w.class || "")}</td><td class="num">${dur ? num(w.time_s / dur) : "–"}</td><td class="num">${od != null ? od.toFixed(od < 1 ? 2 : 1) : "–"}</td><td class="num">${nest ? "–" : (w.time_s != null ? (100 * w.time_s / tot).toFixed(1) : (w.pct != null ? w.pct : "–"))}</td><td class="num">${num(w.count)}</td><td class="num">${w.avg_us != null ? num(w.avg_us) : num(w.time_s * 1e6 / Math.max(w.count, 1))}</td></tr>`; }).join("") + "</tbody></table></div></div>";
 }
 function unsafeMap(tradeoffs) {  // variable -> what it gives up, for the settings a run's trade-offs name
   const m = {};
