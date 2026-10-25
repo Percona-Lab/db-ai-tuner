@@ -785,6 +785,17 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None, bench_started
         vals = [s[group][key] for s in samples if key in s.get(group, {})]
         return max(vals) if vals else None
 
+    def mn(group, key):
+        vals = [s[group][key] for s in samples if key in s.get(group, {})]
+        return min(vals) if vals else None
+
+    def sd(group, key):
+        vals = [s[group][key] for s in samples if key in s.get(group, {})]
+        if len(vals) < 3:
+            return None
+        m = sum(vals) / len(vals)
+        return round((sum((v - m) ** 2 for v in vals) / (len(vals) - 1)) ** 0.5, 3)
+
     def stdev_pct(group, key):
         vals = [s[group][key] for s in samples if key in s.get(group, {})]
         if len(vals) < 3:
@@ -869,6 +880,12 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None, bench_started
         "psi_memory_some_max": mx("os", "psi_memory_some"),
         "cpu_steal": os_rates.get("cpu_steal"),
         "cpu_steal_max": mx("os", "cpu_steal"),
+        # how steady the steal was (spread of the 10 s samples, percentage points): a steady level lowers every run
+        # alike, a fluctuating one moves results (user, 2026-10-25)
+        "cpu_steal_sd": sd("os", "cpu_steal"),
+        # CPU clock and thermal throttling (bare metal mostly): a box clocking down mid-run is an outside effect as steal is
+        "cpu_mhz": avg("os", "cpu_mhz"), "cpu_mhz_min": mn("os", "cpu_mhz"), "cpu_mhz_cv_pct": stdev_pct("os", "cpu_mhz"),
+        "cpu_throttle_events": os_rates.get("cpu_throttle_events"),
         "load1_avg": avg("os", "load1"),
         "disk_r_iops": os_rates.get("disk_r_iops"),
         "disk_w_iops": os_rates.get("disk_w_iops"),

@@ -2664,7 +2664,7 @@ def _reevaluate(c, sess):
     noise = sess.get("noise") or ({"noise_pct": sess["noise_pct"]} if sess.get("noise_pct") else None)
     changed = []
     for i, r in enumerate(sess["runs"]):
-        v, ev = evaluate.verdict(r, sess["runs"][:i], sess["goal"], noise)
+        v, ev = evaluate.verdict(r, sess["runs"][:i], sess["goal"], noise, peers=sess["runs"][:i] + sess["runs"][i + 1:])
         # what the verdict does not recompute stays: the hypothesis this run tested and its outcome
         ev = dict(ev, **{k: (r.get("evaluation") or {})[k] for k in KEEP_ON_REJUDGE if k in (r.get("evaluation") or {})})
         if v in ("improved", "efficiency-gain") and r.get("verdict") not in ("improved", "efficiency-gain") and i + 1 < len(sess["runs"]):

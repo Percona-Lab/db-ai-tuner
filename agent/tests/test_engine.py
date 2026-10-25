@@ -2725,6 +2725,25 @@ def test_measured_share_beats_a_generic_resource_diagnosis():
     assert "spin-loops" in it and not it["spin-loops"].get("relevance"), (it["spin-loops"].get("relevance"), it["spin-loops"].get("addresses"))
 
 
+def test_steal_judged_by_consistency_and_clock_by_throttling():
+    """User (2026-10-25): steady steal lowers every run alike; what moves results is steal that differs from the usual level or
+    goes back and forth. Re-judged runs are compared with every other run of the session (the first runs too). The CPU clock
+    is an outside effect too: thermal throttling flags a run, a different clock never excludes it (it follows the load)."""
+    from tuning_agent import evaluate
+    runs = [{"seq": i, "summary": {"cpu_steal": 0.55, "cpu_steal_max": 1.2, "cpu_steal_sd": 0.1, "cpu_busy": 90}} for i in range(1, 6)]
+    assert evaluate.steal_check(runs[0]["summary"], 2.0, evaluate.usual_steal(runs[1:])) is None  # steady, as usual
+    assert evaluate.steal_check(runs[0]["summary"], 2.0, None)["level"] == "flag"  # with nothing to compare: vs zero
+    wobbly = dict(runs[0]["summary"], cpu_steal_sd=1.0)
+    st = evaluate.steal_check(wobbly, 2.0, evaluate.usual_steal(runs[1:]))
+    assert st and st["level"] == "flag" and "fluctuated" in st["why"], st
+    hot = {"cpu_mhz": 2400, "cpu_mhz_cv_pct": 1, "cpu_throttle_events": 120, "cpu_busy": 95}
+    ck = evaluate.clock_check(hot, 2.0, {"mhz": 3500})
+    assert ck["level"] == "flag" and "throttling" in ck["why"], ck
+    assert evaluate.clock_check({"cpu_mhz": 3490, "cpu_busy": 95}, 2.0, {"mhz": 3500})["level"] == "ok"
+    v, ev = evaluate.verdict({"seq": 9, "summary": hot}, [], "tps", {"noise_pct": 2.0})
+    assert v != "unreliable" and ev["clock"]["level"] == "flag", (v, ev)
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

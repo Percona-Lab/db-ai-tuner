@@ -654,18 +654,54 @@ def steal_check(summary, noise_pct=None, ref=None):
     # host steal is mostly the hypervisor's accounting at low clock speeds, not lost work)
     cpu_factor = min(1.0, (s.get("cpu_busy") if s.get("cpu_busy") is not None else 100) / 70.0)
     impact = max(abs(avg - (r.get("avg") or 0)), abs(cli - (r.get("client") or 0))) * cpu_factor
+    # consistency (user, 2026-10-25): steal going back and forth inside the window makes the run less repeatable even when
+    # its average matches the usual level - flagged, not excluded (the average is what can bias the comparison)
+    fluct = (s.get("cpu_steal_sd") or 0) * cpu_factor
     # a peak is unusual only well above the peaks the compared runs had
     peak_flag = peak >= max(STEAL_FLAG_PEAK, 2 * (r.get("peak") or 0))
     flag_at, invalid_at = max(0.25, noise / 4), max(0.5, noise / 2)
     if impact >= invalid_at:
         level = "invalid"
-    elif impact >= flag_at or peak_flag:
+    elif impact >= flag_at or peak_flag or fluct >= flag_at:
         level = "flag"
     else:
         return None
+    why = ("its average differs from the session's usual level" if impact >= flag_at else
+           "it fluctuated during the window" if fluct >= flag_at else "a short burst well above the usual peaks")
     return {"level": level, "avg_pct": round(avg, 2), "peak_pct": round(peak, 2), "client_avg_pct": round(cli, 2) if cli else None,
-            "usual_pct": round(r["avg"], 2) if r.get("avg") else None,
+            "usual_pct": round(r["avg"], 2) if r.get("avg") else None, "sd_pp": s.get("cpu_steal_sd"), "why": why,
             "est_impact_pct": round(impact, 2), "flag_at_pct": round(flag_at, 2), "invalid_at_pct": round(invalid_at, 2)}
+
+
+def clock_check(summary, noise_pct=None, ref=None):
+    """The CPU clock as an outside effect (user, 2026-10-25: cooling can throttle a bare-metal box mid-run). Thermal
+    throttling events during the window are flagged outright. The average clock is compared with the session's usual one,
+    scaled by how busy the host was - but the clock also follows the load itself (turbo boosts less with more busy cores,
+    idle cores clock down), so a different clock only flags the run, it never excludes it."""
+    s = summary or {}
+    mhz, ev = s.get("cpu_mhz"), s.get("cpu_throttle_events") or 0
+    if not mhz and not ev:
+        return None
+    noise = float(noise_pct or DEFAULT_GOAL_NOISE)
+    cpu_factor = min(1.0, (s.get("cpu_busy") if s.get("cpu_busy") is not None else 100) / 70.0)
+    usual = (ref or {}).get("mhz")
+    dev = abs(mhz - usual) / usual * 100 * cpu_factor if mhz and usual else 0
+    cv = (s.get("cpu_mhz_cv_pct") or 0) * cpu_factor
+    flag_at = max(0.25, noise / 4)
+    why = ([f"{ev:,} thermal throttling events"] if ev else []) + \
+          ([f"clock {mhz:,.0f} MHz vs usually {usual:,.0f} MHz"] if dev >= 2 * flag_at else []) + \
+          ([f"clock varied {s['cpu_mhz_cv_pct']:.1f}% during the window"] if cv >= 2 * flag_at else [])
+    out = {"mhz": mhz, "mhz_min": s.get("cpu_mhz_min"), "cv_pct": s.get("cpu_mhz_cv_pct"), "usual_mhz": usual,
+           "throttle_events": ev, "level": "flag" if why else "ok"}
+    if why:
+        out["why"] = "; ".join(why)
+    return out
+
+
+def usual_clock(history):
+    """The session's usual average CPU clock (median of its runs that report one)."""
+    xs = sorted((h.get("summary") or {}).get("cpu_mhz") for h in history or [] if not h.get("superseded") and (h.get("summary") or {}).get("cpu_mhz"))
+    return {"mhz": xs[len(xs) // 2]} if len(xs) >= 3 else None
 
 
 def usual_steal(history):
@@ -732,17 +768,23 @@ def state_flags(s):
     return out
 
 
-def verdict(run, history, goal, noise):
+def verdict(run, history, goal, noise, peers=None):
     """The run's verdict and its details; every verdict - reference and repeat runs included - carries what the run's
-    own samples say about its state (session 231: a 60 s warm-up was flagged on the first baseline only)."""
-    v, d = _run_verdict(run, history, goal, noise)
-    return v, dict(state_flags(run.get("summary")), **(d or {}))
+    own samples say about its state (session 231: a 60 s warm-up was flagged on the first baseline only). peers: the runs
+    whose usual steal and clock this run is compared with (re-judging: every other run of the session, so the first runs
+    are held to the same level and threshold as the rest); default the earlier runs."""
+    v, d = _run_verdict(run, history, goal, noise, peers)
+    out = dict(state_flags(run.get("summary")), **(d or {}))
+    ck = clock_check(run.get("summary"), (noise or {}).get("noise_pct"), usual_clock(history if peers is None else peers))
+    if ck:
+        out["clock"] = ck
+    return v, out
 
 
-def _run_verdict(run, history, goal, noise):
+def _run_verdict(run, history, goal, noise, peers=None):
     if run.get("superseded"):
         return "superseded", dict(state_flags(run.get("summary")), note=run["superseded"])
-    st = steal_check(run.get("summary"), (noise or {}).get("noise_pct"), usual_steal(history))
+    st = steal_check(run.get("summary"), (noise or {}).get("noise_pct"), usual_steal(history if peers is None else peers))
     if st and st["level"] == "invalid":
         return "unreliable", {"steal": st, "note": f"UNRELIABLE: hypervisor CPU steal averaged {max(st['avg_pct'], st['client_avg_pct'] or 0):.1f}% "
                                                    + (f"(usually {st['usual_pct']:.1f}% in this session) " if st.get("usual_pct") else "")

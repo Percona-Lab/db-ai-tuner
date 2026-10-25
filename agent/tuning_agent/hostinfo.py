@@ -270,6 +270,36 @@ def cgroup_memory(cgroup):
     return out
 
 
+def cpu_clock():
+    """CPU clock outside the database's control (user, 2026-10-25): the average current frequency over the CPUs (cpufreq's
+    scaling_cur_freq - on intel_pstate / amd-pstate an APERF/MPERF estimate of the last tick) and the thermal throttling
+    events counted by the CPUs (Intel: thermal_throttle/*_count). A box that runs hot and clocks down mid-run loses
+    throughput as steal does. VMs usually expose neither: nothing is reported then."""
+    out = {}
+    base = "/sys/devices/system/cpu"
+    try:
+        cpus = [d for d in os.listdir(base) if d.startswith("cpu") and d[3:].isdigit()]
+    except OSError:
+        return out
+    fr, thr, pkg = [], 0, {}
+    for d in cpus:
+        f = _read(f"{base}/{d}/cpufreq/scaling_cur_freq").strip()
+        if f.isdigit():
+            fr.append(int(f))
+        c = _read(f"{base}/{d}/thermal_throttle/core_throttle_count").strip()
+        if c.isdigit():
+            thr += int(c)
+            p = _read(f"{base}/{d}/topology/physical_package_id").strip()
+            pc = _read(f"{base}/{d}/thermal_throttle/package_throttle_count").strip()
+            if pc.isdigit():
+                pkg[p] = int(pc)  # one count per package, repeated on each of its CPUs
+    if fr:
+        out["cpu_khz"] = sum(fr) / len(fr)
+    if thr or pkg:
+        out["throttle"] = thr + sum(pkg.values())
+    return out
+
+
 class OSCounters:
     """Takes raw counters; rates computed between two snapshots."""
 
@@ -295,6 +325,7 @@ class OSCounters:
                 s["procs_running"] = int(line.split()[1])
             elif line.startswith("procs_blocked"):
                 s["procs_blocked"] = int(line.split()[1])
+        s.update(cpu_clock())
         if not self.pid or not os.path.exists(f"/proc/{self.pid}"):
             self.pid = mysqld_pid()
             self.cgroup = cgroup_dir(self.pid) if self.pid else None
@@ -403,6 +434,10 @@ class OSCounters:
             out["cpu_steal"] = round(100.0 * d[7] / tot, 2)
             out["cpu_idle"] = round(100.0 * d[3] / tot, 2)
             out["cpu_busy"] = round(100.0 - out["cpu_idle"] - out["cpu_iowait"], 2)
+        if b.get("cpu_khz"):
+            out["cpu_mhz"] = round(b["cpu_khz"] / 1000.0, 0)
+        if a.get("throttle") is not None and b.get("throttle") is not None:
+            out["cpu_throttle_events"] = max(b["throttle"] - a["throttle"], 0)
         if "mysqld" in a and "mysqld" in b and a["mysqld"][0] == b["mysqld"][0]:
             ticks = os.sysconf("SC_CLK_TCK")
             out["mysqld_cpu_pct"] = round(100.0 * (b["mysqld"][1] - a["mysqld"][1]) / ticks / dt / (os.cpu_count() or 1), 2)
