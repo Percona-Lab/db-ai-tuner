@@ -2409,7 +2409,8 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
                     log("   stable: the run-length probe starts over on this configuration")
                     t0 = time.time()
                     continue
-            pending = [k for k, x in m.items() if not x["unbounded"] and (x["settled_after_s"] is None or x["plateau_s"] < hold(el))]
+            pending = [k for k, x in m.items() if not x["unbounded"] and not x.get("inert")
+                       and (x["settled_after_s"] is None or x["plateau_s"] < hold(el))]
             if int(el) % 300 < 60:
                 log(f"   {el / 60:4.0f} min: " + "; ".join(f"{x['label']} " + (f"settled at {x['settled_after_s'] // 60} min"
                     if x["settled_after_s"] is not None else "moving") for x in m.values()))
@@ -2432,17 +2433,18 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
     smp = SampleStore(c.state.dir).window(t0, time.time())
     res = collector.settle_times(smp, t0)
     m = res["metrics"]
-    settled = [x for x in m.values() if x["settled_after_s"] is not None and not x["unbounded"]]
+    settled = [x for x in m.values() if x["settled_after_s"] is not None and not x["unbounded"] and not x.get("inert")]
     longest = max([x["settled_after_s"] for x in settled] or [0])
     rec = max(60, int(-(-longest * 1.2 // 60)) * 60)
     ml = collector.measure_length(smp, t0 + longest, "tps", target_pct, evaluate.NOISE_K)
-    unsettled = [x["label"] for x in m.values() if x["settled_after_s"] is None and not x["unbounded"]]
+    unsettled = [x["label"] for x in m.values() if x["settled_after_s"] is None and not x["unbounded"] and not x.get("inert")]
     log("== run-length probe " + ("finished: every metric settled" if done else "stopped: no stable configuration (purge triage)"
                                   if triage and not triage.get("stable") else "stopped at the time limit")
         + f" after {(time.time() - start) // 60:.0f} min")
     for k, x in sorted(m.items(), key=lambda kv: -(kv[1]["settled_after_s"] or 10 ** 9)):
         log(f"   {x['label']:28} " + ("grows without bound - no warm-up settles it (unsustainable configuration)" if x["unbounded"]
-            else f"settled after {x['settled_after_s'] // 60} min {x['settled_after_s'] % 60:02d} s at {x['level']:,} (held {x['plateau_s'] // 60} min)"
+            else "falling while every needed page is cached (hit rate >= 99.5%, no reads): the pool filling, not a warm-up"
+            if x.get("inert") else f"settled after {x['settled_after_s'] // 60} min {x['settled_after_s'] % 60:02d} s at {x['level']:,} (held {x['plateau_s'] // 60} min)"
             if x["settled_after_s"] is not None else "did not settle within the probe"))
     txt = (f"recommended warm-up: {rec} s ({rec // 60} min; longest settling time + 20%)"
            + (f"; not settled: {', '.join(unsettled)} - run the probe longer" if unsettled else "")

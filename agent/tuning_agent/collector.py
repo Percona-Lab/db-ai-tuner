@@ -513,6 +513,21 @@ def measure_length(samples, start_ts=None, key="tps", target_pct=3.0, k=2.5):
             "mean": round(mean, 2)}
 
 
+def bp_free_inert(samples):
+    """Free buffer pool pages falling while every page the workload needs is already cached: the pool absorbing a growing
+    data set, not a warm-up. Hit rate at least 99.5%, disk reads negligible (at most 1 per 100 transactions or 20/s) in
+    the last fifth of the samples. Such a slope changes no work, so it does not set a warm-up (pop2hc32 session 335: free
+    pages kept falling 38% -> 7% for 40 min at 100% hits and flat throughput, and stretched the warm-up to 70 min)."""
+    tail = samples[-max(18, len(samples) // 5):]
+    hit = [x["db"]["bp_hit_pct"] for x in tail if (x.get("db") or {}).get("bp_hit_pct") is not None]
+    reads = [x["db"].get("bp_disk_reads") or 0 for x in tail if x.get("db")]
+    tps = [x["db"].get("tps") or 0 for x in tail if x.get("db")]
+    if len(hit) < 9 or not reads:
+        return False
+    r, t = sum(reads) / len(reads), sum(tps) / len(tps) if tps else 0
+    return min(hit) >= 99.5 and r <= max(20.0, 0.01 * t)
+
+
 def settle_times(samples, t0=None):
     """How long each state metric takes to reach its working level from the start of a benchmark (warmup-probe). For each
     metric: the level of its last 20% (at least 3 minutes), a tolerance (its relative / absolute minimum from
@@ -540,6 +555,8 @@ def settle_times(samples, t0=None):
         out[key] = {"label": label, "level": round(level, 2), "tolerance": round(tol, 2),
                     "settled_after_s": int(settled - t0) if settled is not None else None,
                     "plateau_s": int(end - settled) if settled is not None else 0, "unbounded": key in unb}
+    if "bp_free_pct" in out and bp_free_inert(samples):
+        out["bp_free_pct"]["inert"] = True  # reported, but it sets no warm-up (bp_free_inert)
     return {"metrics": out, "unbounded": list(unb.values()), "elapsed_s": int(end - t0)}
 
 
@@ -554,8 +571,11 @@ def warmup_signals(samples, warmup_s=None, tail=None, skip=()):
         return None
     t0 = samples[0].get("ts") or 0
     out, differs = [], []
+    inert = bp_free_inert(samples)
     for key, label, absmin, rel in WARMUP_SIGNALS:
         if key in skip:  # growing without bound: no warm-up settles it (unbounded_growth reports it)
+            continue
+        if key == "bp_free_pct" and inert:  # the pool filling with pages it does not need yet: no warm-up issue
             continue
         tv = [s["db"][key] for s in (tail or []) if (s.get("db") or {}).get(key) is not None]
         wv = [s["db"][key] for s in samples if (s.get("db") or {}).get(key) is not None]

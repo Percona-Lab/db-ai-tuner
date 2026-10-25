@@ -2455,6 +2455,30 @@ def test_no_single_value_sweeps():
         assert not it.get("sweep") or len(it["sweep"]["values"]) >= 2, (it["id"], it["sweep"])
 
 
+def test_free_pages_falling_at_full_hit_rate_set_no_warm_up():
+    """pop2hc32 session 335 (HammerDB 400W, 188 GB pool): throughput, latency, checkpoint age and flushing flat from
+    ~10 min, hit rate 100%, no reads - but free pages fell 38% -> 7% for 40 more minutes and the probe chose a 70-min
+    warm-up. Free pages that change no work set no warm-up; with reads (pool too small) they still do."""
+    from tuning_agent import collector
+    t0 = 1000.0
+
+    def mk(reads):
+        out = []
+        for i in range(360):  # 60 min of 10 s samples
+            t = 10 * i
+            warm = min(1.0, t / 600.0)
+            out.append({"ts": t0 + t, "db": {"tps": 13500 * warm + 50, "avg_latency_ms": 6.5, "checkpoint_age_pct": 62 * warm,
+                                              "bp_dirty_pct": 30 * warm, "bp_hit_pct": 100.0 if t > 600 else 90.0,
+                                              "bp_free_pct": max(0.5, 80 - t / 45.0), "bp_disk_reads": reads if t > 600 else 1500}})
+        return out
+    res = collector.settle_times(mk(0), t0)
+    m = res["metrics"]
+    assert m["bp_free_pct"].get("inert"), m["bp_free_pct"]
+    longest = max(x["settled_after_s"] for x in m.values() if x["settled_after_s"] is not None and not x.get("inert"))
+    assert longest <= 15 * 60, {k: x["settled_after_s"] for k, x in m.items()}
+    assert not collector.settle_times(mk(800), t0)["metrics"]["bp_free_pct"].get("inert")  # reads: the pool matters
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
