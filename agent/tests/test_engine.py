@@ -2817,6 +2817,19 @@ def test_autotune_from_defaults_clears_managed_settings_and_records_it():
         cli.cmd_rollback = saved
 
 
+def test_explore_lifts_the_early_stops():
+    """User (2026-10-25): autotune --explore uses the whole run budget - the engine's value-of-information stop gives way."""
+    from tuning_agent import engine
+    hist = [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}] + [
+        {"seq": i, "label": f"idea{i}", "verdict": "neutral", "managed": {}, "changes": []} for i in range(2, 12)]
+    base = {"goal": "tps", "policy": "safe", "os_tuning": True, "os_facts": {}, "hw": HW, "flavor": "percona", "version": (8, 4, 11),
+            "variables": dict(VARS), "summary": OLTP[0], "inputs": OLTP[1], "history": hist, "noise_pct": 30.0, "managed": {}}
+    r0 = engine.run_engine(base)
+    r1 = engine.run_engine(dict(base, explore=True))
+    assert r1.get("stop_reason") is None, r1.get("stop_reason")
+    assert r0.get("stop_reason") or r0.get("next") == r1.get("next"), (r0.get("stop_reason"), r0.get("next"), r1.get("next"))
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

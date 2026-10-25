@@ -71,6 +71,9 @@ Run everything as root on the database host. `autotune` takes hours, so start it
    `--policy safe` never applies durability or observability trade-offs. Use `--policy benchmark` with
    `autotune --tradeoffs` only when the person asks for benchmark-only settings (results are then not
    production-equivalent: say so). Default limits: 3 calibration runs, then up to 10 experiments (`--max-runs N`).
+   Autotune also stops early after 8 experiments in a row without a gain (`--max-fruitless N`, 0 = never): the best
+   ideas come first, so a long streak means little is left. When the person wants the whole budget used - including
+   less likely and advanced options never tried, suggested by the AI once the rules run out - add `--explore`.
 6. **Watch.** `tuning-agent status --json` (current phase and time left) and `tail /root/autotune.log` every
    few minutes; the session page in the web app shows every run as it lands. Do not run other load or apply
    changes while it runs.

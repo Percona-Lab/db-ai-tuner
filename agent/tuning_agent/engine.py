@@ -2891,7 +2891,7 @@ def run_engine(ctx):
         if required & {c["variable"] for c in it.get("changes") or []} and it["kind"] == "config":
             it["confidence"] = 0
             it["note"] = (it.get("note", "") + " Not run: a benchmark prerequisite ([requires]), not a tuning setting.").strip()
-        if it["id"].startswith("llm-") and len(llm_runs) >= 3 and not llm_won and it["kind"] == "config":
+        if it["id"].startswith("llm-") and len(llm_runs) >= 3 and not llm_won and it["kind"] == "config" and not ctx.get("explore"):
             it["confidence"] = 0
             it["note"] = (it.get("note", "") + f" Not run: {len(llm_runs)} AI-suggested experiments in this session, none kept.").strip()
     # admission control on a commit-bound load shrinks the commit groups (lab / r1: 9 picks with commits >= 50% of the time,
@@ -2950,7 +2950,7 @@ def run_engine(ctx):
     if not why and not benchmark and commit_sh >= 50 and gc and gc.get("complete") and w_ms >= 5 and tried_bundle and streak >= 1:
         why = (f"Storage-bound commits: {commit_sh:.0f}% of the time waits for commit flushes of {w_ms:.1f} ms each, and group commit "
                "already batches every waiting commit - no production-safe server setting changes that. See the storage advice.")
-    if why and nxt and nxt["kind"] == "config":
+    if why and nxt and nxt["kind"] == "config" and not ctx.get("explore"):  # explore: the run budget decides, not the ceiling
         stop = why + " What limits the workload: " + "; ".join(d.get("text", "")[:160] for d in ctx["diagnosis"][:2] if d.get("type") != "none")
         nxt = None
     return {"stop_reason": stop,"workload": ctx["workload"], "diagnosis": ctx["diagnosis"], "breakdown": ctx["breakdown"], "items": items, "next": nxt["id"] if nxt else None,

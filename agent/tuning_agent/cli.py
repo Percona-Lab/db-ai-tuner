@@ -2911,7 +2911,7 @@ def _engine_ctx(c, sess):
         log(f"note: no experience data ({e})")
     b = (last.get("inputs") or {}).get("bench") or {}
     bench_info = {k: b.get(k) for k in ("name", "run", "warmup", "duration", "goal_metric", "requires") if b.get(k) is not None}
-    return {"bench": bench_info, "diagnosis_basis_run": basis, "goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
+    return {"bench": bench_info, "diagnosis_basis_run": basis, "explore": bool(sess.get("explore")), "goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
             "os_tuning": c.os_tuning_allowed() and sess.get("os_tuning", True), "os_facts": osf, "experience": experience,
             # swap = none in agent.ini: no swap by design (a production philosophy) - never add it, size memory for RAM alone
             "no_swap": str(c.cfg.get("swap", "allowed")).strip().lower() in ("none", "no", "off", "false"),
@@ -2931,7 +2931,7 @@ def _recommend(c, sess, llm=False):
     res = engine.run_engine(ctx)
     # a session started with --ai off (rules + learnings only, e.g. the head-to-head's rules arm) asks no model anything
     ai_off = str(sess.get("ai") or "").lower() == "off"
-    why = None if ai_off else llmassist.trigger(res, explicit=llm)
+    why = None if ai_off else ("explore" if llm and sess.get("explore") else llmassist.trigger(res, explicit=llm))
     if ai_off:
         res["llm"] = {"skipped": "AI off for this session (rules + learnings only)"}
     pending = [] if ai_off else (sess.get("llm_pending") or [])  # accepted earlier, not measured yet: they stay candidates
@@ -2942,8 +2942,12 @@ def _recommend(c, sess, llm=False):
         except Exception:
             meta = {}
         try:
-            r = c.client.post_ai("/llm/suggest", {"session_id": sess["id"], "trigger": why, "force": bool(llm),
-                                                "context": llmassist.context(ctx, res, meta)})
+            lc = llmassist.context(ctx, res, meta)
+            if why == "explore":
+                lc["exploration"] = ("The rules have no untried idea left and the person asked to use the whole run budget. Propose "
+                                     "settings this session has not tried (see the history), including less likely and advanced "
+                                     "options whose effect here is uncertain - each is measured and kept only on evidence.")
+            r = c.client.post_ai("/llm/suggest", {"session_id": sess["id"], "trigger": why, "force": bool(llm), "context": lc})
         except Exception as e:  # LLM help is optional
             r = {"enabled": False, "reason": str(e)}
         if r.get("enabled") and r.get("suggestions") is not None:
@@ -3767,7 +3771,13 @@ def _autotune(a):
 
     sess = c.session()
     sess["bench"] = os.path.abspath(a.bench)
+    if getattr(a, "explore", False):
+        # explore (user, 2026-10-25): use the whole --max-runs budget - no stop for diminishing returns or a low ceiling,
+        # and when the rules have nothing left, AI suggestions; ideas never tried are how advanced options get discovered
+        sess["explore"] = True
+        log(f"== explore: up to {a.max_runs} experiment runs, ideas from the rules first, then AI suggestions")
     c.state.set("session", sess)
+    max_fruitless = 0 if getattr(a, "explore", False) else getattr(a, "max_fruitless", FRUITLESS_STOP)
     measured = iterations = 0
     while measured < a.max_runs and iterations < a.max_runs * 3:
         iterations += 1
@@ -3828,7 +3838,7 @@ def _autotune(a):
             c.event("stop", why, {"runs": measured})
             break
         fruitless = _fruitless_since_gain(sess)
-        if item and item["kind"] != "revert" and len(fruitless) >= FRUITLESS_STOP:
+        if item and item["kind"] != "revert" and max_fruitless and len(fruitless) >= max_fruitless:
             # diminishing returns: 26% of recent runs came after a session's last gain (tails of 18-21 runs) and the ceiling
             # check rarely trips. Safe ideas that long without a gain hand over to the trade-offs; after that, stop
             start_ = start_tradeoffs(sess["runs"])
@@ -3853,6 +3863,19 @@ def _autotune(a):
             if trade:
                 log(f"== safe ideas exhausted: switching to trade-off experiments ({trade['id']})")
                 item, nxt = trade, trade["id"]
+        if not item and sess.get("explore"):
+            # the rules have nothing left: ask the AI for ideas this session has not tried (rules-exhausted)
+            log("== explore: the rules have nothing left - asking for AI suggestions")
+            res = _recommend(c, c.session(), llm=True)
+            tried = {r["label"].split(" ")[0] for r in c.session()["runs"]}
+            item = next((i for i in res["items"] if i["kind"] == "config" and i.get("confidence", 0) > 0 and i["id"] not in tried
+                         and i["id"] not in blocked and (i.get("safety") == "safe" or a.tradeoffs)), None)
+            nxt = item["id"] if item else None
+            if not item:
+                why = "Explore: nothing left to try - the rules and the AI suggestions are exhausted (or AI is off / not configured)."
+                log("== " + why)
+                c.event("stop", why, {"runs": measured})
+                break
         if not item:
             log("== no further experiments suggested")
             break
@@ -4484,6 +4507,11 @@ def main(argv=None):
     s.add_argument("--tradeoffs", action="store_true", help="after safe experiments, continue with trade-offs (policy=benchmark)")
     s.add_argument("--no-confirm", dest="confirm", action="store_false", help="skip the confirmation run of the best config")
     s.add_argument("--close", action="store_true", help="close the session when autotune ends (otherwise it stays open for follow-up experiments)")
+    s.add_argument("--max-fruitless", type=int, default=FRUITLESS_STOP,
+                   help=f"stop (or switch to trade-offs) after this many experiments in a row without a gain (default {FRUITLESS_STOP}; 0 = never)")
+    s.add_argument("--explore", action="store_true",
+                   help="use the whole --max-runs budget: no early stop, and when the rules run out, AI-suggested ideas "
+                        "(advanced options never tried) - unlikely ideas included")
     s.add_argument("--from-defaults", action="store_true",
                    help="start from the server's compiled-in defaults: remove every agent-managed setting first and skip the "
                         "hardware baseline (default: start from the baseline applied by `tuning-agent baseline --apply`)")

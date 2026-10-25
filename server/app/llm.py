@@ -185,14 +185,17 @@ def suggest(user_id, env_id, session_id, context, force=False, trigger="routine"
     if not st.get("configured") or st["mode"] == "off":
         return {"enabled": False, "reason": "LLM assistance is not configured (account settings)"}
     force = force and _is_admin(user_id)  # skipping the gates is an operator's choice, not an agent request's
+    # autotune --explore (user, 2026-10-25): the person asked for the whole run budget, ideas never tried included - the
+    # track-record and per-session gates give way; the account's AI budget still applies
+    explore = trigger == "explore"
     if st["mode"] == "when-needed" and trigger == "routine" and not force:
         return {"enabled": False, "reason": "rule-based recommendations are sufficient right now"}
     wl = (context.get("workload") or {}).get("type")
     tries, wins = gate(user_id, wl)
-    if not force and tries >= GATE_MIN_TRIES and wins <= GATE_MAX_WINS:
+    if not force and not explore and tries >= GATE_MIN_TRIES and wins <= GATE_MAX_WINS:
         return {"enabled": False, "reason": f"LLM suggestions have not helped for {wl or 'this'} workloads ({tries} experiments, {wins} improvements)"}
     n = store.q1("SELECT COUNT(*) n FROM llm_calls WHERE session_id=? AND status='ok' AND cached=0 AND COALESCE(purpose,'suggest')='suggest'", (session_id,))["n"]
-    if not force and n >= MAX_CALLS_PER_SESSION:
+    if not force and not explore and n >= MAX_CALLS_PER_SESSION:
         return {"enabled": False, "reason": f"per-session limit of {MAX_CALLS_PER_SESSION} LLM calls reached"}
     payload = json.dumps(context, sort_keys=True, default=str)
     h = hashlib.sha256((st["model"] + payload).encode()).hexdigest()
