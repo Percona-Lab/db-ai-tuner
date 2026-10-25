@@ -226,6 +226,16 @@ def test_agent_activity_and_bye(user):
     assert user.ui.get(f"/api/environments/{env}").json()["environment"]["agent_state"] == "shutdown"
 
 
+def test_activity_of_a_closed_session_belongs_to_the_environment(user):
+    """User (em-b212x, 357): a data load for the next session was shown as the closed session's activity."""
+    env = user.hello()
+    sid = user.start_session(env)
+    user.close(sid)
+    user.agent.post("/api/v1/agent/activity", json={"environment_id": env, "phase": "loading data", "detail": "sysbench prepare", "session_id": sid})
+    a = user.ui.get(f"/api/environments/{env}").json()["activity"]
+    assert a["phase"] == "loading data" and not a.get("session_id"), a
+
+
 def test_experiments_queue(user):
     env = user.hello()
     sid = user.start_session(env)

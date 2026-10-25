@@ -1342,6 +1342,8 @@ def agent_metrics(body: dict = Body(...), key=Depends(auth.agent_key)):
 def agent_activity(body: dict = Body(...), key=Depends(auth.agent_key)):
     e = agent_env(body.get("environment_id"), key)
     act = {k: body.get(k) for k in ("phase", "detail", "until", "session_id")}
+    if act.get("session_id") and not store.q1("SELECT 1 FROM tsessions WHERE id=? AND env_id=? AND status='active'", (act["session_id"], e["id"])):
+        act["session_id"] = None  # activity between sessions (a data load for the next one) is the environment's, not a closed session's
     act["phase"] = str(act.get("phase") or "")[:60]
     act["detail"] = str(act.get("detail") or "")[:200]
     store.ex("UPDATE environments SET activity=?, activity_at=? WHERE id=?", (store.j(act), now(), e["id"]))

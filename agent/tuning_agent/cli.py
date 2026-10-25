@@ -3617,7 +3617,12 @@ def cmd_autotune(a):
             c = Ctx()
             sess = c.session() or {}
             if getattr(a, "close", False) and sess.get("id"):
-                cmd_session(argparse.Namespace(action="stop"))
+                try:
+                    cmd_session(argparse.Namespace(action="stop"))
+                except Exception as e:  # said, not swallowed: an open session left behind looks closed to whoever asked for --close
+                    log(f"ERROR: session #{sess['id']} could not be closed: {e} - run `tuning-agent session stop`")
+                    c.activity("idle", f"autotune finished; closing session #{sess['id']} failed: {str(e)[:120]}")
+                    c.event("session", f"closing session #{sess['id']} after autotune failed: {e}")
             elif sess.get("id"):
                 c.activity("idle", f"autotune finished ({len(sess.get('runs') or [])} runs); session #{sess['id']} still open - "
                                    "tuning-agent session stop when done")
