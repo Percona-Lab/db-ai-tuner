@@ -2442,6 +2442,19 @@ def test_concurrency_cap_from_the_triage_is_tuned_not_blocked():
                                          dict(ctx, variables=dict(v, innodb_thread_concurrency="0")))
 
 
+def test_no_single_value_sweeps():
+    """h2h W3 rules (2026-10-24): the stability trim left a purge-thread sweep with one value; the server refused it
+    (HTTP 400) and the session ended. A one-value sweep is a single change."""
+    from tuning_agent import engine
+    s = dict(OLTP[0], history_list_length_max=3000000, cpu_busy=97, threads_running_avg=500,
+             unbounded_growth=[{"metric": "history_list_length", "label": "h", "start": 1000000, "end": 3000000, "per_hour": 1e7}])
+    v = dict(VARS, innodb_purge_threads="4", innodb_max_purge_lag="0", innodb_max_purge_lag_delay="0", innodb_purge_batch_size="300")
+    ctx = {"goal": "tps", "policy": "benchmark", "os_tuning": True, "os_facts": {}, "hw": dict(HW, cpus=16), "flavor": "percona",
+           "version": (8, 4, 11), "variables": v, "summary": s, "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}}
+    for it in engine.run_engine(ctx)["items"]:
+        assert not it.get("sweep") or len(it["sweep"]["values"]) >= 2, (it["id"], it["sweep"])
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

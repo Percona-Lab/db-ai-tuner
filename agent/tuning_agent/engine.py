@@ -1504,7 +1504,7 @@ def recommend(ctx):
             if busy >= 85 and unb_h and STABILITY_FIRST:
                 # unsustainable: stability before throughput - one step up is measured even on saturated CPUs, after the
                 # purge lag bound (run_engine orders the stability remedies)
-                it_["sweep"]["values"] = it_["sweep"]["values"][:1]
+                it_.pop("sweep")  # one value: a single change (its first value), not a sweep (h2h W3 rules: HTTP 400)
                 it_["rationale"] = ("Purge cannot keep up: the history list grows without slowing down. Stability first: more purge "
                                     "threads are measured even though the CPUs are busy. " + it_["rationale"])
             elif busy >= 85:

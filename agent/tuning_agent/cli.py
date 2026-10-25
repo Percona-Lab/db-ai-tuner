@@ -3677,6 +3677,8 @@ def _autotune(a):
             sess = c.session()
             sess["pending_hypothesis"] = dict(item["hypothesis"], id=nxt)
             c.state.set("session", sess)
+        if item.get("sweep") and len(item["sweep"].get("values") or []) < 2:
+            item.pop("sweep")  # a sweep left with one value is a single change (the server needs two values for a sweep)
         if item.get("sweep"):  # measure several values as an experiment instead of a single step
             body = {"kind": "sweep", "variable": item["sweep"]["variable"], "values": ",".join(item["sweep"]["values"]),
                     "reason": item["rationale"][:400], "created_by": ("llm:" if item.get("source") == "llm" else "agent:") + nxt}
