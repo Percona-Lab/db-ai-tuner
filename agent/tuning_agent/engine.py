@@ -1546,6 +1546,16 @@ def recommend(ctx):
               f"{s.get('threads_running_avg', 0):.0f} running threads on {cpus} CPUs: measure admission limits.",
               {"threads_running_avg": s.get("threads_running_avg"), "cpus": cpus})
 
+    tc_now = _int(v, "innodb_thread_concurrency", 0)
+    if have_run and tc_now > 0 and not unb_hll and "innodb_thread_concurrency" in v:
+        # a cap that keeps the undo history bounded (the purge triage's remedy) is a start, not the answer: its value is
+        # tuned here - every value measured, and only stable configurations can win (user, 2026-10-25)
+        sweep("tune-concurrency-cap", "Tune the InnoDB thread concurrency cap", "innodb_thread_concurrency",
+              [str(x) for x in sorted({max(1, tc_now // 2), tc_now * 3 // 2, tc_now * 2}) if x != tc_now],
+              f"innodb_thread_concurrency={tc_now} is set (by the purge triage or earlier tuning) and the history is bounded: values "
+              "around it measured for throughput; a value that lets the history grow again cannot win.",
+              {"innodb_thread_concurrency": tc_now, "threads_running_avg": s.get("threads_running_avg"), "cpus": cpus}, impact=2)
+
     # ---------------- clustering and other storage engines ---------------------------
     rates_ = inp.get("status_rates") or {}
     cl = ctx.get("cluster") or {}
@@ -2297,7 +2307,10 @@ def oversubscription_block(it, ctx):
     s = ctx.get("summary") or {}
     cpus = int((ctx.get("hw") or {}).get("cpus") or 1)
     conns = s.get("threads_connected_avg") or 0
-    lim = [c["variable"] for c in it.get("changes") or [] if c.get("variable") in LIMITERS and str(c.get("proposed")) not in ("0", "1")]
+    # introducing a limiter is blocked; tuning one already in place (a stability remedy) is not
+    cur = ctx.get("variables") or {}
+    lim = [c["variable"] for c in it.get("changes") or [] if c.get("variable") in LIMITERS and str(c.get("proposed")) not in ("0", "1")
+           and str(cur.get(c["variable"]) or "0") in ("0", "", "OFF", "1" if c["variable"].startswith("os:") else "0")]
     if lim and conns >= OVERSUB_CONN_PER_CPU * cpus:
         return (f"Not run: {conns:.0f} connections on {cpus} vCPUs ({conns / cpus:.0f} per vCPU): limiting concurrency or regrouping the "
                 f"scheduler ({', '.join(lim)}) lost in every comparable session at 16+ connections per vCPU.")

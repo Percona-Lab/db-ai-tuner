@@ -2425,6 +2425,23 @@ def test_data_loads_are_reported():
         importlib.reload(loaddetect)
 
 
+def test_concurrency_cap_from_the_triage_is_tuned_not_blocked():
+    """Canary 2026-10-25: innodb_thread_concurrency=8 bounded the history (+14.5% throughput) at 128 connections per vCPU.
+    The cap is a start: values around it are swept, and the oversubscription block (which stops introducing a cap)
+    does not stop tuning one in place."""
+    from tuning_agent import engine
+    s = dict(OLTP[0], history_list_length_max=1500000, cpu_busy=90, threads_running_avg=8, threads_connected_avg=1024, unbounded_growth=None)
+    v = dict(VARS, innodb_thread_concurrency="8")
+    ctx = {"goal": "tps", "policy": "benchmark", "os_tuning": True, "os_facts": {}, "hw": dict(HW, cpus=8), "flavor": "percona",
+           "version": (8, 4, 11), "variables": v, "summary": s, "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}}
+    it = ids(engine.run_engine(ctx))
+    assert "tune-concurrency-cap" in it and it["tune-concurrency-cap"]["confidence"] > 0, it.get("tune-concurrency-cap")
+    assert it["tune-concurrency-cap"]["sweep"]["values"] and "0" not in it["tune-concurrency-cap"]["sweep"]["values"]
+    # introducing a cap at 128 connections per vCPU is still blocked
+    assert engine.oversubscription_block({"changes": [{"variable": "innodb_thread_concurrency", "proposed": "16"}]},
+                                         dict(ctx, variables=dict(v, innodb_thread_concurrency="0")))
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
