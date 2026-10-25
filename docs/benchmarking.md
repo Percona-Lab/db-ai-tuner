@@ -81,6 +81,16 @@ changing it by hand (the calibration no longer applies).
   samples and event times come from the host's clock. The server compares it at every session start: a warning at
   more than 2 seconds of skew, a refused start at more than a minute.
 
+## Run length (automatic)
+
+With `warmup = auto` / `duration = auto` the run-length probe chooses both from one continuous run:
+
+* **Warm-up:** the longest time a state metric needs to settle, plus 20%. Metrics that change no work do not count, such as free buffer pool pages falling while the hit rate is 99.5%+ and nothing is read: the pool absorbing a growing data set.
+* **Window:** the one with the most precision per hour of benchmarking. A run costs reset + warm-up + window, and a longer window shrinks only the within-run part of the noise. The run-to-run part needs more runs instead. The window minimises (within-run variance / W + run-to-run variance) x (overhead + W), with run-to-run noise assumed at 1% CV until calibration measures it. It is at least 5 min (or 3x the samples' correlation time) and at most 40 min (`max_duration` overrides). Typical: 20-40 min for HammerDB with ~15 min of overhead, 5-10 min for steadier benchmarks.
+* **After calibration, once:** re-planned with the measured run-to-run noise, shorter or longer. A window is also made long enough that the benchmark's own start-up (a new benchmark process for the measured phase reconnecting its threads) is at most 10% of it.
+* Close calls are settled by repeat runs (confirmation), not by longer windows.
+* The buffer pool is not restored between runs (dump / load): each run builds its own cache under its own configuration.
+
 ## What the agent checks
 
 | Check | When | Effect |

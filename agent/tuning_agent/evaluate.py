@@ -387,7 +387,10 @@ def season_check(pts, span_h, run_h=None, floor_pct_h=0.5):
     return out
 
 
-def noise_plan(runs, cal, duration, max_duration=None, target=NOISE_TARGET):
+STARTUP_RAMP_SHARE = 0.1  # the benchmark's own start-up ramp should be at most this share of a window
+
+
+def noise_plan(runs, cal, duration, max_duration=None, target=NOISE_TARGET, overhead_s=None, replan=True):
     """Split the calibrated run-to-run noise into a within-run part (what each run's own 10 s samples predict for its
     length: batch-means standard error) and a between-run part (shifts from run to run: data state, restarts,
     neighbours), and pick the remedy that actually reduces it:
@@ -403,6 +406,23 @@ def noise_plan(runs, cal, duration, max_duration=None, target=NOISE_TARGET):
     if cv is None or not ses:
         return dict(out, action="unknown", text="No per-run sample data to separate within-run and between-run noise.")
     within = (sum(x * x for x in ses) / len(ses)) ** 0.5
+    ramps = [(r.get("summary") or {}).get("startup_ramp_s") for r in runs]
+    ramps = [x for x in ramps if x]
+    if replan and ramps and duration and STARTUP_RAMP_SHARE * duration < max(ramps):
+        # the measured phase starts its own benchmark process: its connect / ramp-up is inside every window and varies
+        # from run to run (em-b212x 337: ~30 s of 2 min windows, ±4.15% threshold). Windows long enough to dilute it
+        from .collector import MEASURE_CANDIDATES_S, WINDOW_CAP_S
+        need = max(ramps) / STARTUP_RAMP_SHARE
+        cap_ = max_duration or WINDOW_CAP_S
+        sec = next((w for w in MEASURE_CANDIDATES_S if w >= need), cap_)
+        sec = min(sec, cap_)
+        if sec > duration:
+            out.update(within_cv_pct=round(within, 2), startup_ramp_s=max(ramps))
+            return dict(out, action="longer-runs", seconds=sec, capped=sec < need, expected_noise_pct=None,
+                        text=f"Each window starts with the benchmark's own start-up ({max(ramps):.0f} s until throughput is back to 90%: "
+                             f"a new benchmark process connects for the measured phase) - {100 * max(ramps) / duration:.0f}% of a "
+                             f"{duration // 60 or 1} min window, and it varies from run to run. {sec // 60} min windows keep it under "
+                             f"{int(100 * STARTUP_RAMP_SHARE)}%.")
     if within > cv:
         # each run's own estimate says it is noisier than repeats of it are: the in-window samples trend or oscillate
         # (throughput rising or falling inside the window), which longer runs do not cure (#125: a plan that predicted
@@ -413,6 +433,21 @@ def noise_plan(runs, cal, duration, max_duration=None, target=NOISE_TARGET):
                          "or oscillates inside the window. Longer runs would not lower the threshold; check steady state.")
     between = max(0.0, cv * cv - within * within) ** 0.5
     out.update(within_cv_pct=round(within, 2), between_cv_pct=round(between, 2))
+    wstar = None
+    if overhead_s and duration and within > 0:
+        # the window with the most precision per hour, now that calibration measured the run-to-run part
+        from .collector import WINDOW_CAP_S, best_window
+        cap_ = max_duration or WINDOW_CAP_S
+        wstar, _ = best_window(within * within * duration, overhead_s, between, cap_s=cap_)
+        out.update(best_window_s=wstar, overhead_s=int(overhead_s))
+        if replan and wstar < duration / 1.5:
+            exp_cv = (between ** 2 + within ** 2 * duration / wstar) ** 0.5
+            exp = round(max(RESOLUTION_NOISE, NOISE_K * exp_cv), 2)
+            return dict(out, action="shorter-runs", seconds=wstar, capped=False, expected_noise_pct=exp,
+                        text=f"Mostly run-to-run noise (between {between:.2f}% vs within {within:.2f}% CV at {duration // 60} min) and "
+                             f"{int(overhead_s) // 60} min of reset and warm-up per run: {max(1, wstar // 60)} min windows buy more precision "
+                             f"per hour than {duration // 60} min ones (threshold about ±{exp}% per run instead of ±{cal.get('noise_pct')}%; "
+                             "more runs in the same time, close calls confirmed by repeats).")
     if (cal.get("noise_pct") or 0) <= target:
         return dict(out, action="ok", text=f"Noise ±{cal.get('noise_pct')}% is within the ±{target}% target.")
     cv_t = target / NOISE_K
@@ -428,6 +463,8 @@ def noise_plan(runs, cal, duration, max_duration=None, target=NOISE_TARGET):
     cap = max_duration or (min(4 * duration, 1800) if duration else None)
     if not new or not cap:
         return dict(out, action="unknown", text="Run length cannot be changed for this benchmark (runs until it finishes).")
+    if wstar:  # never past the most precise window per hour: beyond it, repeats buy more than length
+        cap = min(cap, max(wstar, duration))
     capped = new > cap
     sec = min(new, cap)
     exp_cv = (between ** 2 + within ** 2 * duration / sec) ** 0.5

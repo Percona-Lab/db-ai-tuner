@@ -1691,15 +1691,16 @@ def test_client_failures_and_low_disk_space():
 
 
 def test_measure_length_from_settled_samples():
-    """Run-length probe: plain sample noise needs a short window; a slow flush wave needs several of its periods."""
+    """Run-length probe: plain sample noise needs a short window; a slow flush wave a longer one."""
     import math, random
     from tuning_agent import collector
     rnd = random.Random(3)
     white = [{"ts": 10 * i, "db": {"tps": 1000 * (1 + rnd.gauss(0, 0.02))}} for i in range(120)]
     wave = [{"ts": 10 * i, "db": {"tps": 1000 * (1 + 0.05 * math.sin(2 * math.pi * 10 * i / 240) + rnd.gauss(0, 0.01))}} for i in range(120)]
-    a, b = collector.measure_length(white), collector.measure_length(wave)
-    assert a["reaches_target"] and a["recommended_s"] <= 300, a
-    assert b["recommended_s"] >= 600 and b["recommended_s"] > a["recommended_s"], b
+    # 15 min of reset + warm-up per run: the noisier wave is worth a longer window, plain noise is not
+    a, b = collector.measure_length(white, overhead_s=900), collector.measure_length(wave, overhead_s=900)
+    assert a["reaches_target"] and a["recommended_s"] == collector.WINDOW_MIN_S, a
+    assert b["recommended_s"] > a["recommended_s"], b
     assert collector.measure_length(white[:20]) is None  # too little settled data
 
 
@@ -2477,6 +2478,43 @@ def test_free_pages_falling_at_full_hit_rate_set_no_warm_up():
     longest = max(x["settled_after_s"] for x in m.values() if x["settled_after_s"] is not None and not x.get("inert"))
     assert longest <= 15 * 60, {k: x["settled_after_s"] for k, x in m.items()}
     assert not collector.settle_times(mk(800), t0)["metrics"]["bp_free_pct"].get("inert")  # reads: the pool matters
+
+
+def test_window_with_the_most_precision_per_hour():
+    """User, 2026-10-25: within a time budget, more shorter runs or fewer longer ones? Each run costs overhead (reset +
+    warm-up) plus its window; longer windows shrink only the within-run noise. pop2hc32 HammerDB (session 335): within-run
+    ±3.4% at 30 min, 70 + 60 min runs. With ~15 min of overhead and ~1% run-to-run noise the best window is 20-40 min;
+    with a large run-to-run part it is shorter, with none it is the cap."""
+    from tuning_agent import collector, evaluate
+    wv = (3.4 / 2.5) ** 2 * 1800  # CV %^2 x s from the probe's ±3.4% (2.5 x CV) at 30 min
+    w1, _ = collector.best_window(wv, 900, 1.0)
+    assert 1200 <= w1 <= 2400, w1
+    assert collector.best_window(wv, 900, 2.0)[0] < w1 < collector.best_window(wv, 900, 0.3)[0] == collector.WINDOW_CAP_S
+    assert collector.best_window(wv, 30, 1.0)[0] == collector.WINDOW_MIN_S  # tiny overhead: short runs, but not under the floor
+    # after calibration: a 60 min window with mostly run-to-run noise is re-planned shorter (more runs per hour)
+    runs = [{"summary": {"within_se_pct": 0.5}} for _ in range(3)]
+    cal = {"goal_cv_pct": 1.6, "noise_pct": 4.0}
+    p = evaluate.noise_plan(runs, cal, 3600, overhead_s=900)
+    assert p["action"] == "shorter-runs" and p["seconds"] < 3600 and p["best_window_s"] == p["seconds"], p
+    # mostly within-run noise at a short window: longer, but never past the best window per hour
+    runs2 = [{"summary": {"within_se_pct": 1.5}} for _ in range(3)]
+    p2 = evaluate.noise_plan(runs2, {"goal_cv_pct": 1.6, "noise_pct": 4.0}, 300, overhead_s=900)
+    assert p2["action"] == "longer-runs" and p2["seconds"] <= p2["best_window_s"], p2
+    # no re-plan after the one adjustment
+    assert evaluate.noise_plan(runs, cal, 3600, overhead_s=900, replan=False)["action"] != "shorter-runs"
+
+
+def test_startup_ramp_lengthens_short_windows():
+    """em-b212x session 337: 2 min windows each starting with ~30 s of 1024 sysbench threads reconnecting (7.5k -> 10.9k
+    tps), only 10 s left out, ±4.15% threshold. The whole ramp is measured, and the noise plan lengthens the window until
+    the ramp is at most 10% of it."""
+    from tuning_agent import collector, evaluate
+    t0 = 1000.0
+    smp = [{"ts": t0 + 4 + 10 * i, "db": {"tps": [7505, 7924, 9504][i] if i < 3 else 10900}} for i in range(12)]
+    assert collector.startup_ramp_s(smp, t0, 120) == 34.0
+    runs = [{"summary": {"within_se_pct": 3.4, "startup_ramp_s": 34.0}} for _ in range(3)]
+    p = evaluate.noise_plan(runs, {"goal_cv_pct": 1.66, "noise_pct": 4.15}, 120, overhead_s=900)
+    assert p["action"] == "longer-runs" and p["seconds"] >= 340, p
 
 
 if __name__ == "__main__":

@@ -1978,6 +1978,16 @@ def _review_run_plan(c, runs):
     c.event("run_length_review", txt, review)
 
 
+def _run_overhead(c, prof):
+    """Seconds each run costs besides its window: warm-up plus reset / restart (timed by the run-length probe, else a
+    default) - what a longer window is weighed against."""
+    plan = (c.session() or {}).get("run_plan") or {}
+    wu = int(prof.warmup) if str(prof.warmup).isdigit() else 0
+    if plan.get("overhead_s") and plan.get("warmup_s") is not None:
+        return int(plan["overhead_s"]) - int(plan["warmup_s"]) + wu
+    return wu + collector.OVERHEAD_DEFAULT_S
+
+
 def _noise_plan(c, prof, runs, n):
     """After calibration: is the noise threshold small enough to see typical gains, and what would reduce it?
     Longer runs only when the noise is mostly within-run (they do not remove run-to-run shifts); then the earlier
@@ -2027,7 +2037,7 @@ def _noise_plan(c, prof, runs, n):
     if ds["status"] == "drifting":
         log(f"   WARNING: {ds['text']}")
         c.event("data-state", ds["text"], ds)
-    plan = evaluate.noise_plan(runs, cal, prof.duration, prof.max_duration)
+    plan = evaluate.noise_plan(runs, cal, prof.duration, prof.max_duration, overhead_s=_run_overhead(c, prof))
     if ds["status"] == "drifting" and plan["action"] in ("between-runs", "longer-runs"):
         plan["text"] += " Likely cause: the data set is not restored between runs (set reset = ..., or data_state = seasoned)."
     cl = [x for x in (evaluate.client_saturated(r.get("summary") or {}) for r in runs) if x]
@@ -2053,18 +2063,22 @@ def _noise_plan(c, prof, runs, n):
                "and the calibration runs show why - " + "; ".join(env_dist) + ". Fix it (or set allow_noisy_environment = true in agent.ini).")
         c.event("environment", msg, plan)
         raise Fail(msg)
-    if plan["action"] == "longer-runs" and not (prof.adaptive and prof.can_resize()):
+    if plan["action"] in ("longer-runs", "shorter-runs") and not (prof.adaptive and prof.can_resize()):
         plan["applied"] = False
         plan["text"] += (" Not applied: adaptive_duration = off." if not prof.adaptive else
                          " Not applied: the run command has a fixed length (use {duration} / {total} placeholders in the profile).")
     _set_calibration(c, sess, cal)
     log(f"   noise plan: {plan['text']}")
     c.event("noise-plan", plan["text"], plan)
-    if plan["action"] != "longer-runs" or plan.get("applied") is False:
+    if plan["action"] not in ("longer-runs", "shorter-runs") or plan.get("applied") is False:
         return runs
     old = prof.duration
     sess = c.session()
     sess["run_seconds"] = plan["seconds"]
+    if sess.get("run_plan"):  # the session header shows the window in use
+        sess["run_plan"] = dict(sess["run_plan"], duration_s=plan["seconds"],
+                                replanned={"from_s": old, "between_cv_pct": plan.get("between_cv_pct"), "within_cv_pct": plan.get("within_cv_pct")})
+        _post_run_plan(c, sess)
     note = f"Measured with {old // 60} min runs; superseded by calibration with {plan['seconds'] // 60} min runs (noise plan)."
     for r in sess["runs"]:
         if r["seq"] in {x["seq"] for x in runs}:
@@ -2072,7 +2086,7 @@ def _noise_plan(c, prof, runs, n):
     sess["noise"] = None
     c.state.set("session", sess)
     _reevaluate(c, sess)
-    c.activity("calibrating", f"{n} runs at {plan['seconds'] // 60} min (longer runs to reduce noise)")
+    c.activity("calibrating", f"{n} runs at {plan['seconds'] // 60} min ({'longer runs to reduce noise' if plan['action'] == 'longer-runs' else 'shorter runs: more runs per hour'})")
     log(f"== recalibration: {n} runs of {plan['seconds'] // 60} min")
     new = []
     while len([r for r in new if r.get("verdict") not in evaluate.EXCLUDED]) < n and len(new) < 2 * n:
@@ -2086,11 +2100,12 @@ def _noise_plan(c, prof, runs, n):
     _reevaluate(c, c.session())
     log(_fmt_cal(cal))
     sess = c.session()
-    after = evaluate.noise_plan(new, sess["noise"], prof.duration, prof.max_duration)
+    after = evaluate.noise_plan(new, sess["noise"], prof.duration, prof.max_duration, overhead_s=_run_overhead(c, prof), replan=False)
     after["previous"] = {k: plan.get(k) for k in ("noise_pct", "run_seconds", "within_cv_pct", "between_cv_pct")}
     after["applied"] = True
-    if after["action"] == "longer-runs":  # one adjustment per session: report, do not loop
-        after["text"] = f"Runs lengthened to {prof.duration // 60} min (threshold ±{plan['noise_pct']}% -> ±{sess['noise']['noise_pct']}%)."
+    if after["action"] in ("longer-runs", "shorter-runs") or plan["action"] == "shorter-runs":  # one adjustment per session
+        after["text"] = (f"Runs {'lengthened' if plan['action'] == 'longer-runs' else 'shortened'} to {prof.duration // 60} min "
+                         f"(threshold ±{plan['noise_pct']}% -> ±{sess['noise']['noise_pct']}%).")
     sess["noise"]["plan"] = after
     _set_calibration(c, sess, sess["noise"])
     log(f"   noise plan after recalibration: {after['text']}")
@@ -2350,6 +2365,7 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
     logdir = os.path.join(c.state.dir, "bench")
     os.makedirs(logdir, exist_ok=True)
     logfile = os.path.join(logdir, f"run-length-probe-{int(time.time())}.log")
+    t_prep = time.time()  # the run's fixed cost before the benchmark starts (restart / reset), for the window choice
     if prof.restart_before_run and (not prof.reset or prof.data_state in ("read-only", "seasoned")):
         log("clean start: restarting mysqld and dropping the OS page cache")
         ok, err = Applier(c.cfg, c.state, c.db, log=log).restart()
@@ -2370,6 +2386,7 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
     # the benchmark's prerequisites after the restart / reset, right before it connects (user report: the 1024-thread probe
     # failed with 'Too many connections' - max_connections was back at its option-file value after the restart)
     _ensure_requirements(c, prof)
+    prep_s = int(time.time() - t_prep)
     t0 = time.time()
     start = t0
     # room for a purge triage inside the same run: a configuration whose undo history grows without bound never settles,
@@ -2436,7 +2453,8 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
     settled = [x for x in m.values() if x["settled_after_s"] is not None and not x["unbounded"] and not x.get("inert")]
     longest = max([x["settled_after_s"] for x in settled] or [0])
     rec = max(60, int(-(-longest * 1.2 // 60)) * 60)
-    ml = collector.measure_length(smp, t0 + longest, "tps", target_pct, evaluate.NOISE_K)
+    cap_s = prof.max_duration or collector.WINDOW_CAP_S
+    ml = collector.measure_length(smp, t0 + longest, "tps", target_pct, evaluate.NOISE_K, overhead_s=prep_s + rec, cap_s=cap_s)
     unsettled = [x["label"] for x in m.values() if x["settled_after_s"] is None and not x["unbounded"] and not x.get("inert")]
     log("== run-length probe " + ("finished: every metric settled" if done else "stopped: no stable configuration (purge triage)"
                                   if triage and not triage.get("stable") else "stopped at the time limit")
@@ -2450,8 +2468,9 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
            + (f"; not settled: {', '.join(unsettled)} - run the probe longer" if unsettled else "")
            + (f"; growing without bound: {', '.join(u['label'] for u in res['unbounded'])}" if res["unbounded"] else ""))
     if ml:
-        txt += (f"; recommended measurement: {ml['recommended_s']} s (predicted within-run noise ±{ml['predicted_within_noise_pct']}% "
-                f"of a ±{target_pct:g}% target" + ("" if ml["reaches_target"] else "; the target is not reached within an hour") + ")")
+        txt += (f"; recommended measurement: {ml['recommended_s']} s (the most precision per hour: {ml['overhead_s']} s of reset and "
+                f"warm-up per run, run-to-run noise assumed ±{ml['between_cv_assumed']}% CV until calibration; predicted within-run "
+                f"noise ±{ml['predicted_within_noise_pct']}%)")
         log("   within-run noise by measurement length: " + ", ".join(f"{w // 60 if w >= 60 else w}{'m' if w >= 60 else 's'} ±{n}%" for w, n in ml["table"][:7]))
     log("   " + txt)
     unstable = bool(triage) and not triage.get("stable")
@@ -3502,6 +3521,7 @@ def _autotune(a):
                     "auto": [k for k, on in (("warmup", prof.auto_warmup), ("duration", prof.auto_duration)) if on],
                     "predicted_within_noise_pct": (out.get("measure") or {}).get("predicted_within_noise_pct"),
                     "target_pct": (out.get("measure") or {}).get("target_pct"), "complete": out["complete"],
+                    "overhead_s": (out.get("measure") or {}).get("overhead_s"), "within_var": (out.get("measure") or {}).get("within_var"),
                     "settling": {k: x["settled_after_s"] for k, x in out["metrics"].items()},
                     "unbounded": [u["label"] for u in out["unbounded"]],
                     "unstable": bool(out.get("unstable")), "triage_kept": (out.get("triage") or {}).get("kept") or []}

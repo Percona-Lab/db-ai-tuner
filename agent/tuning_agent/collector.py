@@ -476,15 +476,38 @@ WARMUP_SIGNALS = (("checkpoint_age_pct", "checkpoint age %", 3.0, 0.15), ("bp_di
                   ("tps", "throughput", 0.0, 0.05), ("avg_latency_ms", "average latency", 0.0, 0.10))
 
 
-MEASURE_CANDIDATES_S = (120, 180, 300, 450, 600, 900, 1200, 1800, 2700, 3600)
+MEASURE_CANDIDATES_S = (120, 180, 300, 450, 600, 900, 1200, 1800, 2400, 2700, 3600)
+WINDOW_CAP_S = 2400       # measured window at most 40 min by default: beyond that more runs buy more than longer ones
+WINDOW_MIN_S = 300        # at least 5 min: transients, the CPU / off-CPU profiles and the steady-state checks need room
+BETWEEN_CV_PRIOR = 1.0    # % run-to-run CV assumed before calibration measures it (calibrations after a reset: 0.6-1.5%)
+OVERHEAD_DEFAULT_S = 120  # reset / restart of a run when the probe could not time it
 
 
-def measure_length(samples, start_ts=None, key="tps", target_pct=3.0, k=2.5):
+def best_window(within_var, overhead_s, between_cv, candidates=MEASURE_CANDIDATES_S, cap_s=WINDOW_CAP_S, floor_s=WINDOW_MIN_S):
+    """The window W that buys the most precision per hour of benchmarking. A run costs overhead + W; its result varies by
+    the within-run part (within_var / W, CV %^2, shrinks with W) plus the between-run part (between_cv^2, does not).
+    For a fixed time per configuration the variance of the mean is proportional to (within_var / W + between^2) x
+    (overhead + W), smallest at W* = sqrt(within_var x overhead) / between: longer windows past it buy less than more
+    runs would (user, 2026-10-25: pop2hc32 HammerDB chose 60 min windows to reach half the target within-run noise).
+    Not shorter than floor_s (WINDOW_MIN_S, or several periods of a slow cycle). Returns the best candidate up to cap_s,
+    and the cost table [(W, relative cost)]."""
+    b2 = max(between_cv, 0.05) ** 2
+    floor_s = min(floor_s, cap_s)
+    cands = [w for w in candidates if floor_s <= w <= cap_s] or [min(candidates, key=lambda w: abs(w - floor_s))]
+    cost = [(w, (within_var / w + b2) * (overhead_s + w)) for w in cands]
+    best = min(cost, key=lambda x: x[1])[0]
+    lo = min(c for _, c in cost)
+    return best, [(w, round(c / lo, 3)) for w, c in cost]
+
+
+def measure_length(samples, start_ts=None, key="tps", target_pct=3.0, k=2.5, overhead_s=None, between_cv=BETWEEN_CV_PRIOR,
+                   cap_s=WINDOW_CAP_S):
     """How long must a measured window be? From the settled part of one long run: the variance of the mean of a window
     of W seconds, estimated by batch means (block sizes 10 s .. 5 min; the largest variance x block length is used, so
     slow cycles - checkpoint or flush waves - count), gives the within-run noise of a W-second run: k x CV(W). The
-    recommendation is the shortest candidate whose within-run noise uses at most half the target noise threshold (the
-    other half is left for run-to-run differences). Returns None without at least 5 minutes of settled samples."""
+    recommendation is the window with the most precision per hour (best_window): the run's overhead (reset + warm-up)
+    against the run-to-run noise longer windows cannot remove - until calibration measures it, BETWEEN_CV_PRIOR.
+    Calibration re-plans once with the measured value (evaluate.noise_plan). Returns None without 5 minutes of samples."""
     pts = [(x.get("ts") or 0, x["db"][key]) for x in samples
            if (x.get("db") or {}).get(key) is not None and (start_ts is None or (x.get("ts") or 0) >= start_ts)]
     if len(pts) < 30:
@@ -506,11 +529,18 @@ def measure_length(samples, start_ts=None, key="tps", target_pct=3.0, k=2.5):
         sig2, block = v_ * b * dt, b  # the largest block size that still leaves 6+ blocks (batch means)
     budget = target_pct / 2
     table = [(w, round(100 * k * (sig2 / w) ** 0.5 / abs(mean), 2)) for w in MEASURE_CANDIDATES_S]
-    rec = next((w for w, n in table if n <= budget), None)
-    return {"recommended_s": rec or MEASURE_CANDIDATES_S[-1], "reaches_target": rec is not None,
-            "predicted_within_noise_pct": dict(table)[rec or MEASURE_CANDIDATES_S[-1]], "target_pct": target_pct,
-            "budget_within_pct": budget, "table": table, "basis_s": int(pts[-1][0] - pts[0][0]), "block_s": int(block * dt),
-            "mean": round(mean, 2)}
+    within_var = 1e4 * sig2 / mean ** 2  # CV %^2 x seconds: a W-second window has CV^2 = within_var / W
+    ov = overhead_s if overhead_s is not None else OVERHEAD_DEFAULT_S
+    # at least three of the slowest cycle the samples show (a checkpoint or flush wave): a window shorter than a few
+    # periods catches the wave in one phase or another
+    var1 = sum((v - mean) ** 2 for v in vals) / max(len(vals) - 1, 1)
+    corr_s = sig2 / var1 if var1 else dt  # integrated correlation time: ~one sample for plain noise, longer for slow waves
+    rec, cost = best_window(within_var, ov, between_cv, cap_s=cap_s, floor_s=max(WINDOW_MIN_S, int(3 * corr_s)))
+    return {"recommended_s": rec, "reaches_target": dict(table)[rec] <= budget,
+            "predicted_within_noise_pct": dict(table)[rec], "target_pct": target_pct, "budget_within_pct": budget, "table": table,
+            "basis_s": int(pts[-1][0] - pts[0][0]), "block_s": int(block * dt), "mean": round(mean, 2),
+            "within_var": round(within_var, 1), "correlation_s": int(corr_s), "overhead_s": int(ov), "between_cv_assumed": between_cv, "cap_s": cap_s,
+            "cost_table": cost, "rule": "most precision per hour of benchmarking (overhead vs between-run noise)"}
 
 
 def bp_free_inert(samples):
@@ -678,11 +708,31 @@ def startup_samples(samples, started_at, window_s):
     return n if n < len(samples) // 2 else 0
 
 
+def startup_ramp_s(samples, started_at, window_s):
+    """Seconds from the measured phase's own benchmark start until throughput is back to 90% of the window median - the
+    whole ramp, not capped like startup_samples (em-b212x session 337: 1024 sysbench threads reconnecting took ~30 s of
+    a 2 min window, 10 s were left out, the rest moved the result 5-7% from run to run). None when not measurable."""
+    if not started_at or not samples or (samples[0].get("ts") or 0) > started_at + 30:
+        return None
+    tps = sorted(s["db"]["tps"] for s in samples if (s.get("db") or {}).get("tps") is not None)
+    if len(tps) < 6:
+        return None
+    med = tps[len(tps) // 2]
+    for s in samples:
+        t = s.get("ts") or 0
+        if t - started_at > 0.5 * window_s:
+            return None
+        if t >= started_at and ((s.get("db") or {}).get("tps") or 0) >= 0.9 * med:
+            return round(max(0.0, t - started_at), 1)
+    return None
+
+
 def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None, bench_started_at=None):
     """Summary + decision inputs for a measurement window between snapshots a and b. bench_started_at: start of the
     benchmark process that runs the measured phase, when it started with the window (its start-up is left out of the
     sample-based analyses; the counters still cover the whole window, as the benchmark's own result does)."""
     dt = max(b["t"] - a["t"], 1e-6)
+    ramp = startup_ramp_s(samples, bench_started_at, dt)
     skip = startup_samples(samples, bench_started_at, dt)
     startup_s = round((samples[skip]["ts"] - samples[0]["ts"]), 1) if skip else None
     samples = samples[skip:]
@@ -737,6 +787,7 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None, bench_started
     summary = {
         "duration_s": round(dt, 1),
         "startup_excluded_s": startup_s,
+        "startup_ramp_s": ramp,
         "tps": db_rates.get("tps"),
         "within_se_pct": batch_se_pct("db", "tps") or batch_se_pct("db", "qps"),
         "rows_changed_per_s": avg("db", "rows_changed"),
