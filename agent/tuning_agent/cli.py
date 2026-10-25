@@ -2184,7 +2184,7 @@ def _triage_candidates(c):
 RESTART_VARS = ("thread_handling", "os:mysqld_cap_sys_nice")
 
 
-def _purge_triage(c, running, deadline, start_bench=None):
+def _purge_triage(c, running, deadline, start_bench=None, measure_all=False):
     """Find a configuration whose undo history stays bounded before anything is measured for long. The benchmark keeps
     running; each remedy is measured on its own for TRIAGE_SEG_S (after a restart, the benchmark is started again and
     warms up first): history growth per minute and throughput. A remedy that brings the growth down to TRIAGE_FIX of the
@@ -2279,7 +2279,7 @@ def _purge_triage(c, running, deadline, start_bench=None):
             break
         seg = judge(cand)
         results.append(seg)
-        if seg["result"] == "stable" and seg["cost_pct"] <= TRIAGE_FREE_PCT:
+        if seg["result"] == "stable" and seg["cost_pct"] <= TRIAGE_FREE_PCT and not measure_all:
             break  # bounded at (almost) no cost: nothing better to find
     stable = [x for x in results if x["result"] == "stable"]
     if not stable:
@@ -2467,7 +2467,7 @@ def cmd_purge_triage(a):
     logdir = os.path.join(c.state.dir, "bench")
     os.makedirs(logdir, exist_ok=True)
     _ensure_requirements(c, prof)
-    r = bench.Running(prof.command(total_s=a.lead + TRIAGE_BUDGET_S + 60), os.path.join(logdir, f"purge-triage-{int(time.time())}.log"))
+    r = bench.Running(prof.command(total_s=a.lead + TRIAGE_BUDGET_S * 2 + 60), os.path.join(logdir, f"purge-triage-{int(time.time())}.log"))
     try:
         t0 = time.time()
         while r.alive() and time.time() - t0 < a.lead:
@@ -2475,8 +2475,8 @@ def cmd_purge_triage(a):
             time.sleep(30)
         def start_bench():
             _ensure_requirements(c, prof)
-            return bench.Running(prof.command(total_s=TRIAGE_BUDGET_S + 60), os.path.join(logdir, f"purge-triage-{int(time.time())}.log"))
-        out = _purge_triage(c, r, time.time() + TRIAGE_BUDGET_S, start_bench)
+            return bench.Running(prof.command(total_s=TRIAGE_BUDGET_S * 2 + 60), os.path.join(logdir, f"purge-triage-{int(time.time())}.log"))
+        out = _purge_triage(c, r, time.time() + TRIAGE_BUDGET_S * (2 if a.all else 1), start_bench, measure_all=a.all)
         r = out.pop("running")
     finally:
         if r.alive():
@@ -4227,6 +4227,7 @@ def main(argv=None):
     s = sp.add_parser("purge-triage", help="find an online purge setting that keeps the undo history bounded (one benchmark run)")
     s.add_argument("--bench", required=True)
     s.add_argument("--lead", type=int, default=600, help="seconds of benchmark before the first step (the history has to grow)")
+    s.add_argument("--all", action="store_true", help="measure every remedy (no early stop at a cheap stable one): a full comparison")
     s.set_defaults(fn=cmd_purge_triage)
     s = sp.add_parser("calibrate", help="measure the current configuration N times to calibrate the noise threshold")
     s.add_argument("--runs", type=int, default=3)
