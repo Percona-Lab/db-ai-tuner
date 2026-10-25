@@ -138,7 +138,9 @@ class Applier:
     def restart(self, timeout=1800):
         self.preflush()
         self.log(f"restarting {self.service} ...")
-        self.activity("restarting mysqld", f"systemctl restart {self.service}", timeout)
+        # the timeout is how long to wait before calling it failed, not an estimate: no countdown (user: "~30 min left"
+        # on a restart that takes seconds)
+        self.activity("restarting mysqld", f"systemctl restart {self.service} (gives up after {timeout // 60} min)")
         self.db.close()
         try:
             r = subprocess.run(["systemctl", "restart", self.service], capture_output=True, text=True, timeout=timeout)
@@ -147,7 +149,7 @@ class Applier:
         if r is not None and r.returncode != 0:
             return False, (r.stderr or r.stdout).strip()[-800:]
         deadline = time.time() + timeout
-        self.activity("starting mysqld", "waiting for it to accept connections (crash recovery, buffer pool load)", timeout)
+        self.activity("starting mysqld", f"waiting for it to accept connections (crash recovery, buffer pool load; gives up after {timeout // 60} min)")
         while time.time() < deadline:
             try:
                 self.db.connect()
