@@ -967,6 +967,30 @@ CHOICE_KEYS = ("rank", "id", "title", "kind", "safety", "score", "score_parts", 
                "known_neutral", "restart", "risk", "relevance", "addresses", "stability", "source")
 
 
+def score_parts_of(i, goal):
+    """Score terms of a candidate recorded before the engine kept them (2026-10-25): rebuilt from its impact, confidence and
+    basis; what the record cannot explain is one remaining term."""
+    if i.get("score_parts"):
+        return i["score_parts"]
+    if i.get("score") is None or i.get("impact") is None:
+        return None
+    out = [[f"expected impact {i['impact']} of 3 (x2)", i["impact"] * 2], [f"confidence {i.get('confidence') or 0} of 3", i.get("confidence") or 0]]
+    if goal and goal not in (i.get("goals") or [goal]):
+        out.append([f"not aimed at the goal ({goal})", -3])
+    if i.get("kind") == "advice":
+        out.append(["advice only, not run", -10])
+    b = i.get("basis") or {}
+    for p in (b.get("built_in") or []) + (b.get("learned") or []):
+        if p.get("score"):
+            out.append([p.get("what") or "", p["score"]])
+    if i.get("relevance") == 0 and not any("bottleneck" in w for w, _ in out):
+        out.append(["not aimed at the current bottleneck", -3])
+    rest = round(float(i["score"]) - sum(v for _, v in out), 2)
+    if i["score"] < 99 and abs(rest) >= 0.01:
+        out.append(["other ranking terms (not recorded for this decision)", rest])
+    return [[w, round(v, 2)] for w, v in out if v]
+
+
 def chosen_by(r, changes):
     """The decision that made this run (user, 2026-10-25: why this experiment and not another one): the recommendation its
     change came from, with every candidate's score and score terms, or the person's own experiment."""
@@ -996,7 +1020,8 @@ def chosen_by(r, changes):
         src = dict(src) if src else None
         return {"id": rid, "recommendation": x["id"], "created": x["created"], "policy": x["policy"], "goal": x["goal"], "next": x["next"],
                 "decision": store.uj(x["decision"], {}), "from_run": src,
-                "items": [{k: i.get(k) for k in CHOICE_KEYS if i.get(k) is not None} | {"why": (i.get("hypothesis") or {}).get("text") or i.get("rationale"),
+                "items": [{k: i.get(k) for k in CHOICE_KEYS if i.get(k) is not None} | {"score_parts": score_parts_of(i, x["goal"]),
+                           "why": (i.get("hypothesis") or {}).get("text") or i.get("rationale"),
                            "changes": [{"variable": c.get("variable"), "proposed": c.get("proposed"), "unset": c.get("unset")} for c in i.get("changes") or []]}
                           for i in items]}
     return None
