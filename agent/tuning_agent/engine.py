@@ -1814,6 +1814,12 @@ KEEP = ("improved", "efficiency-gain", "reference")
 # were reverted unexplained - user, 2026-10-25) are experiments of their own
 PRACTICE_IDS = {"flush-neighbors", "o-direct", "os-swappiness", "os-thp-off", "os-scheduler", "os-noatime", "os-zone-reclaim-off", "os-aio", "os-governor"}
 BUNDLE = "best-practices"
+# settings with a known mechanism to help and no known way to hurt when applied correctly (user, 2026-10-25: huge pages in
+# 341 gave +2.2% / +1.2% and -3.5% CPU per transaction, within noise, and were rolled back for lack of proof): kept unless
+# measured harm - unlike settings that can help or hurt (NUMA balancing, concurrency limits, AHI, purge, spin, ...), which
+# need a gain beyond noise. Evidence of harm in comparable sessions (experience: 2+ losses, no win) revokes it.
+LOW_DOWNSIDE_VARS = {"os:hugepages", "large_pages", "os:thp", "os:vm.swappiness", "os:mount_noatime", "os:cpu_governor",
+                     "os:scheduler", "innodb_flush_neighbors", "os:vm.zone_reclaim_mode", "os:fs.aio-max-nr", "os:swapfile"}
 
 
 def is_practice_run(r):
@@ -2056,7 +2062,20 @@ def best_config(history, goal="tps", noise=2.0):
     return pick
 
 
-def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
+def harmful_rules(experience):
+    """Rule ids whose comparable experience shows harm (2+ losses, no win): low-downside keeping does not apply to them."""
+    return {k for k, e in (experience or {}).items() if e.get("losses", 0) >= 2 and not e.get("wins") and not e.get("scope")}
+
+
+def _low_kept(r, harmful):
+    ev = r.get("evaluation") or {}
+    if not ev.get("low_downside_kept"):
+        return False
+    srcs = {str(c.get("source") or "")[4:] for c in r.get("changes") or [] if str(c.get("source") or "").startswith("rec:")}
+    return not (srcs & set(harmful or ()))
+
+
+def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None, harmful=None):
     """Suggest returning to the best configuration when the current one is measurably worse."""
     if len(history) < 2:
         return []
@@ -2089,7 +2108,9 @@ def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
     # loop that ended RW-3 and WI-1 without a single experiment (suite r1)
     calibration = any(str(r.get("label") or "").startswith("baseline") for r in cur_runs)
     stabilized_ = STABILITY_FIRST and any((r.get("evaluation") or {}).get("stabilized") for r in cur_runs)
-    if just_measured and first_eval and not practice_kept and not calibration and not stabilized_ and not verdicts & {"improved", "efficiency-gain"} \
+    low_kept = any(_low_kept(r, harmful) for r in cur_runs)  # low downside, no measured harm: kept (user, 341 huge pages)
+    if just_measured and first_eval and not practice_kept and not calibration and not stabilized_ and not low_kept \
+            and not verdicts & {"improved", "efficiency-gain"} \
             and verdicts & {"neutral", "efficiency-loss"}:
         parent_run = next((r for r in history if r["seq"] == first_eval["parent_runs"][-1]), None)
         if parent_run is not None:
@@ -2101,7 +2122,7 @@ def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None):
                                       {"goal_delta_pct": first_eval.get("goal_delta_pct"), "parent_runs": first_eval.get("parent_runs")},
                                       priority=True))
     if not [i for i in items if i]:
-        drop = _unearned(history, managed)
+        drop = _unearned(history, managed, harmful)
         if drop:
             start = next((r.get("managed") or {} for r in history if str(r.get("label") or "").startswith("baseline")), {})
             target = {k: v for k, v in (managed or {}).items() if k not in drop}
@@ -2121,7 +2142,7 @@ def _big_gain(r):
     return r.get("verdict") in ("improved", "repeat") and d is not None and nz and d >= 2 * float(nz)
 
 
-def _unearned(history, managed):
+def _unearned(history, managed, harmful=None):
     """Managed changes (vs the calibration's starting configuration) that no run still earns: the runs that set them
     are neither kept (improved / efficiency gain, not unconfirmed) nor an accepted best-practice bundle. Suite r1:
     MX-1 jemalloc and RW-1 log_writer_threads were downgraded after confirmation runs and stayed to the end."""
@@ -2144,7 +2165,8 @@ def _unearned(history, managed):
                      or (is_practice_run(r) and r.get("verdict") in ("neutral", "efficiency-gain", "improved"))
                      # a gain of twice the threshold it was measured against is not noise however the threshold moves later
                      # (12 drops, 0 gains, 7 losses: binlog-off dropped for -25% / -28% in 249 / 271, log writers for -18%)
-                     or _big_gain(r) or (STABILITY_FIRST and (r.get("evaluation") or {}).get("stabilized")) for r in setters)
+                     or _big_gain(r) or (STABILITY_FIRST and (r.get("evaluation") or {}).get("stabilized"))
+                     or _low_kept(r, harmful) for r in setters)
         if not earned:
             out.add(k)
     # the chunk size is the companion of the instance count / pool size (it keeps the pool at the intended size): it goes
@@ -2509,7 +2531,8 @@ def run_engine(ctx):
     items = stack_small_wins(items, ctx)
     items = items + per_query_hints(ctx.get("history") or [], ctx["variables"])
     items = revert_suggestions(ctx.get("history") or [], ctx["variables"], ctx.get("goal", "tps"),
-                               float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0), ctx.get("managed")) + items
+                               float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0), ctx.get("managed"),
+                               harmful_rules(ctx.get("experience"))) + items
     items = [it for it in items if not _breaks_requirement(it, (ctx.get("bench") or {}).get("requires") or {})]
     # the account's parameter policy (admin defaults + the user's own list): blocked settings never become experiments;
     # returning a blocked setting to an earlier value (revert / rollback) is still allowed

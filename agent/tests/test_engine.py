@@ -2677,6 +2677,27 @@ def test_requirement_raised_value_is_not_a_config_mismatch():
     assert [x["variable"] for x in mm] == ["innodb_io_capacity"], mm
 
 
+def test_low_downside_settings_kept_without_proof_unless_harm():
+    """User (341): huge pages gave +2.2% / +1.2% and less CPU per transaction, within noise, and were rolled back. A setting
+    that helps in theory and has no known way to hurt stays when the run measured no harm; settings that can help or hurt
+    still need proof; harm in comparable sessions revokes the exception."""
+    from tuning_agent import engine, evaluate
+    run = {"changes": [{"variable": "os:hugepages", "new": "23136", "source": "rec:os-hugepages"},
+                       {"variable": "large_pages", "new": "ON", "source": "rec:os-hugepages"}]}
+    assert evaluate.low_downside_kept(run, "neutral", {"goal_delta_pct": 2.2})
+    assert not evaluate.low_downside_kept(run, "neutral", {"goal_delta_pct": -0.4})
+    assert not evaluate.low_downside_kept({"changes": [{"variable": "os:kernel.numa_balancing", "new": "0"}]}, "neutral", {"goal_delta_pct": 2.0})
+    base = {"seq": 1, "label": "baseline (1/3)", "managed": {"a": "1"}, "goal_value": 100.0, "verdict": "reference"}
+    exp = {"seq": 4, "label": "os-hugepages", "managed": {"a": "1", "os:hugepages": "23136", "large_pages": "ON"}, "goal_value": 102.2,
+           "verdict": "neutral", "changes": run["changes"], "evaluation": {"parent_runs": [1], "goal_delta_pct": 2.2,
+                                                                         "low_downside_kept": {"settings": ["large_pages", "os:hugepages"], "goal_delta_pct": 2.2}}}
+    items = engine.revert_suggestions([base, exp], {}, "tps", 3.0, exp["managed"])
+    assert not any(i["id"].startswith("revert-to-run") for i in items), [i["id"] for i in items]
+    harm = engine.harmful_rules({"os-hugepages": {"n": 3, "losses": 2, "wins": 0}})
+    items2 = engine.revert_suggestions([base, exp], {}, "tps", 3.0, exp["managed"], harm)
+    assert any(i["id"].startswith("revert-to-run") for i in items2), [i["id"] for i in items2]
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

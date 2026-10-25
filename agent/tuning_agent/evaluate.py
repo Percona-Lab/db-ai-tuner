@@ -813,12 +813,34 @@ def _run_verdict(run, history, goal, noise):
         d["note"] = (f"Stabilized: the undo history list no longer grows without bound (it did with the parent configuration, runs "
                      f"{stab['parent_runs']}). Kept for stability" + (f" at a cost of {-stab['goal_delta_pct']:.1f}% on the goal." if (stab.get("goal_delta_pct") or 0) < 0 else ".")
                      + (" " + d["note"] if d.get("note") else ""))
+    low = low_downside_kept(run, v, d)
+    if low:
+        d = dict(d, low_downside_kept=low)
+        d["note"] = ((d["note"] + " ") if d.get("note") else "") + (
+            f"Kept: {', '.join(low['settings'])} {'has' if len(low['settings']) == 1 else 'have'} a known mechanism to help and no known "
+            f"way to hurt when applied correctly; the run measured no harm ({low['goal_delta_pct']:+.1f}% on the goal, CPU / I/O per "
+            "transaction not worse), so the change stays without proof beyond noise. Measured harm in comparable sessions "
+            "revokes this.")
     # only meaningful for a run compared with another configuration (not the first run, not calibration repeats)
     shift = environment_shift(run.get("summary"), noise) if v in ("improved", "regressed", "neutral", "efficiency-gain", "efficiency-loss") else None
     if shift:
         d = dict(d)
         d["environment_shift"] = shift
     return v, d
+
+
+def low_downside_kept(run, v, d):
+    """A within-noise run whose changes are all low-downside settings (engine.LOW_DOWNSIDE_VARS: help in theory, no known way
+    to hurt) and that measured no harm - goal not worse, efficiency not worse, steady window: {settings, goal_delta_pct}
+    (kept), else None. Settings that can help or hurt still need a gain beyond noise (user, 2026-10-25, 341 huge pages)."""
+    from .engine import LOW_DOWNSIDE_VARS
+    if v != "neutral" or (d or {}).get("not_steady") or (d or {}).get("efficiency_worse"):
+        return None
+    ch = [c.get("variable") for c in run.get("changes") or [] if not str(c.get("source") or "").startswith(("rollback", "rec:revert", "rec:drop-"))]
+    dg = (d or {}).get("goal_delta_pct")
+    if not ch or dg is None or dg < 0 or any(x not in LOW_DOWNSIDE_VARS for x in ch):
+        return None
+    return {"settings": sorted(set(ch)), "goal_delta_pct": dg}
 
 
 def mean_noise(noise, n1, n2):
