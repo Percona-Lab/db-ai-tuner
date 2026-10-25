@@ -1554,6 +1554,7 @@ def recommend(ctx):
             elif unb_h:
                 # an unsustainable configuration with CPU to spare: more purge threads come before tuning it
                 it_["score_prior"] = it_.get("score_prior", 0) + 2
+                it_.setdefault("score_parts", []).append(["unbounded history with CPU to spare", 2])
                 it_["rationale"] = ("Purge cannot keep up: the history list grows without slowing down, so this configuration is "
                                     "unsustainable. " + it_["rationale"])
     if have_run and ck >= 75 and _on(v, "innodb_flush_sync"):
@@ -1700,6 +1701,16 @@ def recommend(ctx):
                   {"avg_ms": q["avg_ms"], "per_s": q["per_s"], "pct_time": q["pct_time"]}, impact=2, confidence=2, kind="advice")
 
     return b.items
+
+
+def score_parts(item, goal):
+    """score() term by term: [[what, points]]."""
+    out = [[f"expected impact {item['impact']} of 3 (x2)", item["impact"] * 2], [f"confidence {item['confidence']} of 3", item["confidence"]]]
+    if goal not in item.get("goals", [goal]):
+        out.append([f"not aimed at the goal ({goal})", -3])
+    if item["kind"] == "advice":
+        out.append(["advice only, not run", -10])
+    return out
 
 
 def score(item, goal):
@@ -2705,6 +2716,9 @@ def run_engine(ctx):
             best_imp = max(imps, key=lambda x: knowledge.IMPACT_SCORE.get(x[0], 0))
             it["param_impact"] = {"impact": best_imp[0], "source": best_imp[1]}
             it["score_prior"] = it.get("score_prior", 0) + knowledge.IMPACT_SCORE.get(best_imp[0], 0)
+            if knowledge.IMPACT_SCORE.get(best_imp[0], 0):
+                it.setdefault("score_parts", []).append([f"parameter impact {best_imp[0]} ({'learned' if best_imp[1] == 'learned' else 'catalog'})",
+                                                         knowledge.IMPACT_SCORE[best_imp[0]]])
         learned = matching_insights(it, ctx.get("insights"))
         if learned:
             # what the learner extracted from earlier sessions in these conditions (learning.db): a lead and a small prior
@@ -2712,8 +2726,9 @@ def run_engine(ctx):
             it["insights"] = learned
             for x in learned:  # only results that repeated across sessions move the ranking, and only a little
                 if x["status"] == "repeated":  # weighted by how close the insight's server was (variant, release series)
-                    it["score_prior"] = it.get("score_prior", 0) + float(x.get("weight", 1.0)) * (
-                        1 if x["direction"] == "helps" else -2 if x["direction"] == "hurts" else -1)
+                    w_ = float(x.get("weight", 1.0)) * (1 if x["direction"] == "helps" else -2 if x["direction"] == "hurts" else -1)
+                    it["score_prior"] = it.get("score_prior", 0) + w_
+                    it.setdefault("score_parts", []).append([f"insight #{x.get('id')}: {x['direction']} in earlier sessions", round(w_, 2)])
         if it["kind"] in ("config", "revert"):
             it["hypothesis"] = hypothesis(it, ctx)
             _retest_after_shift(it, ctx)
@@ -2746,17 +2761,36 @@ def run_engine(ctx):
             - (10 if it.get("no_mechanism") else 0) + (it.get("rescore") or {}).get("delta", 0)
         if it.get("relevance") is not None:
             sc += 2 * it["relevance"] if it["relevance"] else (-3 if has_major else 0)
+        # every term of the ranking, for the person asking why this experiment and not another one (user, 2026-10-25)
+        parts = score_parts(it, ctx.get("goal", "tps")) + (it.get("score_parts") or [])
+        if it["kind"] == "revert":
+            parts.append(["returns to a measured configuration", 2])
+        if it.get("score_note"):
+            parts.append([it["score_note"], -2])
+        if it.get("no_mechanism"):
+            parts.append(["nothing in this workload for it to act on", -10])
+        if (it.get("rescore") or {}).get("delta"):
+            parts.append(["hypotheses earlier in this session: " + "; ".join(it["rescore"]["why"]), it["rescore"]["delta"]])
+        if it.get("relevance"):
+            parts.append(["acts on the measured bottleneck" + (f" ({', '.join(it.get('addresses') or [])})" if it.get("addresses") else ""),
+                          2 * it["relevance"]])
+        elif it.get("relevance") == 0 and has_major:
+            parts.append(["not aimed at the current bottleneck", -3])
         sc_before_exp = sc
         if it.get("experience"):
             e = it["experience"]
             w = e.get("weight", 0.5 if e.get("scope") else 1.0)  # less comparable evidence counts less (version, variant, conditions)
-            sc += round(w * 3 * (e.get("wins", 0) - e.get("losses", 0)) / max(e["n"], 1) * min(e["n"], 3) / 3, 2)
+            ed_ = round(w * 3 * (e.get("wins", 0) - e.get("losses", 0)) / max(e["n"], 1) * min(e["n"], 3) / 3, 2)
+            sc += ed_
+            if ed_:
+                parts.append([f"earlier sessions: {e.get('wins', 0)} better, {e.get('losses', 0)} worse in {e['n']} runs", ed_])
             # how large the measured effect was, not only its sign: a lever averaging -30% in comparable sessions (the
             # thread pool on 64-connection co-located cells: -21% to -73% in 8 sessions, all counted "neutral" while
             # not-steady neutralised regressions) must rank behind untried ideas
             md, nz = e.get("mean_delta_pct"), float(ctx.get("noise_pct") or 2.0)
             if md is not None and e.get("n", 0) >= 2 and md < -2 * nz and not e.get("wins"):
                 sc -= round(w * min(abs(md), 30.0) / 5.0, 2)
+                parts.append([f"earlier sessions averaged {md:+.1f}%", -round(w * min(abs(md), 30.0) / 5.0, 2)])
             # strong penalties only from comparable evidence (same workload, CPU class and concurrency): contention-related
             # changes (thread pool, spin settings, concurrency limits) that lose on small low-concurrency boxes can win
             # on many cores with 1000+ connections
@@ -2764,18 +2798,26 @@ def run_engine(ctx):
                 it["confidence"] = min(it["confidence"], 1)
             if e.get("n", 0) >= 5 and e.get("losses", 0) >= 0.7 * e["n"] and not e.get("wins") and not e.get("scope"):
                 sc -= 4  # consistently harmful in comparable sessions (e.g. the thread pool at low concurrency): try it last
+                parts.append(["worse in most comparable sessions", -4])
             elif e.get("n", 0) >= 3 and not e.get("wins") and not e.get("scope") and not it.get("retest"):
                 # known neutral here: 3+ comparable runs (any account), none a win - 34 of 39 such repeats were neutral or
                 # worse again. Ranked behind untried ideas; a shifted bottleneck (retest) measures it again
                 sc -= 3
                 it["known_neutral"] = {"n": e["n"], "losses": e.get("losses", 0)}
+                parts.append([f"known neutral here: no win in {e['n']} comparable runs", -3])
         # priority (best-practice bundle, reverts) only with evidence: a bundle nothing measured points at goes last
         # priority only for returning to measured configurations; everything else - the best-practice bundle included -
         # ranks by the evidence for what it acts on
         it["score"] = 100 if it.get("priority") and not it.get("no_mechanism") and not it.get("practice") else sc
+        it["score_parts"] = [[w_, round(v_, 2)] for w_, v_ in parts if v_]
+        if round(sum(v_ for _, v_ in it["score_parts"]), 2) != round(sc, 2):
+            it["score_parts"].append(["other", round(sc - sum(v_ for _, v_ in it["score_parts"]), 2)])
+        if it["score"] != sc:
+            it["score_override"] = "returns to a measured configuration: before new experiments"
         if it["id"] == BUNDLE + "-bisect":
             # a regressed hygiene bundle is split next: otherwise its harmless members stay reverted unexplained (342)
             it["score"] = max(it["score"], 99)
+            it["score_override"] = "a regressed best-practice bundle is split next"
         last_resort = it["id"] in STABILITY_LAST_RESORT
         if STABILITY_FIRST and unstable_now and it["id"] in STABILITY_IDS and it["kind"] == "config" and it.get("confidence", 0) > 0 \
                 and (not last_resort and stab_tried < STABILITY_TRIES or last_resort and not others_left and it["id"] not in tried_ids):
@@ -2792,6 +2834,7 @@ def run_engine(ctx):
                 order = ("sweep-purge-threads",) + tuple(x for x in order if x != "sweep-purge-threads")
             it["score"] = 100 + (len(order) - order.index(it["id"]))
             it["stability"] = True
+            it["score_override"] = "stability first: purge remedies run before tuning, in a fixed order"
             it["score_note"] = "stability first: the undo history grows without bound in the current configuration"
         it["basis"] = basis(it, round(sc - sc_before_exp, 2))
     # durability trade-offs in a synchronous cluster: a committed transaction is on other nodes too, so one node crashing
@@ -2811,6 +2854,7 @@ def run_engine(ctx):
         for it in items:
             if it["kind"] == "config" and it["id"] in MECHANISMS and "cpu-spin" in MECHANISMS[it["id"]][0] and it["score"] < 100:
                 it["score"] += 1
+                it.setdefault("score_parts", []).append([f"{nodes_} NUMA nodes: latch contention costs more", 1])
                 it["score_note"] = (f"{nodes_} NUMA nodes and {spin_share:.0f}% of the time spinning on latches: cross-node cache-line "
                                     "transfers make contention costlier")
     # no swap at all: the swap state is a precondition for sizing memory (pressure means OOM without it, slower pages
@@ -2822,6 +2866,7 @@ def run_engine(ctx):
             if it is not sw and it["kind"] == "config" and any(c["variable"] in MEMORY_VARS for c in it["changes"]) \
                     and it["score"] >= sw["score"] and it["score"] < 100:
                 it["score"] = sw["score"] - 0.5
+                it["score_override"] = "memory settings wait for the swap experiment"
                 it["score_note"] = "after the swap experiment: memory settings are sized with swap in place"
     items.sort(key=lambda i: (i["safety"] == "trade-off" and i["kind"] != "revert", -i["score"]))
     for n, it in enumerate(items, 1):

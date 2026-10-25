@@ -964,6 +964,45 @@ def cancel_experiment(eid: int, request: Request):
 
 
 @app.get("/api/runs/{run_id}")
+CHOICE_KEYS = ("rank", "id", "title", "kind", "safety", "score", "score_parts", "score_override", "confidence", "impact", "note",
+               "known_neutral", "restart", "risk", "relevance", "addresses", "stability", "source")
+
+
+def chosen_by(r, changes):
+    """The decision that made this run (user, 2026-10-25: why this experiment and not another one): the recommendation its
+    change came from, with every candidate's score and score terms, or the person's own experiment."""
+    rid, manual = None, None
+    for c in changes or []:
+        src = str(c.get("source") or "")
+        if src.startswith("rec:"):
+            rid = src[4:]
+            break
+        if src.startswith("exp:") and src[4:].isdigit():
+            e = store.q1("SELECT id, created_by, reason FROM experiments WHERE id=? AND session_id=?", (int(src[4:]), r["session_id"]))
+            by = str((e["created_by"] if e else "") or "")
+            if by.startswith(("agent:", "llm:")):
+                rid = by.split(":", 1)[1]
+            elif e:
+                manual = {"experiment": e["id"], "reason": e["reason"]}
+            break
+    if manual:
+        return {"manual": manual}
+    if not rid:
+        return None
+    for x in store.q("SELECT * FROM recommendations WHERE session_id=? AND created<=? ORDER BY id DESC LIMIT 6", (r["session_id"], r["started"] or 9e12)):
+        items = store.uj(x["items"], []) or []
+        if not any(i.get("id") == rid for i in items):
+            continue
+        src = store.q1("SELECT id, seq, label FROM runs WHERE id=?", (x["run_id"],)) if x["run_id"] else None
+        src = dict(src) if src else None
+        return {"id": rid, "recommendation": x["id"], "created": x["created"], "policy": x["policy"], "goal": x["goal"], "next": x["next"],
+                "decision": store.uj(x["decision"], {}), "from_run": src,
+                "items": [{k: i.get(k) for k in CHOICE_KEYS if i.get(k) is not None} | {"why": (i.get("hypothesis") or {}).get("text") or i.get("rationale"),
+                           "changes": [{"variable": c.get("variable"), "proposed": c.get("proposed"), "unset": c.get("unset")} for c in i.get("changes") or []]}
+                          for i in items]}
+    return None
+
+
 def run_detail(run_id: int, request: Request, vs: int = None):
     u = auth.current_user(request)
     r = own_run(run_id, u["id"])
@@ -1006,6 +1045,7 @@ def run_detail(run_id: int, request: Request, vs: int = None):
         "recommendations": recs, "runs": siblings, "feedback": _feedback_view(_feedback("f.run_id=?", (run_id,)), u),
         "starred": bool(store.q1("SELECT 1 FROM stars WHERE user_id=? AND run_id=?", (u["id"], run_id))),
         "vs_baseline": vs_baseline(r),
+        "chosen_by": chosen_by(r, changes),
         "environment": {"id": s["env_id"], "name": (store.q1("SELECT name FROM environments WHERE id=?", (s["env_id"],)) or {"name": ""})["name"]},
     })
     return out

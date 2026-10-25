@@ -2698,6 +2698,18 @@ def test_low_downside_settings_kept_without_proof_unless_harm():
     assert any(i["id"].startswith("revert-to-run") for i in items2), [i["id"] for i in items2]
 
 
+def test_score_parts_explain_the_ranking():
+    """User (2026-10-25): why this experiment and not another one - every candidate's score term by term, adding up to its
+    score unless a fixed order (reverts, stability first) overrides it."""
+    for sm, inp in (OLTP, OLAP):
+        for it in run(sm, inp, "benchmark")["items"]:
+            ps = it.get("score_parts")
+            assert ps is not None, it["id"]
+            if not it.get("score_override"):
+                assert abs(sum(v for _, v in ps) - it["score"]) < 0.01, (it["id"], it["score"], ps)
+            assert all(w != "other" for w, _ in ps), (it["id"], ps)
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

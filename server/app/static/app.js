@@ -1622,7 +1622,7 @@ function renderRecs(el, rec, runs, feedback, thisRun) {
   function recItem(it) {
     return `<div class="rec"><div class="h"><b>${it.rank}. ${esc(it.title)}</b><span class="id">${esc(it.id)}</span>${it.source === "llm" ? `<span class="badge info">LLM</span>` : ""}${it.kind === "advice" ? '<span class="badge plain">advice only</span>' : it.kind === "revert" ? '<span class="badge warn">revert</span>' : ""}
      ${it.restart ? '<span class="badge plain">restart</span>' : ""}${it.id === rec.next ? '<span class="badge info">next</span>' : ""}
-     <span class="muted" style="font-size:12px">impact <span class="dots" aria-label="${it.impact} of 3">${dots3(it.impact)}</span> · confidence <span class="dots" aria-label="${it.confidence} of 3">${dots3(it.confidence)}</span> · risk <span class="${["durability", "compat", "observability"].includes(it.risk) ? "unsafe" : ""}">${esc(it.risk || "none")}</span></span></div>
+     <span class="muted" style="font-size:12px">score ${scoreCell(it)} · impact <span class="dots" aria-label="${it.impact} of 3">${dots3(it.impact)}</span> · confidence <span class="dots" aria-label="${it.confidence} of 3">${dots3(it.confidence)}</span> · risk <span class="${["durability", "compat", "observability"].includes(it.risk) ? "unsafe" : ""}">${esc(it.risk || "none")}</span></span></div>
      ${it.changes.length ? `<div class="mono" style="margin:4px 0">${it.changes.map(c => `${esc(c.variable)}: <span class="diff-old">${esc(val(c.variable, c.current))}</span> → <span class="diff-new">${c.unset ? "(server default)" : esc(val(c.variable, c.proposed))}</span>`).join("<br>")}</div>` : ""}
      ${it.hypothesis ? `<div class="reason"><b>Why:</b> ${esc(it.hypothesis.text)}${it.hypothesis.lead ? ` <span class="muted">Leads (outside reports and learned insights - they motivate the test, the measurements decide): ${esc(it.hypothesis.lead)}</span>` : ""}${(it.rescore || {}).why ? ` <span class="badge ${it.rescore.delta > 0 ? "good" : "warn"}" data-tip="${esc(it.rescore.why.join("; "))}" tabindex="0">${it.rescore.delta > 0 ? "+" : ""}${it.rescore.delta} from earlier results</span>` : ""}</div>` : ""}
      ${dupOf(it.rationale, it.hypothesis && it.hypothesis.text) && !it.note ? "" : `<div class="reason">${dupOf(it.rationale, it.hypothesis && it.hypothesis.text) ? "" : esc(it.rationale)}${it.note ? " <b>" + esc(it.note) + "</b>" : ""}</div>`}
@@ -1778,10 +1778,69 @@ function baselineDiffHtml(r) {
    <div class="card tablewrap"><table><thead><tr><th>Setting</th><th>Baseline</th><th>This run</th><th>Changed in</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+// why this experiment and not another one: the decision that made this run, every candidate with its score and score terms
+const ptsTxt = v => `${v > 0 ? "+" : v < 0 ? "−" : ""}${+Math.abs(v).toFixed(2)}`;
+const partsTip = it => (it.score_parts || []).map(([w, v]) => `${ptsTxt(v)} ${w}`).join("\n") + (it.score_override ? `\nRanked by a fixed order: ${it.score_override}.` : "");
+function scoreCell(it) {
+  const tip = partsTip(it);
+  return `<span class="mono"${tip ? ` data-tip="${esc(tip)}" tabindex="0" style="text-decoration:underline dotted"` : ""}>${it.score_override ? "fixed" : +(+it.score || 0).toFixed(1)}</span>`;
+}
+function choiceStatus(it, cb, chosen) {
+  if (it.id === cb.id) return '<span class="badge good">chosen</span>';
+  const tip = t => `data-tip="${esc(t)}" tabindex="0"`;
+  if (it.kind === "advice") return `<span class="badge plain" ${tip(it.note || "Advice: shown to people, never run as an experiment.")}>advice only</span>`;
+  if (!it.confidence) return `<span class="badge plain" ${tip(it.note || "Ruled out for this state.")}>ruled out</span>`;
+  if (it.safety === "trade-off" && it.kind !== "revert" && (!chosen || chosen.safety !== "trade-off"))
+    return cb.policy === "benchmark" ? `<span class="badge warn" ${tip("Trade-offs (durability, replication, observability) run after the production-safe candidates, whatever their score: a safe gain is worth more than a faster but less safe configuration.")}>trade-off: after safe ones</span>`
+      : `<span class="badge warn" ${tip("The session's policy keeps production-safe settings only.")}>trade-off: not allowed</span>`;
+  if (chosen && (it.rank || 0) < (chosen.rank || 0)) return `<span class="badge plain" ${tip("Ranked higher but not run: already measured in this session, or it was not runnable at this point.")}>skipped</span>`;
+  return '<span class="muted">lower score</span>';
+}
+function chosenByHtml(r) {
+  const cb = r.chosen_by;
+  if (!cb) return "";
+  if (cb.manual) return `<h3>Why this experiment</h3><p class="muted">Queued by a person (experiment #${cb.manual.experiment})${cb.manual.reason ? ": " + esc(cb.manual.reason) : ""}.</p>`;
+  const items = cb.items || [], chosen = items.find(i => i.id === cb.id);
+  if (!chosen) return "";
+  const d = cb.decision || {}, by = String(d.by || "rules"), planner = by.startsWith("planner:");
+  const from = cb.from_run ? `run #${cb.from_run.seq} <a href="#/run/${cb.from_run.id}/recs">${esc(cb.from_run.label)}</a>` : "the session's start";
+  const rule = planner ? `The AI planner chose it${d.engine_choice && d.engine_choice !== cb.id ? `; the rules' top choice was <code>${esc(d.engine_choice)}</code>` : ""}.`
+    : chosen.score_override ? `It runs in a fixed order: ${esc(chosen.score_override)}.`
+    : `The rules run the highest-scoring candidate that can run${cb.policy === "benchmark" ? ", production-safe candidates before trade-offs" : ""}.`;
+  const rows = items.filter(i => i.kind !== "advice" || i.id === cb.id);
+  // expert input: which candidate a person would have run here (agree = the same one) - for the planner, the learner and
+  // the decision benchmark's labels
+  const ro = !ME || ME.share, mine = [...(r.feedback || [])].reverse().find(f => f.about === "decision" && f.rec_id === cb.recommendation && f.mine !== false);
+  const pick = it => ro ? "" : `<td><button class="ghost${mine && mine.item_id === it.id ? " primary" : ""}" data-pick="${esc(it.id)}" style="padding:1px 8px;font-size:12px">${it.id === cb.id ? "agree" : "pick"}</button></td>`;
+  const row = it => `<tr${it.id === cb.id ? ' style="background:var(--hl, rgba(37,99,235,.06))"' : ""}><td class="num">${it.rank ?? ""}</td><td><b>${esc(it.title || it.id)}</b> <span class="muted mono" style="font-size:11.5px">${esc(it.id)}</span>${it.changes && it.changes.length ? `<div class="mono" style="font-size:12px;color:var(--ink-2)">${it.changes.map(c => `${esc(c.variable)} → ${c.unset ? "(default)" : esc(val(c.variable, c.proposed))}`).join(", ")}</div>` : ""}</td><td class="num">${scoreCell(it)}</td><td>${choiceStatus(it, cb, chosen)}</td>${pick(it)}</tr>`;
+  const top = rows.slice(0, 8), rest = rows.slice(8);
+  return `<h3>Why this experiment${info("The decision that made this run: every candidate the rules generated from the measurements of the run it started from, with its score. Hover a score for its terms: expected impact and confidence of the rule, whether its mechanism matches the measured bottleneck, the parameter catalog, outcomes of the same change in earlier sessions, learned insights and hypotheses tested earlier in this session.")}</h3>
+   <div class="card"><p style="margin:0 0 6px">Chosen from ${from}${decisionLine(d)}. ${rule}</p>
+   ${chosen.why ? `<p class="reason" style="margin:0 0 8px"><b>Why:</b> ${esc(chosen.why)}</p>` : ""}
+   ${(chosen.score_parts || []).length ? `<div class="reason" style="margin:0 0 10px"><b>Score ${chosen.score_override ? "(before the fixed order) " : ""}${+(+((chosen.score_parts || []).reduce((a, [, v]) => a + v, 0))).toFixed(2)}</b> = ${chosen.score_parts.map(([w, v]) => `<span style="white-space:nowrap">${ptsTxt(v)}</span> ${esc(w)}`).join(" · ")}</div>` : ""}
+   <div class="tablewrap"><table><thead><tr><th>#</th><th>Candidate</th><th>Score</th><th>Outcome</th>${ro ? "" : `<th>Your pick${info("Which candidate would you have run at this point? Agree if it is the chosen one. Saved as expert feedback: the AI planner and the learner see it next to the measurements, and it labels this decision for checking the rules.")}</th>`}</tr></thead><tbody>${top.map(row).join("")}</tbody></table></div>
+   ${rest.length ? `<details><summary>${rest.length} more candidate${rest.length === 1 ? "" : "s"}</summary><div class="tablewrap"><table><tbody>${rest.map(row).join("")}</tbody></table></div></details>` : ""}
+   ${items.length - rows.length ? `<p class="muted" style="font-size:12px;margin:6px 0 0">${items.length - rows.length} advice-only item${items.length - rows.length === 1 ? "" : "s"} on the <a href="#/run/${cb.from_run ? cb.from_run.id : r.id}/recs">recommendations</a>.</p>` : ""}</div>`;
+}
+function wirePicks(el, r) {
+  const cb = r.chosen_by;
+  el.querySelectorAll("[data-pick]").forEach(b => b.onclick = async () => {
+    const id = b.dataset.pick, it = (cb.items || []).find(i => i.id === id) || {}, same = id === cb.id;
+    const comment = prompt(same ? "Agree with this choice. Why (optional)?" : `Run ${it.title || id} instead. Why (what in the data points to it)?`);
+    if (comment === null) return;
+    try {
+      const res = await api(`/api/runs/${r.id}/feedback`, { method: "POST", body: { verdict: same ? "agree" : "disagree", about: "decision", rec_id: cb.recommendation,
+        item_id: id, alternative: same ? "" : `${id}: ${it.title || ""}`, comment } });
+      r.feedback = res.feedback;
+      el.querySelectorAll("[data-pick]").forEach(x => x.classList.toggle("primary", x === b));
+    } catch (err) { alert(err.message); }
+  });
+}
 function renderDiff(el, r) {
   const prev = r.compared_with;
   let h = renderEvaluation(r);
   h += baselineDiffHtml(r);
+  h += chosenByHtml(r);
   if (r.seq === 1) h += `<p class="muted">Starting configuration of the session${info("The first run measures the configuration the session started with. Key settings below show compiled defaults and the source of each value." + (prev ? ` Differences from the last run before this session (run #${prev.seq}) are listed for reference.` : ""))}</p>`;
   if (!prev) {}
   else if (!r.diff.length && r.seq !== 1) h += `<p>No configuration differences with run #${prev.seq} <b>${esc(prev.label)}</b>.</p>`;
@@ -1795,6 +1854,7 @@ function renderDiff(el, r) {
     + (pinned.length ? `<p class="muted" style="font-size:12.5px;margin:6px 0 0">Also written at their compiled default (no change on this server): ${pinned.map(k => `<code>${esc(k)}</code>`).join(" ")}${info("The agent's option file pins these at the value this server version uses anyway. Pinning keeps the configuration the same when the same file is used on another release series, where some defaults differ (e.g. MySQL 8.0 vs 8.4).")}</p>` : "");
   else if (reqs.length) h += `<h3>Benchmark prerequisites${info(REQ_TIP)}</h3><div class="card">${reqTable(reqs)}</div>`;
   el.innerHTML = h;
+  if (r.chosen_by && r.chosen_by.items) wirePicks(el, r);
 }
 
 function renderCpuProfile(el, p) {
@@ -1896,7 +1956,7 @@ function renderInputs(el, r) {
 // ------------------------------------------------------------------ info tooltips (hover, focus, tap)
 (function () {
   const show = el => { const r = el.getBoundingClientRect(); const t = document.getElementById("tip");
-    t.innerHTML = `<div style="max-width:300px;white-space:normal;line-height:1.45">${esc(el.dataset.tip)}</div>`; t.hidden = false;
+    t.innerHTML = `<div style="max-width:300px;white-space:pre-line;line-height:1.45">${esc(el.dataset.tip)}</div>`; t.hidden = false;
     let left = Math.min(r.left, window.innerWidth - t.offsetWidth - 8), top = r.bottom + 6;
     if (top + t.offsetHeight > window.innerHeight - 8) top = r.top - t.offsetHeight - 6;
     t.style.left = Math.max(8, left) + "px"; t.style.top = top + "px"; };

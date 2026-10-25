@@ -948,3 +948,24 @@ def test_learner_write_class():
           {"name": "CPU: redo / commit path", "share_pct": 30.0, "tags": ["cpu", "commit"]}]
     assert learner._write_class({"redo_mbs": 40}, {"time_breakdown": tb}) == "write-heavy"
     assert learner._write_class({"redo_mbs": 40}, {"time_breakdown": tb[1:]}) == "writes"  # CPU on the commit path is not a backlog
+
+
+def test_run_shows_the_decision_that_chose_it(tuned, user):
+    """User (2026-10-25, session 353 run 5 spin-loops): why this experiment and not another one. The run page gets the
+    recommendation its change came from, with every candidate's score and score terms."""
+    from app import store
+    rid = tuned["runs"][-1]
+    r = store.q1("SELECT session_id, seq, started FROM runs WHERE id=?", (rid,))
+    parent = store.q1("SELECT id FROM runs WHERE session_id=? AND seq<? ORDER BY seq DESC LIMIT 1", (r["session_id"], r["seq"]))
+    items = [{"id": "spin-loops", "rank": 1, "title": "Shorter spin loops", "kind": "config", "safety": "safe", "score": 11.9, "confidence": 1,
+              "score_parts": [["expected impact 2 of 3 (x2)", 4], ["confidence 1 of 3", 1], ["acts on the measured bottleneck", 6.9]],
+              "changes": [{"variable": "innodb_sync_spin_loops", "proposed": "10"}], "hypothesis": {"text": "CPU saturated"}},
+             {"id": "binlog-off", "rank": 2, "title": "Binary log off", "kind": "config", "safety": "trade-off", "score": 15.4, "confidence": 2}]
+    store.ex("INSERT INTO recommendations(session_id, run_id, created, goal, policy, items, next, decision) VALUES (?,?,?,?,?,?,?,?)",
+             (r["session_id"], parent["id"] if parent else None, (r["started"] or 0) - 10, "tps", "benchmark", json.dumps(items), "spin-loops",
+              '{"by": "rules"}'))
+    store.ex("UPDATE runs SET changes=? WHERE id=?", (json.dumps([{"variable": "innodb_sync_spin_loops", "old": "30", "new": "10", "source": "rec:spin-loops"}]), rid))
+    cb = user.ui.get(f"/api/runs/{rid}").json()["chosen_by"]
+    assert cb["id"] == "spin-loops" and cb["policy"] == "benchmark", cb
+    assert [i["id"] for i in cb["items"]] == ["spin-loops", "binlog-off"], cb
+    assert cb["items"][0]["score_parts"][0][1] == 4 and cb["items"][0]["why"] == "CPU saturated", cb["items"][0]

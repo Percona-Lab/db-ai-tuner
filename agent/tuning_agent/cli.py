@@ -2940,6 +2940,8 @@ def _recommend(c, sess, llm=False):
     if extra:
         for it in extra:
             it["score"] = engine.score(it, ctx.get("goal", "tps")) + (2 if why not in (None, "routine") else 0) - (10 if it.get("no_mechanism") else 0)
+            it["score_parts"] = [x for x in engine.score_parts(it, ctx.get("goal", "tps")) + [["AI asked because the rules ran out or the bottleneck is unclear", 2 if why not in (None, "routine") else 0],
+                                 ["nothing in this workload for it to act on", -10 if it.get("no_mechanism") else 0]] if x[1]]
             ob = engine.oversubscription_block(it, ctx)  # AI ideas get the same gate as the rules'
             if ob:
                 it["confidence"], it["note"] = 0, (it.get("note", "") + " " + ob).strip()
