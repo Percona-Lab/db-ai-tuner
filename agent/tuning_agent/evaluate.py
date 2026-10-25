@@ -1013,7 +1013,7 @@ def _verdict(run, history, goal, noise):
         details["swap_hazard"] = {"dbproc_swap_mb": s.get("dbproc_swap_mb"), "swap_in": s.get("swap_in"),
                                   "offcpu_swapin_share_pct": s.get("offcpu_swapin_share_pct")}
     v = _goal_verdict(d_goal, goal_noise, better, worse, details)
-    _secondary_latency(details, s, parent_runs, d_goal, goal_noise)
+    _secondary_latency(details, s, parent_runs, d_goal, goal_noise, run)
     if v == "neutral" and d_goal is not None:
         _explain_neutral(details, d_goal, goal_noise, noise)
     return v, details
@@ -1047,11 +1047,22 @@ LATENCY_KEYS = (("avg_latency_ms", "avg statement latency"), ("p95_latency_ms", 
 MIN_LATENCY_NOISE = 10.0  # %: statement latencies scatter more than throughput
 
 
-def _secondary_latency(details, s, parent_runs, d_goal, goal_noise):
+def _thread_pool(r):
+    return str(((r or {}).get("managed") or {}).get("thread_handling") or ((r or {}).get("config") or {}).get("thread_handling") or "").lower() == "pool-of-threads"
+
+
+def _secondary_latency(details, s, parent_runs, d_goal, goal_noise, run=None):
     """The goal did not move, but statements got clearly faster at no extra CPU or I/O per transaction (session 294:
     os-autogroup +0.7% TPS, avg statement latency -24%, p95 -37% - with a co-located closed-loop client the time saved
     in the server moved to the client, so TPS could not show it). Reported, and offered as a latency improvement."""
     if d_goal is None or d_goal < -0.5 * goal_noise or details.get("efficiency_worse"):
+        return
+    if run is not None and any(_thread_pool(p) != _thread_pool(run) for p in parent_runs):
+        # performance_schema times a statement from when a worker runs it: under the thread pool the time it waited in the
+        # pool's queue is in no statement timer (em-b212x 337: avg 3.75 -> 0.39 ms while 1024 clients / TPS stayed ~92 ms
+        # per transaction). Statement latencies with and without the pool are not comparable
+        details["latency_not_comparable"] = ("thread pool on in one configuration and off in the other: server-side statement "
+                                             "times leave out the pool's queue, so they are not compared")
         return
     gains = {}
     for k, label in LATENCY_KEYS:

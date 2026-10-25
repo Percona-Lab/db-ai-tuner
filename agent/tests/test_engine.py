@@ -2531,6 +2531,20 @@ def test_thread_pool_settings_tuned_not_only_switched_on():
     assert "1" not in it["tune-thread-pool-oversubscribe"]["sweep"]["values"]
 
 
+def test_thread_pool_statement_times_not_compared():
+    """em-b212x 337: the thread pool 'made statements 10x faster' (avg 3.75 -> 0.39 ms) while clients waited as long as
+    before (1024 / TPS ~92 ms per transaction): statement timers leave out the pool's queue. Not a latency gain."""
+    from tuning_agent import evaluate
+    par = [{"seq": i, "managed": {"thread_handling": "one-thread-per-connection"}, "summary": {"avg_latency_ms": x}} for i, x in ((1, 3.75), (2, 3.8), (3, 3.91))]
+    run = {"seq": 4, "managed": {"thread_handling": "pool-of-threads"}, "summary": {"avg_latency_ms": 0.39}}
+    d = {}
+    evaluate._secondary_latency(d, run["summary"], par, 3.8, 4.15, run)
+    assert "secondary_gain" not in d and d.get("latency_not_comparable"), d
+    d2 = {}
+    evaluate._secondary_latency(d2, run["summary"], [dict(p, managed={"thread_handling": "pool-of-threads"}) for p in par], 3.8, 4.15, run)
+    assert d2.get("secondary_gain"), d2  # both under the pool: compared as before
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
