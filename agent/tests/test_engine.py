@@ -2686,7 +2686,8 @@ def test_low_downside_settings_kept_without_proof_unless_harm():
     run = {"changes": [{"variable": "os:hugepages", "new": "23136", "source": "rec:os-hugepages"},
                        {"variable": "large_pages", "new": "ON", "source": "rec:os-hugepages"}]}
     assert evaluate.low_downside_kept(run, "neutral", {"goal_delta_pct": 2.2})
-    assert not evaluate.low_downside_kept(run, "neutral", {"goal_delta_pct": -0.4})
+    assert evaluate.low_downside_kept(run, "neutral", {"goal_delta_pct": -0.15, "goal_noise_pct": 2.69})  # 361: noise, not harm
+    assert not evaluate.low_downside_kept(run, "neutral", {"goal_delta_pct": -1.5, "goal_noise_pct": 2.69})  # leans to harm
     assert not evaluate.low_downside_kept({"changes": [{"variable": "os:kernel.numa_balancing", "new": "0"}]}, "neutral", {"goal_delta_pct": 2.0})
     base = {"seq": 1, "label": "baseline (1/3)", "managed": {"a": "1"}, "goal_value": 100.0, "verdict": "reference"}
     exp = {"seq": 4, "label": "os-hugepages", "managed": {"a": "1", "os:hugepages": "23136", "large_pages": "ON"}, "goal_value": 102.2,

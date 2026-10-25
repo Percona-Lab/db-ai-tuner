@@ -855,12 +855,12 @@ def _run_verdict(run, history, goal, noise, peers=None):
         d["note"] = (f"Stabilized: the undo history list no longer grows without bound (it did with the parent configuration, runs "
                      f"{stab['parent_runs']}). Kept for stability" + (f" at a cost of {-stab['goal_delta_pct']:.1f}% on the goal." if (stab.get("goal_delta_pct") or 0) < 0 else ".")
                      + (" " + d["note"] if d.get("note") else ""))
-    low = low_downside_kept(run, v, d)
+    low = low_downside_kept(run, v, d, (noise or {}).get("noise_pct"))
     if low:
         d = dict(d, low_downside_kept=low)
         d["note"] = ((d["note"] + " ") if d.get("note") else "") + (
             f"Kept: {', '.join(low['settings'])} {'has' if len(low['settings']) == 1 else 'have'} a known mechanism to help and no known "
-            f"way to hurt when applied correctly; the run measured no harm ({low['goal_delta_pct']:+.1f}% on the goal, CPU / I/O per "
+            f"way to hurt when applied correctly; the run measured no harm ({low['goal_delta_pct']:+.1f}% on the goal, within noise; CPU / I/O per "
             "transaction not worse), so the change stays without proof beyond noise. Measured harm in comparable sessions "
             "revokes this.")
     # only meaningful for a run compared with another configuration (not the first run, not calibration repeats)
@@ -871,16 +871,19 @@ def _run_verdict(run, history, goal, noise, peers=None):
     return v, d
 
 
-def low_downside_kept(run, v, d):
+def low_downside_kept(run, v, d, noise_pct=None):
     """A within-noise run whose changes are all low-downside settings (engine.LOW_DOWNSIDE_VARS: help in theory, no known way
-    to hurt) and that measured no harm - goal not worse, efficiency not worse, steady window: {settings, goal_delta_pct}
-    (kept), else None. Settings that can help or hurt still need a gain beyond noise (user, 2026-10-25, 341 huge pages)."""
+    to hurt) and that measured no harm - goal not clearly worse (no lower than half the noise threshold: within noise a
+    harmless change measures slightly negative half the time - 361 huge pages -0.15% within ±2.69% was rolled back),
+    efficiency not worse, steady window: {settings, goal_delta_pct} (kept), else None. Settings that can help or hurt still
+    need a gain beyond noise (user, 2026-10-25, 341 huge pages)."""
     from .engine import LOW_DOWNSIDE_VARS
     if v != "neutral" or (d or {}).get("not_steady") or (d or {}).get("efficiency_worse"):
         return None
     ch = [c.get("variable") for c in run.get("changes") or [] if not str(c.get("source") or "").startswith(("rollback", "rec:revert", "rec:drop-"))]
     dg = (d or {}).get("goal_delta_pct")
-    if not ch or dg is None or dg < 0 or any(x not in LOW_DOWNSIDE_VARS for x in ch):
+    harm_at = -0.5 * float((d or {}).get("goal_noise_pct") or noise_pct or DEFAULT_GOAL_NOISE)
+    if not ch or dg is None or dg <= harm_at or any(x not in LOW_DOWNSIDE_VARS for x in ch):
         return None
     return {"settings": sorted(set(ch)), "goal_delta_pct": dg}
 
