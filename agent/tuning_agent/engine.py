@@ -2525,6 +2525,8 @@ def rescore(it, hyps):
 
 
 ALSO_FROM_DIAGNOSIS = {"io-read", "io-flush"}
+GENERIC_RESOURCE = {"cpu", "cpu-pressure", "sched-delay", "io", "concurrency"}  # diagnoses of a whole resource (or of many runnable threads), not of one way to spend it
+SPECIFIC_KINDS = set().union(*bottleneck.SPECIFIC.values())
 QUEUE_LEVERS = {"thread-pool", "sweep-thread-concurrency"}
 STOP_AFTER_FRUITLESS = 6  # status / OS evidence (read vs write split) the wait classes cannot separate
 
@@ -2677,7 +2679,13 @@ def run_engine(ctx):
             q = next((p.get("cpu_queue_share_pct") for p in ctx["breakdown"] if p.get("cpu_queue_share_pct") is not None), None)
             if q is not None:
                 in_time.add("sched-delay")
-            rd, md = relevance(it["id"], [d for d in ctx["diagnosis"] if d["type"] not in in_time or d["type"] in ALSO_FROM_DIAGNOSIS])
+            diag_ = [d for d in ctx["diagnosis"] if d["type"] not in in_time or d["type"] in ALSO_FROM_DIAGNOSIS]
+            if set(MECHANISMS[it["id"]][0]) & SPECIFIC_KINDS & in_time and it["id"] not in QUEUE_LEVERS:
+                # the specific kind it acts on is measured (spinning, the allocator, read I/O ...): that share decides, not a
+                # diagnosis of the whole resource - big items first (user, 353: spin-loops ranked first with +6 for "CPU
+                # saturated" while spinning was 1% of the time)
+                diag_ = [d for d in diag_ if d["type"] not in GENERIC_RESOURCE or d["type"] in ALSO_FROM_DIAGNOSIS]
+            rd, md = relevance(it["id"], diag_)
             rel, matched = max(rb or 0, rd or 0), mb + md
             # only levers that reduce the queue itself (admission control) earn the queue share: the boost for every
             # "sched-delay" tag lifted log-writer-off, spin-loops and autogroup as high as the thread pool (r1 review)

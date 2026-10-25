@@ -2710,6 +2710,21 @@ def test_score_parts_explain_the_ranking():
             assert all(w != "other" for w, _ in ps), (it["id"], ps)
 
 
+def test_measured_share_beats_a_generic_resource_diagnosis():
+    """User (353): big items first. A change aimed at 1% of the time (spin loops while the profile shows 1% spinning)
+    gets no bottleneck credit from 'CPU saturated'; a change aimed at the large measured part ranks ahead of it."""
+    from tuning_agent import engine
+    s = dict(OLTP[0], cpu_busy=97, psi_cpu_some=80, threads_running_avg=200)
+    bd = [{"name": "CPU: spinning on latches", "share_pct": 1, "tags": ["cpu", "cpu-spin"]},
+          {"name": "CPU: B-tree / row access", "share_pct": 30, "tags": ["cpu", "cpu-btree"]},
+          {"name": "Waiting: commit - redo flush", "share_pct": 45, "tags": ["commit", "io"]}]
+    ctx = {"goal": "tps", "policy": "benchmark", "os_tuning": True, "os_facts": {}, "hw": dict(HW, cpus=8), "flavor": "percona",
+           "version": (8, 4, 11), "variables": dict(VARS), "summary": s, "inputs": dict(OLTP[1], time_breakdown=bd),
+           "history": [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}], "noise_pct": 2.0, "managed": {}}
+    it = ids(engine.run_engine(ctx))
+    assert "spin-loops" in it and not it["spin-loops"].get("relevance"), (it["spin-loops"].get("relevance"), it["spin-loops"].get("addresses"))
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
