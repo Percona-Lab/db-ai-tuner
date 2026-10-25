@@ -1251,6 +1251,15 @@ async function sessionPage(id) {
      ${cols.tps ? `<td class="num">${num(sm.tps)}</td>` : ""}${cols.avg ? `<td class="num">${num(sm.avg_latency_ms)}</td>` : ""}${cols.perTrx ? `<td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td>` : ""}<td class="num" style="white-space:nowrap">${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}${costOf(r) != null ? `<div class="muted" style="font-size:11px" data-tip="Machine cost of this run: wall time since the previous run ended (data reset, warm-up, measurement) × $${(d.cost.rate_hourly).toFixed(4)}/hour" tabindex="0">$${costOf(r).toFixed(costOf(r) < 0.1 ? 3 : 2)}</div>` : ""}</td>`;
     tb.appendChild(tr);
   });
+  // the run being prepared (reset, restart, warm-up): it gets its row once its window starts - shown here meanwhile
+  const act = s.status === "active" ? s.activity : null;
+  if (tb && act && !["measuring", "idle", "between runs"].includes(act.phase) && !d.runs.some(r => r.status === "measuring")) {
+    const left = act.until ? Math.round((act.until - Date.now() / 1000) / 60) : null;
+    const tr = document.createElement("tr");
+    tr.className = "pending-run";
+    tr.innerHTML = `<td class="muted">${(d.runs.length ? Math.max(...d.runs.map(r => r.seq)) : 0) + 1}</td><td colspan="11"><span class="badge info" data-tip="The next run is being prepared; it appears with its results once its measured window starts." tabindex="0">${esc(act.phase)}</span> <span class="muted">${esc(act.detail || "")}${act.at ? ` · since ${ago(act.at)}` : ""}${left != null && left > 0 ? ` · ~${left} min left` : ""}</span></td>`;
+    tb.appendChild(tr);
+  }
   if (tb) wireStars(tb);
   const bc = document.getElementById("bestcfg");
   if (bc) bc.addEventListener("toggle", () => { if (bc.open && !bc.dataset.loaded) { bc.dataset.loaded = 1; renderBestConfig(document.getElementById("bestcfgBody"), bestSafe, bestTrade, first); } });

@@ -1155,6 +1155,16 @@ def run_metrics(run_id: int, request: Request, pad: float = 60, points: int = 40
             warm = [r["started"] - secs - max(0.0, float(w["wd"] or 0)), r["started"]]
     except (TypeError, ValueError):
         warm = None
+    if warm is None and r["started"] and r["status"] == "measuring":
+        # a run still measuring has no inputs yet: its warm-up is the session's planned one, else the previous run's
+        plan = store.uj(s.get("run_plan")) or {}
+        prev = store.q1("SELECT json_extract(inputs, '$.bench.warmup_s') ws FROM runs WHERE session_id=? AND seq<? AND "
+                        "json_extract(inputs, '$.bench.warmup_s') IS NOT NULL ORDER BY seq DESC LIMIT 1", (r["session_id"], r["seq"]))
+        secs = plan.get("warmup_s") or (prev["ws"] if prev else None)
+        try:
+            warm = [r["started"] - float(secs), r["started"]] if secs else None
+        except (TypeError, ValueError):
+            warm = None
     t0 = (warm[0] if warm else (r["started"] or now())) - pad
     t1 = (r["ended"] or now()) + (pad if r["ended"] else 0)
     m = metrics_window(s["env_id"], t0, t1, points)
