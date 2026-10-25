@@ -162,6 +162,28 @@ a multi-GB buffer pool can take a minute.
   locks, swap, concurrency. Pressure-stall numbers (PSI, `% of time stalled`) come from mysqld's own cgroup
   when available, so a co-located benchmark client does not distort them.
 * Run summaries include host CPU and `mysqld_cpu_pct` (mysqld's share of the host).
+* **Why each experiment ran:** every run page has a "Why this experiment" card - all candidates the rules generated
+  from the previous run's measurements, each with its score term by term (expected impact, confidence, how much of
+  the measured time it acts on, outcomes in earlier sessions, learned insights) and why the others did not run.
+  The biggest measured items come first. A person can mark the candidate they would have picked.
+* **Verdicts:** `improved` / `regressed` only beyond the session's calibrated noise threshold; within it `neutral`.
+  A change is kept only with a gain beyond noise - except low-downside best practices (huge pages, swappiness,
+  noatime, the CPU governor, the I/O scheduler, THP off, flush_neighbors 0 ...), which stay unless the run leans to
+  harm (worse than half the threshold, or more CPU / I/O per transaction). Settings that can help or hurt (NUMA
+  interleave, the thread pool ...) always need proof.
+* **Run quality flags** (on the run page and in `--json` evaluations) - say them when you report a result:
+  * *CPU steal* (VMs): compared with the session's usual level and checked for swings inside the window; a steady
+    level affects every run alike and is fine. Steal well off the usual level makes the run `unreliable` (excluded,
+    re-measured); swings flag it.
+  * *CPU clock*: average and lowest frequency and thermal throttling events (bare metal). Throttling or a clock far
+    off the usual flags the run; it never excludes it (the clock also follows the load).
+  * *Host busy*: before each run the agent checks that the host is quiet - after a data reset with mysqld stopped,
+    caches synced and dropped, so any CPU (processes, kernel threads, interrupts) or disk traffic is outside work: a
+    software RAID resync, a scrub, package updates. Flagged, not excluded: find and stop the outside work, or wait
+    for it, before trusting small differences.
+  * *not steady*, *unsustainable* (undo history growing without bound), *low disk space*, *stalls*: see the badges.
+* Verdicts are re-judged against all other runs of the session when the noise is recalibrated; after updating the
+  agent mid-session, `tuning-agent reevaluate` applies the current rules to earlier runs.
 
 ## Benchmark hygiene (important)
 
@@ -172,5 +194,11 @@ a multi-GB buffer pool can take a minute.
   buffer pool load has completed and throughput is stable; `measure run` uses it automatically if mysqld restarted
   in the last 10 minutes.
 * Differences below ~2-3% are usually noise on cloud VMs; repeat runs before claiming a win.
+* With a `reset` command in the profile, every run starts from the same OS state: after the reset the agent syncs
+  and drops the page cache (and checks the host is quiet with mysqld stopped; `quiet_check = false` in `[bench]`
+  turns that check off). Without a reset, the data and caches carry over from run to run.
+* Do not restore the buffer pool from a dump between runs: each run builds its own cache, so runs start alike.
+* Swap: the baseline adds a swap file up to 20% of RAM (at least 4 GiB, at most 16 GiB, at most half the free disk)
+  so memory pressure shows as slower runs instead of an OOM kill; a larger existing swap is kept.
 * Do not run `measure` while applying changes; `apply` refuses during a measurement.
 * The server restarting during a window invalidates it (`measure stop` fails; use `measure abort`).
