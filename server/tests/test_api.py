@@ -894,3 +894,19 @@ def test_waits_share_of_database_time(user):
     assert w["active_threads"] == 1000 and abs(w["wait_threads"] - 10.1) < 0.01, w
     ev = {e["event"]: e for e in w["events"]}
     assert ev["wait/io/table/sql/handler"]["pct"] is None and ev["wait/io/file/innodb/innodb_data_file"]["pct"] > 98
+
+
+def test_repeat_run_shows_the_profile_of_its_configuration(tuned, user):
+    """User (342 run 4833): runs of an already profiled configuration said 'CPU (not profiled)'. The run page shows the
+    profile of the latest earlier run of the same configuration, and says which run it is from."""
+    from app import store
+    rid = tuned["runs"][-1]
+    r = store.q1("SELECT session_id, seq, managed FROM runs WHERE id=?", (rid,))
+    prev = store.q1("SELECT id, seq FROM runs WHERE session_id=? AND seq<? ORDER BY seq DESC LIMIT 1", (r["session_id"], r["seq"]))
+    if not prev:
+        return
+    store.ex("UPDATE runs SET managed=?, status='done', inputs=? WHERE id=?",
+             (r["managed"], '{"cpu_profile": {"categories": {"B-tree / row access": 40}}}', prev["id"]))
+    store.ex("UPDATE runs SET inputs='{}' WHERE id=?", (rid,))
+    cp = user.ui.get(f"/api/runs/{rid}").json()["inputs"].get("cpu_profile")
+    assert cp and cp["borrowed_from"]["seq"] == prev["seq"], cp

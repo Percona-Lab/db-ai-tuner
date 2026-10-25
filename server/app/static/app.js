@@ -1685,7 +1685,8 @@ async function runPage(id, tab) {
       if (r.status === "measuring") timers.push(setInterval(loadRun, 15000));
     }
     else if (name === "inputs") renderInputs(tabEl, r);
-    else if (name === "cpu") renderCpuProfile(tabEl, r.inputs.cpu_profile);
+    else if (name === "cpu") { renderCpuProfile(tabEl, r.inputs.cpu_profile); const bf = r.inputs.cpu_profile.borrowed_from;
+      if (bf) tabEl.insertAdjacentHTML("afterbegin", `<div class="note" style="margin-bottom:10px">The CPU is profiled once per configuration: this profile is from <a href="#/run/${bf.run_id}/cpu">run #${bf.seq} ${esc(bf.label || "")}</a>, the same configuration measured earlier.</div>`); }
     else if (name === "recs") { tabEl.innerHTML = ""; if (!r.recommendations.length) tabEl.innerHTML = '<p class="muted">No recommendation was generated from this run.</p>'; r.recommendations.forEach(rec => { const c = document.createElement("div"); c.className = "card"; c.style.marginBottom = "12px"; tabEl.appendChild(c); renderRecs(c, rec, r.runs, r.feedback, r.id); }); }
     else if (name === "config") {
       const c = await api(`/api/runs/${id}/config`);
@@ -1807,9 +1808,12 @@ function renderInputs(el, r) {
     h += `<h3>Benchmark: ${esc(b.name)}</h3><div class="kv">${(b.observed || []).map(o => `<div>Tool as it ran</div><div class="mono">${esc(o.argv.map(shq).join(" "))}${Object.keys(o.env || {}).length ? " " + esc(Object.entries(o.env).map(([k, v]) => k + "=" + v).join(" ")) : ""}</div>`).join("")}<div>Run command</div><div class="mono">${esc(maskPw(b.command || b.run))}</div>${b.reset ? `<div>Reset</div><div class="mono">${esc(maskPw(b.reset))}</div>` : ""}<div>Warm-up / measured</div><div>${esc(b.warmup)} s / ${b.duration ? esc(b.duration) + " s" : "until finished"}</div><div>Exit code</div><div>${esc(b.exit_code)}</div>${(b.requirements || []).length ? `<div>Prerequisites${info(REQ_TIP)}</div><div class="mono">${b.requirements.map(q => esc(q.variable) + " ≥ " + esc(q.required)).join(" · ")}</div>` : ""}
       ${Object.entries(b.metrics || {}).map(([k, v]) => `<div class="mono">${esc(k)}</div><div class="mono"><b${typeof v === "number" ? ` data-tip="${esc(v)}" tabindex="0"` : ""}>${typeof v === "number" ? num(v) : esc(v)}</b></div>`).join("")}</div><details><summary>Benchmark output (tail)</summary><pre>${esc(b.log_tail || "")}</pre></details>`;
   }
-  const tbk = inp.time_breakdown || [];
+  const tbk = (inp.time_breakdown || []).map(x => (inp.cpu_profile || {}).borrowed_from && x.name === "CPU (not profiled)"
+    ? Object.assign({}, x, { name: `CPU (profiled in run #${inp.cpu_profile.borrowed_from.seq})` }) : x);
   if (tbk.length) {
     const q = tbk[0].cpu_queue_share_pct;
+    const bfp = (inp.cpu_profile || {}).borrowed_from;
+    if (bfp) h += `<div class="note" style="margin:6px 0 8px;font-size:12.5px">This run has no CPU profile of its own (one per configuration): the CPU detail of this configuration is in <a href="#/run/${bfp.run_id}/cpu">run #${bfp.seq} ${esc(bfp.label || "")}</a>.</div>`;
     h += `<h3>Where the time went${info("Average number of database threads in each state during the measured window, largest first: what keeps the workload from going faster. On-CPU time is split by the CPU profile when one was taken (otherwise one CPU component); time spent runnable but waiting for a CPU is added to the CPU components in proportion, because doing less CPU work shortens that queue too. Waits come from the eBPF off-CPU profile of the connection threads when one was taken (every blocked moment, classified by where the thread blocked, including waits performance_schema does not instrument); otherwise from performance_schema waits and file I/O by operation (global, so background threads such as page cleaners are included) and InnoDB row lock counters. Name resolution comes from eBPF probes over the whole window. Hover a component for its source and the stacks behind it. 'Client / network' = the server waiting for the next statement. Experiments are ranked by how much of this time they can act on.")}</h3>
       <div class="card"><div class="waitbar">${stackBar(tbk, p => p.name, p => p.share_pct, p => `${p.name}: ${p.share_pct}% (${num(p.threads)} threads)`).map(([k, v, c, t]) => `<span style="width:${v}%;background:${c}" data-tip="${esc(t)}" tabindex="0"></span>`).join("")}</div>
       <div class="tablewrap"><table class="kvt" style="margin-top:6px"><tbody>${tbk.slice(0, 10).map((p, i) => {

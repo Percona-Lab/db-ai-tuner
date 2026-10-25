@@ -983,6 +983,18 @@ def run_detail(run_id: int, request: Request, vs: int = None):
     inputs = store.uj(r["inputs"], {}) or {}
     if inputs.get("bench"):
         inputs["bench"] = mask_bench(inputs["bench"])
+    if not (inputs.get("cpu_profile") or {}).get("categories"):
+        # profiles run once per configuration: a repeat / confirmation / re-check uses the latest earlier run of the same
+        # configuration's profile (as the agent does for its next decision) - said so, with that run (user, 342 run 4833)
+        mk = json.dumps(store.uj(r["managed"], {}) or {}, sort_keys=True)
+        for x in store.q("SELECT id, seq, label, managed, inputs FROM runs WHERE session_id=? AND seq<? AND status='done' ORDER BY seq DESC",
+                         (r["session_id"], r["seq"])):
+            if json.dumps(store.uj(x["managed"], {}) or {}, sort_keys=True) != mk:
+                continue
+            cp = (store.uj(x["inputs"], {}) or {}).get("cpu_profile")
+            if (cp or {}).get("categories"):
+                inputs["cpu_profile"] = dict(cp, borrowed_from={"run_id": x["id"], "seq": x["seq"], "label": x["label"]})
+                break
     out.update({
         "start": session_results(s).get("start"),
         "inputs": inputs, "diagnosis": store.uj(r["diagnosis"], []), "managed": store.uj(r["managed"], {}),
