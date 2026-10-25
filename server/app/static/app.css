@@ -241,3 +241,4 @@ figure.shot figcaption { font-size: 12px; color: var(--muted); margin-top: 5px; 
 .note.alert { background: color-mix(in srgb, var(--serious) 12%, var(--surface)); border-left: 3px solid var(--serious); }
 .tile.alert { border-color: var(--crit); background: color-mix(in srgb, var(--crit) 8%, var(--surface)); }
 .tile.caution { border-color: var(--serious); background: color-mix(in srgb, var(--serious) 8%, var(--surface)); }
+.tile.ok { border-color: color-mix(in srgb, var(--good) 55%, var(--border)); background: color-mix(in srgb, var(--good) 6%, var(--surface)); }
