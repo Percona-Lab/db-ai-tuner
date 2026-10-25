@@ -64,7 +64,7 @@ const EXCLUDED = ["unreliable", "superseded"];
 function verdictBadge(v, note) {
   const m = { improved: "good", "efficiency-gain": "good", regressed: "bad", "efficiency-loss": "warn", neutral: "plain", reference: "info", repeat: "plain", unreliable: "warn", superseded: "plain" };
   // the run's own reason (steal, configuration mismatch, client failures, ...): the badge used to blame steal for all of them
-  const tip = v === "unreliable" ? ` data-tip="${esc((note || "The measurement is not trustworthy").replace(/^UNRELIABLE:\s*/, "") + " Excluded from all comparisons and re-measured by autotune.")}" tabindex="0"'
+  const tip = v === "unreliable" ? ` data-tip="${esc((note || "The measurement is not trustworthy").replace(/^UNRELIABLE:\s*/, "") + " Excluded from all comparisons and re-measured by autotune.")}" tabindex="0"`
     : v === "superseded" ? ' data-tip="Measured with a shorter run length. The noise plan lengthened the runs and calibrated the starting configuration again; this run is kept for reference and excluded from comparisons." tabindex="0"' : "";
   return v ? `<span class="badge ${m[v] || "plain"}"${tip}>${esc(v)}</span>` : "";
 }
