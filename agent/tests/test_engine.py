@@ -1903,6 +1903,10 @@ def test_fruitless_streak_since_last_gain():
            [{"seq": 4 + i, "label": f"idea{i}", "verdict": "neutral"} for i in range(5)] + [{"seq": 9, "label": "re-check (run 2 config)", "verdict": "repeat"}]
     f = cli._fruitless_since_gain({"runs": runs})
     assert [r["seq"] for r in f] == [4, 5, 6, 7, 8], f
+    sw = runs[:3] + [{"seq": 4, "label": "exp#395 innodb_buffer_pool_instances=4", "verdict": "neutral"},
+                     {"seq": 5, "label": "exp#395 innodb_buffer_pool_instances=16", "verdict": "regressed"},
+                     {"seq": 6, "label": "os-hugepages", "verdict": "neutral"}]
+    assert [r["seq"] for r in cli._fruitless_since_gain({"runs": sw})] == [4, 6]  # a sweep is one experiment
 
 
 def test_learning_state_counts_loaded_learnings():

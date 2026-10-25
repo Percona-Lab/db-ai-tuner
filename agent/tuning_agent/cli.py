@@ -44,9 +44,18 @@ def _fruitless_since_gain(sess):
     runs = sess.get("runs") or []
     last = max((i for i, r in enumerate(runs) if r.get("verdict") in ("improved", "efficiency-gain", "reference")), default=-1)
     skip = ("baseline", "calibration", "re-check", "best safe", "best with")
-    return [r for r in runs[last + 1:] if r.get("verdict") not in ("repeat", "superseded")
-            and not str(r.get("label") or "").startswith(skip) and "(confirm" not in str(r.get("label") or "")
-            and "(repeat" not in str(r.get("label") or "")]
+    out, seen = [], set()
+    for r in runs[last + 1:]:
+        lab = str(r.get("label") or "")
+        if r.get("verdict") in ("repeat", "superseded") or lab.startswith(skip) or "(confirm" in lab or "(repeat" in lab:
+            continue
+        # a sweep is one experiment however many values it measured (pop2 341: two 2-point sweeps counted as 4 of the 8)
+        key = lab.split(" ")[0] if lab.startswith("exp#") else None
+        if key and key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+    return out
 
 
 class TooSlow(Fail):
