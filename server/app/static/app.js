@@ -1797,6 +1797,7 @@ function scoreCell(it) {
   const tip = partsTip(it);
   return `<span class="mono"${tip ? ` data-tip="${esc(tip)}" tabindex="0" style="text-decoration:underline dotted"` : ""}>${it.score_override ? "fixed" : +(+it.score || 0).toFixed(1)}</span>`;
 }
+const TRADE_FIRST = "Benchmark policy: a trade-off backed by measured evidence runs before production-safe ideas that score far lower, and with commits taking 20% or more of the time the commit-path trade-off (innodb_flush_log_at_trx_commit=2) runs first - the largest item first. It never becomes part of the production-safe configuration.";
 function choiceStatus(it, cb, chosen) {
   if (it.id === cb.id) return '<span class="badge good">chosen</span>';
   const tip = t => `data-tip="${esc(t)}" tabindex="0"`;
@@ -1805,6 +1806,8 @@ function choiceStatus(it, cb, chosen) {
   if (it.safety === "trade-off" && it.kind !== "revert" && (!chosen || chosen.safety !== "trade-off"))
     return cb.policy === "benchmark" ? `<span class="badge warn" ${tip("Trade-offs (durability, replication, observability) run after the production-safe candidates, whatever their score: a safe gain is worth more than a faster but less safe configuration.")}>trade-off: after safe ones</span>`
       : `<span class="badge warn" ${tip("The session's policy keeps production-safe settings only.")}>trade-off: not allowed</span>`;
+  if (chosen && chosen.safety === "trade-off" && it.safety !== "trade-off" && cb.policy === "benchmark")
+    return `<span class="badge plain" ${tip(TRADE_FIRST)}>after the trade-off</span>`;
   if (chosen && (it.rank || 0) < (chosen.rank || 0)) return `<span class="badge plain" ${tip("Ranked higher but not run: already measured in this session, or it was not runnable at this point.")}>skipped</span>`;
   return '<span class="muted">lower score</span>';
 }
@@ -1818,6 +1821,7 @@ function chosenByHtml(r) {
   const from = cb.from_run ? `run #${cb.from_run.seq} <a href="#/run/${cb.from_run.id}/recs">${esc(cb.from_run.label)}</a>` : "the session's start";
   const rule = planner ? `The AI planner chose it${d.engine_choice && d.engine_choice !== cb.id ? `; the rules' top choice was <code>${esc(d.engine_choice)}</code>` : ""}.`
     : chosen.score_override ? `It runs in a fixed order: ${esc(chosen.score_override)}.`
+    : chosen.safety === "trade-off" && cb.policy === "benchmark" ? `A trade-off ahead of the production-safe candidates${info(TRADE_FIRST)}.`
     : `The rules run the highest-scoring candidate that can run${cb.policy === "benchmark" ? ", production-safe candidates before trade-offs" : ""}.`;
   const rows = items.filter(i => i.kind !== "advice" || i.id === cb.id);
   // expert input: which candidate a person would have run here (agree = the same one) - for the planner, the learner and
