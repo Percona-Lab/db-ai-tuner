@@ -912,21 +912,28 @@ def test_repeat_run_shows_the_profile_of_its_configuration(tuned, user):
     assert cp and cp["borrowed_from"]["seq"] == prev["seq"], cp
 
 
-def test_learner_daily_cap_counts_timer_passes_and_says_why(user):
-    """A 97-call admin backlog pass blocked every timer pass for 24 h, and those passes said only '0 sessions' while 30
-    finished sessions waited. Only timer passes count against the daily cap, and a capped pass records why."""
+def test_learner_cost_cap_is_optional_and_says_why(user):
+    """TUNER_LEARNER_MAX_COST_PER_DAY: optional dollars of learner AI cost in any 24 h (unset = unlimited). A capped pass
+    records why (passes #24-#27 said only '0 sessions' while 30 finished sessions waited)."""
     import time
     from app import learner, store
     c = learner.db()
     c.execute("DELETE FROM learner_runs")
-    c.execute("INSERT INTO learner_runs(started, ended, trigger, calls) VALUES (?,?,?,?)", (time.time() - 3600, time.time() - 3500, "admin-backlog", 97))
+    c.execute("INSERT INTO learner_runs(started, ended, trigger, calls, cost) VALUES (?,?,?,?,?)", (time.time() - 3600, time.time() - 3500, "admin-backlog", 97, 14.0))
     env = user.hello(uid="learner-agent")
     sid = user.start_session(env)
     store.ex("UPDATE tsessions SET status='closed' WHERE id=?", (sid,))
-    r = learner.run_pass("timer", max_sessions=0)  # nothing processed, by request
-    row = dict(c.execute("SELECT * FROM learner_runs ORDER BY id DESC LIMIT 1").fetchone())
-    assert not (row.get("error") or "").startswith("daily cap"), row  # the admin pass does not count
-    c.execute("INSERT INTO learner_runs(started, ended, trigger, calls) VALUES (?,?,?,?)", (time.time() - 1800, time.time() - 1700, "timer", 60))
-    learner.run_pass("timer")
-    row = dict(c.execute("SELECT * FROM learner_runs ORDER BY id DESC LIMIT 1").fetchone())
-    assert (row.get("error") or "").startswith("daily cap reached"), row
+    saved = learner.MAX_COST_PER_DAY
+    try:
+        learner.MAX_COST_PER_DAY = None  # unlimited: no cap message
+        learner.run_pass("timer")
+        row = dict(c.execute("SELECT * FROM learner_runs ORDER BY id DESC LIMIT 1").fetchone())
+        assert "cost cap" not in (row.get("error") or ""), row
+        learner.MAX_COST_PER_DAY = 10.0
+        store.ex("UPDATE tsessions SET status='closed' WHERE id=?", (sid,))
+        c.execute("DELETE FROM processed WHERE session_id=?", (sid,))
+        learner.run_pass("timer")
+        row = dict(c.execute("SELECT * FROM learner_runs ORDER BY id DESC LIMIT 1").fetchone())
+        assert (row.get("error") or "").startswith("daily cost cap reached: $14.00 of $10.00"), row
+    finally:
+        learner.MAX_COST_PER_DAY = saved

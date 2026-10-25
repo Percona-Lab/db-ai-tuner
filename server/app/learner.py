@@ -8,7 +8,8 @@ Learnings are summaries of experiment data, not truths: a result may not repeat,
 conditions it was measured in, and may come from one host. Every insight carries its scope (conditions, sessions, hosts)
 and is phrased as what was measured; agents see it as an earlier result to test, never as a reason to skip measuring.
 
-Each pass (every TUNER_LEARNER_HOURS, default 6, or started by the admin):
+Each pass (every TUNER_LEARNER_HOURS, default 6, or started by the admin; up to 12 sessions; optionally capped by
+TUNER_LEARNER_MAX_COST_PER_DAY - dollars of AI cost in any 24 h, unset = unlimited):
 1. digest every session closed since the last pass (measured bottlenecks, experiments, outcomes, hypotheses);
 2. ask the AI (the service key) for insights and code proposals, given what is already known;
 3. count each insight against the observations - runs that changed the same settings under the same conditions - and
@@ -29,7 +30,9 @@ from . import llm, store
 
 DB_PATH = os.environ.get("TUNER_LEARNING_DB", "/var/lib/aituner/learning.db")
 INTERVAL_H = float(os.environ.get("TUNER_LEARNER_HOURS", "6"))
-MAX_CALLS_PER_PASS, MAX_CALLS_PER_DAY = 12, 48
+MAX_CALLS_PER_PASS = 12  # sessions per pass: pacing, so a backlog is worked through over several passes
+# optional spend limit: AI cost of all learner passes (timer and admin) in any 24 h, in dollars; unset or 0 = unlimited
+MAX_COST_PER_DAY = float(os.environ.get("TUNER_LEARNER_MAX_COST_PER_DAY") or 0) or None
 MAX_ATTEMPTS = 3  # a session whose digest fails this many passes in a row is skipped (the error is kept in `failures`)
 LOCK = DB_PATH + ".lock"
 
@@ -378,21 +381,22 @@ def run_pass(trigger="timer", max_sessions=None):
         err = None
         try:
             admin = store.q1("SELECT id FROM users WHERE is_admin=1 ORDER BY id LIMIT 1")
-            # the daily cap is for the timer's passes: an admin backlog pass (97 calls on 2026-10-24) used to block every timer
-            # pass for the next 24 h while 30 finished sessions waited
-            day = c.execute("SELECT COALESCE(SUM(calls),0) n FROM learner_runs WHERE started > ? AND trigger='timer'",
-                            (time.time() - 86400,)).fetchone()["n"]
+            spent = c.execute("SELECT COALESCE(SUM(cost),0) c FROM learner_runs WHERE started > ?", (time.time() - 86400,)).fetchone()["c"]
             done = {r["session_id"] for r in c.execute("SELECT session_id FROM processed")}
             # canaries (short windows, deliberate test configurations) are not evidence: their study, or "canary" anywhere in
             # the name ("deploy canary ...", "noise canary ...")
             todo = [r["id"] for r in store.q("SELECT s.id, s.name, st.name study FROM tsessions s LEFT JOIN studies st ON st.id=s.study_id "
                                             "WHERE s.status='closed' ORDER BY s.id")
                     if r["id"] not in done and "canary" not in str(r["name"] or "").lower() and str(r["study"] or "").lower() != "canary"]
-            limit = min(MAX_CALLS_PER_PASS if max_sessions is None else max_sessions, MAX_CALLS_PER_PASS,
-                        max(0, MAX_CALLS_PER_DAY - day) if trigger == "timer" else MAX_CALLS_PER_PASS)
-            if todo and not limit:  # say why nothing is processed (passes #24-#27 showed "0 sessions" without a reason)
-                err = f"daily cap reached: {day} of {MAX_CALLS_PER_DAY} AI calls in the last 24 h; {len(todo)} session(s) waiting"
+            limit = min(MAX_CALLS_PER_PASS if max_sessions is None else max_sessions, MAX_CALLS_PER_PASS)
+            capped = MAX_COST_PER_DAY is not None and spent >= MAX_COST_PER_DAY
+            if todo and capped:  # say why nothing is processed (passes #24-#27 showed "0 sessions" without a reason)
+                err = f"daily cost cap reached: ${spent:.2f} of ${MAX_COST_PER_DAY:.2f} in the last 24 h; {len(todo)} session(s) waiting"
+                limit = 0
             for sid in todo[:limit]:
+                if MAX_COST_PER_DAY is not None and spent + stats["cost"] >= MAX_COST_PER_DAY:
+                    err = f"daily cost cap reached: ${spent + stats['cost']:.2f} of ${MAX_COST_PER_DAY:.2f} in the last 24 h"
+                    break
                 try:
                     dg = digest(sid)
                     if not dg or len(dg["runs"]) < 3:
@@ -663,7 +667,8 @@ def overview():
             "proposals": [dict(r, sessions=_uj(r["sessions"], [])) for r in c.execute("SELECT * FROM proposals ORDER BY status!='open', id DESC")],
             "runs": [dict(r) for r in c.execute("SELECT * FROM learner_runs ORDER BY id DESC LIMIT 20")],
             "processed": c.execute("SELECT COUNT(*) n FROM processed").fetchone()["n"],
-            "interval_hours": INTERVAL_H, "db_path": DB_PATH}
+            "interval_hours": INTERVAL_H, "db_path": DB_PATH, "max_cost_per_day": MAX_COST_PER_DAY,
+            "spent_24h": round(db().execute("SELECT COALESCE(SUM(cost),0) c FROM learner_runs WHERE started > ?", (time.time() - 86400,)).fetchone()["c"], 3)}
 
 
 RESTRUCTURE = {"type": "object", "additionalProperties": False, "required": ["items"], "properties": {"items": {"type": "array", "items": {
