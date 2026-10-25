@@ -2100,7 +2100,8 @@ TRIAGE_SEG_S = 300       # each remedy is measured this long (the first TRIAGE_S
 TRIAGE_SETTLE_S = 60
 TRIAGE_RESTART_LEAD_S = 120  # after a mysqld restart: the benchmark reconnects and warms up before the step is measured
 TRIAGE_HELP = 0.5        # a partial remedy: growth per committed transaction at most half the reference's
-TRIAGE_FIX = 0.25        # stable with a margin: growth down to a quarter of the reference, or the history shrinking
+TRIAGE_FIX = 0.02        # stable = bounded: the history flat (growth at most 2% of the reference) or shrinking. A quarter was
+                         # not enough: concurrency 8 on the canary cut 216k/min to 22.5k/min - still +1.35M an hour (user)
 TRIAGE_FREE_PCT = 5.0    # a stable remedy costing at most this much throughput ends the triage early: nothing cheaper to find
 TRIAGE_BUDGET_S = 7200
 PROVISIONAL_WINDOW_S = 600  # measurement length while no stable configuration exists
@@ -2279,15 +2280,26 @@ def _purge_triage(c, running, deadline, start_bench=None):
         seg = judge(cand)
         results.append(seg)
         if seg["result"] == "stable" and seg["cost_pct"] <= TRIAGE_FREE_PCT:
-            break  # stable at (almost) no cost: nothing better to find
+            break  # bounded at (almost) no cost: nothing better to find
     stable = [x for x in results if x["result"] == "stable"]
     if not stable:
+        # the best partial remedy combined with each other partial one that sets other variables (e.g. a concurrency cap
+        # with more purge threads at a higher priority): a lower growth from both sides may bound it
         part = sorted([x for x in results if x["result"] == "partial"], key=lambda x: _per_trx(x))
-        if len(part) >= 2 and not set(dict(part[0]["_changes"])) & set(dict(part[1]["_changes"])):
-            both = {"label": f"{part[0]['label']} + {part[1]['label']}", "changes": part[0]["_changes"] + part[1]["_changes"],
+        # ... and with the purge-speed remedies even when they did nothing alone: with every CPU taken by user threads,
+        # more purge threads or a higher priority cannot act until a cap frees room for them (canary 2026-10-25)
+        speed = [x for x in results if x["result"] == "no effect" and any(k in ("innodb_purge_threads", "rg:purge") for k, _ in x["_changes"])]
+        speed.sort(key=lambda x: -int(dict(x["_changes"]).get("innodb_purge_threads") or 0))
+        for other in part[1:] + speed:
+            if stable or not part:
+                break
+            if set(dict(part[0]["_changes"])) & set(dict(other["_changes"])):
+                continue
+            both = {"label": f"{part[0]['label']} + {other['label']}", "changes": part[0]["_changes"] + other["_changes"],
                     "restart": True, "last": False}
             if time_left(both) and running.alive():
                 seg = judge(both)
+                results.append(seg)
                 if seg["result"] == "stable":
                     stable = [seg]
     if not stable:
@@ -2303,7 +2315,8 @@ def _purge_triage(c, running, deadline, start_bench=None):
         x.pop("_changes", None)
     txt = (f"purge triage: stable with {', '.join(f'{k}={x}' for k, x in kept) or 'the current configuration'} "
            f"({win['tps']} tps, {-win['cost_pct']:+.1f}% vs the start)" if win else
-           "purge triage: no remedy bounds the undo history under this load (" + ", ".join(f"{x['label']}: {x['result']}" for x in results)
+           "purge triage: no remedy bounds the undo history under this load (" + ", ".join(
+               f"{x['label']}: {x['result']} ({x['hll_per_min']:+,}/min)" for x in results)
            + "); the configuration cannot run this load in production")
     log("   " + txt)
     c.event("purge_triage", txt, {"stable": bool(win), "kept": kept, "steps": steps, "reference": ref})

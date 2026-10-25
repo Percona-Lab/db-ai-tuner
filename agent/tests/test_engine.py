@@ -2329,14 +2329,19 @@ def test_purge_triage_keeps_substantial_cuts_and_tries_the_lag_bound_last():
 
     ref = {"hll_per_min": 300000, "tps": 5000, "hll_end": 1e7}
     try:
-        # batch size: no effect; concurrency 8: stable at -40%; the thread pool (a restart): stable at -15% - it wins
+        # batch size: no effect; concurrency 8: bounded at -40%; the thread pool (a restart): bounded at -15% - it wins
         out = run([cand("batch 1000", [("innodb_purge_batch_size", "1000")]), cand("conc 8", [("innodb_thread_concurrency", "8")]),
                    cand("thread pool", [("thread_handling", "pool-of-threads"), ("thread_pool_size", "8")], restart=True),
                    cand("lag", [("innodb_max_purge_lag", "__HLL__")], last=True)],
-                  [ref, dict(ref, hll_per_min=298000), {"hll_per_min": 10000, "tps": 3000}, {"hll_per_min": -500, "tps": 4250}])
+                  [ref, dict(ref, hll_per_min=298000), {"hll_per_min": 5000, "tps": 3000}, {"hll_per_min": -500, "tps": 4250}])
         assert out["stable"] and out["kept"] == [("thread_handling", "pool-of-threads"), ("thread_pool_size", "8")], out
         assert starts and any(r for _, r in applied)  # restarted, benchmark started again
         assert not any(k == "innodb_max_purge_lag" for a, _ in applied for k, _ in a)
+        # growth cut by 90% but still growing (canary: 216k -> 22.5k/min): partial, not stable; combined with the next
+        out = run([cand("conc 8", [("innodb_thread_concurrency", "8")]), cand("32 purge", [("innodb_purge_threads", "32")], restart=True)],
+                  [ref, {"hll_per_min": 22500, "tps": 5700}, {"hll_per_min": 150000, "tps": 4900}, {"hll_per_min": -800, "tps": 5600}])
+        assert out["steps"][1]["result"] == "partial" and out["stable"], out["steps"]
+        assert out["kept"] == [("innodb_thread_concurrency", "8"), ("innodb_purge_threads", "32")], out
         # lower growth only because throughput fell: no effect; nothing stable -> the lag bound last, at the level reached
         out = run([cand("conc 64", [("innodb_thread_concurrency", "64")]), cand("lag", [("innodb_max_purge_lag", "__HLL__")], last=True)],
                   [ref, {"hll_per_min": 180000, "tps": 3000}, {"hll_per_min": -100, "tps": 2000}])
