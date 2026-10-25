@@ -2382,6 +2382,23 @@ def agent_study_create(body: dict = Body(...), key=Depends(auth.agent_key)):
     return {"id": st["id"], "name": st["name"], "url": f"{PUBLIC_URL}/#/study/{st['id']}"}
 
 
+@app.post("/api/v1/agent/studies/sessions")
+def agent_study_sessions(body: dict = Body(...), key=Depends(auth.agent_key)):
+    """Add existing sessions of this account to a study (created by name if new), or take them out (study null) - what
+    the web app's session page does (user, 2026-10-25: an agent running a version study could not)."""
+    ids = [int(x) for x in body.get("sessions") or []]
+    if not ids:
+        raise HTTPException(400, "sessions required")
+    for sid in ids:
+        own_session(sid, key["user_id"])
+    st = None
+    if body.get("study") not in (None, ""):
+        st = study_get_or_create(key["user_id"], body["study"], body.get("goal") or "tps", None, body.get("kind") or "compare")
+    for sid in ids:
+        store.ex("UPDATE tsessions SET study_id=? WHERE id=?", (st["id"] if st else None, sid))
+    return {"study": {"id": st["id"], "name": st["name"], "url": f"{PUBLIC_URL}/#/study/{st['id']}"} if st else None, "sessions": ids}
+
+
 # background threads start last: their first scan uses functions defined anywhere in this module (now(), ...)
 AUTO_CLOSE_SILENT_S = 6 * 3600   # an active session whose agent has been silent this long cannot continue
 AUTO_CLOSE_IDLE_S = 24 * 3600    # agent alive and idle (no autotune), nothing measured for this long

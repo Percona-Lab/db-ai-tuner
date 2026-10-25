@@ -828,7 +828,8 @@ def cmd_session(a):
             raise Fail("scope 'filesystem' needs a dedicated device: tuning-agent init --fs-device /dev/... --allow-fs-experiments")
         sess = {"id": r["session_id"], "name": a.name or r.get("name"), "goal": a.goal, "policy": a.policy, "scope": scope,
                 "noise_pct": a.noise_pct, "started": time.time(), "runs": [], "best": None, "os_tuning": os_tuning,
-                "stability": getattr(a, "stability", None), "ai": getattr(a, "ai", None)}
+                "stability": getattr(a, "stability", None), "ai": getattr(a, "ai", None),
+                "server_version": c.variables.get("version")}
         if r.get("study"):
             sess["study"] = r["study"]
         c.state.set("session", sess)
@@ -867,8 +868,18 @@ def _parse_kv(items):
     return out
 
 
+def _same_server(c, sess):
+    """A session measures one server: another version under it (a version study installing the next release) belongs in a
+    new session - its runs would be compared with the old version's (user, em-b212x 357)."""
+    was, now_ = sess.get("server_version"), c.variables.get("version")
+    if was and now_ and was != now_:
+        raise Fail(f"session #{sess['id']} was started on {was}; the server now runs {now_}. Close it (`tuning-agent session stop`) "
+                   "and start a new session for this server")
+
+
 def _measure_start(c, label=None, notes=None, warmed=False):
     sess = c.session()
+    _same_server(c, sess)
     if c.state.get("measurement"):
         raise Fail("measurement already in progress (run `tuning-agent measure stop`)")
     store = SampleStore(c.state.dir)
@@ -1515,6 +1526,7 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
     """reset -> start benchmark -> warm-up -> measure -> wait for exit -> parse metrics -> finish run."""
     t_run0 = time.time()
     sess = c.session()
+    _same_server(c, sess)  # before the reset and warm-up, not after them
     if (prof.auto_warmup or prof.auto_duration) and not sess.get("run_plan"):
         log(f"note: the profile leaves the run length to the probe; without one this run uses warm-up {prof.warmup} s and "
             f"{prof.duration} s measured (find them with `tuning-agent run-length --bench ...`, or let autotune do it)")
@@ -3532,7 +3544,17 @@ def cmd_study(a):
             raise Fail("study name required")
         r = c.client.post("/studies", {"name": a.name, "kind": a.kind, "goal": a.goal, "target": a.target, "notes": a.notes})
         emit(r, f"Study #{r['id']} '{r['name']}': {r['url']}\nAttach sessions with `tuning-agent session start --study \"{r['name']}\" ...` "
-                "on each environment.")
+                "on each environment, or existing ones with `tuning-agent study add \"" + r['name'] + "\" --session N`.")
+        return
+    if a.action in ("add", "remove"):
+        if not a.session:
+            raise Fail("--session N required (repeatable)")
+        if a.action == "add" and not a.name:
+            raise Fail("study name or id required")
+        r = c.client.post("/studies/sessions", {"study": a.name if a.action == "add" else None, "sessions": a.session,
+                                                 "goal": a.goal, "kind": a.kind})
+        emit(r, (f"Session(s) {', '.join('#' + str(x) for x in r['sessions'])} added to study '{r['study']['name']}': {r['study']['url']}"
+                 if r.get("study") else f"Session(s) {', '.join('#' + str(x) for x in r['sessions'])} taken out of their study."))
         return
     studies = c.client.get("/studies")["studies"]
     if a.action == "list":
@@ -4233,6 +4255,18 @@ def cmd_daemon(a):
                 loads = loads or loaddetect.Tracker(c.datadir())
                 rep = loads.report(time.time(), c.db if sampler is not None else None)
                 if rep:
+                    st_ = c.state.load().data
+                    open_ = (st_.get("session") or {}).get("id")
+                    if rep[0] == "loading data" and open_ and not st_.get("measurement"):
+                        # preparing data is work for the next session: the open one should have been closed first
+                        # (user, em-b212x 357: a version study loaded the next data set inside the finished session)
+                        rep = (rep[0], rep[1] + f" - session #{open_} is still open: close it (tuning-agent session stop) "
+                                                "before preparing the next one")
+                        if loads.warned != open_:
+                            loads.warned = open_
+                            c.event("session", f"data is being loaded while session #{open_} is still open and not measuring: "
+                                               "close it (tuning-agent session stop) before preparing another server, data set "
+                                               "or benchmark")
                     c.activity(rep[0], rep[1])
             except Exception as e:  # never let it break sampling
                 log(f"load detection: {e}")
@@ -4381,8 +4415,9 @@ def main(argv=None):
     s.set_defaults(fn=cmd_diag)
 
     s = sp.add_parser("study", help="studies: compare tuning sessions across environments")
-    s.add_argument("action", choices=["create", "list", "show"])
-    s.add_argument("name", nargs="?", help="study name (create/show) or id (show)")
+    s.add_argument("action", choices=["create", "list", "show", "add", "remove"])
+    s.add_argument("name", nargs="?", help="study name (create/show/add) or id (show/add); add creates the study if it does not exist")
+    s.add_argument("--session", type=int, action="append", help="add/remove: an existing session id (repeatable)")
     s.add_argument("--kind", choices=["compare", "scaling", "min-hardware"], default="compare")
     s.add_argument("--goal", choices=["tps", "latency"], default="tps")
     s.add_argument("--target", type=float, help="min-hardware: goal value to reach (e.g. 50000 NOPM, or 5 ms for latency)")

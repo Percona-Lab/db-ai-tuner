@@ -95,6 +95,7 @@ class Tracker:
         self.start = None  # (ts, used bytes) when the load was first seen
         self.last = None
         self.active = False
+        self.warned = None  # the open session a data load was reported against (once)
 
     def report(self, now, db=None, procs=None):
         ld = loaders(procs)

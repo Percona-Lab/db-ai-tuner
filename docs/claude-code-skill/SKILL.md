@@ -78,6 +78,17 @@ Run everything as root on the database host. `autotune` takes hours, so start it
    production-safe configuration applied). Report the gain over the calibrated start and the noise threshold from
    `tuning-agent status --json` / the session page, and link the session page.
 
+**One session = one server version, one benchmark, one data set.** Close the session
+(`tuning-agent session stop`, or `autotune --close`) as soon as its work is done, and always **before** changing any
+of those: installing another server version, loading or regenerating data, switching benchmark or concurrency. Data
+preparation for the next session is not part of the previous one. The agent refuses to measure a different server
+version inside a session, and flags a data load while a session is open. Check with `tuning-agent session show`.
+
+**Studies** compare sessions (versions, hardware, configurations). Name the study when starting each session
+(`session start --study "NAME"`), or add existing sessions afterwards:
+`tuning-agent study add "NAME" --session 357 --session 362` (creates the study if needed; `study remove --session N`
+takes one out). `tuning-agent study show "NAME"` lists the sessions with their results.
+
 The rest of this guide is the step-by-step workflow, for when you drive each experiment yourself.
 
 Add `--json` to any command for machine-readable output. Exit code 0 = ok, 2 = usage/state

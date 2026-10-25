@@ -979,3 +979,18 @@ def test_run_shows_the_decision_that_chose_it(tuned, user):
     assert cb["id"] == "spin-loops" and cb["policy"] == "benchmark", cb
     assert [i["id"] for i in cb["items"]] == ["spin-loops", "binlog-off"], cb
     assert cb["items"][0]["score_parts"][0][1] == 4 and cb["items"][0]["why"] == "CPU saturated", cb["items"][0]
+
+
+def test_agent_adds_existing_sessions_to_a_study(user):
+    """User (2026-10-25): an agent running a version study could not attach finished sessions to a study (only the UI could)."""
+    env = user.hello()
+    a, b = user.start_session(env), None
+    user.close(a)
+    b = user.start_session(env)
+    r = user.agent.post("/api/v1/agent/studies/sessions", json={"study": "PS versions", "sessions": [a, b]})
+    assert r.status_code == 200 and r.json()["study"]["name"] == "PS versions", r.text
+    st = user.agent.get("/api/v1/agent/studies").json()["studies"]
+    assert {s["id"] for s in next(x for x in st if x["name"] == "PS versions")["sessions"]} == {a, b}
+    r = user.agent.post("/api/v1/agent/studies/sessions", json={"study": None, "sessions": [a]})
+    assert r.status_code == 200 and r.json()["study"] is None
+    assert user.agent.post("/api/v1/agent/studies/sessions", json={"study": "x", "sessions": [999999]}).status_code == 404
