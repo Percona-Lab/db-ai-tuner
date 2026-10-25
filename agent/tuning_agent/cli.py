@@ -1519,28 +1519,43 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
             raise ServerDown(f"reset command failed ({rc}): {out[-500:]}")
         c.db.connect(retries=30, delay=2)
         c.state.set("restart_pending", False)
+
+    def sync_drop():
         # every run starts from the same OS state: the reset's copy written out (its writeback would otherwise run inside
         # the warm-up) and the page cache empty (a database without O_DIRECT reads through it) - user, 2026-10-25
         t_ = time.time()
         subprocess.run(["sh", "-c", "sync; echo 3 > /proc/sys/vm/drop_caches"], capture_output=True, timeout=1800)
         if time.time() - t_ > 5:
-            log(f"   sync + drop caches after the reset: {time.time() - t_:.0f} s")
+            log(f"   sync + drop caches: {time.time() - t_:.0f} s")
     quiet = None
     if prof.quiet_check:
-        # the host should be quiet between runs (benchmark stopped, database idle): outside work - a RAID resync, a scrub,
-        # updates - is shared with the run (session 361: an md resync ended mid-session and the next run "won")
-        c.activity("quiet check", "is the host idle between runs?")
+        # the host should be quiet between runs: outside work - a RAID resync, a scrub, updates, the kernel's own - is
+        # shared with the run (session 361: an md resync ended mid-session and the next run "won"). After a reset the run
+        # starts from scratch anyway: mysqld is stopped, so nothing at all should use the host (user, 2026-10-25)
+        c.activity("quiet check", "is the host idle between runs?" + (" (database stopped)" if prof.reset else ""))
         try:
             from . import quietcheck
-            quiet = quietcheck.check()
+            if prof.reset:
+                def stopped():
+                    sync_drop()
+                    return quietcheck.check(db_stopped=True)
+                ok_, quiet, err_ = Applier(c.cfg, c.state, c.db, log=log, activity=c.activity).while_stopped(stopped)
+                if not ok_:
+                    raise ServerDown(f"mysqld did not come back after the quiet check: {err_}")
+            else:
+                quiet = quietcheck.check()
             if quiet["busy"]:
                 log(f"WARNING the host is not quiet between runs: {quiet['why']}")
                 if sess.get("quiet_warned") != quiet["why"][:60]:
                     c.event("environment", "host not quiet between runs: " + quiet["why"], quiet)
                     sess["quiet_warned"] = quiet["why"][:60]
                     c.state.set("session", sess)
+        except ServerDown:
+            raise
         except Exception as e:  # noqa - never fail a run because of the check
             log(f"quiet check failed: {e}")
+    elif prof.reset:
+        sync_drop()
 
     try:  # free space on the data disk before the run: a seasoned / growing data set can fill it (session 222)
         st_ = os.statvfs(c.variables.get("datadir") or "/var/lib/mysql")

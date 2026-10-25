@@ -159,6 +159,28 @@ class Applier:
                 time.sleep(2)
         return False, "server did not accept connections: " + last
 
+    def while_stopped(self, fn, timeout=1800):
+        """Runs fn() with mysqld shut down, then starts it again and waits for connections. (ok, fn's result, error)"""
+        self.db.close()
+        r = subprocess.run(["systemctl", "stop", self.service], capture_output=True, text=True, timeout=timeout)
+        if r.returncode != 0:
+            return False, None, (r.stderr or r.stdout).strip()[-800:]
+        try:
+            res = fn()
+        finally:
+            subprocess.run(["systemctl", "start", self.service], capture_output=True, text=True, timeout=timeout)
+        deadline, last = time.time() + timeout, ""
+        while time.time() < deadline:
+            try:
+                self.db.connect()
+                self.db.scalar("SELECT 1")
+                self.reapply_runtime()
+                return True, res, ""
+            except Exception as e:  # noqa
+                last = str(e)
+                time.sleep(2)
+        return False, res, "server did not accept connections: " + last
+
     def reapply_runtime(self):
         """Settings that live only in the running server: the benchmark's prerequisites (SET GLOBAL), resource group thread
         assignments, the performance_schema profile."""

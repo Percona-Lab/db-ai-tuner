@@ -2773,6 +2773,8 @@ def test_quiet_check_flags_outside_work_between_runs():
         assert q["busy"] and "md0 resync at 41%" in q["why"], q
     finally:
         quietcheck.md_activity = orig
+    q = quietcheck.check(seconds=0.3, db_stopped=True)
+    assert "cpu_split" in q and "unattributed_pct" in q and q["db_stopped"], q
     fl = evaluate.state_flags({"host_not_quiet": {"why": "software RAID md0 resync at 41%"}})
     assert "md0" in fl["host_not_quiet"]["why"]
 

@@ -40,9 +40,10 @@ def md_activity():
 
 
 def _cpu_total():
+    """(total, idle + iowait, steal, [user, sys, irq, softirq]) jiffies of all CPUs."""
     f = _read("/proc/stat").split("\n", 1)[0].split()[1:]
-    v = [int(x) for x in f[:8]]
-    return sum(v), v[3] + v[4]  # total, idle + iowait
+    v = [int(x) for x in f[:8]] + [0] * max(0, 8 - len(f))
+    return sum(v), v[3] + v[4], v[7], [v[0] + v[1], v[2], v[5], v[6]]
 
 
 def _procs():
@@ -84,9 +85,12 @@ def _disks():
     return out
 
 
-def check(exclude_pids=(), seconds=SAMPLE_S):
-    """Samples the host for `seconds` with the benchmark stopped. Returns {busy, why, cpu_other_pct, top, disk_other_mbs,
-    disk_util_pct, md}; busy only when something outside mysqld and the agent uses the host noticeably."""
+def check(exclude_pids=(), seconds=SAMPLE_S, db_stopped=False):
+    """Samples the host for `seconds` with the benchmark stopped. Returns {busy, why, cpu_other_pct, top, disk_outside_mbs,
+    disk_util_pct, md}; busy only when something outside mysqld and the agent uses the host noticeably. db_stopped: the
+    database is shut down and the caches synced and dropped - then the host should do nothing at all, so its whole CPU
+    use counts, kernel work no process accounts for included (user, 2026-10-25: the kernel may be busy in ways we do not
+    know), and all disk traffic."""
     me = {os.getpid(), os.getppid()} | set(exclude_pids or ())
     ncpu = os.cpu_count() or 1
     hz = os.sysconf("SC_CLK_TCK")
@@ -94,15 +98,21 @@ def check(exclude_pids=(), seconds=SAMPLE_S):
     time.sleep(seconds)
     t1, c1, p1, d1 = time.time(), _cpu_total(), _procs(), _disks()
     dt = max(t1 - t0, 0.1)
-    host_busy = 100.0 * (1 - (c1[1] - c0[1]) / max(c1[0] - c0[0], 1))
-    ignore = {"mysqld", "mariadbd", "postgres", "tuning-agent", "python3"}  # the database and the agent itself
-    other_io = own_io = 0
+    tot = max(c1[0] - c0[0], 1)
+    # steal is the hypervisor's, not work on this host; the rest of the non-idle time is: processes and the kernel
+    host_busy = 100.0 * (tot - (c1[1] - c0[1]) - (c1[2] - c0[2])) / tot
+    split = {k: round(100.0 * (b - a) / tot, 1) for k, a, b in zip(("user", "system", "irq", "softirq"), c0[3], c1[3])}
+    # the database (idle between runs) and the agent itself: its own process tree, not every python3 on the host
+    ignore = {"mysqld", "mariadbd", "postgres"}
+    me |= {pid for pid in p1 if any(x in _read(f"/proc/{pid}/cmdline") for x in ("tuning-agent", "tuning_agent"))}
+    other_io = own_io = own_cpu = 0
     kthreads = {}
     for pid, (name, ticks, rb, wb) in p1.items():
         if pid not in p0:
             continue
         if pid in me or name in ignore:
             own_io += max((rb - p0[pid][2]) + (wb - p0[pid][3]), 0)  # the database flushing after the last run is its own work
+            own_cpu += 100.0 * (ticks - p0[pid][1]) / hz / dt / ncpu
             continue
         cpu = 100.0 * (ticks - p0[pid][1]) / hz / dt / ncpu
         io = (rb - p0[pid][2]) + (wb - p0[pid][3])
@@ -118,13 +128,25 @@ def check(exclude_pids=(), seconds=SAMPLE_S):
     util = max((100.0 * (d1[k][2] - d0[k][2]) / (dt * 1000) for k in d1 if k in d0), default=0.0)
     md = md_activity()
     why = []
+    # kernel threads are processes too (kworker, md0_resync, kswapd): what no live process accounts for is processes that
+    # came and went during the sample, and interrupt work
+    unattributed = max(0.0, host_busy - cpu_other - own_cpu)
+    if db_stopped and host_busy >= CPU_BUSY_PCT:
+        # nothing should run: whatever uses the CPUs is outside work, the kernel's own included
+        why.append(f"the host used {host_busy:.0f}% of the CPUs with the database stopped (user {split['user']}%, system "
+                   f"{split['system']}%, irq {split['irq']}%, softirq {split['softirq']}%"
+                   + (f"; processes: " + ", ".join(f"{x['name']} {x['cpu_pct']}%" for x in per[:3]) if per else "")
+                   + (f"; {unattributed:.0f}% in no running process: short-lived processes or interrupts" if unattributed >= 1 else "") + ")")
     if md:
         why.append("software RAID " + ", ".join(f"{x['array']} {x['action']}" + (f" at {x['progress_pct']:.0f}%" if x["progress_pct"] is not None else "") for x in md))
-    if cpu_other >= CPU_BUSY_PCT:
+    elif cpu_other >= CPU_BUSY_PCT:
         why.append(f"other processes used {cpu_other:.0f}% of the CPUs (" + ", ".join(f"{x['name']} {x['cpu_pct']}%" for x in per[:3]) + ")")
     # disk traffic of processes (page cache writeback and RAID resync are kernel work: the disks' own counters show them)
-    if other_io / dt / 1e6 >= DISK_MBS or (util >= DISK_UTIL_PCT and outside_mbs >= DISK_MBS):
+    if db_stopped and disk_mbs >= DISK_MBS:
+        why.append(f"the disks moved {disk_mbs:.0f} MB/s with the database stopped and the caches synced (busiest disk {util:.0f}% of the time)")
+    elif other_io / dt / 1e6 >= DISK_MBS or (util >= DISK_UTIL_PCT and outside_mbs >= DISK_MBS):
         why.append(f"disks busy outside the database: {outside_mbs:.0f} MB/s, busiest disk {util:.0f}% of the time")
-    return {"busy": bool(why), "why": "; ".join(why), "seconds": round(dt, 1), "host_busy_pct": round(host_busy, 1),
+    return {"busy": bool(why), "why": "; ".join(why), "seconds": round(dt, 1), "db_stopped": db_stopped, "host_busy_pct": round(host_busy, 1),
+            "cpu_split": split, "unattributed_pct": round(unattributed, 1),
             "cpu_other_pct": round(cpu_other, 1), "top": per[:5], "disk_mbs": round(disk_mbs, 1), "disk_outside_mbs": round(outside_mbs, 1), "disk_util_pct": round(util, 1),
             "other_proc_io_mbs": round(other_io / dt / 1e6, 1), "md": md}
