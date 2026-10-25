@@ -65,6 +65,9 @@ Run everything as root on the database host. `autotune` takes hours, so start it
    tuning-agent session start --goal tps --policy safe --name "sysbench oltp_read_write on $(hostname)"
    nohup tuning-agent autotune --bench /root/sysbench.ini --close > /root/autotune.log 2>&1 &
    ```
+   To measure the climb from the server's **compiled-in defaults** instead of the hardware-sized start (only when the
+   person asks for it), skip `baseline --apply` and run `autotune --from-defaults`: it removes every setting the agent
+   manages before the first run (the host's own option files stay) and records the start on the session.
    `--policy safe` never applies durability or observability trade-offs. Use `--policy benchmark` with
    `autotune --tradeoffs` only when the person asks for benchmark-only settings (results are then not
    production-equivalent: say so). Default limits: 3 calibration runs, then up to 10 experiments (`--max-runs N`).

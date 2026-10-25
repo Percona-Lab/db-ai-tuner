@@ -2779,6 +2779,40 @@ def test_quiet_check_flags_outside_work_between_runs():
     assert "md0" in fl["host_not_quiet"]["why"]
 
 
+def test_autotune_from_defaults_clears_managed_settings_and_records_it():
+    """User (2026-10-25): starting from the compiled-in defaults is an option (not the default) an agent can pick easily:
+    every agent-managed setting is removed before the first run and the session says so; later it is refused."""
+    from tuning_agent import cli
+    calls, events = [], []
+
+    class St(dict):
+        def set(self, k, v):
+            self[k] = v
+
+    class C(_FakeCtx):
+        def __init__(self, sess, managed):
+            super().__init__(sess)
+            self.state = St(managed=managed, session=sess)
+
+        def session(self, required=False):
+            return self.state["session"]
+
+        def event(self, *a):
+            events.append(a)
+    saved = cli.cmd_rollback
+    try:
+        cli.cmd_rollback = lambda a: calls.append(a.reset)
+        s = cli._start_from_defaults(C({"id": 1, "runs": []}, {"innodb_buffer_pool_size": {"value": "8G"}}), {"id": 1, "runs": []})
+        assert calls == [True] and s["start_from"] == "defaults" and events, (calls, s)
+        try:
+            cli._start_from_defaults(C({"id": 1, "runs": [{"seq": 1}]}, {}), {"id": 1, "runs": [{"seq": 1}]})
+            assert False, "must refuse after the first run"
+        except cli.Fail:
+            pass
+    finally:
+        cli.cmd_rollback = saved
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

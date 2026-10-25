@@ -622,6 +622,29 @@ def _measured_overhead(c):
     return None
 
 
+def _start_from_defaults(c, sess):
+    """autotune --from-defaults (user, 2026-10-25: not the default, but easy for an agent): the session starts from the
+    server's compiled-in defaults instead of the hardware-sized baseline - every setting the agent manages is removed
+    first (the host's own option files stay), and the session records it, so the climb from the defaults is the result."""
+    if sess.get("runs"):
+        if sess.get("start_from") == "defaults":
+            return sess
+        raise Fail("--from-defaults sets the starting configuration: use it on a new session, before its first run")
+    managed = c.state.get("managed") or {}
+    if managed:
+        log(f"== starting from the compiled-in defaults: removing the {len(managed)} setting(s) the agent manages "
+            "(the host's own option files stay)")
+        cmd_rollback(argparse.Namespace(reset=True, to_run=None, best=False, best_safe=False))
+    else:
+        log("== starting from the compiled-in defaults (the agent manages no settings)")
+    sess = c.session()
+    sess["start_from"] = "defaults"
+    c.state.set("session", sess)
+    c.event("session", "starting configuration: the server's compiled-in defaults (autotune --from-defaults), not the hardware "
+                       "baseline", {"start_from": "defaults", "removed": sorted(managed)})
+    return sess
+
+
 def _warn_undersized_start(c, sess):
     """A starting configuration with a buffer pool far below the data (server defaults: 128 MB) makes every run read the
     data - and purge read its undo - from disk: tuning would first discover the buffer pool, and a purge triage would
@@ -3619,7 +3642,10 @@ def _autotune(a):
             probes.ensure_debug_symbols(log)
         except Exception as e:  # profiles still work with exported symbols
             log(f"debug symbols: {e}")
-    _warn_undersized_start(c, sess)
+    if getattr(a, "from_defaults", False):
+        sess = _start_from_defaults(c, sess)
+    if sess.get("start_from") != "defaults":
+        _warn_undersized_start(c, sess)
     cn = _cap_nice_prep(c)
     if cn and not sess.get("runs"):
         log("== host preparation: CAP_SYS_NICE for mysqld (thread priorities for the purge triage; a restart, no effect by itself)")
@@ -4409,6 +4435,9 @@ def main(argv=None):
     s.add_argument("--tradeoffs", action="store_true", help="after safe experiments, continue with trade-offs (policy=benchmark)")
     s.add_argument("--no-confirm", dest="confirm", action="store_false", help="skip the confirmation run of the best config")
     s.add_argument("--close", action="store_true", help="close the session when autotune ends (otherwise it stays open for follow-up experiments)")
+    s.add_argument("--from-defaults", action="store_true",
+                   help="start from the server's compiled-in defaults: remove every agent-managed setting first and skip the "
+                        "hardware baseline (default: start from the baseline applied by `tuning-agent baseline --apply`)")
     s.add_argument("--allow-unstable", action="store_true",
                    help="tune even when the purge triage finds no configuration with a bounded undo history (results drift)")
     s.add_argument("--recheck-every", type=int, default=3,
