@@ -423,6 +423,11 @@ def noise_plan(runs, cal, duration, max_duration=None, target=NOISE_TARGET, over
                              f"a new benchmark process connects for the measured phase) - {100 * max(ramps) / duration:.0f}% of a "
                              f"{duration // 60 or 1} min window, and it varies from run to run. {sec // 60} min windows keep it under "
                              f"{int(100 * STARTUP_RAMP_SHARE)}%.")
+    if within > cv and (cal.get("noise_pct") or 0) <= target:
+        # both parts small (canary 2026-10-25: 0.67% within vs 0.53% CV, threshold well inside the target): nothing to fix
+        out.update(within_cv_pct=round(within, 2), between_cv_pct=0.0)
+        return dict(out, action="ok", text=f"Noise ±{cal.get('noise_pct')}% is within the ±{target}% target "
+                                            f"(within-run {within:.2f}%, run-to-run {cv:.2f}% CV).")
     if within > cv:
         # each run's own estimate says it is noisier than repeats of it are: the in-window samples trend or oscillate
         # (throughput rising or falling inside the window), which longer runs do not cure (#125: a plan that predicted
