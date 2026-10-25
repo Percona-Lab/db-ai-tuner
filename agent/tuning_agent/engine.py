@@ -1555,6 +1555,36 @@ def recommend(ctx):
               f"innodb_thread_concurrency={tc_now} is set (by the purge triage or earlier tuning) and the history is bounded: values "
               "around it measured for throughput; a value that lets the history grow again cannot win.",
               {"innodb_thread_concurrency": tc_now, "threads_running_avg": s.get("threads_running_avg"), "cpus": cpus}, impact=2)
+        # its companions, like the thread pool's settings (user): how long a thread keeps its slot (tickets: row operations
+        # before it queues again) and how waiting threads back off (sleep delay; adaptive up to its max)
+        if "innodb_concurrency_tickets" in v:
+            tk = _int(v, "innodb_concurrency_tickets", 5000)
+            sweep("tune-concurrency-tickets", "Tune InnoDB concurrency tickets", "innodb_concurrency_tickets",
+                  [str(x) for x in (500, 2000, 20000) if x != tk],
+                  f"innodb_thread_concurrency={tc_now} with {tk} tickets: fewer tickets rotate threads through the slots more often "
+                  "(fairer, more switching), more let a thread finish its transaction in one go (shorter open transactions).",
+                  {"innodb_concurrency_tickets": tk}, impact=1)
+        if "innodb_thread_sleep_delay" in v:
+            sd = _int(v, "innodb_thread_sleep_delay", 10000)
+            sweep("tune-concurrency-sleep", "Tune the concurrency queue sleep", "innodb_thread_sleep_delay",
+                  [str(x) for x in (0, 1000, 50000) if x != sd],
+                  f"Threads waiting for one of the {tc_now} slots sleep {sd} us before queueing (adaptive up to "
+                  f"innodb_adaptive_max_sleep_delay): shorter wakes them sooner, longer spins less.", {"innodb_thread_sleep_delay": sd}, impact=1)
+
+    if have_run and str(v.get("thread_handling") or "").lower() == "pool-of-threads" and not unb_hll and "thread_pool_size" in v:
+        # the thread pool's settings are tuned, not only the pool switched on (user): how many threads run at once
+        tps_ = _int(v, "thread_pool_size", cpus)
+        sweep("tune-thread-pool-size", "Tune the thread pool size", "thread_pool_size",
+              [str(x) for x in sorted({max(2, tps_ // 2), tps_ * 3 // 2, tps_ * 2}) if x != tps_],
+              f"The thread pool runs with {tps_} groups; how many threads it runs at once (groups x (1 + oversubscribe)) trades "
+              "contention against idle CPUs. Values around the current one measured; with a stability remedy in place only "
+              "stable configurations can win.", {"thread_pool_size": tps_, "cpus": cpus}, impact=2)
+        if "thread_pool_oversubscribe" in v:
+            ov_ = _int(v, "thread_pool_oversubscribe", 3)
+            sweep("tune-thread-pool-oversubscribe", "Tune thread pool oversubscription", "thread_pool_oversubscribe",
+                  [str(x) for x in (1, 2, 3, 5) if x != ov_],
+                  f"thread_pool_oversubscribe={ov_}: how many more threads a group may run while one waits (locks, I/O).",
+                  {"thread_pool_oversubscribe": ov_}, impact=2)
 
     # ---------------- clustering and other storage engines ---------------------------
     rates_ = inp.get("status_rates") or {}

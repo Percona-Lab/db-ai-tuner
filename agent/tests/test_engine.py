@@ -2438,6 +2438,7 @@ def test_concurrency_cap_from_the_triage_is_tuned_not_blocked():
     it = ids(engine.run_engine(ctx))
     assert "tune-concurrency-cap" in it and it["tune-concurrency-cap"]["confidence"] > 0, it.get("tune-concurrency-cap")
     assert it["tune-concurrency-cap"]["sweep"]["values"] and "0" not in it["tune-concurrency-cap"]["sweep"]["values"]
+    assert "tune-concurrency-tickets" in ids(engine.run_engine(dict(ctx, variables=dict(v, innodb_concurrency_tickets="5000"))))
     # introducing a cap at 128 connections per vCPU is still blocked
     assert engine.oversubscription_block({"changes": [{"variable": "innodb_thread_concurrency", "proposed": "16"}]},
                                          dict(ctx, variables=dict(v, innodb_thread_concurrency="0")))
@@ -2515,6 +2516,19 @@ def test_startup_ramp_lengthens_short_windows():
     runs = [{"summary": {"within_se_pct": 3.4, "startup_ramp_s": 34.0}} for _ in range(3)]
     p = evaluate.noise_plan(runs, {"goal_cv_pct": 1.66, "noise_pct": 4.15}, 120, overhead_s=900)
     assert p["action"] == "longer-runs" and p["seconds"] >= 340, p
+
+
+def test_thread_pool_settings_tuned_not_only_switched_on():
+    """User: for the thread pool (and purge) there are settings to experiment with, not only on / off. With the pool in
+    place and the history bounded, its size and oversubscription are swept."""
+    from tuning_agent import engine
+    s = dict(OLTP[0], history_list_length_max=500000, cpu_busy=90, threads_running_avg=16, threads_connected_avg=1024, unbounded_growth=None)
+    v = dict(VARS, thread_handling="pool-of-threads", thread_pool_size="8", thread_pool_oversubscribe="1")
+    ctx = {"goal": "tps", "policy": "benchmark", "os_tuning": True, "os_facts": {}, "hw": dict(HW, cpus=8), "flavor": "percona",
+           "version": (8, 4, 11), "variables": v, "summary": s, "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}}
+    it = ids(engine.run_engine(ctx))
+    assert "tune-thread-pool-size" in it and "tune-thread-pool-oversubscribe" in it
+    assert "1" not in it["tune-thread-pool-oversubscribe"]["sweep"]["values"]
 
 
 if __name__ == "__main__":

@@ -35,8 +35,11 @@ reaches a steady state in a benchmark.
      - 4, 8 and 32 purge threads at a higher priority; 32 (the cap) at the highest priority (-20) is the fastest purge
        InnoDB can run, the upper bound of what purge alone can do;
      - `innodb_purge_batch_size` 1000, then 5000;
-     - fewer user threads creating undo at once: `thread_pool_oversubscribe=1` when the thread pool is on; on servers
-       without a thread pool (MySQL Community), `innodb_thread_concurrency` at 4x then 2x vCPUs;
+     - fewer user threads creating undo at once: `innodb_thread_concurrency` at the vCPU count, then half of it
+       (MySQL / Percona);
+     - the thread pool and its settings (restart to enable): on, oversubscribe 1, half the vCPUs as groups,
+       `thread_pool_max_threads` = 2x vCPUs, `thread_pool_stall_limit` 1000 ms;
+     - purge threads on their own CPUs (the last 2) at the highest priority;
      - last, only when no restart-only remedy is left either: `innodb_max_purge_lag` at the level reached, with a 0.3 s
        delay cap. It is a stopgap that throttles every writer.
    - The kept settings are recorded as changes (source `stability-triage`) and measured by the calibration that follows.
@@ -54,3 +57,21 @@ reaches a steady state in a benchmark.
    configuration is chosen among stable ones. Tuning for performance continues from it. The thread pool and the
    concurrency cap are exempt from the oversubscription block there, because they are judged by the history, not
    by throughput.
+
+## After a stable start: the remedy's own settings are tuned
+
+The triage's remedy is a starting point. Its value and companions are swept, and only configurations that keep the
+history bounded can win:
+
+- **`innodb_thread_concurrency`:** values around the cap (half, 1.5x, 2x), plus `innodb_concurrency_tickets` (500 /
+  2000 / 20000) and `innodb_thread_sleep_delay`.
+- **The thread pool:** `thread_pool_size` (half, 1.5x, 2x) and `thread_pool_oversubscribe` (1 / 2 / 3 / 5).
+
+The oversubscription block (no new concurrency limiter at 16+ connections per vCPU) does not stop tuning a limiter
+already in place. Canary 2026-10-25, 1024 threads on 8 vCPUs:
+
+| Setting | Throughput | History |
+|---|---|---|
+| `innodb_thread_concurrency=8` | +20% | growth -94% |
+| `innodb_thread_concurrency=4` | +2% | shrinking |
+| thread pool, oversubscribe 1 | +18% | growth -65% |

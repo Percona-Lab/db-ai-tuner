@@ -2183,13 +2183,29 @@ def _triage_candidates(c):
         for x in sorted({cpus, max(2, cpus // 2)}, reverse=True):
             add(f"innodb_thread_concurrency {x}", [("innodb_thread_concurrency", str(x))])
     tp_on = str(v.get("thread_handling") or "").lower() == "pool-of-threads"
-    if "thread_pool_size" in v and not tp_on:
-        add("thread pool", [("thread_handling", "pool-of-threads"), ("thread_pool_size", str(cpus))], restart=True)
-        if "thread_pool_oversubscribe" in v:
-            add("thread pool, oversubscribe 1", [("thread_handling", "pool-of-threads"), ("thread_pool_size", str(cpus)),
-                                                 ("thread_pool_oversubscribe", "1")], restart=True)
-    elif tp_on and int(v.get("thread_pool_oversubscribe") or 3) > 1:
-        add("thread pool oversubscribe 1", [("thread_pool_oversubscribe", "1")])
+    if "thread_pool_size" in v:
+        # the pool's own settings, not only on / off (user): how many threads run at once is what bounds the undo created -
+        # groups x (1 + oversubscribe), plus the threads the pool adds for stalled ones (stall limit) up to max_threads
+        base = [] if tp_on else [("thread_handling", "pool-of-threads"), ("thread_pool_size", str(cpus))]
+        os1 = [("thread_pool_oversubscribe", "1")] if "thread_pool_oversubscribe" in v else []
+        if not tp_on:
+            add("thread pool", base, restart=True)
+        if os1 and (not tp_on or int(v.get("thread_pool_oversubscribe") or 3) > 1):
+            add("thread pool, oversubscribe 1", base + os1, restart=not tp_on)
+        if os1:
+            half = [("thread_handling", "pool-of-threads")] if not tp_on else []
+            add("thread pool, half the CPUs as groups, oversubscribe 1", half + [("thread_pool_size", str(max(2, cpus // 2)))] + os1,
+                restart=not tp_on)
+            if "thread_pool_max_threads" in v:
+                add(f"thread pool, oversubscribe 1, at most {2 * cpus} threads", base + os1 + [("thread_pool_max_threads", str(2 * cpus))],
+                    restart=not tp_on)
+            if "thread_pool_stall_limit" in v and int(v.get("thread_pool_stall_limit") or 500) < 1000:
+                add("thread pool, oversubscribe 1, stall limit 1000 ms", base + os1 + [("thread_pool_stall_limit", "1000")],
+                    restart=not tp_on)
+    if rg and cap and cpus >= 8:
+        # purge on CPUs of its own (user): the last two vCPUs at the highest priority - user threads may still run there,
+        # but purge no longer waits behind hundreds of them for a CPU
+        add("purge threads on their own CPUs (last 2) at the highest priority", [("rg:purge", f"cpus={cpus - 2}-{cpus - 1},prio=-20")])
     pt = int(v.get("innodb_purge_threads") or 4)
     pt_online = bool(dynamic_in("innodb_purge_threads", series))
     for x in sorted({min(32, max(4, pt * 2)), min(32, max(8, cpus // 2)), 32}):
