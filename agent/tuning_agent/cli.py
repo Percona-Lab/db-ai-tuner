@@ -2224,10 +2224,12 @@ def _triage_candidates(c):
             if "thread_pool_stall_limit" in v and int(v.get("thread_pool_stall_limit") or 500) < 1000:
                 add("thread pool, oversubscribe 1, stall limit 1000 ms", base + os1 + [("thread_pool_stall_limit", "1000")],
                     restart=not tp_on)
-    if rg and cap and cpus >= 8:
+    if rg and (cap or can_cap) and cpus >= 8:
         # purge on CPUs of its own (user): the last two vCPUs at the highest priority - user threads may still run there,
-        # but purge no longer waits behind hundreds of them for a CPU
-        add("purge threads on their own CPUs (last 2) at the highest priority", [("rg:purge", f"cpus={cpus - 2}-{cpus - 1},prio=-20")])
+        # but purge no longer waits behind hundreds of them for a CPU. Without CAP_SYS_NICE yet: granted with a restart
+        # (the clean canary rerun skipped this step when mysqld lacked it at the start)
+        add("purge threads on their own CPUs (last 2) at the highest priority",
+            ([] if cap else [("os:mysqld_cap_sys_nice", "ON")]) + [("rg:purge", f"cpus={cpus - 2}-{cpus - 1},prio=-20")], restart=not cap)
     pt = int(v.get("innodb_purge_threads") or 4)
     pt_online = bool(dynamic_in("innodb_purge_threads", series))
     for x in sorted({min(32, max(4, pt * 2)), min(32, max(8, cpus // 2)), 32}):

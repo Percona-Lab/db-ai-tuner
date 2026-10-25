@@ -81,3 +81,23 @@ before measuring from such a start.
 | `innodb_thread_concurrency=8` | +20% | growth -94% |
 | `innodb_thread_concurrency=4` | +2% | shrinking |
 | thread pool, oversubscribe 1 | +18% | growth -65% |
+
+## Clean canary rerun (2026-10-25, session 349)
+
+The rerun used a hardware-baseline buffer pool (21 GB, 99.99% hit rate), 1024 update threads on 8 vCPUs, and
+`trx_commit=2`. The reference grew the history by +2.69M/min at 46.1k tps, about one undo log per transaction, so purge
+removed almost nothing.
+
+| Remedy | History | Throughput |
+|---|---|---|
+| `innodb_thread_concurrency=8` | flat | +43.8% (the winner) |
+| `innodb_thread_concurrency=4` | flat | +34.6% |
+| Thread pool (defaults / oversubscribe 1 / half the groups / 16 threads / stall 1000 ms) | flat | +18% to +29% |
+| `innodb_purge_batch_size=5000` | shrinking 1M/min | -1.7% |
+| `innodb_purge_batch_size=1000`, purge priority, 4 / 8 / 32 purge threads at nice -10 / -20 | no effect | about 0 |
+
+- **More purge threads or priority never help.** Purge is not short of CPU; it waits on per-batch coordination, and a
+  larger batch amortises that.
+- **Limiting concurrency is both the stability remedy and the throughput gain.**
+- **The runs with a 128 MB buffer pool were I/O-bound and misleading.** There batch 5000 showed no effect, and the
+  thread pool did not bound the history.
