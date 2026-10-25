@@ -85,6 +85,9 @@ class Profile:
         # probe = auto (calibration + after unusual steal; default) | always | false
         pv = b.get("probe", "auto").lower()
         self.probe = "always" if pv == "always" else (pv in ("auto", "true", "yes", "1"))
+        # quiet_check = true (default): ~10 s with the benchmark stopped before each run - is the host idle? (outside work
+        # such as a RAID resync is flagged on the run)
+        self.quiet_check = str(b.get("quiet_check", "true")).strip().lower() in ("true", "yes", "1", "on")
 
     PLACEHOLDERS = ("{duration}", "{warmup}", "{total}", "{duration_min}", "{warmup_min}", "{total_min}")
 

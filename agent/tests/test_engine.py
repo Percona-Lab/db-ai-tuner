@@ -2760,6 +2760,23 @@ def test_swap_target_is_a_fifth_of_ram_within_4_to_16_gib():
     assert not any(c["variable"] == "os:swapfile" for i in its for c in i.get("changes") or []), [i["id"] for i in its]
 
 
+def test_quiet_check_flags_outside_work_between_runs():
+    """User (361): an md resync ran in the background; between runs the host should be quiet. A resync / other processes /
+    disk traffic outside the database flag the run; mysqld's own flushing does not."""
+    from tuning_agent import quietcheck, evaluate
+    q = quietcheck.check(seconds=0.5)
+    assert set(q) >= {"busy", "why", "cpu_other_pct", "disk_outside_mbs", "md"}, q
+    orig = quietcheck.md_activity
+    try:
+        quietcheck.md_activity = lambda: [{"array": "md0", "action": "resync", "progress_pct": 41.0}]
+        q = quietcheck.check(seconds=0.2)
+        assert q["busy"] and "md0 resync at 41%" in q["why"], q
+    finally:
+        quietcheck.md_activity = orig
+    fl = evaluate.state_flags({"host_not_quiet": {"why": "software RAID md0 resync at 41%"}})
+    assert "md0" in fl["host_not_quiet"]["why"]
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

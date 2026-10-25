@@ -760,6 +760,9 @@ def state_flags(s):
         out["warmup_short"] = s["warmup_signals"]
     if (s or {}).get("unbounded_growth"):
         out["unbounded"] = s["unbounded_growth"]
+    if (s or {}).get("host_not_quiet"):
+        # outside work on the host between runs (a RAID resync, a scrub, updates): flagged, the run shares the host with it
+        out["host_not_quiet"] = s["host_not_quiet"]
     fp = (s or {}).get("datadir_free_pct")
     if fp is not None and fp < LOW_FREE_PCT:
         # below ~10% free, SSDs (less spare area for garbage collection) and filesystems (fragmented allocation) slow down:

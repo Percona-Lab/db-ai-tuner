@@ -1113,6 +1113,8 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
             summary["config_mismatch"] = extra_inputs["config_mismatch"]
         if extra_inputs.get("config_mismatch_all"):
             summary["config_mismatch_all"] = extra_inputs["config_mismatch_all"]
+        if (extra_inputs.get("quiet_check") or {}).get("busy"):
+            summary["host_not_quiet"] = {k: extra_inputs["quiet_check"].get(k) for k in ("why", "md", "cpu_other_pct", "disk_outside_mbs")}
         if (extra_inputs.get("cow") or {}).get("intended"):
             summary["cow_intended"] = extra_inputs["cow"]["intended"]
         for k, v in (extra_inputs.get("probe") or {}).items():
@@ -1517,6 +1519,28 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
             raise ServerDown(f"reset command failed ({rc}): {out[-500:]}")
         c.db.connect(retries=30, delay=2)
         c.state.set("restart_pending", False)
+        # every run starts from the same OS state: the reset's copy written out (its writeback would otherwise run inside
+        # the warm-up) and the page cache empty (a database without O_DIRECT reads through it) - user, 2026-10-25
+        t_ = time.time()
+        subprocess.run(["sh", "-c", "sync; echo 3 > /proc/sys/vm/drop_caches"], capture_output=True, timeout=1800)
+        if time.time() - t_ > 5:
+            log(f"   sync + drop caches after the reset: {time.time() - t_:.0f} s")
+    quiet = None
+    if prof.quiet_check:
+        # the host should be quiet between runs (benchmark stopped, database idle): outside work - a RAID resync, a scrub,
+        # updates - is shared with the run (session 361: an md resync ended mid-session and the next run "won")
+        c.activity("quiet check", "is the host idle between runs?")
+        try:
+            from . import quietcheck
+            quiet = quietcheck.check()
+            if quiet["busy"]:
+                log(f"WARNING the host is not quiet between runs: {quiet['why']}")
+                if sess.get("quiet_warned") != quiet["why"][:60]:
+                    c.event("environment", "host not quiet between runs: " + quiet["why"], quiet)
+                    sess["quiet_warned"] = quiet["why"][:60]
+                    c.state.set("session", sess)
+        except Exception as e:  # noqa - never fail a run because of the check
+            log(f"quiet check failed: {e}")
 
     try:  # free space on the data disk before the run: a seasoned / growing data set can fill it (session 222)
         st_ = os.statvfs(c.variables.get("datadir") or "/var/lib/mysql")
@@ -1704,6 +1728,8 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
                        "window_start_delay_s": m.get("window_start_delay_s"), "warmup_s": waited}, "probe": env_probe}
     if cow is not None:
         extra["cow"] = cow
+    if quiet is not None:
+        extra["quiet_check"] = quiet
     if mismatch:
         extra["config_mismatch"] = mismatch
     if mismatch_all:
