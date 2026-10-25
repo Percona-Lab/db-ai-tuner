@@ -2613,6 +2613,27 @@ def test_prepared_statements_read_before_the_benchmark_exits():
     assert "prepared_at" not in snap2
 
 
+def test_kernel_time_is_explained_with_its_levers():
+    """User (342 run 4812): 20%+ system CPU - where does the kernel spend it, and what tunes it? The profile splits kernel
+    samples by area; the rules turn the large ones into advice (mitigations as a security trade-off, never applied)."""
+    from tuning_agent import cpuprof, engine
+    assert cpuprof.kernel_area(["native_queued_spin_lock_slowpath", "futex_wake", "do_futex"]) == ("scheduling / futex", True)
+    assert cpuprof.kernel_area(["tcp_sendmsg", "sock_sendmsg"])[0] == "network stack"
+    assert cpuprof.kernel_area(["syscall_return_via_sysret"])[0] == "syscall entry / exit"
+    prof = {"categories": {"statement dispatch": 20}, "kernel": {"pct": 24.0, "areas": {"scheduling / futex": 10.8, "network stack": 5.3,
+            "syscall entry / exit": 5.1}}}
+    s = dict(OLTP[0], cpu_busy=95, threads_running_avg=200)
+    ctx = {"goal": "tps", "policy": "safe", "os_tuning": True, "os_facts": {"os:cpu_mitigations": "meltdown: PTI; retbleed: IBRS"},
+           "hw": dict(HW, cpus=8), "flavor": "percona", "version": (8, 4, 11), "variables": dict(VARS), "summary": s,
+           "inputs": dict(OLTP[1], cpu_profile=prof), "history": [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}],
+           "noise_pct": 2.0, "managed": {}}
+    it = ids(engine.run_engine(ctx))
+    assert it["kernel-mitigations"]["kind"] == "advice" and it["kernel-mitigations"]["tradeoffs"][0]["category"] == "security"
+    assert "kernel-network" in it and "kernel-scheduling" in it
+    off = ids(engine.run_engine(dict(ctx, os_facts={"os:cpu_mitigations": "off"})))
+    assert "kernel-mitigations" not in off
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

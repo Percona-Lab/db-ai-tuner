@@ -46,6 +46,34 @@ CATEGORIES = (  # (category, regex on one frame) - frames are checked from the l
     ("memory management (kernel)", r"handle_mm_fault|do_page_fault|exc_page_fault|clear_page|compact_zone|khugepaged|folio|lru_|shrink_|swap"),
 )
 _CAT_RE = [(c, re.compile(r)) for c, r in CATEGORIES]
+
+# where the kernel spends mysqld's CPU (user, 2026-10-25: 20%+ system CPU, run 4812): the area of a kernel sample is the
+# first frame from the leaf that names one; a kernel spin lock is charged to the area that took it
+KERNEL_AREAS = (
+    ("profiling overhead", r"^(perf_|bpf_|__bpf|kprobe|uprobe|trace_call_bpf)"),
+    ("scheduling / futex", r"futex|^schedule|__schedule|__switch_to|finish_task_switch|pick_next_task|try_to_wake_up|ttwu|enqueue_task|dequeue_task|update_curr|select_task_rq"),
+    ("network stack", r"^(tcp_|udp_|ip_|ipv6_|sock_|sk_|__sk_|skb_|__skb|kfree_skb|__netif|netif_|napi_|net_rx|dev_|__dev_|unix_|inet_|loopback|__sys_(send|recv)|sys_(send|recv))"),
+    ("page faults / memory management", r"handle_mm_fault|do_page_fault|exc_page_fault|clear_page|__alloc_pages|free_pages|folio|lru_|compact_|khugepaged|madvise|mmap|munmap|zap_|unmap_|page_fault|do_anonymous_page|swap"),
+    ("filesystem / block I/O", r"io_submit|io_getevents|aio_|blk_|ext4_|xfs_|btrfs_|iomap|filemap_|generic_file|vfs_|fsync|nvme|scsi"),
+    ("data copies (user <-> kernel)", r"copy_user|copy_to_user|copy_from_user|_copy_to_iter|_copy_from_iter|rep_movs|memcpy_orig|copyin|copyout"),
+    ("timers / clock", r"hrtimer|ktime_get|clock_gettime|read_tsc|tick_|timekeeping"),
+    ("interrupts / softirq", r"irq_|__do_softirq|do_softirq|handle_irq|asm_common_interrupt|common_interrupt"),
+    ("syscall entry / exit", r"entry_SYSCALL|do_syscall_64|syscall_exit|syscall_return|exit_to_user_mode|__x64_sys_|syscall_enter|x64_sys_call|swapgs|entry_SYSRETQ|_raw_spin_unlock_irqrestore"),
+)
+_KAREA_RE = [(a, re.compile(r)) for a, r in KERNEL_AREAS]
+_KLOCK = re.compile(r"queued_spin_lock_slowpath|_raw_spin_lock|_raw_read_lock|_raw_write_lock|osq_lock|rwsem_|mutex_lock|native_queued")
+
+
+def kernel_area(frames):
+    """(area, contended lock?) of a kernel sample's frames (leaf first, kernel frames only)."""
+    locked = bool(frames) and bool(_KLOCK.search(frames[0]))
+    for f in frames:
+        if _KLOCK.search(f):
+            continue
+        for a, r in _KAREA_RE:
+            if r.search(f):
+                return a, locked
+    return "other kernel", locked
 _ARGS = re.compile(r"\(.*$")
 
 
@@ -140,10 +168,12 @@ class Profiler:
         self_fn = collections.Counter()
         incl_fn = collections.Counter()
         cats = collections.Counter()
+        k_area, k_leaf, k_lock, k_total = collections.Counter(), collections.Counter(), collections.Counter(), [0]
         total = db_total = 0
         has_fp = 0
         cur = None
         frames = []
+        kflags = []
 
         def flush():
             nonlocal total, db_total, has_fp
@@ -160,6 +190,14 @@ class Profiler:
             fs = [short(f) for f in frames] or ["[unknown]"]
             if len(fs) > 3:
                 has_fp += 1
+            if kflags and kflags[0]:  # the sample hit kernel code: where in the kernel, and for what
+                kfs = [f for f, k in zip(fs, kflags) if k]
+                area, locked = kernel_area(kfs)
+                k_total[0] += 1
+                k_area[area] += 1
+                k_leaf[kfs[0]] += 1
+                if locked:
+                    k_lock[area] += 1
             self_fn[fs[0]] += 1
             for f in set(fs):
                 incl_fn[f] += 1
@@ -173,6 +211,7 @@ class Profiler:
             if not line.startswith((" ", "\t")):
                 flush()
                 frames = []
+                kflags = []
                 m = re.match(r"^\s*(\S.*?)\s+(\d+)/(\d+)\s*$", line) or re.match(r"^\s*(\S.*?)\s+(\d+)\s", line)
                 if m:
                     cur = (m.group(1).strip(), int(m.group(2)))
@@ -182,10 +221,11 @@ class Profiler:
             parts = line.strip().split(None, 1)
             if len(parts) == 2:
                 sym = parts[1].rsplit(" (", 1)[0]
+                dso = parts[1].rsplit("(", 1)[-1].rstrip(")") if "(" in parts[1] else ""
                 if sym == "[unknown]":
-                    dso = parts[1].rsplit("(", 1)[-1].rstrip(")")
                     sym = f"[{os.path.basename(dso)}]"
                 frames.append(sym)
+                kflags.append("kernel" in dso or "vmlinux" in dso)
         flush()
         if not total:
             return {"error": "no samples"}
@@ -198,4 +238,8 @@ class Profiler:
             "top_self": [{"fn": k, "pct": round(100 * v / n, 2)} for k, v in self_fn.most_common(30)],
             "top_inclusive": [{"fn": k, "pct": round(100 * v / n, 2)} for k, v in incl_fn.most_common(40) if v < n],
             "folded": [[k, v] for k, v in folded.most_common(max_stacks)],
+            "kernel": {"pct": round(100 * k_total[0] / n, 1),
+                       "areas": {k: round(100 * v / n, 1) for k, v in k_area.most_common()},
+                       "contended_locks": {k: round(100 * v / n, 1) for k, v in k_lock.most_common() if v},
+                       "top": [{"fn": k, "pct": round(100 * v / n, 2)} for k, v in k_leaf.most_common(15)]} if k_total[0] else None,
         }

@@ -884,6 +884,36 @@ def recommend(ctx):
     if any(i["id"] == "purge-threadpool" for i in b.items):
         b.items = [i for i in b.items if i["id"] != "thread-pool"]
 
+    # ---------------- kernel time (CPU profile: where the kernel spends mysqld's CPU) ----------------
+    kp = (inp.get("cpu_profile") or {}).get("kernel") or {}
+    ka = kp.get("areas") or {}
+    if have_run and kp.get("pct"):
+        mit = str((ctx.get("os_facts") or {}).get("os:cpu_mitigations") or "")
+        sysc = ka.get("syscall entry / exit", 0)
+        if sysc >= 3 and mit and mit not in ("off", "none costly"):
+            b.add("kernel-mitigations", "CPU vulnerability mitigations cost kernel entry and exit", [],
+                  f"{kp['pct']:.0f}% of mysqld's CPU is kernel time; {sysc:.1f}% is syscall entry / exit alone, which these mitigations make "
+                  f"expensive ({mit[:300]}), and IBRS / buffer clearing slow kernel code beyond that. On a dedicated, single-tenant "
+                  "database host running only trusted code, booting with mitigations=off removes that cost - a security trade-off "
+                  "(other tenants or untrusted code could read memory across boundaries), never applied by the tuner. Needs a reboot.",
+                  {"kernel_pct": kp["pct"], "syscall_entry_exit_pct": sysc, "mitigations": mit}, impact=2, confidence=1, kind="advice")
+            b.items[-1]["tradeoffs"] = [{"category": "security", "lost": "protection against CPU side-channel attacks between processes / tenants"}]
+        net = ka.get("network stack", 0)
+        if net >= 5:
+            b.add("kernel-network", "Kernel network stack time", [],
+                  f"{net:.1f}% of mysqld's CPU is the kernel network stack (TCP send / receive, wake-ups). A client on the same host is "
+                  "faster over the Unix socket (no TCP); a separate client host moves its half off this machine. Interrupt placement "
+                  "(IRQ split) and fewer, larger round trips (batching, prepared statements) cut it too.",
+                  {"network_stack_pct": net, "kernel_pct": kp["pct"]}, impact=1, confidence=2, kind="advice")
+        sch = ka.get("scheduling / futex", 0)
+        if sch >= 8 and (s.get("threads_running_avg") or 0) > 2 * cpus:
+            b.add("kernel-scheduling", "Kernel time switching threads", [],
+                  f"{sch:.1f}% of mysqld's CPU is the kernel scheduling threads (futex wake-ups, context switches) with "
+                  f"{s.get('threads_running_avg', 0):.0f} threads running on {cpus} CPUs: fewer runnable threads - a concurrency cap "
+                  "(innodb_thread_concurrency) or the thread pool - cut this directly; the experiments that do so are ranked with it.",
+                  {"scheduling_futex_pct": sch, "threads_running_avg": s.get("threads_running_avg"), "cpus": cpus},
+                  impact=2, confidence=2, kind="advice")
+
     # ---------------- connections / caches ----------------------------------------
     if have_run and rates.get("Opened_tables", 0) > 1:
         toc = _int(v, "table_open_cache", 4000)

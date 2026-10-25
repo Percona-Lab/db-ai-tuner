@@ -293,6 +293,16 @@ def facts(datadir, device, service, fs_device=None):
         f["os:numa_node_mem_gb"] = ",".join(str(round(x["mem_bytes"] / 2 ** 30, 1)) for x in topo["per_node"])
         f["os:numa_node_cpulists"] = ";".join(x["cpulist"] for x in topo["per_node"])
     f["os:aio_in_use"] = _read("/proc/sys/fs/aio-nr")
+    # CPU vulnerability mitigations that cost every syscall / kernel entry (PTI, IBRS, buffer clearing): what a
+    # kernel-heavy profile pays for them (user, 2026-10-25: 20%+ system CPU)
+    costly = []
+    for path in sorted(glob.glob("/sys/devices/system/cpu/vulnerabilities/*")):
+        txt = _read(path) or ""
+        for mark in ("PTI", "IBRS", "Clear CPU buffers", "IBPB before exit", "retpoline"):
+            if mark in txt and "Not affected" not in txt:
+                costly.append(f"{os.path.basename(path)}: {mark}")
+    cmd = _read("/proc/cmdline") or ""
+    f["os:cpu_mitigations"] = "off" if "mitigations=off" in cmd else ("; ".join(costly) or "none costly")
     return f
 
 
