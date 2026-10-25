@@ -17,7 +17,7 @@ writes, analytics) against the effort and risk.
 | Lever | What it does | Why it matters | Status | Priority |
 |---|---|---|---|---|
 | USER resource groups (MySQL 8.0+) | Lower the priority of, or bind, foreground thread classes (reporting, batch) with `SET RESOURCE GROUP` per connection or `/*+ RESOURCE_GROUP(g) */` hints | Mixed OLTP plus reporting: keeps p99 of the OLTP part flat. Needs the application or a proxy to tag sessions. | not modelled | advice, P3 |
-| Buffer pool dump / load (`innodb_buffer_pool_dump_at_shutdown`, `_load_at_startup`, `_dump_pct`) | Restart with a warm buffer pool | Cuts the warm-up of every clean-start run: tuning time per run, and restart recovery time in production | not in rules | **P1**: run-length efficiency for the tuner itself |
+| Buffer pool dump / load (`innodb_buffer_pool_dump_at_shutdown`, `_load_at_startup`, `_dump_pct`) | Restart with a warm buffer pool | Restart recovery time in production | not in rules | **Not for the tuner's own runs** (user, 2026-10-25): a restored pool starts each run from what the previous run cached, so runs start in conditions that depend on run order; every run builds its own cache. Production advice only, P3 |
 | Histograms (`ANALYZE TABLE … UPDATE HISTOGRAM`; MariaDB engine-independent statistics, `histogram_type=JSON_HB`) | Better plans for skewed columns | Query-plan wins on analytics and skewed OLTP | `stats-histograms` rule exists for MySQL | extend to MariaDB, P2 |
 | Pinning or renicing purge and page-cleaner threads on MariaDB (no resource groups) | taskset / renice by `THREAD_OS_ID` after each start | Same remedy as `rg:purge`, MariaDB edition | advice only | P2 (needs a re-apply hook like resgroups.ensure) |
 
@@ -93,8 +93,9 @@ writes, analytics) against the effort and risk.
    - thread pool parameter sweep;
    - TempTable mmap / internal temporary table engine for analytics;
    - C-states for latency goals.
-2. **Buffer pool dump/load** in the harness and as a production recommendation: every clean-start run warms faster,
-   which cuts tuning time directly.
+2. **Shorter warm-ups without changing run conditions** (done 2026-10-25): the run-length probe ignores state that
+   changes no work (free buffer pool pages falling at a full hit rate). Buffer pool dump/load is not used for the
+   tuner's runs: each run must build its own cache under its own configuration.
 3. **A MariaDB pass:** its own rules where it differs (thread pool, optimizer costs, group commit wait, Aria temp
    tables, flushing variables).
 4. **Settings applied after start beyond resource groups:**
