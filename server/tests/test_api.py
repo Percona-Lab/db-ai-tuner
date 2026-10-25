@@ -937,3 +937,14 @@ def test_learner_cost_cap_is_optional_and_says_why(user):
         assert (row.get("error") or "").startswith("daily cost cap reached: $14.00 of $10.00"), row
     finally:
         learner.MAX_COST_PER_DAY = saved
+
+
+def test_learner_write_class():
+    """Binary log and sync_binlog insights are counted only against runs of the same write intensity (user: they matter
+    with significant writes and a commit backlog; read-only and write-heavy sessions made 'binlog off' look contested)."""
+    from app import learner
+    assert learner._write_class({"redo_mbs": 0.0}, {}) == "read-only"
+    tb = [{"name": "Waiting: binary log writes / fsync (commit)", "share_pct": 12.0, "tags": ["commit"]},
+          {"name": "CPU: redo / commit path", "share_pct": 30.0, "tags": ["cpu", "commit"]}]
+    assert learner._write_class({"redo_mbs": 40}, {"time_breakdown": tb}) == "write-heavy"
+    assert learner._write_class({"redo_mbs": 40}, {"time_breakdown": tb[1:]}) == "writes"  # CPU on the commit path is not a backlog

@@ -960,9 +960,13 @@ def recommend(ctx):
                   "a power loss/OS crash can lose ~1 s of committed transactions. Only acceptable where that loss is acceptable.",
                   {"data_fsyncs": s.get("data_fsyncs"), "tps": s.get("tps"), "disk_await_ms": s.get("disk_await_ms")}, impact=3, confidence=3, kind=dur_kind)
         if v.get("log_bin") == "ON" and _int(v, "sync_binlog", 1) == 1:
+            # sync_binlog before binlog off (user): the binary log stays for replicas / PITR, and when relaxing its fsync
+            # removes the commit backlog, turning the log off has little left to win
             b.add("sync-binlog", "Relax binlog fsync (DURABILITY TRADE-OFF)", [("sync_binlog", "1000")],
-                  "Binary log fsync at every commit group. Relaxing can lose binlog events on OS crash (replicas/PITR diverge).",
-                  {"data_fsyncs": s.get("data_fsyncs"), "tps": s.get("tps")}, impact=2, confidence=2, kind=dur_kind)
+                  "Binary log fsync at every commit group. Relaxing can lose binlog events on OS crash (replicas/PITR diverge). "
+                  "Tried before turning the binary log off: it keeps the log, and if the commit backlog goes away there is little "
+                  "left for binlog-off to win.",
+                  {"data_fsyncs": s.get("data_fsyncs"), "tps": s.get("tps"), "commit_wait_pct": round(commit_share, 1)}, impact=3, confidence=2, kind=dur_kind)
     page_writes = rates.get("Innodb_pages_written", 0) or rates.get("Innodb_dblwr_pages_written", 0)
     if have_run and wtype in ("oltp-write", "mixed") and "innodb_doublewrite" in v and str(v.get("innodb_doublewrite")).upper() == "ON" \
             and rates.get("Innodb_dblwr_pages_written", 0) > 50:
@@ -970,7 +974,10 @@ def recommend(ctx):
               f"{rates.get('Innodb_dblwr_pages_written', 0):.0f} pages/s are written twice. Without doublewrite a crash during a page write "
               "can leave a torn page that InnoDB cannot repair.", {"Innodb_dblwr_pages_written_per_s": rates.get("Innodb_dblwr_pages_written")},
               impact=2, confidence=2, kind="config" if policy == "benchmark" else "advice")
-    if have_run and v.get("log_bin") == "ON" and wtype in ("oltp-write", "mixed") and commit_bound:
+    if have_run and v.get("log_bin") == "ON" and wtype in ("oltp-write", "mixed") and commit_bound \
+            and not (_int(v, "sync_binlog", 1) == 1 and any(i["id"] == "sync-binlog" for i in b.items)):
+        # only after sync_binlog was relaxed (or cannot be) and the commit path still waits: the binary log's remaining
+        # cost is its write and group-commit stage, which only significant writes make large (user, 2026-10-25)
         b.add("binlog-off", "Run without the binary log (REPLICATION / PITR TRADE-OFF)", [("disable_log_bin", "")],
               "Every commit is a two-phase commit between the binlog and InnoDB with its own fsync. Without the binlog there is no replication "
               "and no point-in-time recovery.", {"fsyncs_per_trx": s.get("fsyncs_per_trx"), "log_bin": v.get("log_bin")},

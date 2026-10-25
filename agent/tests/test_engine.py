@@ -68,7 +68,8 @@ def test_oltp_benchmark_offers_tradeoffs_after_safe():
     res = run(*OLTP, policy="benchmark")
     it = ids(res)
     assert "trx-commit-2" in it and it["trx-commit-2"]["kind"] == "config"
-    assert "doublewrite-off" in it and "binlog-off" in it
+    # binlog off waits until sync_binlog is relaxed (user: the correlated, gentler step first)
+    assert "doublewrite-off" in it and ("binlog-off" in it or "sync-binlog" in it)
     assert it[res["next"]]["safety"] == "safe"
     assert res["phase"] == "safe"
 
@@ -2632,6 +2633,22 @@ def test_kernel_time_is_explained_with_its_levers():
     assert "kernel-network" in it and "kernel-scheduling" in it
     off = ids(engine.run_engine(dict(ctx, os_facts={"os:cpu_mitigations": "off"})))
     assert "kernel-mitigations" not in off
+
+
+def test_sync_binlog_before_binlog_off():
+    """User: sync_binlog is the binary log's correlated setting and matters with significant writes and a commit backlog;
+    it comes first - binlog off only once it is relaxed and the commit path still waits."""
+    from tuning_agent import engine
+    s = dict(OLTP[0], cpu_busy=60, data_fsyncs=900, tps=1000)
+    bd = [{"name": "Waiting: binary log writes / fsync (commit)", "share_pct": 30, "tags": ["commit"]}]
+    v = dict(VARS, log_bin="ON", sync_binlog="1", innodb_flush_log_at_trx_commit="1")
+    ctx = {"goal": "tps", "policy": "benchmark", "os_tuning": True, "os_facts": {}, "hw": dict(HW, cpus=8), "flavor": "percona",
+           "version": (8, 4, 11), "variables": v, "summary": s, "inputs": OLTP[1], "breakdown": bd,
+           "history": [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}], "noise_pct": 2.0, "managed": {}}
+    it = ids(engine.run_engine(ctx))
+    assert "sync-binlog" in it and "binlog-off" not in it, list(it)
+    it2 = ids(engine.run_engine(dict(ctx, variables=dict(v, sync_binlog="1000"))))
+    assert "binlog-off" in it2 and "sync-binlog" not in it2, list(it2)
 
 
 if __name__ == "__main__":

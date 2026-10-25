@@ -130,6 +130,23 @@ def _cpu_class(n):  # the same classes as the experience endpoint (main.cpu_clas
 CONC_CLASSES = ("low", "medium", "high", "extreme")
 
 
+COMMIT_BACKLOG_PCT = 5.0  # waiting on the commit path (redo / binlog writes and fsyncs) beyond this share: commit backlog
+
+
+def _write_class(summary, inputs):
+    """How write-heavy a run was (user, 2026-10-25: the binary log and sync_binlog matter only with significant writes and a
+    commit backlog - pooled together, read-only and write-heavy sessions made 'binlog off' look contested):
+    read-only (no redo), writes (no commit backlog), write-heavy (commit-path waits >= COMMIT_BACKLOG_PCT of database time)."""
+    redo = (summary or {}).get("redo_mbs")
+    tb = (inputs or {}).get("time_breakdown") or []
+    if redo is None and not tb:
+        return None
+    if redo is not None and redo < 0.1:
+        return "read-only"
+    commit = sum(p.get("share_pct") or 0 for p in tb if "commit" in (p.get("tags") or []) and not str(p.get("name", "")).startswith("CPU"))
+    return "write-heavy" if commit >= COMMIT_BACKLOG_PCT else "writes"
+
+
 def _conc_class(n, cpus=None):  # main.conc_class: connections per vCPU
     n, c = int(float(n or 0)), int(cpus or 0)
     if not n or not c:
@@ -148,8 +165,10 @@ def digest(sid):
     runs = store.q("SELECT seq, label, changes, verdict, goal_value, evaluation, summary, inputs, diagnosis FROM runs "
                    "WHERE session_id=? AND status='done' ORDER BY seq", (sid,))
     out_runs, wl, conns, base_bd = [], None, None, None
+    wcls = []
     for r in runs:
         ev, sm, inp = _uj(r["evaluation"], {}) or {}, _uj(r["summary"], {}) or {}, _uj(r["inputs"], {}) or {}
+        wcls.append(_write_class(sm, inp))
         wl = wl or ((inp.get("workload") or {}).get("type"))
         conns = conns or sm.get("threads_connected_avg")
         bd = [f"{p['name']} {p['share_pct']}%" for p in (inp.get("time_breakdown") or [])[:4]]
@@ -175,6 +194,8 @@ def digest(sid):
             "policy": s["policy"],
             "agent_version": s["agent_version"] if "agent_version" in s.keys() else None,
             "conditions": {"workload": wl, "cpu_class": _cpu_class(hw.get("cpus")), "concurrency_class": _conc_class(conns, hw.get("cpus")),
+                           # the session's usual write intensity (most runs): settings that act on the commit path differ by it
+                           "write_class": max(set(w for w in wcls if w), key=lambda w: wcls.count(w)) if any(wcls) else None,
                            "numa": ("multi-node" if int(hw.get("numa_nodes") or 1) > 1 else "uniform"),
                            "series": _series((facts.get("db") or {}).get("flavor"), (facts.get("db") or {}).get("version")),
                            "cluster": ((facts.get("db") or {}).get("cluster") or {}).get("type") or "standalone",
@@ -273,7 +294,8 @@ def validate(settings, direction, cond):
     (support, contradict, neutral, sessions)."""
     names = {_norm(s["variable"]): _norm(s["value"]) for s in settings}
     rows = store.q("SELECT r.session_id, s.env_id, s.agent_version, r.evaluation, r.changes, r.verdict, json_extract(r.inputs, '$.workload.type') wl, "
-                   "json_extract(e.facts, '$.hardware.cpus') cpus, json_extract(r.summary, '$.threads_connected_avg') conns "
+                   "json_extract(e.facts, '$.hardware.cpus') cpus, json_extract(r.summary, '$.threads_connected_avg') conns, "
+                   "json_extract(r.summary, '$.redo_mbs') redo, json_extract(r.inputs, '$.time_breakdown') tb "
                    "FROM runs r JOIN tsessions s ON s.id=r.session_id JOIN environments e ON e.id=s.env_id "
                    "WHERE r.status='done' AND r.verdict IN ('improved','efficiency-gain','neutral','regressed','efficiency-loss')")
     per = {}
@@ -293,6 +315,10 @@ def validate(settings, direction, cond):
             continue
         if cond.get("workload") and r["wl"] and cond["workload"] != r["wl"]:
             continue
+        if cond.get("write_class"):  # older insights have none: they match any write intensity until re-learned
+            wc = _write_class({"redo_mbs": r["redo"]}, {"time_breakdown": _uj(r["tb"], [])})
+            if wc and wc != cond["write_class"]:
+                continue
         if cond.get("cpu_class") and r["cpus"] and _cpu_class(r["cpus"]) != cond["cpu_class"]:
             continue
         # classes from before 2026-10-22 were absolute counts ("1-16"): they match any concurrency until re-learned
