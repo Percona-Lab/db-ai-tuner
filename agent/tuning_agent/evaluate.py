@@ -759,7 +759,10 @@ def stabilized(run, history, d, goal):
         noise = float((d or {}).get("goal_noise_pct") or DEFAULT_GOAL_NOISE)
         lower = goal == "latency"
         worse = (run["goal_value"] - ref) / ref * 100 * (-1 if lower else 1) if ref else 0
-        if worse < -noise:
+        # balancing a change that made a stable configuration unbounded (engine.balance_purge): the change plus its purge
+        # remedy must beat the stable configuration, else going back is as fast, simpler and stable
+        need = noise if any((h.get("evaluation") or {}).get("destabilized") for h in par) else -noise
+        if worse < need:
             out.update(below_stable=True, stable_runs=[h["seq"] for h in stable if config_key(h.get("managed")) == key],
                        vs_stable_pct=round(worse, 2))
     return out
@@ -887,7 +890,7 @@ def _run_verdict(run, history, goal, noise, peers=None):
     if stab and stab.get("below_stable"):
         d = dict(d, stable_but_slower=stab)
         d["note"] = (f"The undo history no longer grows without bound, but the goal is {stab['vs_stable_pct']:+.1f}% vs the last stable "
-                     f"configuration (runs {stab['stable_runs']}): returning to it is stable and faster."
+                     f"configuration (runs {stab['stable_runs']}): not better beyond noise - returning to it is stable and as fast or faster."
                      + (" " + d["note"] if d.get("note") else ""))
         stab = None
     if stab:

@@ -2087,6 +2087,84 @@ def _low_kept(r, harmful):
     return not (srcs & set(harmful or ()))
 
 
+BALANCE_TRIES = 3  # purge-speed remedies measured with a change that made the undo history unbounded, before reverting it
+
+
+def _plain_item(id_, title, changes, variables, rationale, evidence, score):
+    ch = [{"variable": k, "current": variables.get(k), "proposed": v} for k, v in changes
+          if normalize(k, variables.get(k)) != normalize(k, v)]
+    return {"id": id_, "title": title, "kind": "config", "safety": "safe", "changes": ch, "rationale": rationale, "evidence": evidence,
+            "impact": 3, "confidence": 2, "risk": "low", "goals": ["tps", "latency"], "tradeoffs": [], "score": score, "stability": True,
+            "restart": any(not KB.get(c["variable"], {}).get("dynamic", False) for c in ch), "score_override":
+            "balance: purge-speed remedies are measured with a change that made the undo history unbounded before it is reverted",
+            "hypothesis": {"kind": "rule", "text": rationale}} if ch else None
+
+
+def balance_purge(items, ctx):
+    """A change made a stable configuration's undo history grow without bound (evaluate: destabilized) while purge was
+    starved for CPU, not blocked by an old snapshot (user, 370: log-writer-threads-off +6.3%, one purge thread among ~150
+    runnable threads). Part of its gain is purge work left unpaid - but purge may keep up again with more of the CPUs: the
+    change is measured with purge-speed remedies (priority, more purge threads, a bigger batch), each judged against the
+    last stable configuration, before it is reverted. Returns the items with the balance step (or the return to the
+    stable configuration) in front."""
+    hist = ctx.get("history") or []
+    managed, v = ctx.get("managed") or {}, ctx.get("variables") or {}
+    d_idx = next((i for i in range(len(hist) - 1, -1, -1) if (hist[i].get("evaluation") or {}).get("destabilized")), None)
+    if d_idx is None:
+        return items
+    dr = hist[d_idx]
+    after = hist[d_idx + 1:]
+    dkey = config_key(dr.get("managed"))
+    # still on the destabilized change (its configuration, or it plus balance steps)?
+    if any(normalize(k, managed.get(k)) != normalize(k, val) for k, val in (dr.get("managed") or {}).items()):
+        return items
+    if any((r.get("evaluation") or {}).get("stabilized") for r in after):
+        return items  # balanced: kept, tuning continues from it
+    tries = [r for r in after if str(r.get("label") or "").startswith("balance-")]
+    stable_runs = (dr.get("evaluation") or {}).get("parent_runs") or []
+    stable = next((r for r in hist if r.get("seq") == (stable_runs[-1] if stable_runs else None)), None)
+    s = ctx.get("summary") or {}
+    blocked = purge_blocked(s) or purge_blocked(dr.get("summary"))
+    cands = []
+    if not blocked and len(tries) < BALANCE_TRIES and not any((r.get("evaluation") or {}).get("stable_but_slower") for r in tries):
+        cpus = int((ctx.get("hw") or {}).get("cpus") or 2)
+        pr = next((i for i in items if i["id"] == "purge-priority" and i["kind"] == "config" and i.get("changes")), None)
+        done = {str(r.get("label") or "").split(" ")[0] for r in after}
+        why0 = (f"Run {dr['seq']} ({dr.get('label')}) gained {(dr.get('evaluation') or {}).get('unsustainable_verdict') and (dr.get('evaluation') or {}).get('goal_delta_pct')}% "
+                "but purge stopped keeping up - it was starved for CPU, not blocked. Measured with faster purge before it is reverted: ")
+        if pr and "balance-purge-priority" not in done:
+            cands.append(_plain_item("balance-purge-priority", "Balance: higher priority for purge", [(c["variable"], c["proposed"]) for c in pr["changes"]], v,
+                                     why0 + "the purge threads at a higher priority than the user threads.", {"destabilized_run": dr["seq"]}, 120))
+        pt = _int(v, "innodb_purge_threads", 4)
+        if pt < 4 and "balance-purge-threads" not in done:
+            cands.append(_plain_item("balance-purge-threads", "Balance: more purge threads", [("innodb_purge_threads", str(min(4, max(2, cpus // 2))))], v,
+                                     why0 + f"{min(4, max(2, cpus // 2))} purge threads instead of {pt}: on saturated CPUs each thread gets a share, "
+                                     "so more threads give purge more of them.", {"destabilized_run": dr["seq"]}, 119))
+        if _int(v, "innodb_purge_batch_size", 300) < 1000 and "balance-purge-batch" not in done:
+            cands.append(_plain_item("balance-purge-batch", "Balance: bigger purge batches", [("innodb_purge_batch_size", "1000")], v,
+                                     why0 + "purge batches of 1000 undo pages (fewer coordination rounds per page).", {"destabilized_run": dr["seq"]}, 118))
+    cands = [c for c in cands if c]
+    if cands:
+        nxt = cands[0]
+        # nothing else runs - and nothing reverts - while the balance is measured
+        return [nxt] + [dict(i, confidence=0, note=(i.get("note", "") + " After the balance step.").strip()) if i["kind"] in ("config", "revert") else i
+                        for i in items if i["id"] != nxt["id"]]
+    if stable is None:
+        return items
+    # no remedy left, or the last one stayed slower than the stable configuration: back to it
+    target = stable.get("managed") or {}
+    rv = _revert_item(f"rollback-to-run-{stable['seq']}", "Return to the last stable configuration", managed, target, v,
+                      f"Run {dr['seq']} ({dr.get('label')}) made the undo history grow without bound"
+                      + (f"; {len(tries)} purge-speed remedies did not bring it back above the stable configuration" if tries else
+                         ("; purge was blocked by an old snapshot, not starved" if blocked else ""))
+                      + f": returning to the configuration of run {stable['seq']}, stable and faster.",
+                      {"destabilized_run": dr["seq"], "balance_runs": [r["seq"] for r in tries]}, priority=True)
+    if not rv:
+        return items
+    rv.update(score=130, safety="safe", tradeoffs=rv.get("tradeoffs") or [], score_override="back to the last stable configuration: the balance did not beat it")
+    return [rv] + [i for i in items if not str(i["id"]).startswith(("revert-to-run", "rollback-to-run"))]
+
+
 def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None, harmful=None):
     """Suggest returning to the best configuration when the current one is measurably worse."""
     if len(history) < 2:
@@ -2903,6 +2981,7 @@ def run_engine(ctx):
                 it["confidence"] = 0
                 it["note"] = (it.get("note", "") + f" Not run: commits take {commit_sh:.0f}% of the time - limiting admission "
                               "shrinks the commit groups.").strip()
+    items = balance_purge(items, ctx)
     actionable = [i for i in items if i["kind"] in ("config", "revert") and i["confidence"] > 0]
     safe_next = next((i for i in actionable if i["safety"] == "safe"), None)
     trade_next = next((i for i in actionable if i["safety"] == "trade-off"), None)
@@ -2937,7 +3016,7 @@ def run_engine(ctx):
     # 30-60 / >60%); when even that is below the noise it cannot show (user 194 / 174, lab: ~40 points that could not)
     ceiling = {0: 2.5, 1: 15, 2: 30, 3: 60, 4: 100}.get(nxt.get("relevance") or 0, 0) * 0.5 if nxt else 0
     why = ""
-    if nxt and nxt["kind"] == "config" and streak >= STOP_AFTER_FRUITLESS and (nxt.get("relevance") or 0) <= 1:
+    if nxt and nxt["kind"] == "config" and not nxt.get("stability") and streak >= STOP_AFTER_FRUITLESS and (nxt.get("relevance") or 0) <= 1:
         why = f"{streak} experiments in a row kept nothing, and the best remaining idea ({nxt['id']}) acts on little of the measured time."
     elif nxt and nxt["kind"] == "config" and nxt["safety"] == "safe" and nxt.get("relevance") is not None and streak >= 3 and ceiling < noise:
         why = (f"{streak} experiments in a row kept nothing, and the best remaining idea ({nxt['id']}) acts on at most ~{2 * ceiling:.0f}% "

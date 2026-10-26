@@ -2857,6 +2857,36 @@ def test_destabilizing_gain_is_not_a_win_and_a_costly_remedy_returns_to_the_stab
     assert d7b.get("stabilized"), d7b
 
 
+def test_balance_purge_before_reverting_a_destabilizing_change():
+    """User (370): a gain that made purge fall behind - measure it with faster purge (more purge threads, a bigger batch)
+    before reverting it; when the balance does not beat the stable configuration, return to that configuration."""
+    from tuning_agent import engine
+    unb = dict(OLTP[0], cpu_busy=99.5, threads_running_avg=125, history_list_length_max=2_600_000, oldest_trx_s_max=1,
+               unbounded_growth=[{"metric": "history_list_length", "label": "history list length", "start": 1_900_000, "end": 2_600_000,
+                                  "per_hour": 8_500_000}])
+    ok = dict(OLTP[0], cpu_busy=99.4, history_list_length_max=400_000)
+    lw = {"innodb_log_writer_threads": "OFF"}
+    hist = [{"seq": i, "label": f"baseline ({i}/3)", "verdict": "reference" if i == 1 else "repeat", "managed": {}, "goal_value": 3300.0,
+             "summary": ok, "changes": []} for i in (1, 2, 3)]
+    d = {"seq": 5, "label": "log-writer-threads-off", "verdict": "neutral", "managed": lw, "goal_value": 3500.0, "summary": unb,
+         "evaluation": {"destabilized": True, "unsustainable_verdict": "improved", "goal_delta_pct": 6.3, "parent_runs": [1, 2, 3]},
+         "changes": [{"variable": "innodb_log_writer_threads", "new": "OFF", "source": "rec:log-writer-threads-off"}]}
+    v = dict(VARS, innodb_log_writer_threads="OFF", innodb_purge_threads="1", innodb_purge_batch_size="300")
+    ctx = {"goal": "tps", "policy": "safe", "os_tuning": False, "os_facts": {}, "hw": dict(HW, cpus=8), "flavor": "percona", "version": (8, 4, 11),
+           "variables": v, "summary": unb, "inputs": OLTP[1], "history": hist + [d], "noise_pct": 2.0, "managed": lw}
+    r = engine.run_engine(ctx)
+    assert r["next"] == "balance-purge-threads", (r["next"], [i["id"] for i in r["items"][:4]])
+    assert not any(i["id"].startswith(("revert-to-run", "rollback-to-run")) and i.get("confidence") for i in r["items"])
+    # the balance stayed slower than the stable configuration: back to it
+    m6 = dict(lw, innodb_purge_threads="4")
+    b6 = {"seq": 6, "label": "balance-purge-threads", "verdict": "regressed", "managed": m6, "goal_value": 3250.0,
+          "summary": dict(ok, history_list_length_max=3000), "evaluation": {"stable_but_slower": {"vs_stable_pct": -1.5}, "parent_runs": [5]},
+          "changes": [{"variable": "innodb_purge_threads", "new": "4", "source": "rec:balance-purge-threads"}]}
+    r2 = engine.run_engine(dict(ctx, history=hist + [d, b6], managed=m6, variables=dict(v, innodb_purge_threads="4"),
+                                summary=b6["summary"]))
+    assert r2["next"] == "rollback-to-run-3", (r2["next"], [i["id"] for i in r2["items"][:4]])
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

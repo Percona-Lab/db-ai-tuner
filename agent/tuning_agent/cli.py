@@ -3838,7 +3838,7 @@ def _autotune(a):
             c.event("stop", why, {"runs": measured})
             break
         fruitless = _fruitless_since_gain(sess)
-        if item and item["kind"] != "revert" and max_fruitless and len(fruitless) >= max_fruitless:
+        if item and item["kind"] != "revert" and not str(item.get("id")).startswith("balance-") and max_fruitless and len(fruitless) >= max_fruitless:
             # diminishing returns: 26% of recent runs came after a session's last gain (tails of 18-21 runs) and the ceiling
             # check rarely trips. Safe ideas that long without a gain hand over to the trade-offs; after that, stop
             start_ = start_tradeoffs(sess["runs"])
