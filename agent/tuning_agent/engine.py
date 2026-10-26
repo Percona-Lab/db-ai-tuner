@@ -2127,7 +2127,7 @@ def nofile_guard(items, ctx):
     return items
 
 
-BALANCE_TRIES = 3  # purge-speed remedies measured with a change that made the undo history unbounded, before reverting it
+BALANCE_TRIES = 4  # remedies measured with a change that made the undo history unbounded, before reverting it
 
 
 def _plain_item(id_, title, changes, variables, rationale, evidence, score):
@@ -2168,21 +2168,48 @@ def balance_purge(items, ctx):
     cands = []
     if not blocked and len(tries) < BALANCE_TRIES and not any((r.get("evaluation") or {}).get("stable_but_slower") for r in tries):
         cpus = int((ctx.get("hw") or {}).get("cpus") or 2)
-        pr = next((i for i in items if i["id"] == "purge-priority" and i["kind"] == "config" and i.get("changes")), None)
+        by_id = {i["id"]: i for i in items if i["kind"] == "config" and i.get("changes")}
+        pr = by_id.get("purge-priority")
+        tp = by_id.get("purge-threadpool")
         done = {str(r.get("label") or "").split(" ")[0] for r in after}
-        why0 = (f"Run {dr['seq']} ({dr.get('label')}) gained {(dr.get('evaluation') or {}).get('unsustainable_verdict') and (dr.get('evaluation') or {}).get('goal_delta_pct')}% "
-                "but purge stopped keeping up - it was starved for CPU, not blocked. Measured with faster purge before it is reverted: ")
-        if pr and "balance-purge-priority" not in done:
-            cands.append(_plain_item("balance-purge-priority", "Balance: higher priority for purge", [(c["variable"], c["proposed"]) for c in pr["changes"]], v,
-                                     why0 + "the purge threads at a higher priority than the user threads.", {"destabilized_run": dr["seq"]}, 120))
-        pt = _int(v, "innodb_purge_threads", 4)
-        if pt < 4 and "balance-purge-threads" not in done:
-            cands.append(_plain_item("balance-purge-threads", "Balance: more purge threads", [("innodb_purge_threads", str(min(4, max(2, cpus // 2))))], v,
-                                     why0 + f"{min(4, max(2, cpus // 2))} purge threads instead of {pt}: on saturated CPUs each thread gets a share, "
-                                     "so more threads give purge more of them.", {"destabilized_run": dr["seq"]}, 119))
-        if _int(v, "innodb_purge_batch_size", 300) < 1000 and "balance-purge-batch" not in done:
-            cands.append(_plain_item("balance-purge-batch", "Balance: bigger purge batches", [("innodb_purge_batch_size", "1000")], v,
-                                     why0 + "purge batches of 1000 undo pages (fewer coordination rounds per page).", {"destabilized_run": dr["seq"]}, 118))
+        dv = dr.get("managed") or {}
+        why0 = (f"Run {dr['seq']} ({dr.get('label')}) gained {(dr.get('evaluation') or {}).get('goal_delta_pct')}% but purge stopped keeping up - "
+                "starved for CPU, not blocked. Measured with this remedy (on its own, not stacked on an earlier one) against the last "
+                "stable configuration before the change is reverted: ")
+        # the remedies that bounded the history elsewhere, strongest evidence first (user, 373: 4 purge threads and a bigger
+        # batch were tried, the concurrency cap, the thread pool and 32 purge threads at a high priority were not):
+        # canary 2026-10-25 - innodb_thread_concurrency = CPUs +44% and bounded, the thread pool bounded (+18-29%), purge
+        # threads / priority alone no effect at 1024 threads
+        remedies = []
+        if "innodb_thread_concurrency" in v and str(v.get("thread_handling") or "").lower() != "pool-of-threads" and ctx.get("flavor") != "mariadb":
+            remedies.append(("balance-concurrency", "Balance: cap the threads inside InnoDB", [("innodb_thread_concurrency", str(cpus))],
+                             f"innodb_thread_concurrency = {cpus} (the CPUs): fewer user threads create undo at once, so purge gets CPU time."))
+        if tp:
+            remedies.append(("balance-threadpool", "Balance: thread pool", [(c["variable"], c["proposed"]) for c in tp["changes"]],
+                             "the thread pool runs about one statement per CPU and queues the rest, so purge gets its share of the CPUs."))
+        mx = [("innodb_purge_threads", "32")] + ([(c["variable"], c["proposed"]) for c in pr["changes"] if c["variable"] != "innodb_purge_threads"] if pr else [])
+        if _int(v, "innodb_purge_threads", 4) < 32:
+            remedies.append(("balance-purge-max", "Balance: 32 purge threads" + (" at a higher priority" if pr else ""), mx,
+                             "the most purge threads InnoDB allows" + (", at a higher priority than the user threads" if pr else "")
+                             + ": on saturated CPUs each thread gets a share, so more threads give purge more of them."))
+        if _int(v, "innodb_purge_batch_size", 300) < 1000:
+            remedies.append(("balance-purge-batch", "Balance: bigger purge batches", [("innodb_purge_batch_size", "1000")],
+                             "purge batches of 1000 undo pages (fewer coordination rounds per page)."))
+        # each remedy on its own on top of the change: what an earlier balance attempt set goes back to the change's value
+        undo = [(k, dv.get(k)) for k in managed if normalize(k, managed.get(k)) != normalize(k, dv.get(k))]
+        score = 125
+        for id_, title, ch, why in remedies:
+            if id_ in done:
+                continue
+            chk = {k for k, _ in ch}
+            it_ = _plain_item(id_, title, ch + [(k, x) for k, x in undo if k not in chk and x is not None], v, why0 + why,
+                              {"destabilized_run": dr["seq"]}, score)
+            if it_:
+                for k, x in undo:
+                    if k not in chk and x is None and k in managed:
+                        it_["changes"].append({"variable": k, "current": v.get(k), "proposed": None, "unset": True})
+                cands.append(it_)
+                score -= 1
     cands = [c for c in cands if c]
     if cands:
         nxt = cands[0]
@@ -2247,7 +2274,7 @@ def revert_suggestions(history, variables, goal="tps", noise=2.0, managed=None, 
             # priority: costs no run (merged into the next experiment) and keeps neutral changes from piling up
             items.append(_revert_item(f"revert-to-run-{parent_run['seq']}", "Revert the last experiment: no measurable benefit",
                                       managed, parent_run.get("managed") or {}, variables,
-                                      f"The experiment was within the {noise_txt} on the goal ({first_eval.get('goal_delta_pct'):+.1f}%) and did not reduce "
+                                      f"The experiment was within the {noise_txt} on the goal ({(first_eval.get('goal_delta_pct') or 0):+.1f}%) and did not reduce "
                                       "CPU or I/O per transaction. Keeping changes without a measurable benefit only adds risk.",
                                       {"goal_delta_pct": first_eval.get("goal_delta_pct"), "parent_runs": first_eval.get("parent_runs")},
                                       priority=True))

@@ -2874,17 +2874,27 @@ def test_balance_purge_before_reverting_a_destabilizing_change():
     v = dict(VARS, innodb_log_writer_threads="OFF", innodb_purge_threads="1", innodb_purge_batch_size="300")
     ctx = {"goal": "tps", "policy": "safe", "os_tuning": False, "os_facts": {}, "hw": dict(HW, cpus=8), "flavor": "percona", "version": (8, 4, 11),
            "variables": v, "summary": unb, "inputs": OLTP[1], "history": hist + [d], "noise_pct": 2.0, "managed": lw}
+    v = dict(v, innodb_thread_concurrency="0")
+    ctx["variables"] = v
     r = engine.run_engine(ctx)
-    assert r["next"] == "balance-purge-threads", (r["next"], [i["id"] for i in r["items"][:4]])
+    # the strongest stabilizer first (canary: concurrency cap = CPUs), not a few more purge threads (user, 373)
+    assert r["next"] == "balance-concurrency", (r["next"], [i["id"] for i in r["items"][:4]])
     assert not any(i["id"].startswith(("revert-to-run", "rollback-to-run")) and i.get("confidence") for i in r["items"])
-    # the balance stayed slower than the stable configuration: back to it
-    m6 = dict(lw, innodb_purge_threads="4")
-    b6 = {"seq": 6, "label": "balance-purge-threads", "verdict": "regressed", "managed": m6, "goal_value": 3250.0,
+    # still unbounded with it: the next remedy on its own - the concurrency cap goes back to the change's value
+    m6 = dict(lw, innodb_thread_concurrency="8")
+    b6 = {"seq": 6, "label": "balance-concurrency", "verdict": "neutral", "managed": m6, "goal_value": 3400.0, "summary": unb,
+          "evaluation": {"parent_runs": [5], "goal_delta_pct": -2.9}, "changes": [{"variable": "innodb_thread_concurrency", "new": "8", "source": "rec:balance-concurrency"}]}
+    r2 = engine.run_engine(dict(ctx, history=hist + [d, b6], managed=m6, variables=dict(v, innodb_thread_concurrency="8")))
+    nx = next(i for i in r2["items"] if i["id"] == r2["next"])
+    assert r2["next"].startswith("balance-") and r2["next"] != "balance-concurrency", r2["next"]
+    assert any(c["variable"] == "innodb_thread_concurrency" and c.get("unset") for c in nx["changes"]), nx["changes"]
+    # a remedy that bounds the history but stays slower than the stable configuration: back to it
+    b7 = {"seq": 7, "label": "balance-purge-max", "verdict": "regressed", "managed": dict(lw, innodb_purge_threads="32"), "goal_value": 3250.0,
           "summary": dict(ok, history_list_length_max=3000), "evaluation": {"stable_but_slower": {"vs_stable_pct": -1.5}, "parent_runs": [5]},
-          "changes": [{"variable": "innodb_purge_threads", "new": "4", "source": "rec:balance-purge-threads"}]}
-    r2 = engine.run_engine(dict(ctx, history=hist + [d, b6], managed=m6, variables=dict(v, innodb_purge_threads="4"),
-                                summary=b6["summary"]))
-    assert r2["next"] == "rollback-to-run-3", (r2["next"], [i["id"] for i in r2["items"][:4]])
+          "changes": [{"variable": "innodb_purge_threads", "new": "32", "source": "rec:balance-purge-max"}]}
+    r3 = engine.run_engine(dict(ctx, history=hist + [d, b6, b7], managed=b7["managed"], variables=dict(v, innodb_purge_threads="32"),
+                                summary=b7["summary"]))
+    assert r3["next"] == "rollback-to-run-3", (r3["next"], [i["id"] for i in r3["items"][:4]])
 
 
 def test_connection_refusals_make_a_run_unreliable():
