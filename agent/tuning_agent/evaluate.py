@@ -793,6 +793,9 @@ def state_flags(s):
         out["warmup_short"] = s["warmup_signals"]
     if (s or {}).get("unbounded_growth"):
         out["unbounded"] = s["unbounded_growth"]
+    if (s or {}).get("bench_ended_early_s"):
+        # the benchmark stopped inside the measured window: the counters include its wind-down
+        out["bench_ended_early"] = {"seconds": s["bench_ended_early_s"], "share_pct": round(100.0 * s["bench_ended_early_s"] / max(s.get("duration_s") or 1, 1), 1)}
     if (s or {}).get("client_restart"):
         # the measured phase ran in a new benchmark process that never got back to the warm-up's level (run 5251: warm-up
         # and measurement as two sysbench invocations): the warm-up did not warm what the window measured

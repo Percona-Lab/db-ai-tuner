@@ -821,6 +821,24 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None, bench_started
                                   "warmup_tps": round(ref["tps"], 1), "window_tps": round(sum(rest) / len(rest), 1)}
     startup_s = round((samples[skip]["ts"] - samples[0]["ts"]), 1) if skip else None
     samples = samples[skip:]
+    # the tail: samples at the window's end where the load had already stopped (a benchmark ending inside the window, the
+    # last 10 s sample reaching past its end) - left out of the sample-based analyses like the start-up (user, 2026-10-26)
+    tail_s = None
+    tv = [(x.get("db") or {}).get("tps") for x in samples]
+    cv_ = [(x.get("db") or {}).get("threads_connected") for x in samples]
+    known = sorted(v for v in tv if v is not None)
+    kc = sorted(v for v in cv_ if v is not None)
+    if len(known) >= 6 and len(kc) >= 6:
+        # a wind-down, not a stall: throughput down AND the clients disconnecting (a stall keeps its connections and
+        # stays in the stall statistics)
+        med_, medc = known[len(known) // 2], kc[len(kc) // 2]
+        cut = len(samples)
+        while cut > len(samples) // 2 and tv[cut - 1] is not None and tv[cut - 1] < 0.5 * med_ \
+                and cv_[cut - 1] is not None and cv_[cut - 1] < 0.9 * medc:
+            cut -= 1
+        if cut < len(samples):
+            tail_s = round((samples[-1].get("ts") or 0) - (samples[cut - 1].get("ts") or 0), 1)
+            samples = samples[:cut]
     sa, sb = a["status"], b["status"]
     deltas = {}
     for k, v in sb.items():
@@ -883,6 +901,7 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None, bench_started
     summary = {
         "duration_s": round(dt, 1),
         "startup_excluded_s": startup_s,
+        "tail_excluded_s": tail_s,
         "client_restart": client_restart,
         "startup_ramp_s": ramp,
         "tps": db_rates.get("tps"),

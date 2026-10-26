@@ -1202,6 +1202,9 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
                 summary["numa_mysqld_max_node_pct"] = pl["max_node_pct"]
     except Exception:  # noqa
         pass
+    ee_ = ((extra_inputs or {}).get("bench") or {}).get("ended_early_s")
+    if ee_:
+        summary["bench_ended_early_s"] = ee_
     sr_ = inputs.get("status_rates") or {}
     from . import connhealth
     ch_ = connhealth.judge(sr_, c.variables.get("max_connections"))
@@ -1625,6 +1628,7 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         raise ServerDown(f"lost the connection to mysqld during the run: {str(e)[:300]}")
 
 
+COOLDOWN_S = 15  # the window closes at least this long before a benchmark's planned end ({total} adds 30 s after the window)
 WARM_PASSES_MAX = 6
 WARM_STEADY_PCT = 3.0
 
@@ -1844,6 +1848,10 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
             planned_end = t_launch + (waited or 0) + prof.duration
             delay = time.time() - (t_launch + (waited or 0))
             deadline = min(time.time() + prof.duration, planned_end) if waited else time.time() + prof.duration
+            if prof.shape == "split":
+                # the benchmark's own measured phase ends at planned_end: the window closes COOLDOWN_S before it, so its
+                # wind-down (threads disconnecting, the final report) is never measured (user, 2026-10-26)
+                deadline = min(deadline, planned_end - COOLDOWN_S)
             m["window_start_delay_s"] = round(delay, 1)
             if waited and delay > 0.05 * prof.duration:
                 log(f"WARNING: the measured window starts {delay:.0f}s after the warm-up ended (agent setup): it is shortened to end with "
@@ -1853,6 +1861,10 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
             while time.time() < deadline and r.alive():
                 time.sleep(1)
                 prep_tail = _prepared_tail(c, prep_tail)
+            if not r.alive() and deadline - time.time() > 2:
+                # the benchmark ended inside the window: its last seconds (wind-down) are in it - recorded, flagged
+                m["ended_early_s"] = round(deadline - time.time(), 1)
+                log(f"WARNING: the benchmark exited {m['ended_early_s']:.0f}s before the window's end: the window includes its wind-down")
         else:
             # early abort (OtterTune lesson): a configuration that makes the run take far longer than usual is a failure
             durs = sorted(x["summary"].get("duration_s") for x in sess["runs"] if (x.get("summary") or {}).get("duration_s"))
@@ -1927,7 +1939,8 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
         spec["observed"] = observed
         spec["spec_sha"] = hashlib.sha256((spec["spec_sha"] + json.dumps([o["argv"] for o in observed])).encode()).hexdigest()[:12]
     extra = {"bench": {**spec, "requirements": requirements, "exit_code": rc, "metrics": metrics, "log_tail": text[-4000:],
-                       "window_start_delay_s": m.get("window_start_delay_s"), "warmup_s": waited}, "probe": env_probe}
+                       "window_start_delay_s": m.get("window_start_delay_s"), "ended_early_s": m.get("ended_early_s"), "warmup_s": waited},
+             "probe": env_probe}
     if cow is not None:
         extra["cow"] = cow
     if quiet is not None:

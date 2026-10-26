@@ -2971,6 +2971,22 @@ def test_client_restart_judged_against_the_warm_up():
     assert collector.startup_end(good, t0, tail) == 6, collector.startup_end(good, t0, tail)
 
 
+def test_window_tail_trims_a_wind_down_but_keeps_a_stall():
+    """User (2026-10-26): no seconds after the benchmark stopped in the window - samples where throughput fell AND the
+    clients disconnected are left out at the end; a stall at the end (connections kept) stays."""
+    from tuning_agent import collector
+    def run(tail_tps, tail_conn):
+        smp = [{"ts": 1000 + 10 * i, "db": {"tps": 1000.0, "threads_connected": 256}, "os": {}} for i in range(20)]
+        smp += [{"ts": 1200 + 10 * i, "db": {"tps": tail_tps, "threads_connected": tail_conn}, "os": {}} for i in range(2)]
+        return smp
+    a = {"t": 995, "status": {}, "variables": {}, "os": {"t": 995}, "innodb_text": ""}
+    b = {"t": 1215, "status": {}, "variables": {}, "os": {"t": 1215}, "innodb_text": ""}
+    s1 = collector.analyze_window(a, b, run(50.0, 20))[0]
+    assert s1.get("tail_excluded_s"), s1.get("tail_excluded_s")
+    s2 = collector.analyze_window(a, b, run(50.0, 256))[0]
+    assert not s2.get("tail_excluded_s"), s2.get("tail_excluded_s")
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
