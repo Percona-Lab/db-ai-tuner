@@ -736,6 +736,41 @@ def startup_samples(samples, started_at, window_s):
     return n if n < len(samples) // 2 else 0
 
 
+def _tail_ref(tail):
+    """The warm-up's last minutes, the state the measured phase should continue: connections and throughput (mean, sd)."""
+    tps = [(x.get("db") or {}).get("tps") for x in tail or [] if (x.get("db") or {}).get("tps") is not None]
+    con = [(x.get("db") or {}).get("threads_connected") for x in tail or [] if (x.get("db") or {}).get("threads_connected") is not None]
+    if len(tps) < 3:
+        return None
+    m = sum(tps) / len(tps)
+    sd = (sum((v - m) ** 2 for v in tps) / (len(tps) - 1)) ** 0.5
+    return {"tps": m, "tps_sd": sd, "connected": (sum(con) / len(con)) if con else None}
+
+
+def startup_end(samples, started_at, tail):
+    """Index of the first window sample after the new benchmark process's start-up, judged against the warm-up it should
+    continue (user, run 5251: a fixed 90%-of-median rule left out 21 s while connections took ~60 s to recover): its
+    connections back to the warm-up's level (98%) and throughput back inside the warm-up's spread (mean - 2 sd, at
+    least 95% of it) for two samples in a row. None when it never gets there in the first half of the window."""
+    ref = _tail_ref(tail)
+    if not ref or not started_at:
+        return None
+    lo = min(ref["tps"] - 2 * ref["tps_sd"], 0.95 * ref["tps"])
+    ok_run, half = 0, samples[len(samples) // 2].get("ts") if samples else None
+    for i, x in enumerate(samples):
+        d = x.get("db") or {}
+        if half is not None and (x.get("ts") or 0) > half:
+            return None
+        con_ok = ref["connected"] is None or d.get("threads_connected") is None or d["threads_connected"] >= 0.98 * ref["connected"]
+        if (x.get("ts") or 0) >= started_at and con_ok and (d.get("tps") or 0) >= lo:
+            ok_run += 1
+            if ok_run == 2:
+                return max(0, i - 1)
+        else:
+            ok_run = 0
+    return None
+
+
 def startup_ramp_s(samples, started_at, window_s):
     """Seconds from the measured phase's own benchmark start until throughput is back to 90% of the window median - the
     whole ramp, not capped like startup_samples (em-b212x session 337: 1024 sysbench threads reconnecting took ~30 s of
@@ -762,6 +797,28 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None, bench_started
     dt = max(b["t"] - a["t"], 1e-6)
     ramp = startup_ramp_s(samples, bench_started_at, dt)
     skip = startup_samples(samples, bench_started_at, dt)
+    client_restart = None
+    if bench_started_at and samples and (samples[0].get("ts") or 0) <= bench_started_at + 30 and warmup_tail:
+        # a new benchmark process for the measured phase: its start-up judged against the warm-up it should continue
+        end = startup_end(samples, bench_started_at, warmup_tail)
+        ref = _tail_ref(warmup_tail)
+        if end is not None:
+            skip = end
+            ramp = round((samples[end]["ts"] or 0) - bench_started_at, 1) if end else ramp
+        rest = [(x.get("db") or {}).get("tps") for x in samples[skip if end is not None else len(samples) // 2:] if (x.get("db") or {}).get("tps") is not None]
+        if ref and rest:
+            gap = (sum(rest) / len(rest) - ref["tps"]) / ref["tps"] * 100 if ref["tps"] else 0
+            # two averages compared: their standard errors, not the 10 s samples' spread (5251: 10,737 vs 11,385 tps,
+            # -5.7%, samples +-4.8% each)
+            n_t = len([x for x in warmup_tail if (x.get("db") or {}).get("tps") is not None])
+            m_w = sum(rest) / len(rest)
+            sd_w = (sum((v - m_w) ** 2 for v in rest) / max(len(rest) - 1, 1)) ** 0.5
+            se = (ref["tps_sd"] ** 2 / max(n_t, 1) + sd_w ** 2 / len(rest)) ** 0.5
+            if end is None or gap < -max(2.0, 200 * se / ref["tps"] if ref["tps"] else 0):
+                # the restarted client never got back to the warm-up's level: the warm-up did not warm what the window
+                # measures (warm-up and measurement as two benchmark processes)
+                client_restart = {"recovered": end is not None, "window_vs_warmup_pct": round(gap, 1),
+                                  "warmup_tps": round(ref["tps"], 1), "window_tps": round(sum(rest) / len(rest), 1)}
     startup_s = round((samples[skip]["ts"] - samples[0]["ts"]), 1) if skip else None
     samples = samples[skip:]
     sa, sb = a["status"], b["status"]
@@ -826,6 +883,7 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None, bench_started
     summary = {
         "duration_s": round(dt, 1),
         "startup_excluded_s": startup_s,
+        "client_restart": client_restart,
         "startup_ramp_s": ramp,
         "tps": db_rates.get("tps"),
         "within_se_pct": batch_se_pct("db", "tps") or batch_se_pct("db", "qps"),

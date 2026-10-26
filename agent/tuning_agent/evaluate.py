@@ -793,6 +793,10 @@ def state_flags(s):
         out["warmup_short"] = s["warmup_signals"]
     if (s or {}).get("unbounded_growth"):
         out["unbounded"] = s["unbounded_growth"]
+    if (s or {}).get("client_restart"):
+        # the measured phase ran in a new benchmark process that never got back to the warm-up's level (run 5251: warm-up
+        # and measurement as two sysbench invocations): the warm-up did not warm what the window measured
+        out["client_restart"] = s["client_restart"]
     if (s or {}).get("connect_failures"):
         # connects failing for other reasons than max_connections (handshake timeouts, accept / resource errors): the
         # clients spent part of the run reconnecting - flagged with what to check

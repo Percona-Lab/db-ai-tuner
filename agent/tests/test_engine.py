@@ -2956,6 +2956,21 @@ def test_connection_health_judges_storms_and_failing_connects():
     assert w.check("1100")["kind"] == "refused"
 
 
+def test_client_restart_judged_against_the_warm_up():
+    """User (run 5251): warm-up and window as two sysbench processes - connections took ~60 s to recover and the window ran
+    ~4% below the warm-up's end; the fixed 90%-of-median rule left out 21 s. Now the start-up ends when the client is back
+    to the warm-up's level, and a window that stays below it is flagged."""
+    from tuning_agent import collector
+    tail = [{"ts": 1000 + 30 * i, "db": {"tps": 11500 + (i % 3) * 60, "threads_connected": 1178}} for i in range(8)]
+    t0 = 2000
+    win = [{"ts": t0 + 10 * i, "db": {"tps": (9000 if i < 3 else 10900 + (i % 2) * 80), "threads_connected": (1026 + 25 * i if i < 6 else 1176)}}
+           for i in range(30)]
+    end = collector.startup_end(win, t0, tail)
+    assert end is None, end  # never back inside the warm-up's spread: not a start-up, a lower level
+    good = [dict(x, db=dict(x["db"], tps=11450 if i >= 6 else x["db"]["tps"])) for i, x in enumerate(win)]
+    assert collector.startup_end(good, t0, tail) == 6, collector.startup_end(good, t0, tail)
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
