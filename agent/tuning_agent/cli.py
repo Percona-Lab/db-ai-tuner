@@ -1148,6 +1148,13 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
                 summary["numa_mysqld_max_node_pct"] = pl["max_node_pct"]
     except Exception:  # noqa
         pass
+    sr_ = inputs.get("status_rates") or {}
+    if sr_.get("Connection_errors_max_connections"):
+        # new connections refused with 'Too many connections' (user, run 5214: 1024 reconnecting threads, max_connections
+        # 1100, ~14,000 refusals/s while closed connections waited to release their slots)
+        summary["conn_refused_per_s"] = sr_["Connection_errors_max_connections"]
+        summary["connections_per_s"] = sr_.get("Connections")
+        summary["max_connections"] = c.variables.get("max_connections")
     if extra_inputs:
         inputs.update(extra_inputs)
         if (extra_inputs.get("cow") or {}).get("issues"):
@@ -1475,7 +1482,30 @@ def _ensure_requirements(c, prof):
     """Benchmark prerequisites ([requires] in the profile): raise them at runtime before the run if the server is below.
     Numeric values are minimums; others must match. Returns what was checked / changed for the run record."""
     out = []
-    for var, want in (prof.requires or {}).items():
+    req = dict(prof.requires or {})
+    sess_ = c.session(required=False) or {}
+    for var, want in (sess_.get("requires_raised") or {}).items():
+        # raised by the agent for this session: the profile's minimum was not enough (connection refusals)
+        try:
+            if float(want) > float(req.get(var) or 0):
+                req[var] = want
+        except (TypeError, ValueError):
+            pass
+    last_ = ((sess_.get("runs") or [{}])[-1].get("summary") or {})
+    if (last_.get("conn_refused_per_s") or 0) >= 1 and "max_connections" in req:
+        # reconnecting clients need room for the connections still closing: the prerequisite was too low, not a tuning result
+        cur_ = int(float(last_.get("max_connections") or req["max_connections"]))
+        new_ = int(-(-cur_ * 1.5 // 100) * 100)
+        if new_ > float(req["max_connections"]):
+            req["max_connections"] = str(new_)
+            sess_.setdefault("requires_raised", {})["max_connections"] = str(new_)
+            c.state.set("session", sess_)
+            msg = (f"benchmark requirement raised for this session: max_connections {cur_} -> {new_} - the last run had "
+                   f"{last_['conn_refused_per_s']:,.0f} refused connections/s ('Too many connections'): reconnecting clients "
+                   "need room for connections that are still closing. Raise [requires] max_connections in the profile.")
+            log("   " + msg)
+            c.event("bench", msg, {"refused_per_s": last_["conn_refused_per_s"], "max_connections": new_})
+    for var, want in req.items():
         if not re.fullmatch(r"[a-z_][a-z0-9_]*", var):
             out.append({"variable": var, "required": want, "error": "not a server variable name"})
             continue
@@ -1500,7 +1530,7 @@ def _ensure_requirements(c, prof):
         out.append(item)
     # remembered: every restart the agent makes re-applies them (Applier.reapply_runtime) - SET GLOBAL values do not
     # survive one, and a benchmark connecting right after a restart failed with 'Too many connections' (user report)
-    c.state.set("requirements", {k: str(v) for k, v in (prof.requires or {}).items() if re.fullmatch(r"[a-z_][a-z0-9_]*", k)})
+    c.state.set("requirements", {k: str(v) for k, v in req.items() if re.fullmatch(r"[a-z_][a-z0-9_]*", k)})
     return out
 
 

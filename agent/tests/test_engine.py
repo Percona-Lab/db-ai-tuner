@@ -2887,6 +2887,18 @@ def test_balance_purge_before_reverting_a_destabilizing_change():
     assert r2["next"] == "rollback-to-run-3", (r2["next"], [i["id"] for i in r2["items"][:4]])
 
 
+def test_connection_refusals_make_a_run_unreliable():
+    """User (run 5214): 1024 reconnecting sysbench threads at max_connections 1100 - ~14,000 'Too many connections' per
+    second; the run measured retries. Unreliable, with the fix in the note."""
+    from tuning_agent import evaluate
+    s = {"conn_refused_per_s": 14275.0, "connections_per_s": 1007.0, "max_connections": "1100", "tps": 8882}
+    r = evaluate.connection_refusals(s)
+    assert r and "max_connections" in r["text"], r
+    assert evaluate.connection_refusals({"conn_refused_per_s": 0.2, "connections_per_s": 1000}) is None
+    v, d = evaluate.verdict({"seq": 2, "label": "x", "managed": {}, "goal_value": 1.0, "summary": s}, [], "tps", {"noise_pct": 2.0})
+    assert v == "unreliable" and d.get("connection_refusals"), (v, d)
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

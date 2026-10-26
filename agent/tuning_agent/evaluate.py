@@ -629,6 +629,19 @@ def client_failures(s):
     return {"disk_full": bool(disk), "errors_per_s": per_s, "top": errs[:3], "text": text}
 
 
+def connection_refusals(s):
+    """New connections refused because max_connections was reached (Connection_errors_max_connections): the clients spent
+    the run retrying instead of working (user, run 5214: ~14,000 refusals/s for ~1,000 connections/s). None if negligible."""
+    ref = s.get("conn_refused_per_s") or 0
+    if ref < max(1.0, 0.01 * (s.get("connections_per_s") or 0)):
+        return None
+    return {"refused_per_s": ref, "connections_per_s": s.get("connections_per_s"), "max_connections": s.get("max_connections"),
+            "text": f"UNRELIABLE: the server refused {ref:,.0f} new connections/s ('Too many connections': max_connections "
+                    f"{s.get('max_connections')} reached, {s.get('connections_per_s') or 0:,.0f} connections/s accepted) - the clients "
+                    "spent the run retrying. Reconnecting clients need room for connections still closing: the agent raises "
+                    "max_connections for the next runs; raise [requires] max_connections in the profile (about 1.5-2x the client threads)."}
+
+
 def client_stall(s):
     """The clients stopped sending work: most connections stay open but idle and the server has nothing to do (session
     222: 259 HammerDB connections, ~15 running, CPU 1%, 14 commits/s after 270k NOPM - reported as 'CPU steal')."""
@@ -821,6 +834,9 @@ def _run_verdict(run, history, goal, noise, peers=None):
     fail = client_failures(run.get("summary") or {})
     if fail:
         return "unreliable", {"client_failures": fail, "note": fail["text"]}
+    refused = connection_refusals(run.get("summary") or {})
+    if refused:
+        return "unreliable", {"connection_refusals": refused, "note": refused["text"]}
     stall = client_stall(run.get("summary") or {})
     if stall:
         return "unreliable", {"client_stalled": stall,
