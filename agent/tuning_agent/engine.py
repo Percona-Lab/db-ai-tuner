@@ -1747,6 +1747,12 @@ def apply_history(items, history, swap_now_mb=None, managed_now=None):
     for it in items:
         prior = [tried.get((c["variable"], normalize(c["variable"], c["proposed"]))) for c in it["changes"]]
         prior = [p for p in prior if p] or ([tried_ids[it["id"]]] if it["id"] in tried_ids and it["kind"] == "config" else [])
+        last_ = tried_ids.get(it["id"]) if it["kind"] == "config" else None
+        if last_ is not None and last_.get("verdict") in ("regressed", "efficiency-loss"):
+            # the rule's own last run regressed: that decides, not an earlier run that matched part of its changes (matrix P1,
+            # session 377: bp-overcommit kept at run 9, then -57% / -54% / -54% at runs 12, 15, 17 - each bigger step matched
+            # run 9's swap file and passed as "tried and kept")
+            prior = [last_]
         if not prior and it.get("sweep") and it["sweep"]["variable"] in swept:
             prior = [swept[it["sweep"]["variable"]]]
         if prior:

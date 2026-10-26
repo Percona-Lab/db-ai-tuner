@@ -2997,6 +2997,21 @@ def test_window_tail_trims_a_wind_down_but_keeps_a_stall():
     assert not s2.get("tail_excluded_s"), s2.get("tail_excluded_s")
 
 
+def test_a_rule_that_regressed_is_not_repeated_with_a_bigger_step():
+    """Matrix P1 (session 377): bp-overcommit kept once, then three bigger steps at -57% / -54% / -54% - each matched the
+    first run's swap file and passed as tried-and-kept. The rule's own last run decides."""
+    from tuning_agent import engine
+    hist = [{"seq": 9, "label": "bp-overcommit", "verdict": "improved", "managed": {},
+             "changes": [{"variable": "innodb_buffer_pool_size", "new": "24G", "source": "rec:bp-overcommit"},
+                         {"variable": "os:swapfile", "new": "6G", "source": "rec:bp-overcommit"}]},
+            {"seq": 12, "label": "bp-overcommit", "verdict": "regressed", "managed": {},
+             "changes": [{"variable": "innodb_buffer_pool_size", "new": "27G", "source": "rec:bp-overcommit"}]}]
+    it = {"id": "bp-overcommit", "kind": "config", "confidence": 1, "changes": [
+        {"variable": "innodb_buffer_pool_size", "current": "24G", "proposed": "29G"}, {"variable": "os:swapfile", "current": "0", "proposed": "6G"}]}
+    out = engine.apply_history([it], hist)[0]
+    assert out["confidence"] == 0 and "#12" in out["note"], out
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
