@@ -742,10 +742,27 @@ def stabilized(run, history, d, goal):
     from .engine import STABILITY_FIRST, unbounded_hll
     par = [h for h in history if h.get("seq") in ((d or {}).get("parent_runs") or [])]
     s = run.get("summary") or {}
-    if not STABILITY_FIRST or not par or not all(unbounded_hll(h.get("summary")) for h in par) or unbounded_hll(s) or "unbounded_growth" not in s:
+    # the history was measured in this run (an empty unbounded_growth is left out of the stored summary, so its key cannot
+    # tell - session 370: purge-threadpool brought the history from 2.6M to 500 and was not recognised)
+    if not STABILITY_FIRST or not par or not all(unbounded_hll(h.get("summary")) for h in par) or unbounded_hll(s) \
+            or s.get("history_list_length_max") is None:
         return None
     dg = (d or {}).get("goal_delta_pct")
-    return {"parent_runs": [h["seq"] for h in par], "goal_delta_pct": dg}
+    out = {"parent_runs": [h["seq"] for h in par], "goal_delta_pct": dg}
+    # stability whatever it costs - but not below the last stable configuration: when a change made the history unbounded
+    # and a remedy then costs more than that change gained (370: +6.3%, then -9%), going back is stable and faster
+    stable = [h for h in history if h.get("goal_value") is not None and h.get("verdict") not in EXCLUDED
+              and (h.get("summary") or {}).get("history_list_length_max") is not None and not unbounded_hll(h.get("summary"))]
+    if stable and run.get("goal_value") is not None:
+        key = config_key(stable[-1].get("managed"))
+        ref = _mean([h["goal_value"] for h in stable if config_key(h.get("managed")) == key])
+        noise = float((d or {}).get("goal_noise_pct") or DEFAULT_GOAL_NOISE)
+        lower = goal == "latency"
+        worse = (run["goal_value"] - ref) / ref * 100 * (-1 if lower else 1) if ref else 0
+        if worse < -noise:
+            out.update(below_stable=True, stable_runs=[h["seq"] for h in stable if config_key(h.get("managed")) == key],
+                       vs_stable_pct=round(worse, 2))
+    return out
 
 
 def state_flags(s):
@@ -852,7 +869,27 @@ def _run_verdict(run, history, goal, noise, peers=None):
     if st:
         d = dict(d)
         d["steal"] = st
+    # a change that makes a stable configuration's undo history grow without bound: its gain comes partly from purge work
+    # it leaves unpaid, and the configuration cannot run the load for long - not a win (user, 370 log-writer-threads-off
+    # +6.3% with the history growing 8.5M per hour, judged improved and kept)
+    from .engine import unbounded_hll
+    u_ = unbounded_hll(run.get("summary"))
+    par_ = [h for h in history if h.get("seq") in ((d or {}).get("parent_runs") or [])]
+    if u_ and par_ and v in ("improved", "efficiency-gain") and not any(unbounded_hll(h.get("summary")) for h in par_):
+        d = dict(d, destabilized=True, unsustainable_verdict=v,
+                 note=f"Unsustainable: {v} by {d.get('goal_delta_pct')}%, but the undo history now grows without bound "
+                      f"({u_['start']:,.0f} -> {u_['end']:,.0f}, ~{u_['per_hour']:,.0f} per hour; it did not with the parent "
+                      f"configuration, runs {[h['seq'] for h in par_]}). Part of the gain is purge work left unpaid, and this "
+                      "configuration cannot run the load for long. Treated as no measurable effect."
+                      + ((" " + d["note"]) if d.get("note") else ""))
+        v = "neutral"
     stab = stabilized(run, history, d, goal)
+    if stab and stab.get("below_stable"):
+        d = dict(d, stable_but_slower=stab)
+        d["note"] = (f"The undo history no longer grows without bound, but the goal is {stab['vs_stable_pct']:+.1f}% vs the last stable "
+                     f"configuration (runs {stab['stable_runs']}): returning to it is stable and faster."
+                     + (" " + d["note"] if d.get("note") else ""))
+        stab = None
     if stab:
         d = dict(d, stabilized=stab)
         d["note"] = (f"Stabilized: the undo history list no longer grows without bound (it did with the parent configuration, runs "

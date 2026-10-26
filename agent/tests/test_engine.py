@@ -1799,7 +1799,7 @@ def test_stability_first():
     and the change that ended the growth is kept as stabilized even though it cost throughput."""
     from tuning_agent import engine, evaluate
     unb = {"unbounded_growth": [{"metric": "history_list_length", "start": 600000, "end": 1250000, "per_hour": 1e6}]}
-    ok = {"unbounded_growth": None}
+    ok = {"unbounded_growth": None, "history_list_length_max": 5000}
     hist = [{"seq": 1, "label": "baseline (1/3)", "managed": {"a": "1"}, "goal_value": 100.0, "verdict": "reference", "summary": unb},
             {"seq": 2, "label": "baseline (2/3)", "managed": {"a": "1"}, "goal_value": 100.0, "verdict": "repeat", "summary": unb}]
     run = {"seq": 3, "label": "purge-lag", "managed": {"a": "1", "innodb_max_purge_lag": "600000"}, "goal_value": 90.0, "summary": ok,
@@ -2828,6 +2828,33 @@ def test_explore_lifts_the_early_stops():
     r1 = engine.run_engine(dict(base, explore=True))
     assert r1.get("stop_reason") is None, r1.get("stop_reason")
     assert r0.get("stop_reason") or r0.get("next") == r1.get("next"), (r0.get("stop_reason"), r0.get("next"), r1.get("next"))
+
+
+def test_destabilizing_gain_is_not_a_win_and_a_costly_remedy_returns_to_the_stable_config():
+    """User (370): log-writer-threads-off +6.3% while the undo history grew 8.5M/h was judged improved; purge-threadpool then
+    restored stability at -9% and was not recognised. Now: the gain is not kept (unsustainable), and a remedy that ends below
+    the last stable configuration is not kept for stability either."""
+    from tuning_agent import evaluate
+    unb = lambda a, b: {"history_list_length_max": b, "unbounded_growth": [{"metric": "history_list_length", "label": "history list length",  # noqa: E731
+                                                                            "start": a, "end": b, "rate_per_s": 2400, "per_hour": 8_500_000}]}
+    ok = {"history_list_length_max": 400_000, "steady_state": {"steady": True, "growing": []}}
+    base = {"logwriter": None}
+    hist = [{"seq": i, "label": f"baseline ({i}/3)", "verdict": "reference" if i == 1 else "repeat", "managed": {}, "goal_value": 400_000.0,
+             "summary": ok, "changes": []} for i in (1, 2, 3)]
+    lw = {"innodb_log_writer_threads": "OFF"}
+    r5 = {"seq": 5, "label": "log-writer-threads-off", "managed": lw, "goal_value": 425_000.0, "summary": unb(1_900_000, 2_600_000),
+          "changes": [{"variable": "innodb_log_writer_threads", "new": "OFF", "source": "rec:log-writer-threads-off"}]}
+    v, d = evaluate.verdict(r5, hist, "tps", {"noise_pct": 2.0})
+    assert v == "neutral" and d.get("destabilized") and "Unsustainable" in d["note"], (v, d.get("note"))
+    r5["verdict"], r5["evaluation"] = "improved", {}  # as the old agent judged it: the parent of the remedy
+    tp = dict(lw, thread_handling="pool-of-threads")
+    r7 = {"seq": 7, "label": "purge-threadpool", "managed": tp, "goal_value": 386_000.0, "summary": dict(ok, history_list_length_max=1200),
+          "changes": [{"variable": "thread_handling", "new": "pool-of-threads", "source": "rec:purge-threadpool"}]}
+    v7, d7 = evaluate.verdict(r7, hist + [r5], "tps", {"noise_pct": 2.0})
+    assert not d7.get("stabilized") and d7.get("stable_but_slower"), (v7, d7)
+    r7b = dict(r7, goal_value=402_000.0)
+    _, d7b = evaluate.verdict(r7b, hist + [r5], "tps", {"noise_pct": 2.0})
+    assert d7b.get("stabilized"), d7b
 
 
 if __name__ == "__main__":
