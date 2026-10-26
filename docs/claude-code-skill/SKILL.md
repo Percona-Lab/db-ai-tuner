@@ -57,7 +57,11 @@ Run everything as root on the database host. `autotune` takes hours, so start it
    max_connections = THREADS + 50
    ```
    Write the numbers in (no shell variables in the file). `[requires]` holds settings the benchmark needs just to run;
-   they are applied before every run and never tuned. A writing benchmark that must start each run from the same data
+   they are applied before every run and never tuned. Give `max_connections` headroom: the threads + 50 for
+   persistent connections, about 2x the threads when clients reconnect (`--reconnect`, connection-per-transaction
+   loads) - closing connections hold their slot for a moment. If connects are refused anyway, the agent stops the warm-up
+   or run-length probe within a minute, raises the requirement for the session (and mysqld's open-files limit with it)
+   and starts again; put the raised value into the profile. A writing benchmark that must start each run from the same data
    adds `reset = /path/to/restore.sh` (see __SERVER__/agent-guide.md#benchmark-hygiene-important).
 5. **Session and autotune.**
    ```bash

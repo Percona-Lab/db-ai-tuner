@@ -62,6 +62,35 @@ class TooSlow(Fail):
     pass
 
 
+class ConnStorm(Fail):
+    """New connections refused while the benchmark warmed up (max_connections reached): the run is stopped before it
+    measures the storm, the prerequisite raised, the run started again."""
+
+    def __init__(self, info):
+        super().__init__(info["text"])
+        self.info = info
+
+
+def _raise_conn_requirement(c, info):
+    """max_connections too low for the clients (they reconnect faster than closing connections free their slots): raise
+    the benchmark's prerequisite for the rest of the session (1.5x, whole hundreds), and mysqld's open-files limit with it
+    when needed (a restart). It is a prerequisite, not tuning: the profile's [requires] should carry it."""
+    sess = c.session()
+    cur = int(float(info.get("max_connections") or c.variables.get("max_connections") or 151))
+    new = int(-(-cur * 1.5 // 100) * 100)
+    sess.setdefault("requires_raised", {})["max_connections"] = str(new)
+    c.state.set("session", sess)
+    msg = (f"connection storm: {info['text']}. Benchmark requirement raised for this session: max_connections {cur} -> {new}; "
+           "raise [requires] max_connections in the profile (about 2x the client threads for reconnecting clients).")
+    log("   " + msg)
+    c.event("bench", msg, info)
+    nf = int((c.os_settings() or {}).get("os:mysqld_nofile") or 0) if sess.get("os_tuning", c.os_tuning_allowed()) else 0
+    need = engine.files_needed(dict(c.variables, max_connections=str(new)))
+    if nf and need > nf:
+        _apply_and_record(c, [{"variable": "os:mysqld_nofile", "value": str(max(engine.NOFILE_TARGET, int(need * 1.25))),
+                               "reason": f"max_connections {new} needs ~{need:,} open files", "source": "requirement"}], "requirement")
+
+
 class BenchFailed(Fail):
     """The benchmark itself failed under this configuration (exited during warm-up: e.g. mysqld OOM-killed, connections
     not accepted in time). Under an experiment: a failed experiment (reverted), not the end of the session."""
@@ -1174,6 +1203,10 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     except Exception:  # noqa
         pass
     sr_ = inputs.get("status_rates") or {}
+    from . import connhealth
+    ch_ = connhealth.judge(sr_, c.variables.get("max_connections"))
+    if ch_ and ch_["kind"] == "failing":
+        summary["connect_failures"] = ch_  # other failed connects: flagged with what to check (refusals: below)
     if sr_.get("Connection_errors_max_connections"):
         # new connections refused with 'Too many connections' (user, run 5214: 1024 reconnecting threads, max_connections
         # 1100, ~14,000 refusals/s while closed connections waited to release their slots)
@@ -1567,7 +1600,13 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     import pymysql
     t0 = time.time()
     try:
-        return _bench_run_once(c, prof, label, notes, warmup_override)
+        try:
+            return _bench_run_once(c, prof, label, notes, warmup_override)
+        except ConnStorm as cs:
+            # stopped in the warm-up, nothing measured: the prerequisite raised, the run started again (once)
+            _raise_conn_requirement(c, cs.info)
+            log("   the run starts again with the raised requirement")
+            return _bench_run_once(c, prof, label, notes, warmup_override)
     except (pymysql.err.OperationalError, pymysql.err.InterfaceError) as e:
         oom = _oom_killed_since(t0)
         try:  # wait for mysqld to come back (systemd restarts it) so the revert can be applied
@@ -1734,8 +1773,18 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
                 log(f"warm-up {waited}s ...")
                 c.activity("warm-up", label, waited)
                 deadline = time.time() + waited
+                from . import connhealth
+                cw, cw_said = connhealth.Watch(c.db), False
                 while time.time() < deadline and r.alive():
                     time.sleep(1)
+                    bad = cw.check(c.variables.get("max_connections"))
+                    if bad and bad["kind"] == "refused":
+                        r.kill()
+                        raise ConnStorm(bad)
+                    if bad and not cw_said:
+                        cw_said = True
+                        log(f"   WARNING connects failing during the warm-up: {bad['text']}")
+                        c.event("bench", f"connects failing during the warm-up of {label}: {bad['text']}", bad)
         if not r.alive():
             oom = _oom_killed_since(t_run0)
             raise BenchFailed(("mysqld was OOM-killed during the warm-up (" + oom.split("kernel:")[-1].strip()[:160] + "); " if oom else "")
@@ -2608,11 +2657,25 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
     r = bench.Running(prof.command(total_s=max_s + TRIAGE_BUDGET_S + 60), logfile)
     done = False
     triage = None
+    from . import connhealth
+    cw, cw_said = connhealth.Watch(c.db), False
     try:
         while r.alive() and time.time() - t0 < max_s:
             time.sleep(60)
             el = time.time() - t0
             c.activity("run-length probe", f"{el / 60:.0f} of max {max_s // 60} min")
+            bad = cw.check(c.variables.get("max_connections"), min_s=55)
+            if bad and bad["kind"] == "refused" and not getattr(prof, "_storm_restarted", False):
+                # a connection storm would be what the probe measures (pop2 371: 161 min of it): stop, raise, start over
+                r.kill()
+                _raise_conn_requirement(c, bad)
+                prof._storm_restarted = True
+                log("== run-length probe: starting again with the raised requirement")
+                return _run_length_probe(c, prof, max_s, target_pct)
+            if bad and not cw_said:
+                cw_said = True
+                log(f"   WARNING connects failing in the run-length probe: {bad['text']}")
+                c.event("bench", f"connects failing in the run-length probe: {bad['text']}", bad)
             if el < 600:
                 continue
             smp_ = SampleStore(c.state.dir).window(t0, time.time())

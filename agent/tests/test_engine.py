@@ -2933,6 +2933,29 @@ def test_open_files_limit_follows_table_cache_and_connections():
     assert len(ok["changes"]) == 1
 
 
+def test_connection_health_judges_storms_and_failing_connects():
+    """User (pop2 371): 'Too many connections' storms are caught while the benchmark runs (probe, warm-up) and other
+    failed connects are flagged with what to check."""
+    from tuning_agent import connhealth, evaluate
+    st = connhealth.judge({"Connections": 1007, "Connection_errors_max_connections": 14275, "Aborted_connects": 917}, "1100")
+    assert st["kind"] == "refused" and "1100" in st["text"], st
+    f = connhealth.judge({"Connections": 300, "Aborted_connects": 40, "Connection_errors_accept": 5}, "2048")
+    assert f["kind"] == "failing" and "back_log" in f["text"], f
+    assert connhealth.judge({"Connections": 1000, "Aborted_connects": 2}, "2048") is None
+    assert "connect_failures" in evaluate.state_flags({"connect_failures": f})
+
+    class DB:
+        def __init__(self):
+            self.n = 0
+
+        def status(self):
+            self.n += 1
+            return {"Connections": 1000 * self.n, "Connection_errors_max_connections": 20000 * self.n}
+    w = connhealth.Watch(DB())
+    w.t -= 61
+    assert w.check("1100")["kind"] == "refused"
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

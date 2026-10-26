@@ -793,6 +793,10 @@ def state_flags(s):
         out["warmup_short"] = s["warmup_signals"]
     if (s or {}).get("unbounded_growth"):
         out["unbounded"] = s["unbounded_growth"]
+    if (s or {}).get("connect_failures"):
+        # connects failing for other reasons than max_connections (handshake timeouts, accept / resource errors): the
+        # clients spent part of the run reconnecting - flagged with what to check
+        out["connect_failures"] = s["connect_failures"]
     if (s or {}).get("host_not_quiet"):
         # outside work on the host between runs (a RAID resync, a scrub, updates): flagged, the run shares the host with it
         out["host_not_quiet"] = s["host_not_quiet"]
