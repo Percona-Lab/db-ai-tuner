@@ -819,6 +819,97 @@
    "group": false,
    "est_hours": 10,
    "question": "Case-base matrix v2 wave 1, cell D5: TPC-H SF10: analytics, total-time goal (none)"
+  },
+  {
+   "id": "matrix-P1-atvbmamd",
+   "script": "matrix.sh",
+   "args": [
+    "P1"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 9,
+   "question": "Case-base matrix v2 wave 2, cell P1: read-only, high concurrency, partly cached (none so far); loads ~60 GB"
+  },
+  {
+   "id": "matrix-P5-atvbmamd",
+   "script": "matrix.sh",
+   "args": [
+    "P5"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 8,
+   "question": "Case-base matrix v2 wave 2, cell P5: commit-heavy (update_index), medium concurrency, partly cached"
+  },
+  {
+   "id": "matrix-P3-atvbmamd",
+   "script": "matrix.sh",
+   "args": [
+    "P3"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 8,
+   "question": "Case-base matrix v2 wave 2, cell P3: writes, extreme concurrency, partly cached"
+  },
+  {
+   "id": "matrix-M2-atvbmamd",
+   "script": "matrix.sh",
+   "args": [
+    "M2"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 8,
+   "question": "Case-base matrix v2 wave 2, cell M2: read-only, medium concurrency, in memory"
+  },
+  {
+   "id": "matrix-M1-atvbmamd",
+   "script": "matrix.sh",
+   "args": [
+    "M1"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 8,
+   "question": "Case-base matrix v2 wave 2, cell M1: point selects, extreme concurrency, in memory (AMD)"
+  },
+  {
+   "id": "matrix-X1-atvbmamd",
+   "script": "matrix.sh",
+   "args": [
+    "X1"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 9,
+   "question": "Case-base matrix v2 wave 2, cell X1: explore: read-write, high concurrency, in memory - rules, then AI ideas never tried, whole budget"
+  },
+  {
+   "id": "matrix-D6-atvbmamd",
+   "script": "matrix.sh",
+   "args": [
+    "D6"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 12,
+   "question": "Case-base matrix v2 wave 2, cell D6: TPC-H SF30, warm passes, total-time goal"
   }
  ]
 }

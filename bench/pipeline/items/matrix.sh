@@ -48,16 +48,31 @@ case $CELL in
   # atvbmmia (SATA): TPC-C in memory and on disk, TPC-H SF10
   C2) gotpc_prep tpcc gotpcc100 100; dataset 1 10000; tpcc_profile 100 256 ;;
   C4) gotpc_prep tpcc gotpcc1000 1000; dataset 1 10000; tpcc_profile 1000 1024 ;;
+  # D5 cold passes (no warm-up script: mysqld restarted and caches dropped before each), D6 warm passes
   D5) gotpc_prep tpch tpch10 10; dataset 1 10000
       sed -e "s/-D tpch --sf 1/-D tpch10 --sf 10/" -e "s/^name = .*/name = matrix D5: go-tpc TPC-H SF10, 22 queries, 1 stream, 600 s cap per query ($(hostname))/" \
-          -e "s/max_execution_time=120000/max_execution_time=600000/" -e "s/^timeout = .*/timeout = 21600/" -e "/^capped_queries/d" /root/bench/tpch.ini > $P
+          -e "s/max_execution_time=120000/max_execution_time=600000/" -e "s/^timeout = .*/timeout = 21600/" -e "/^capped_queries/d" -e "/^reset = /d" /root/bench/tpch.ini > $P
       GOAL=latency ;;
   # canary-type cell on a pipeline box: read-only point lookups, hot set, low concurrency, latency goal (~60 GB)
   C6) dataset 16 16000000; sb_profile $P "matrix C6: sysbench oltp_point_select 16 x 16M (~60 GB), hot set, 8 threads, p95 latency ($(hostname))" oltp_point_select 16 16000000 8 pareto 300 300
       latency_goal $P ;;
+  # wave 2, atvbmamd (NVMe, AMD EPYC): partly cached 16 x 16M (~60 GB), then in memory 8 x 4M, then TPC-H SF30
+  P1) dataset 16 16000000; sb_profile $P "matrix P1: sysbench oltp_read_only 16 x 16M (~60 GB, partly cached), 256 threads ($(hostname))" oltp_read_only 16 16000000 256 uniform 300 300 ;;
+  P5) dataset 16 16000000; sb_profile $P "matrix P5: sysbench oltp_update_index 16 x 16M (~60 GB, partly cached), 48 threads ($(hostname))" oltp_update_index 16 16000000 48 uniform 300 300 ;;
+  P3) dataset 16 16000000; sb_profile $P "matrix P3: sysbench oltp_write_only 16 x 16M (~60 GB, partly cached), 1024 threads ($(hostname))" oltp_write_only 16 16000000 1024 uniform 300 300 ;;
+  M2) dataset 8 4000000; sb_profile $P "matrix M2: sysbench oltp_read_only 8 x 4M (in memory), 48 threads ($(hostname))" oltp_read_only 8 4000000 48 uniform 300 300 ;;
+  M1) dataset 8 4000000; sb_profile $P "matrix M1: sysbench oltp_point_select 8 x 4M (in memory), 1024 threads ($(hostname))" oltp_point_select 8 4000000 1024 uniform 300 300 ;;
+  X1) dataset 8 4000000; sb_profile $P "matrix X1 (explore): sysbench oltp_read_write 8 x 4M (in memory), 256 threads ($(hostname))" oltp_read_write 8 4000000 256 uniform 300 300
+      EXPLORE_CELL=1 ;;
+  D6) gotpc_prep tpch tpch30 30; dataset 1 10000
+      sed -e "s/-D tpch --sf 1/-D tpch30 --sf 30/" -e "s/^name = .*/name = matrix D6: go-tpc TPC-H SF30, 22 queries, 1 stream, warm passes, 900 s cap per query ($(hostname))/" \
+          -e "s/max_execution_time=120000/max_execution_time=900000/" -e "s/^timeout = .*/timeout = 28800/" -e "/^capped_queries/d" -e "/^reset = /d" /root/bench/tpch.ini > $P
+      printf 'passes = warm\nwarm_passes = 1\n' >> /tmp/matrix-d6-extra && sed -i "/^\[bench\]/r /tmp/matrix-d6-extra" $P && rm -f /tmp/matrix-d6-extra
+      GOAL=latency ;;
   *) echo "QUEUEFAILED: unknown cell $CELL"; exit 1 ;;
 esac
-grep -q "^warmup = auto" $P || [ $CELL = D5 ] || auto_len $P
-export AI_OFF=1
-STUDY="${MATRIX_STUDY:-case-base matrix v2 (wave 1) 2026-10-26}" run_session $P "matrix $CELL ($(hostname))" $GOAL 16
+grep -q "^warmup = auto" $P || [ $CELL = D5 ] || [ $CELL = D6 ] || auto_len $P
+# the explore cells use the AI once the rules run out (autotune --explore); the others run without AI
+if [ -n "${EXPLORE_CELL:-}" ]; then export EXPLORE=1; else export AI_OFF=1; fi
+STUDY="${MATRIX_STUDY:-case-base matrix v2 2026-10-26}" run_session $P "matrix $CELL ($(hostname))" $GOAL 16
 echo PIPEOK
