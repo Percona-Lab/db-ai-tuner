@@ -1625,11 +1625,48 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
         raise ServerDown(f"lost the connection to mysqld during the run: {str(e)[:300]}")
 
 
+WARM_PASSES_MAX = 6
+WARM_STEADY_PCT = 3.0
+
+
+def _warm_passes(c, prof, logfile, label):
+    """Fixed work measured warm (shape = passes, passes = warm): run the pass until its time is steady - two passes in a
+    row within WARM_STEADY_PCT, or the profile's warm_passes - before the measured pass. Nothing is measured meanwhile."""
+    times = []
+    n_max = prof.warm_passes if prof.warm_passes is not None else WARM_PASSES_MAX
+    for i in range(n_max):
+        c.activity("warm-up", f"{label}: warm-up pass {i + 1}" + ("" if prof.warm_passes is not None else f" (until steady, at most {n_max})"))
+        w = bench.Running(prof.command(), logfile + f".warm{i + 1}")
+        t_ = time.time()
+        rc_ = w.wait(prof.timeout)
+        if rc_ is None or (rc_ < 0 and time.time() - t_ >= prof.timeout - 5):
+            raise BenchFailed(f"warm-up pass {i + 1} did not finish within {prof.timeout} s")
+        v = prof.parse(w.output()).get(prof.goal_metric) if prof.goal_metric else None
+        times.append(v)
+        log(f"   warm-up pass {i + 1}: {prof.goal_metric} = {v}")
+        if prof.warm_passes is None and len(times) >= 2 and None not in times[-2:] and times[-2] and \
+                abs(times[-1] - times[-2]) / abs(times[-2]) * 100 <= WARM_STEADY_PCT:
+            break
+    else:
+        if prof.warm_passes is None:
+            log(f"   warm-up passes not steady after {n_max}: measuring anyway ({times})")
+    return times
+
+
 def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
     """reset -> start benchmark -> warm-up -> measure -> wait for exit -> parse metrics -> finish run."""
     t_run0 = time.time()
     sess = c.session()
     _same_server(c, sess)  # before the reset and warm-up, not after them
+    for lvl, txt in prof.shape_check():
+        # what the run shape means for the goal (user, 2026-10-26): an error before anything runs, a note once per session
+        if lvl == "error":
+            raise Fail(f"benchmark profile ({prof.shape}): {txt}")
+        if not sess.get("shape_noted"):
+            log(f"note ({prof.shape} run shape): {txt}")
+    if not sess.get("shape_noted"):
+        sess["shape_noted"] = True
+        c.state.set("session", sess)
     if (prof.auto_warmup or prof.auto_duration) and not sess.get("run_plan"):
         log(f"note: the profile leaves the run length to the probe; without one this run uses warm-up {prof.warmup} s and "
             f"{prof.duration} s measured (find them with `tuning-agent run-length --bench ...`, or let autotune do it)")
@@ -1757,6 +1794,8 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
         # run length chosen at calibration (noise plan)
         prof.timeout += int(sess["run_seconds"]) - prof.duration
         prof.duration = int(sess["run_seconds"])
+    if prof.shape == "passes" and prof.passes == "warm":
+        _warm_passes(c, prof, logfile, label)
     r = bench.Running(prof.command(), logfile)
     t_launch = time.time()  # the benchmark's own clock starts here: its measured phase is launch + warm-up .. + duration
     profiler = offcpu = None

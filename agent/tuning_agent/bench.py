@@ -80,6 +80,19 @@ class Profile:
         # A reflink / snapshot clone made by the data restore stays a harness artifact either way.
         self.copy_on_write = b.get("copy_on_write", "avoid").strip().lower()
         self.max_duration = int(b["max_duration"]) if b.get("max_duration") else None
+        # shape of a run (user, 2026-10-26): window - one continuous process ({total}), the window measured inside it;
+        # split - the benchmark splits warm-up and measurement itself ({warmup} + {duration}, its report covers the
+        # measured part); passes - fixed work (a query set, a batch), the goal is its elapsed time: cold (each measured
+        # pass from a restart and empty caches) or warm (passes repeated until the pass time is steady, then one measured)
+        sh = str(b.get("shape", "")).strip().lower()
+        if sh not in ("window", "split", "passes"):
+            sh = ("passes" if self.duration == 0 and not self.auto_duration else "window" if "{total" in self.run
+                  else "split" if "{warmup" in self.run and "{duration" in self.run else "window")
+        self.shape = sh
+        pv = str(b.get("passes", "cold")).strip().lower()
+        self.passes = pv if pv in ("cold", "warm") else "cold"
+        wp = str(b.get("warm_passes", "auto")).strip().lower()
+        self.warm_passes = int(wp) if wp.isdigit() else None  # None: until the pass time is steady (at most WARM_PASSES_MAX)
         self.base_duration = self.duration
         self.base_warmup = self.warmup
         # probe = auto (calibration + after unusual steal; default) | always | false
@@ -90,6 +103,26 @@ class Profile:
         self.quiet_check = str(b.get("quiet_check", "true")).strip().lower() in ("true", "yes", "1", "on")
 
     PLACEHOLDERS = ("{duration}", "{warmup}", "{total}", "{duration_min}", "{warmup_min}", "{total_min}")
+
+    def shape_check(self):
+        """What the run shape means for the goal: [(level, text)] - 'error' when the goal cannot cover the measured part,
+        'note' for what to know (user, 2026-10-26)."""
+        out = []
+        gm = self.goal_metric
+        spec = self.metrics.get(gm, "") if gm else ""
+        if self.shape == "window" and gm and not spec.startswith("window:") and not gm.startswith("sysbench_") and self.duration > 0:
+            out.append(("error", f"the goal {gm} comes from the benchmark's own report, which in one continuous run covers the warm-up "
+                                 "too. Use a goal the server measures (no goal_metric), interval reports restricted to the window "
+                                 f"({gm} = window:<regex with (time) and (value)>), or let the benchmark split warm-up and measurement "
+                                 "itself ({warmup} + {duration})."))
+        if self.shape == "split":
+            out.append(("note", "{warmup} and {duration} go to the benchmark, which must measure only the second part in ONE process "
+                                "(sysbench --warmup-time, HammerDB rampup + duration). A wrapper that starts a second process for the "
+                                "measurement measures a cold client (run 5251): use {total} and one invocation instead."))
+        if self.shape == "passes" and self.passes == "warm":
+            out.append(("note", "warm passes: the pass is repeated until its time is steady, then measured once"
+                                + (f" ({self.warm_passes} warm-up passes)" if self.warm_passes is not None else "")))
+        return out
 
     def can_resize(self):
         """Run length can follow a duration change: fixed-length measurement and a run command that uses it."""

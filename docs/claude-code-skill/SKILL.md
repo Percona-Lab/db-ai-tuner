@@ -198,6 +198,19 @@ a multi-GB buffer pool can take a minute.
   buffer pool load has completed and throughput is stable; `measure run` uses it automatically if mysqld restarted
   in the last 10 minutes.
 * Differences below ~2-3% are usually noise on cloud VMs; repeat runs before claiming a win.
+* **Run shape** (`shape =` in `[bench]`, inferred when left out) - how warm-up and measurement fit in one run:
+  * `window` (`{total}` in the run command; the default and the preferred one): ONE benchmark process runs warm-up and
+    measurement; the agent measures its window inside it at full speed. The goal should be what the server measures
+    (no `goal_metric`: transactions/s, statement latency) or the benchmark's interval reports cut to the window
+    (`goal = window:<regex with (time) and (value)>`; sysbench's are used automatically). A benchmark total that covers
+    the whole run (go-tpc's tpmC, a final average) is refused as the goal - it includes the warm-up.
+  * `split` (`{warmup}` and `{duration}`): the benchmark itself warms up and then measures, in one process (sysbench
+    `--warmup-time`, HammerDB rampup + duration), and its report covers only the measured part. Never a wrapper that
+    starts a second process for the measurement: the window then measures a cold client (connections, prepared
+    statements); the agent flags such runs "benchmark restarted".
+  * `passes` (`duration = 0`): fixed work - a query set, a batch - whose elapsed time is the goal. `passes = cold`
+    measures each pass from a restart with empty caches; `passes = warm` repeats the pass until its time is steady
+    (or `warm_passes = N`) and then measures one.
 * With a `reset` command in the profile, every run starts from the same OS state: after the reset the agent syncs
   and drops the page cache (and checks the host is quiet with mysqld stopped; `quiet_check = false` in `[bench]`
   turns that check off). Without a reset, the data and caches carry over from run to run.

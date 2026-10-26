@@ -16,7 +16,8 @@ latency_goal() {  # latency goal: the benchmark's 95th percentile, lower is bett
   sed -i 's/^goal_metric = .*/goal_metric = sysbench_p95_ms/' $1
   GOAL=latency
 }
-tpcc_profile() {  # tpcc_profile <warehouses> <threads>
+tpcc_profile() {  # tpcc_profile <warehouses> <threads>; goal: transactions/s measured by the server in the window (go-tpc's
+  # tpmC covers the whole run, warm-up included, and its interval lines carry no time to cut the window from)
   cat > $P <<INI
 [bench]
 name = matrix $CELL: go-tpc TPC-C $1 W, $2 threads ($(hostname))
@@ -25,10 +26,9 @@ run = ulimit -n 1048576; /opt/go-tpc/go-tpc tpcc run -H 127.0.0.1 -P 3306 -U tpc
 warmup = auto
 duration = auto
 timeout = 14400
-goal_metric = tpmC
 
 [metrics]
-tpmC = tpmC: ([\d.]+)
+tpmC_whole_run = tpmC: ([\d.]+)
 
 [requires]
 max_connections = $(( $2 * 2 + 100 ))
