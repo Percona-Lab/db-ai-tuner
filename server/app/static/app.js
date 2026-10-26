@@ -1281,7 +1281,7 @@ async function sessionPage(id) {
     const fl = (flagsOf[r.id] || runFlags(r)).filter(f => !common.includes(f.key));
     const shownFl = fl.slice(0, 1), restFl = fl.slice(1);
     const vr = vsRef(r.goal_value);
-    tr.innerHTML = `<td style="white-space:nowrap">${r.seq}${ME && !ME.share ? starBtn(r.id, r.starred) : ""}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${r.status !== "done" ? " " + statusBadge(r.status, r.abort_reason) : ""}${tradeBadge(r.tradeoffs_added || r.tradeoffs)}${fbMark(rfb)}<div class="chg-m">${ch}</div></td><td class="chg">${ch}</td>
+    tr.innerHTML = `<td style="white-space:nowrap">${r.seq}${ME && !ME.share ? starBtn(r.id, r.starred) : ""}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${runWhy(r)}${r.status !== "done" ? " " + statusBadge(r.status, r.abort_reason) : ""}${tradeBadge(r.tradeoffs_added || r.tradeoffs)}${fbMark(rfb)}<div class="chg-m">${ch}</div></td><td class="chg">${ch}</td>
      <td class="num"><b>${num(r.goal_value)}</b></td><td class="num ${deltaClsN(ev.goal_delta_pct, noiseP)}">${gainTxt(ev.goal_delta_pct, lower)}</td><td class="num ${deltaClsN(r.goal_value != null ? vr : null, noiseP)}">${r.goal_value != null && vr != null ? (bestAt[r.id] ? `<b data-tip="Best configuration known at this point" tabindex="0">${gainTxt(vr, lower)}</b>` : gainTxt(vr, lower)) : "–"}</td>
      <td>${verdictBadge(r.verdict, ev.note)}${r.verdict === "neutral" && ev.note ? info(ev.note) : ""}${shownFl.map(f => f.html).join("")}${restFl.length ? ` <span class="badge plain" data-tip="${esc(restFl.map(f => f.text).join("\n\n"))}" tabindex="0">+${restFl.length}</span>` : ""}</td>
      ${cols.tps ? `<td class="num">${num(sm.tps)}</td>` : ""}${cols.avg ? `<td class="num">${num(sm.avg_latency_ms)}</td>` : ""}${cols.perTrx ? `<td class="num">${num(sm.mysqld_cpu_ms_per_trx)}</td><td class="num">${num(sm.disk_ios_per_trx)}</td>` : ""}<td class="num" style="white-space:nowrap">${dur(sm.duration_s || (r.status === "measuring" ? Date.now() / 1000 - r.started : null))}${costOf(r) != null ? `<div class="muted" style="font-size:11px" data-tip="Machine cost of this run: wall time since the previous run ended (data reset, warm-up, measurement) × $${(d.cost.rate_hourly).toFixed(4)}/hour" tabindex="0">$${costOf(r).toFixed(costOf(r) < 0.1 ? 3 : 2)}</div>` : ""}</td>`;
@@ -1856,6 +1856,15 @@ function wirePicks(el, r) {
       el.querySelectorAll("[data-pick]").forEach(x => x.classList.toggle("primary", x === b));
     } catch (err) { alert(err.message); }
   });
+}
+// why a run that is not an experiment ran (extra calibration, re-check, confirmation): the agent's note, or the label's meaning
+function runWhy(r) {
+  const lab = String(r.label || "");
+  const t = r.notes || (/after a calibration slide/.test(lab) ? "Extra baseline run: the calibration runs moved the same way every time, by more than each run's own precision explains, so the starting state may still be settling. One more run of the same configuration; the noise is calibrated on the latest runs."
+    : /^re-check/.test(lab) ? "The current configuration measured again, a few runs after it was last measured: controls drift, and repeats separated in time give the session its long-term noise."
+    : /\(confirm/.test(lab) ? "The configuration of a run that looked better measured again: kept only if the mean of both still beats its parent beyond noise."
+    : /repeat: within noise/.test(lab) ? "A within-noise result measured again before deciding." : "");
+  return t ? info(t) : "";
 }
 function renderDiff(el, r) {
   const prev = r.compared_with;

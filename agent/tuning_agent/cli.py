@@ -3957,7 +3957,11 @@ def _autotune(a):
             # settling (JOB: a 3-run slide set the threshold to ±5% and hid a ~2.8% read-ahead gain) - one more run, and
             # calibrate on the latest ones
             log(f"   calibration slide: {slide}; one more calibration run")
-            run, _ = _bench_run(c, prof, f"baseline ({len(runs) + 1}, after a calibration slide)")
+            why_ = (f"Extra baseline run: the calibration runs so far moved the same way every time ({slide}), so the starting "
+                    "state may still be settling. One more run of the same configuration; the noise is calibrated on the latest "
+                    "runs (user, session 373: the label alone did not say why).")
+            c.event("calibration", why_, {"slide": slide})
+            run, _ = _bench_run(c, prof, f"baseline ({len(runs) + 1}, after a calibration slide)", notes=why_)
             log(f"   run {run['seq']}: goal {run['goal_value']}")
             runs = (runs + [run])[-a.calibrate:]
         sess = c.session()
