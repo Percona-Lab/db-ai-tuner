@@ -20,6 +20,13 @@ BUILD=main-$SHA
 TMP=$(mktemp -d)
 trap 'git -C "$REPO" worktree remove --force "$TMP/src" >/dev/null 2>&1; rm -rf "$TMP"' EXIT
 git -C "$REPO" worktree add -q --detach "$TMP/src" "origin/main" 2>> "$OUT/cron.log" || { log "worktree failed"; exit 2; }
+# the similarity term's case base, as the server has it tonight (read-only extract on the tuner server); kept if it fails
+if [ -f "$TMP/src/tools/dbench/extract_cases.py" ]; then
+    mkdir -p "$OPS/dbench/knn"
+    scp -qF "$OPS/ssh_config" "$TMP/src/tools/dbench/extract_cases.py" "$TMP/src/tools/dbench/features.py" atweb:/tmp/ 2>> "$OUT/cron.log" \
+      && ssh -F "$OPS/ssh_config" atweb "cd /tmp && sudo -n python3 extract_cases.py" > "$OPS/dbench/knn/cases.new" 2>> "$OUT/cron.log" \
+      && [ -s "$OPS/dbench/knn/cases.new" ] && mv "$OPS/dbench/knn/cases.new" "$OPS/dbench/knn/cases.jsonl" || log "case base refresh failed; using the previous one"
+fi
 TOOL=$TMP/src/tools/dbench/regress.py
 [ -f "$TOOL" ] || TOOL=$REPO/tools/dbench/regress.py   # main from before the tool existed
 python3 "$TOOL" --ops "$OPS" score --agent "$TMP/src/agent" --build "$BUILD" --against 'main-*' > "$OUT/$BUILD.log" 2>&1

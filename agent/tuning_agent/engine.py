@@ -2892,6 +2892,17 @@ def run_engine(ctx):
                 sc -= 3
                 it["known_neutral"] = {"n": e["n"], "losses": e.get("losses", 0)}
                 parts.append([f"known neutral here: no win in {e['n']} comparable runs", -3])
+        # what the same change did from the most similar measured states in earlier sessions (simcore: nearest cases by the
+        # measured state vector, one vote per session, 2+ sessions) - corpus: +0.45 -> +0.90 pp per decision, regressed
+        # picks 22 -> 5 (user, 2026-10-26). A ranking term only: the gates above (confidence 0) and fixed orders stay
+        sm_ = (ctx.get("similar") or {}).get(it["id"])
+        if sm_ and it["kind"] == "config":
+            from .simcore import BLEND_WEIGHT
+            dl_ = round(BLEND_WEIGHT * float(sm_["pred"]), 2)
+            sc += dl_
+            it["similar"] = sm_
+            parts.append([f"similar measured states: {sm_['better']} better, {sm_['worse']} worse in {sm_['sessions']} sessions "
+                          f"(predicted {float(sm_['pred']):+.1f} noise widths)", dl_])
         # priority (best-practice bundle, reverts) only with evidence: a bundle nothing measured points at goes last
         # priority only for returning to measured configurations; everything else - the best-practice bundle included -
         # ranks by the evidence for what it acts on
@@ -3016,9 +3027,12 @@ def run_engine(ctx):
     # 30-60 / >60%); when even that is below the noise it cannot show (user 194 / 174, lab: ~40 points that could not)
     ceiling = {0: 2.5, 1: 15, 2: 30, 3: 60, 4: 100}.get(nxt.get("relevance") or 0, 0) * 0.5 if nxt else 0
     why = ""
-    if nxt and nxt["kind"] == "config" and not nxt.get("stability") and streak >= STOP_AFTER_FRUITLESS and (nxt.get("relevance") or 0) <= 1:
+    # the ceiling argument (acts on little of the measured time) gives way when similar measured states showed this change
+    # winning (similarity term): evidence of an effect the time breakdown does not explain
+    sim_backed = nxt is not None and float((nxt.get("similar") or {}).get("pred") or 0) >= 0.5
+    if nxt and nxt["kind"] == "config" and not nxt.get("stability") and not sim_backed and streak >= STOP_AFTER_FRUITLESS and (nxt.get("relevance") or 0) <= 1:
         why = f"{streak} experiments in a row kept nothing, and the best remaining idea ({nxt['id']}) acts on little of the measured time."
-    elif nxt and nxt["kind"] == "config" and nxt["safety"] == "safe" and nxt.get("relevance") is not None and streak >= 3 and ceiling < noise:
+    elif nxt and nxt["kind"] == "config" and nxt["safety"] == "safe" and not sim_backed and nxt.get("relevance") is not None and streak >= 3 and ceiling < noise:
         why = (f"{streak} experiments in a row kept nothing, and the best remaining idea ({nxt['id']}) acts on at most ~{2 * ceiling:.0f}% "
                f"of the time - even halving that is below the ±{noise:.1f}% noise.")
     # safe policy, storage-bound commits: grouping is already complete and each flush is slow - no server setting the

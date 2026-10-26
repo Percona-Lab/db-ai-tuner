@@ -2899,6 +2899,24 @@ def test_connection_refusals_make_a_run_unreliable():
     assert v == "unreliable" and d.get("connection_refusals"), (v, d)
 
 
+def test_similar_cases_term_in_the_ranking():
+    """User (2026-10-26): what the same change did from the most similar measured states is one more score term (blend 4 x
+    predicted noise widths), shown term by term; gated candidates stay gated."""
+    from tuning_agent import engine
+    base = {"goal": "tps", "policy": "safe", "os_tuning": True, "os_facts": {}, "hw": HW, "flavor": "percona", "version": (8, 4, 11),
+            "variables": dict(VARS), "summary": OLTP[0], "inputs": OLTP[1], "noise_pct": 2.0, "managed": {},
+            "history": [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}]}
+    r0 = engine.run_engine(base)
+    cfg = [i for i in r0["items"] if i["kind"] == "config" and i.get("confidence", 0) > 0 and i["safety"] == "safe" and not i.get("score_override")]
+    low = cfg[-1]
+    sim = {low["id"]: {"pred": 3.0, "sessions": 4, "n": 9, "better": 7, "worse": 0, "neighbours": []}}
+    r1 = engine.run_engine(dict(base, similar=sim))
+    it = next(i for i in r1["items"] if i["id"] == low["id"])
+    assert it["score"] == round(low["score"] + 12.0, 2) or abs(it["score"] - (low["score"] + 12.0)) < 0.01, (low["score"], it["score"])
+    assert any("similar measured states" in w for w, _ in it["score_parts"]) and it["similar"]["better"] == 7
+    assert abs(sum(v for _, v in it["score_parts"]) - it["score"]) < 0.01
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

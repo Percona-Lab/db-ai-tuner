@@ -994,3 +994,38 @@ def test_agent_adds_existing_sessions_to_a_study(user):
     r = user.agent.post("/api/v1/agent/studies/sessions", json={"study": None, "sessions": [a]})
     assert r.status_code == 200 and r.json()["study"] is None
     assert user.agent.post("/api/v1/agent/studies/sessions", json={"study": "x", "sessions": [999999]}).status_code == 404
+
+
+def test_similarity_core_is_shared_and_other_accounts_stay_anonymous(user):
+    """simcore is one module in two places (agent and server); predictions name only the caller's own sessions."""
+    import pathlib
+    from app import similar, simcore
+    root = pathlib.Path(__file__).resolve().parents[2]
+    agent_copy = root / "agent" / "tuning_agent" / "simcore.py"
+    if agent_copy.exists():
+        assert agent_copy.read_text() == (root / "server" / "app" / "simcore.py").read_text(), "server/app/simcore.py differs from the agent's"
+    env = user.hello()
+    sid = user.start_session(env)
+    vec = {n: 0.5 for n in simcore.NAMES}
+    mk = lambda session, seq, z_, own: {"session": session, "seq": seq, "label": "spin-loops", "verdict": "improved" if z_ > 1 else "neutral",  # noqa: E731
+                                        "rule": "spin-loops", "changes": {"innodb_sync_spin_loops": "10"}, "delta": z_ * 2, "z": z_,
+                                        "vec": dict(vec, cpu_busy=0.9 + seq / 100), "facets": {"writes": "writes"}}
+    cases = [mk(9001, 1, 2.0, True), mk(9002, 2, 1.5, False), mk(9003, 3, 1.0, False)]
+    st = simcore.standardiser(cases)
+    for c in cases:
+        c["_z"] = simcore.z(c["vec"], st)
+    from app import store
+    uid = store.q1("SELECT e.user_id FROM tsessions s JOIN environments e ON e.id=s.env_id WHERE s.id=?", (sid,))["user_id"]
+    saved = dict(similar._cache)
+    try:
+        similar._cache.update(t=9e12, cases=cases, st=st, owner={9001: uid, 9002: -1, 9003: -1})
+        r = user.agent.post("/api/v1/agent/similar", json={"session_id": sid, "vector": dict(vec, cpu_busy=0.92),
+                                                           "candidates": [{"id": "spin-loops", "changes": [{"variable": "innodb_sync_spin_loops", "proposed": "10"}]}]})
+        assert r.status_code == 200, r.text
+        p = r.json()["predictions"]["spin-loops"]
+        assert p["sessions"] == 3 and p["pred"] > 0, p
+        own = [n for n in p["neighbours"] if n["own"]]
+        assert own and own[0]["session"] == 9001 and all(n["session"] is None for n in p["neighbours"] if not n["own"]), p["neighbours"]
+    finally:
+        similar._cache.clear()
+        similar._cache.update(saved)

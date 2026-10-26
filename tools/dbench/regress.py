@@ -239,7 +239,33 @@ def load_agent(agent_dir):
     from tuning_agent import bottleneck, engine, knowledge, planner
     if not os.path.abspath(tuning_agent.__file__).startswith(agent_dir):
         sys.exit(f"tuning_agent imported from {tuning_agent.__file__}, not {agent_dir}")
-    return {"engine": engine, "planner": planner, "bottleneck": bottleneck, "tradeoff_of": knowledge.tradeoff_of}
+    ag = {"engine": engine, "planner": planner, "bottleneck": bottleneck, "tradeoff_of": knowledge.tradeoff_of}
+    try:  # builds with the similarity term (2026-10-26)
+        from tuning_agent import simcore
+        ag["simcore"] = simcore
+    except ImportError:
+        pass
+    return ag
+
+
+def load_similar(ag, cases_path, out):
+    """The case base for the similarity term, as the agent gets it from the server - but temporal: for each decision point
+    only sessions started before the point's session (and not of its group), so the score is what the tuner could know."""
+    sc = ag.get("simcore")
+    if not sc or not cases_path or not os.path.exists(cases_path):
+        return
+    cases = [json.loads(x) for x in open(cases_path)]
+    st = sc.standardiser(cases)
+    for c in cases:
+        c["_z"] = sc.z(c["vec"], st)
+    start = {}
+    for c in cases:
+        start[c["session"]] = min(start.get(c["session"], c["session_start"]), c["session_start"])
+    groups = {}
+    for g in out.get("groups") or []:
+        for x in g:
+            groups[x] = set(g)
+    ag["sim"] = {"cases": cases, "st": st, "start": start, "groups": groups}
 
 
 def restore(ctx, ag):
@@ -276,6 +302,22 @@ def settle(ctx, engine, rounds=4):
 def rules_choice(pt, ag):
     ctx = restore(pt["ctx"], ag)
     res = settle(ctx, ag["engine"])
+    sim = ag.get("sim")
+    if sim and ctx.get("summary"):
+        # the agent's second pass (cli._recommend): predictions for the candidates from earlier sessions' similar states
+        sid = pt["session"]
+        t0 = sim["start"].get(sid)
+        excl = sim["groups"].get(sid, {sid}) | {sid}
+        pool = [c for c in sim["cases"] if c["session"] not in excl and t0 is not None and c["session_start"] < t0]
+        sc = ag["simcore"]
+        inp = ctx.get("inputs") or {}
+        vec = sc.vector(ctx.get("summary"), inp, (ctx.get("hw") or {}).get("cpus"), (ctx.get("variables") or {}).get("innodb_buffer_pool_size"),
+                        inp.get("data_bytes"))
+        cands = [i for i in res["items"] if i["kind"] == "config" and i.get("changes")]
+        preds = sc.predictions(vec, cands, pool, sim["st"]) if pool and cands else {}
+        if preds:
+            ctx["similar"] = preds
+            res = settle(ctx, ag["engine"])
     if not res.get("next"):
         ch = stop_choice((res.get("stop_reason") or "")[:200] or None)
     else:
@@ -532,6 +574,10 @@ def cmd_score(a):
     build = re.sub(r"[^A-Za-z0-9._-]", "_", a.build or auto)
     pts = load_points(P["corpus"], man)
     out = load_outcomes(P["corpus"], man)
+    if not a.no_similar:
+        load_similar(ag, a.similar or os.path.join(a.ops, "dbench", "knn", "cases.jsonl"), out)
+        if ag.get("sim"):
+            print(f"similarity term: {len(ag['sim']['cases'])} cases (temporal)", file=sys.stderr)
     rules, ctxs, errors = {}, {}, []
     t0 = time.time()
     for p in pts:
@@ -828,6 +874,8 @@ def main():
     sc.add_argument("--against", help="baseline to compare with (a build name, or a prefix ending in *); default: latest accepted")
     sc.add_argument("--tolerance", type=float, default=0.10, help="outcome-score drop (pp per decision) still accepted")
     sc.add_argument("--no-save", action="store_true")
+    sc.add_argument("--similar", help="case base for the similarity term (default: OPS/dbench/knn/cases.jsonl when the build has simcore)")
+    sc.add_argument("--no-similar", action="store_true", help="score the rules without the similarity term")
     sc.add_argument("--accept", action="store_true", help="save as an accepted baseline even when flagged")
     sc.add_argument("--planner", action="store_true", help="also score the AI planner (paid calls through the tuner server)")
     sc.add_argument("--budget", type=float, default=0.0, help="USD cap for planner calls in this run")

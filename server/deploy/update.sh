@@ -28,6 +28,11 @@ else
     [ -x $AV/bin/python ] || python3 -m venv $AV
     $AV/bin/python -c "import pymysql" 2>/dev/null || $AV/bin/pip install -q "PyMySQL>=1.0"
     git archive "$REV" agent | tar -x -C "$TT"
+    # the similarity core is one module in two places (the agent computes the state vector, the server the neighbours)
+    if ! cmp -s "$TT/agent/tuning_agent/simcore.py" "$TT/server/app/simcore.py"; then
+      echo "simcore.py differs between agent/tuning_agent and server/app on ${REV:0:7}: not deployed"
+      exit 1
+    fi
     echo "agent tests on ${REV:0:7} ..."
     if ! (cd "$TT/agent" && timeout 300 $AV/bin/python tests/test_engine.py > "$TT/agent-tests.log" 2>&1); then
       grep -E "^FAIL|Error" "$TT/agent-tests.log" | tail -40

@@ -2382,6 +2382,18 @@ def agent_study_create(body: dict = Body(...), key=Depends(auth.agent_key)):
     return {"id": st["id"], "name": st["name"], "url": f"{PUBLIC_URL}/#/study/{st['id']}"}
 
 
+@app.post("/api/v1/agent/similar")
+def agent_similar(body: dict = Body(...), key=Depends(auth.agent_key)):
+    """What each candidate change did from the most similar measured states in earlier sessions (all accounts; another
+    account's sessions are not identified): the similarity term of the ranking (simcore, user 2026-10-26)."""
+    from . import similar
+    sid = int(body.get("session_id") or 0)
+    own_session(sid, key["user_id"])
+    cands = [{"id": str(c.get("id")), "changes": [{"variable": x.get("variable"), "proposed": x.get("proposed")} for x in c.get("changes") or []]}
+             for c in (body.get("candidates") or [])[:80]]
+    return similar.predict(key["user_id"], sid, body.get("vector") or {}, cands, int(body.get("k") or 15))
+
+
 @app.post("/api/v1/agent/studies/sessions")
 def agent_study_sessions(body: dict = Body(...), key=Depends(auth.agent_key)):
     """Add existing sessions of this account to a study (created by name if new), or take them out (study null) - what

@@ -2955,10 +2955,37 @@ def _engine_ctx(c, sess):
             "managed": {k: v["value"] for k, v in c.state.get("managed", {}).items()}}
 
 
+def _similar(c, sess, ctx, res):
+    """Predictions for the candidates from the most similar measured states in earlier sessions (server case base,
+    simcore); None when there is no measured state yet, the server has none, or it is switched off (similarity = off)."""
+    if not ctx.get("summary") or str(c.cfg.get("similarity", "on")).lower() in ("off", "false", "0"):
+        return None
+    from . import simcore
+    inp = ctx.get("inputs") or {}
+    vec = simcore.vector(ctx["summary"], inp, (ctx.get("hw") or {}).get("cpus"), (ctx.get("variables") or {}).get("innodb_buffer_pool_size"),
+                         inp.get("data_bytes"))
+    cands = [{"id": i["id"], "changes": [{"variable": x["variable"], "proposed": x.get("proposed")} for x in i.get("changes") or []]}
+             for i in res["items"] if i["kind"] == "config" and i.get("changes")]
+    if not cands:
+        return None
+    try:
+        r = c.client.post("/similar", {"session_id": sess["id"], "vector": vec, "candidates": cands})
+    except Exception as e:  # a ranking aid: never a reason to fail a decision
+        log(f"   similar cases: not available ({str(e)[:120]})")
+        return None
+    return r
+
+
 def _recommend(c, sess, llm=False):
     c.refresh()
     ctx = _engine_ctx(c, sess)
     res = engine.run_engine(ctx)
+    sim = _similar(c, sess, ctx, res)
+    if sim and sim.get("predictions"):
+        # second pass: the same rules, with what similar measured states showed for each candidate as one more score term
+        ctx["similar"] = sim["predictions"]
+        res = engine.run_engine(ctx)
+        res["similar_basis"] = {"cases": sim.get("cases"), "sessions": sim.get("sessions"), "predicted": len(sim["predictions"])}
     # a session started with --ai off (rules + learnings only, e.g. the head-to-head's rules arm) asks no model anything
     ai_off = str(sess.get("ai") or "").lower() == "off"
     why = None if ai_off else ("explore" if llm and sess.get("explore") else llmassist.trigger(res, explicit=llm))
@@ -3082,6 +3109,8 @@ def _recommend(c, sess, llm=False):
         _plan(c, sess, ctx, res)
     res.pop("_ctx", None)
     run_id = sess["runs"][-1]["id"] if sess["runs"] else None
+    if res.get("similar_basis"):
+        res.setdefault("decision", {})["similar"] = res["similar_basis"]
     r = c.client.post("/recommendations", {"session_id": sess["id"], "run_id": run_id, "goal": sess["goal"], "policy": sess["policy"],
                                            "items": res["items"], "diagnosis": res["diagnosis"], "next": res["next"],
                                            "workload": res.get("workload"), "phase": res.get("phase"), "decision": res.get("decision"),
