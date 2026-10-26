@@ -2917,6 +2917,22 @@ def test_similar_cases_term_in_the_ranking():
     assert abs(sum(v for _, v in it["score_parts"]) - it["score"]) < 0.01
 
 
+def test_open_files_limit_follows_table_cache_and_connections():
+    """User report: table_open_cache failed - MySQL lowers it at start when mysqld's open-files limit is short (atvbm:
+    'Changed limits: table_open_cache: 4695 (requested 8000)' at LimitNOFILE 10000). The limit comes with the change."""
+    from tuning_agent import engine
+    v = dict(VARS, table_open_cache="4000", max_connections="600", **{"os:mysqld_nofile": "10000"})
+    assert engine.files_needed(dict(v, table_open_cache="8000")) == 16610
+    it = {"id": "table-open-cache", "kind": "config", "confidence": 3, "changes": [{"variable": "table_open_cache", "current": "4000", "proposed": "8000"}]}
+    out = engine.nofile_guard([dict(it, changes=list(it["changes"]))], {"variables": v, "os_tuning": True})[0]
+    ch = {c["variable"]: c["proposed"] for c in out["changes"]}
+    assert int(ch["os:mysqld_nofile"]) >= 20762 and out["restart"], out
+    blocked = engine.nofile_guard([dict(it, changes=list(it["changes"]))], {"variables": v, "os_tuning": False})[0]
+    assert blocked["confidence"] == 0 and "LimitNOFILE" in blocked["note"], blocked
+    ok = engine.nofile_guard([dict(it, changes=list(it["changes"]))], {"variables": dict(v, **{"os:mysqld_nofile": "65535"}), "os_tuning": True})[0]
+    assert len(ok["changes"]) == 1
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

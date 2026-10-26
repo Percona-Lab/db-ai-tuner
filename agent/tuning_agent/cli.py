@@ -695,6 +695,28 @@ def _cap_nice_prep(c):
                       "grows without bound); no effect until a priority is set"}
 
 
+def _nofile_prep(c, items=()):
+    """mysqld's open-files limit as host preparation with the baseline (a restart anyway): the packages' 10000 is not
+    enough for the baseline's table_open_cache at a few hundred connections, and MySQL silently lowers settings at start.
+    When OS tuning is allowed and the limit is below engine.NOFILE_TARGET or what the baseline needs; else None."""
+    sess = c.session(required=False) or {}
+    if not sess.get("os_tuning", c.os_tuning_allowed()):
+        return None
+    try:
+        cur = int((c.os_settings() or {}).get("os:mysqld_nofile") or 0)
+    except Exception:
+        return None
+    if not cur:
+        return None
+    target = dict(c.variables, **{it["variable"]: it["value"] for it in items if not str(it["variable"]).startswith("os:")})
+    need = max(engine.NOFILE_TARGET, int(engine.files_needed(target) * 1.25))
+    if cur >= need:
+        return None
+    return {"variable": "os:mysqld_nofile", "value": str(need),
+            "reason": f"mysqld's open-files limit {cur:,} -> {need:,}: table_open_cache and max_connections need ~{engine.files_needed(target):,} "
+                      "file handles; below that MySQL lowers them at start without an error."}
+
+
 def _baseline_swap(c, hw):
     """Swap as part of the baseline (best practice): unused swap costs nothing (swap study, 2026-10-21), and without it
     memory pressure is an OOM kill instead of slower pages, so memory settings cannot be explored safely (r2 RO-4.ns, 294,
@@ -751,6 +773,9 @@ def cmd_baseline(a):
     cn = _cap_nice_prep(c)
     if cn:
         items.append(cn)
+    nf = _nofile_prep(c, items)
+    if nf:
+        items.append(nf)
     osv = None
     for it in items:
         if it["variable"].startswith("os:"):

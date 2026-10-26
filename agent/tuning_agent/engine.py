@@ -2087,6 +2087,46 @@ def _low_kept(r, harmful):
     return not (srcs & set(harmful or ()))
 
 
+NOFILE_TARGET = 65535  # mysqld's open-files limit the agent sets (packages default to 10000)
+
+
+def files_needed(variables):
+    """File handles MySQL asks for at start (mysqld.cc: max of max_connections x 5, 10 + max_connections + 2 x
+    table_open_cache, open_files_limit); with fewer it lowers table_open_cache and max_connections silently."""
+    mc, toc = _int(variables, "max_connections", 151), _int(variables, "table_open_cache", 4000)
+    return max(mc * 5, 10 + mc + 2 * toc, _int(variables, "open_files_limit", 0))
+
+
+def nofile_guard(items, ctx):
+    """An experiment that needs more file handles than mysqld's open-files limit allows would be cut back at start (user
+    report: table_open_cache failed; atvbm: 'Changed limits: table_open_cache: 4695 (requested 8000)'): with OS tuning the
+    limit is raised in the same restart, else the experiment is not run."""
+    v = ctx.get("variables") or {}
+    lim = _int(v, "os:mysqld_nofile", 0)
+    if not lim:
+        return items
+    for it in items:
+        if it["kind"] != "config" or not it.get("changes"):
+            continue
+        ch = {c["variable"]: c.get("proposed") for c in it["changes"]}
+        if not ch.keys() & {"table_open_cache", "max_connections", "open_files_limit"}:
+            continue
+        need = files_needed(dict(v, **{k: x for k, x in ch.items() if x is not None}))
+        if need <= lim:
+            continue
+        if ctx.get("os_tuning") and "os:mysqld_nofile" not in ch:
+            new = str(max(NOFILE_TARGET, int(need * 1.25)))
+            it["changes"].append({"variable": "os:mysqld_nofile", "current": str(lim), "proposed": new})
+            it["restart"] = True
+            it["rationale"] = (it.get("rationale") or "") + (f" Needs ~{need:,} open files; mysqld's limit is {lim:,}: raised to {int(new):,} "
+                                                             "in the same restart (else MySQL lowers the setting at start).")
+        else:
+            it["confidence"] = 0
+            it["note"] = (it.get("note", "") + f" Not run: needs ~{need:,} open files, mysqld's limit is {lim:,} (LimitNOFILE) - MySQL would "
+                          "lower it at start. Raise LimitNOFILE for the mysqld service first.").strip()
+    return items
+
+
 BALANCE_TRIES = 3  # purge-speed remedies measured with a change that made the undo history unbounded, before reverting it
 
 
@@ -2992,6 +3032,7 @@ def run_engine(ctx):
                 it["confidence"] = 0
                 it["note"] = (it.get("note", "") + f" Not run: commits take {commit_sh:.0f}% of the time - limiting admission "
                               "shrinks the commit groups.").strip()
+    items = nofile_guard(items, ctx)
     items = balance_purge(items, ctx)
     actionable = [i for i in items if i["kind"] in ("config", "revert") and i["confidence"] > 0]
     safe_next = next((i for i in actionable if i["safety"] == "safe"), None)

@@ -95,6 +95,9 @@ OS_KB = {
     "os:malloc": ("Memory allocator for mysqld: glibc[:arena_max=N], jemalloc[:MALLOC_CONF], tcmalloc, mimalloc (LD_PRELOAD).", True, "memory"),
     "os:mysqld_cap_sys_nice": ("Give mysqld CAP_SYS_NICE (systemd AmbientCapabilities): needed for resource-group thread priorities "
                                "(rg:purge prio); without it Linux ignores them. ON / OFF.", True, "cpu"),
+    "os:mysqld_nofile": ("Open-files limit of mysqld (systemd LimitNOFILE). MySQL needs about max(max_connections x 5, "
+                         "10 + max_connections + 2 x table_open_cache) file handles and silently lowers table_open_cache / "
+                         "max_connections at start when the limit is lower (packages default to 10000).", True, "connections"),
     "os:datadir_fs": ("Filesystem of the data directory on the experiment device (scope 'filesystem' only).", True, "io"),
     "os:hugepages": ("Number of 2 MiB huge pages reserved (used by the buffer pool when large_pages=ON).", True, "memory"),
     "os:cpu_governor": ("CPU frequency governor.", False, "cpu"),
@@ -247,6 +250,16 @@ def current(datadir, device, service, fs_device=None):
         out["os:rps"] = "on" if any(_read(p).strip("0,\n ") for p in q) else "off"
     dropin = _read(service_dropin(service))
     out["os:mysqld_cap_sys_nice"] = "ON" if re.search(r"^AmbientCapabilities=.*CAP_SYS_NICE", dropin, re.M) else "OFF"
+    m = re.search(r"^LimitNOFILE=(\d+)", dropin, re.M)
+    if m:
+        out["os:mysqld_nofile"] = m.group(1)
+    else:  # the service's own limit (package default)
+        try:
+            r = subprocess.run(["systemctl", "show", service, "-p", "LimitNOFILE", "--value"], capture_output=True, text=True, timeout=10)
+            if r.stdout.strip().isdigit():
+                out["os:mysqld_nofile"] = r.stdout.strip()
+        except Exception:
+            pass
     m = re.search(r"^# os:malloc=(.+)$", dropin, re.M)
     out["os:malloc"] = m.group(1).strip() if m else ("jemalloc" if "jemalloc" in dropin else "glibc")
     out["os:hugepages"] = _read("/proc/sys/vm/nr_hugepages")
@@ -427,7 +440,7 @@ class OSApplier:
             if note:
                 self.log(note)
             return True
-        if name == "os:mysqld_cap_sys_nice":
+        if name in ("os:mysqld_cap_sys_nice", "os:mysqld_nofile"):
             return True  # takes effect at the next mysqld start (drop-in written by persist())
         if name == "os:malloc":
             alloc = str(value).partition(":")[0]
@@ -590,6 +603,8 @@ class OSApplier:
             lines.append("LimitMEMLOCK=infinity")
         if str(osm.get("os:mysqld_cap_sys_nice") or "OFF").upper() == "ON":
             lines.append("AmbientCapabilities=CAP_SYS_NICE")  # resource-group thread priorities (rg:purge)
+        if str(osm.get("os:mysqld_nofile") or "").isdigit():
+            lines.append(f"LimitNOFILE={osm['os:mysqld_nofile']}")  # table_open_cache / max_connections need the file handles
         if osm.get("os:cpu_affinity") not in (None, "all"):
             lines.append(f"CPUAffinity={osm['os:cpu_affinity'].replace(',', ' ')}")
         pol = str(osm.get("os:mysqld_numa_policy") or "default")
