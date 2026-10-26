@@ -29,6 +29,10 @@ Profile (INI):
 
     [requires]                          ; benchmark prerequisites: set before every run (numbers are minimums), never tuned
     max_connections = 1100
+
+    [fixed]                             ; settings fixed for the session: applied before the runs, never tuned
+    innodb_buffer_pool_size = 4G        ; e.g. an I/O-bound load on a small data set
+    innodb_redo_log_capacity = 2G
 """
 import configparser
 import math
@@ -69,6 +73,10 @@ class Profile:
         # settings the benchmark needs just to run (e.g. max_connections for 1024 client threads): applied before every
         # run, including the server-defaults run; numeric values are minimums. Never tuned, shown apart from tuning.
         self.requires = dict(cp["requires"]) if cp.has_section("requires") else {}
+        # settings the benchmark fixes for the whole session (user, 2026-10-26: tune with a fixed buffer pool to force an I/O-
+        # bound load on a small data set, or with a fixed redo size): applied before the runs - restart-only ones too, through
+        # the option file - and never tuned, sized by the baseline or changed by an experiment
+        self.fixed = {k: v.strip() for k, v in cp["fixed"].items()} if cp.has_section("fixed") else {}
         ds = b.get("data_state", "").strip().lower()
         self.data_state = ds if ds in ("reset", "seasoned", "read-only") else ("reset" if self.reset else "unspecified")
         self.season_hours = float(b.get("season_hours", "12" if self.data_state == "seasoned" else "0"))

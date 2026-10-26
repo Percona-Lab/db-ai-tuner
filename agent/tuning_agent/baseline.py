@@ -90,7 +90,8 @@ def generate(hw, variables, flavor, version, opts=None):
     redo = _round_down(redo, 512 * MiB) if redo >= GiB else _round_down(redo, MiB)
     if "innodb_redo_log_capacity" in variables:
         add("innodb_redo_log_capacity", fmt_size(redo),
-            "Redo sized at ~25% of RAM (1-16 GiB) so checkpoints are not forced under write bursts.")
+            "Redo sized at ~25% of RAM (1-16 GiB) so checkpoints are not forced under write bursts. Cost: crash recovery "
+            f"applies up to {fmt_size(redo)} of redo after a crash, so it takes longer than with a small redo log.")
     elif flavor == "mariadb":
         add("innodb_log_file_size", fmt_size(redo), "Single MariaDB redo log sized at ~25% of RAM (1-16 GiB).")
     else:

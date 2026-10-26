@@ -3012,6 +3012,26 @@ def test_a_rule_that_regressed_is_not_repeated_with_a_bigger_step():
     assert out["confidence"] == 0 and "#12" in out["note"], out
 
 
+def test_profile_fixed_settings_are_never_tuned():
+    """User (2026-10-26): a benchmark can fix settings for the session - a small buffer pool to force I/O on a small data set,
+    a fixed redo size. They are applied and never tuned: the engine treats them like the account's blocked settings."""
+    import tempfile
+    from tuning_agent import bench, engine
+    f = tempfile.NamedTemporaryFile("w", suffix=".ini", delete=False)
+    f.write("[bench]\nrun = sysbench --time={total} run\n[fixed]\ninnodb_buffer_pool_size = 4G\ninnodb_redo_log_capacity = 2G\n")
+    f.close()
+    p = bench.Profile(f.name)
+    assert p.fixed == {"innodb_buffer_pool_size": "4G", "innodb_redo_log_capacity": "2G"}, p.fixed
+    s = dict(OLTP[0], bp_hit_pct=90.0, mem_available_mb=20000, checkpoint_age_pct_max=90, redo_mbs=20)
+    ctx = {"goal": "tps", "policy": "safe", "os_tuning": True, "os_facts": {}, "hw": HW, "flavor": "percona", "version": (8, 4, 11),
+           "variables": dict(VARS, innodb_buffer_pool_size=str(4 * GiB)), "summary": s, "inputs": OLTP[1], "noise_pct": 2.0, "managed": {},
+           "history": [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}]}
+    free = {c["variable"] for i in engine.run_engine(ctx)["items"] for c in i.get("changes") or []}
+    fixed = {c["variable"] for i in engine.run_engine(dict(ctx, blocked=sorted(p.fixed)))["items"] if i["kind"] != "revert" for c in i.get("changes") or []}
+    assert "innodb_buffer_pool_size" in free or "innodb_redo_log_capacity" in free, free
+    assert not fixed & set(p.fixed), fixed & set(p.fixed)
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

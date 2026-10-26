@@ -56,7 +56,9 @@ Run everything as root on the database host. `autotune` takes hours, so start it
    [requires]
    max_connections = THREADS + 50
    ```
-   Write the numbers in (no shell variables in the file). `[requires]` holds settings the benchmark needs just to run;
+   Write the numbers in (no shell variables in the file). `[fixed]` (optional) holds settings the person wants held for the
+   whole session - e.g. `innodb_buffer_pool_size = 4G` to tune an I/O-bound load on a small data set, or a fixed
+   `innodb_redo_log_capacity`: applied before the runs (restart-only ones too) and never tuned. `[requires]` holds settings the benchmark needs just to run;
    they are applied before every run and never tuned. Give `max_connections` headroom: the threads + 50 for
    persistent connections, about 2x the threads when clients reconnect (`--reconnect`, connection-per-transaction
    loads) - closing connections hold their slot for a moment. If connects are refused anyway, the agent stops the warm-up

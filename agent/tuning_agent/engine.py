@@ -652,8 +652,11 @@ def recommend(ctx):
             b.add("redo-grow", "Larger redo log", [(var, fmt_size(val))],
                   f"Checkpoint age peaked at {ck:.0f}% of the {human_size(cap)} redo log while writing {redo_mbs:.1f} MiB/s of redo "
                   f"(redo covers {cap / MiB / max(redo_mbs, 0.01):.0f} s of writes). Room for ~10 minutes avoids "
-                  "sync-flush stalls and lets pages absorb more changes before being written.",
-                  {"checkpoint_age_pct_max": ck, "redo_mbs": redo_mbs, "redo_capacity": human_size(cap)}, impact=3 if ck >= 75 else 2, confidence=3)
+                  "sync-flush stalls and lets pages absorb more changes before being written. Cost: crash recovery applies the redo "
+                  f"written since the last checkpoint - up to {human_size(want)} instead of {human_size(cap)} - so it takes longer after "
+                  "a crash (user, 2026-10-26: redo size is not free).",
+                  {"checkpoint_age_pct_max": ck, "redo_mbs": redo_mbs, "redo_capacity": human_size(cap), "redo_after": human_size(want)},
+                  impact=3 if ck >= 75 else 2, confidence=3)
     if have_run and rates.get("Innodb_log_waits", 0) > 0:
         lbs = _int(v, "innodb_log_buffer_size", 16 * MiB)
         b.add("log-buffer", "Larger redo log buffer", [("innodb_log_buffer_size", fmt_size(max(lbs * 2, 64 * MiB)))],

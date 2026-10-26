@@ -939,6 +939,27 @@ def _parse_kv(items):
     return out
 
 
+def _ensure_fixed(c, prof):
+    """The profile's [fixed] settings in effect before a run: applied (option file and, where needed, a restart) when the
+    server does not run them - at the session's start, and again if anything moved them. Returns the changes made."""
+    if not prof.fixed:
+        return []
+    sess = c.session()
+    if sess.get("fixed") != prof.fixed:
+        sess["fixed"] = prof.fixed
+        c.state.set("session", sess)
+    cur = c.all_settings()
+    managed = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
+    ch = [{"variable": k, "value": v, "reason": "fixed by the benchmark profile ([fixed]): not tuned", "source": "profile-fixed"}
+          for k, v in prof.fixed.items()
+          if normalize(k, cur.get(k)) != normalize(k, v) or normalize(k, managed.get(k)) != normalize(k, v)]
+    if ch:
+        log("== fixed by the benchmark profile: " + ", ".join(f"{x['variable']}={x['value']}" for x in ch))
+        _apply_and_record(c, ch, "profile-fixed")
+        c.refresh()
+    return ch
+
+
 def _same_server(c, sess):
     """A session measures one server: another version under it (a version study installing the next release) belongs in a
     new session - its runs would be compared with the old version's (user, em-b212x 357)."""
@@ -1670,6 +1691,9 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
     t_run0 = time.time()
     sess = c.session()
     _same_server(c, sess)  # before the reset and warm-up, not after them
+    if prof.fixed:
+        _ensure_fixed(c, prof)
+        sess = c.session()
     for lvl, txt in prof.shape_check():
         # what the run shape means for the goal (user, 2026-10-26): an error before anything runs, a note once per session
         if lvl == "error":
@@ -3074,6 +3098,7 @@ def _engine_ctx(c, sess):
             blocked = set(c.client.get("/param-policy").get("blocked") or [])
         except Exception:
             blocked = set()
+        blocked |= set(sess.get("fixed") or {})  # fixed by the benchmark profile ([fixed]): never tuned
         hyp_exp = {"similar": ex.get("hypotheses") or [], "all": ex.get("hypotheses_all") or []}
         # evidence tiers, most specific first: this variant and release series in similar conditions (full weight), the same
         # variant in other series, other variants (MySQL / Percona / MariaDB differ in options, defaults and behaviour),
@@ -3891,8 +3916,11 @@ def _autotune(a):
             log(f"debug symbols: {e}")
     if getattr(a, "from_defaults", False):
         sess = _start_from_defaults(c, sess)
-    if sess.get("start_from") != "defaults":
-        _warn_undersized_start(c, sess)
+    if prof.fixed:
+        _ensure_fixed(c, prof)  # before the probe and calibration: every run of the session measures with them
+        sess = c.session()
+    if sess.get("start_from") != "defaults" and "innodb_buffer_pool_size" not in (prof.fixed or {}):
+        _warn_undersized_start(c, sess)  # a buffer pool fixed small by the profile is the point, not a mistake
     cn = _cap_nice_prep(c)
     if cn and not sess.get("runs"):
         log("== host preparation: CAP_SYS_NICE for mysqld (thread priorities for the purge triage; a restart, no effect by itself)")
