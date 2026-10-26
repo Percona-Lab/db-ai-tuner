@@ -1009,7 +1009,7 @@ def test_similarity_core_is_shared_and_other_accounts_stay_anonymous(user):
     vec = {n: 0.5 for n in simcore.NAMES}
     mk = lambda session, seq, z_, own: {"session": session, "seq": seq, "label": "spin-loops", "verdict": "improved" if z_ > 1 else "neutral",  # noqa: E731
                                         "rule": "spin-loops", "changes": {"innodb_sync_spin_loops": "10"}, "delta": z_ * 2, "z": z_,
-                                        "vec": dict(vec, cpu_busy=0.9 + seq / 100), "facets": {"writes": "writes"}}
+                                        "vec": {n: 0.1 * (i % 7) + (0.3 if i == seq else 0) for i, n in enumerate(simcore.NAMES)}, "facets": {"writes": "writes"}}
     cases = [mk(9001, 1, 2.0, True), mk(9002, 2, 1.5, False), mk(9003, 3, 1.0, False)]
     st = simcore.standardiser(cases)
     for c in cases:
@@ -1019,7 +1019,7 @@ def test_similarity_core_is_shared_and_other_accounts_stay_anonymous(user):
     saved = dict(similar._cache)
     try:
         similar._cache.update(t=9e12, cases=cases, st=st, owner={9001: uid, 9002: -1, 9003: -1})
-        r = user.agent.post("/api/v1/agent/similar", json={"session_id": sid, "vector": dict(vec, cpu_busy=0.92),
+        r = user.agent.post("/api/v1/agent/similar", json={"session_id": sid, "vector": {n: 0.1 * (i % 7) for i, n in enumerate(simcore.NAMES)},
                                                            "candidates": [{"id": "spin-loops", "changes": [{"variable": "innodb_sync_spin_loops", "proposed": "10"}]}]})
         assert r.status_code == 200, r.text
         p = r.json()["predictions"]["spin-loops"]
