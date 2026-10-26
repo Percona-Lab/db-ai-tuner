@@ -835,7 +835,7 @@ def test_profile_has_all_attributes():
     b = bench.Profile(p)
     for attr in ("probe", "requires", "data_state", "adaptive", "max_duration", "season_hours", "timeout", "reset", "metrics"):
         assert hasattr(b, attr), attr
-    assert b.probe is True and b.describe()["command"] == "sysbench --time=450 run"
+    assert b.probe is False and b.describe()["command"] == "sysbench --time=450 run"
 
 
 def test_io_bound_kinds():

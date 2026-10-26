@@ -95,8 +95,11 @@ class Profile:
         self.warm_passes = int(wp) if wp.isdigit() else None  # None: until the pass time is steady (at most WARM_PASSES_MAX)
         self.base_duration = self.duration
         self.base_warmup = self.warmup
-        # probe = auto (calibration + after unusual steal; default) | always | false
-        pv = b.get("probe", "auto").lower()
+        # probe = false (default) | auto (calibration + after unusual steal) | always: the ~20 s sysbench cpu / fio micro-benchmarks
+        # before a run. Off by default (user, 2026-10-26): steal (judged by consistency), the CPU clock, the quiet check before
+        # each run and the run's own disk latencies show a changed environment without spending time on it, and on a VM with
+        # steal fio's fsync rate mostly measured its own noise (session 372: an 'environment shift' of +22% fsync/s)
+        pv = b.get("probe", "false").lower()
         self.probe = "always" if pv == "always" else (pv in ("auto", "true", "yes", "1"))
         # quiet_check = true (default): ~10 s with the benchmark stopped before each run - is the host idle? (outside work
         # such as a RAID resync is flagged on the run)
