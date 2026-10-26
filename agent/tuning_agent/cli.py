@@ -170,6 +170,14 @@ class Ctx:
     def all_settings(self):
         v = dict(self.variables)
         v.update(self.os_settings())
+        # resource groups and the performance_schema profile, as the applier sees them: without them the engine never saw
+        # rg:purge, so a higher purge priority was only ever advice (user, session 373 / em-a116x)
+        try:
+            from . import psprofile, resgroups
+            v.update(resgroups.current(self.db))
+            v.update(psprofile.current(self.db))
+        except Exception:
+            pass
         hosts = [h for h in self.client_hosts() if h.get("online")]
         if hosts:  # client settings as client:os:* (from the first online client; clients are tuned together)
             for k, val in ((hosts[0].get("facts") or {}).get("os") or {}).items():
