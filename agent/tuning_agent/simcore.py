@@ -106,6 +106,46 @@ def vector(summary, inputs, cpus, bp_bytes=None, data_bytes=None):
     return out
 
 
+# what each number is (all measured, none learned): shown with the neighbours, and the groups the learned weights apply to
+FEATURE_DESC = {
+    "tb_cpu": "share of database time on CPU", "tb_cpu_queue": "share of database time waiting for a CPU (run queue)",
+    "tb_sched": "share of time in scheduling delay", "tb_commit": "share of time waiting for commits (redo / binary log flush)",
+    "tb_io_read": "share of time reading pages from disk", "tb_io_flush": "share of time on page flushing / writes",
+    "tb_io": "share of time on other disk I/O", "tb_locks": "share of time waiting for row / table locks",
+    "tb_latch": "share of time waiting for latches / mutexes", "tb_network": "share of time on the network / client",
+    "tb_memory": "share of time on memory pressure / swap",
+    "p_btree": "CPU profile: B-tree / row access", "p_spin": "CPU profile: spinning on mutexes",
+    "p_redo": "CPU profile: redo / commit path", "p_bufpool": "CPU profile: buffer pool page access",
+    "p_parser": "CPU profile: parser / optimizer", "p_exec": "CPU profile: SQL executor", "p_dispatch": "CPU profile: statement dispatch",
+    "p_network": "CPU profile: network / protocol", "p_sched": "CPU profile: scheduler / futex", "p_malloc": "CPU profile: memory allocator",
+    "p_pfs": "CPU profile: performance_schema", "p_compress": "CPU profile: checksums / compression", "p_rowlocks": "CPU profile: row locks",
+    "p_tableopen": "CPU profile: table open / cache", "p_kio": "CPU profile: kernel disk I/O path",
+    "rows_chg_trx": "rows changed per transaction (log)", "redo_kb_trx": "redo KB per transaction (log)",
+    "fsync_trx": "fsyncs per transaction (log)", "reads_trx": "disk page reads per transaction (log)", "read_only": "no redo written (read-only)",
+    "miss_pct": "buffer pool miss % (log)", "data_over_bp": "data size / buffer pool (log ratio)", "dirty": "dirty pages share",
+    "ckpt_age": "checkpoint age (share of redo capacity)", "hll": "undo history length (log scale)",
+    "run_per_cpu": "running threads per vCPU (log)", "conn_per_cpu": "connections per vCPU (log)", "lock_wait_ms": "row lock wait (log ms)",
+    "cpu_busy": "host CPU busy", "sys_share": "kernel share of CPU time", "iowait": "CPU I/O wait",
+    "r_await": "disk read latency (log ms)", "w_await": "disk write latency (log ms)"}
+FEATURE_GROUP = {**{n: "time breakdown" for n in NAMES if n.startswith("tb_")}, **{n: "CPU profile" for n in NAMES if n.startswith("p_")},
+                 **{n: "work per transaction" for n in ("rows_chg_trx", "redo_kb_trx", "fsync_trx", "reads_trx", "read_only")},
+                 **{n: "memory fit" for n in ("miss_pct", "data_over_bp", "dirty", "ckpt_age")},
+                 **{n: "concurrency" for n in ("run_per_cpu", "conn_per_cpu", "lock_wait_ms")},
+                 **{n: "host" for n in ("cpu_busy", "sys_share", "iowait", "r_await", "w_await")}, "hll": "undo history"}
+GROUP_WEIGHTS = {}  # equal; learned weights (tools/dbench/learn_weights.py) not adopted yet - see the note below
+# 2026-10-26: learned on all cases {CPU profile 1, concurrency 3, memory fit 2, others 0}; on the older half of the sessions
+# only concurrency 3 / memory fit 2 / host 0 repeated. Held out on the newer half that stable part predicted outcomes a
+# little better (Spearman 0.66 -> 0.68, right sign 82% -> 83%), but scored lower on the decision corpus (+0.57 -> +0.42
+# pp/decision, 31 -> 26 improved picks) - re-check as the case base grows
+
+
+def expand_weights(groups):
+    return {n: float(groups.get(g, 1.0)) for n, g in FEATURE_GROUP.items()}
+
+
+FEATURE_WEIGHTS = expand_weights(GROUP_WEIGHTS)
+
+
 # ---- nearest measured states
 def standardiser(cases):
     vals = collections.defaultdict(list)
@@ -125,13 +165,16 @@ def z(vec, st):
     return {k: (v - st[k][0]) / st[k][1] for k, v in vec.items() if v is not None and k in st}
 
 
-def cosine(a, b, min_shared=10):
-    ks = set(a) & set(b)
+def cosine(a, b, min_shared=10, weights=None):
+    """Cosine similarity of two standardised vectors over the features both have; weights: per feature (default
+    FEATURE_WEIGHTS, learned per group - 0 leaves a feature out)."""
+    w = FEATURE_WEIGHTS if weights is None else weights
+    ks = [k for k in set(a) & set(b) if w.get(k, 1.0) > 0]
     if len(ks) < min_shared:
         return None
-    dot = sum(a[k] * b[k] for k in ks)
-    na = math.sqrt(sum(a[k] ** 2 for k in ks))
-    nb = math.sqrt(sum(b[k] ** 2 for k in ks))
+    dot = sum(w.get(k, 1.0) * a[k] * b[k] for k in ks)
+    na = math.sqrt(sum(w.get(k, 1.0) * a[k] ** 2 for k in ks))
+    nb = math.sqrt(sum(w.get(k, 1.0) * b[k] ** 2 for k in ks))
     return dot / (na * nb) if na and nb else None
 
 
