@@ -676,6 +676,149 @@
    "group": false,
    "est_hours": 7,
    "question": "Head-to-head W4 (standard benchmark (1024 connections, binlog off)): planner arm on atvbmamd; crossover with the pair box in opposite order"
+  },
+  {
+   "id": "matrix-M4-atvbm",
+   "script": "matrix.sh",
+   "args": [
+    "M4"
+   ],
+   "hosts": [
+    "atvbm"
+   ],
+   "group": false,
+   "est_hours": 8,
+   "question": "Case-base matrix v2 wave 1, cell M4: writes, low concurrency, in memory (1 session so far)"
+  },
+  {
+   "id": "matrix-M5-atvbm",
+   "script": "matrix.sh",
+   "args": [
+    "M5"
+   ],
+   "hosts": [
+    "atvbm"
+   ],
+   "group": false,
+   "est_hours": 8,
+   "question": "Case-base matrix v2 wave 1, cell M5: commit-heavy, extreme concurrency, in memory (none)"
+  },
+  {
+   "id": "matrix-M6-atvbm",
+   "script": "matrix.sh",
+   "args": [
+    "M6"
+   ],
+   "hosts": [
+    "atvbm"
+   ],
+   "group": false,
+   "est_hours": 8,
+   "question": "Case-base matrix v2 wave 1, cell M6: read-mostly hot rows, p95 latency goal"
+  },
+  {
+   "id": "matrix-P4-atvbm2",
+   "script": "matrix.sh",
+   "args": [
+    "P4"
+   ],
+   "hosts": [
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 11,
+   "question": "Case-base matrix v2 wave 1, cell P4: writes, low concurrency, partly cached (none); loads ~60 GB"
+  },
+  {
+   "id": "matrix-C6-atvbm2",
+   "script": "matrix.sh",
+   "args": [
+    "C6"
+   ],
+   "hosts": [
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 8,
+   "question": "Case-base matrix v2 wave 1, cell C6: read-only point lookups, hot set, low concurrency, p95 latency"
+  },
+  {
+   "id": "matrix-D1-atvbm2",
+   "script": "matrix.sh",
+   "args": [
+    "D1"
+   ],
+   "hosts": [
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 12,
+   "question": "Case-base matrix v2 wave 1, cell D1: read-only, medium concurrency, on disk (1 session); loads ~220 GB"
+  },
+  {
+   "id": "matrix-D3-atvbm2",
+   "script": "matrix.sh",
+   "args": [
+    "D3"
+   ],
+   "hosts": [
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 8,
+   "question": "Case-base matrix v2 wave 1, cell D3: read-only, extreme concurrency, on disk (none)"
+  },
+  {
+   "id": "matrix-D4-atvbm2",
+   "script": "matrix.sh",
+   "args": [
+    "D4"
+   ],
+   "hosts": [
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 8,
+   "question": "Case-base matrix v2 wave 1, cell D4: writes, low concurrency, on disk (none)"
+  },
+  {
+   "id": "matrix-C2-atvbmmia",
+   "script": "matrix.sh",
+   "args": [
+    "C2"
+   ],
+   "hosts": [
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 9,
+   "question": "Case-base matrix v2 wave 1, cell C2: TPC-C 100 W: commit-heavy, high concurrency, in memory (none)"
+  },
+  {
+   "id": "matrix-C4-atvbmmia",
+   "script": "matrix.sh",
+   "args": [
+    "C4"
+   ],
+   "hosts": [
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 11,
+   "question": "Case-base matrix v2 wave 1, cell C4: TPC-C 1000 W: commit-heavy, extreme concurrency, on disk, SATA (none)"
+  },
+  {
+   "id": "matrix-D5-atvbmmia",
+   "script": "matrix.sh",
+   "args": [
+    "D5"
+   ],
+   "hosts": [
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Case-base matrix v2 wave 1, cell D5: TPC-H SF10: analytics, total-time goal (none)"
   }
  ]
 }
