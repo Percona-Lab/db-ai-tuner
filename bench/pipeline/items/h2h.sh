@@ -3,7 +3,7 @@
 # the same workload and hardware (2026-10-23; rerun 2026-10-25 with the rules arm without AI). Each workload runs once per arm on both boxes of a pair, in opposite order
 # (crossover), so box and order effects cancel. Same agent build, profile, run cap and noise handling; only the choice of
 # the next step differs. Percona Server 8.4, benchmark policy (production-safe first, then trade-offs), 16 runs.
-W=$1; ARM=$2
+W=$1; ARM=$2; RERUN=${3:-}   # rerun: the same arm with the current engine, in its own study (2026-10-26)
 . /root/bench/pipeline/lib.sh
 set -x
 ensure_ps84
@@ -24,5 +24,6 @@ esac
 # planner arm: rules + learnings + the AI planner; rules arm: rules + learnings, no AI at all (2026-10-25 rerun, choice B)
 [ $ARM = planner ] && export PLANNER=1
 [ $ARM = rules ] && export AI_OFF=1
-STUDY="${H2H_STUDY:-head-to-head: planner vs rules + learnings 2026-10-25}" PRE_APPLY="$PRE" run_session $P "h2h $W $ARM ($(hostname))" tps 16
+[ -n "$RERUN" ] && H2H_STUDY="head-to-head rerun: rules + learnings + similarity (engine of 2026-10-26)"
+STUDY="${H2H_STUDY:-head-to-head: planner vs rules + learnings 2026-10-25}" PRE_APPLY="$PRE" run_session $P "h2h $W $ARM${RERUN:+ rerun} ($(hostname))" tps 16
 echo PIPEOK

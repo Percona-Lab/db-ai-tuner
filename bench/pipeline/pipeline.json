@@ -691,6 +691,21 @@
    "question": "Case-base matrix v2 wave 1, cell M4: writes, low concurrency, in memory (1 session so far)"
   },
   {
+   "id": "h2h-W2-rules-rerun-atvbm",
+   "script": "h2h.sh",
+   "args": [
+    "W2",
+    "rules",
+    "rerun"
+   ],
+   "hosts": [
+    "atvbm"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head rerun W2: rules + learnings arm with the current engine (similarity term, size-weighted relevance, purge balance) on atvbm, against the 2026-10-25 planner and rules arms on the same box"
+  },
+  {
    "id": "matrix-M5-atvbm",
    "script": "matrix.sh",
    "args": [
@@ -728,6 +743,21 @@
    "group": false,
    "est_hours": 11,
    "question": "Case-base matrix v2 wave 1, cell P4: writes, low concurrency, partly cached (none); loads ~60 GB"
+  },
+  {
+   "id": "h2h-W2-rules-rerun-atvbm2",
+   "script": "h2h.sh",
+   "args": [
+    "W2",
+    "rules",
+    "rerun"
+   ],
+   "hosts": [
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head rerun W2: rules + learnings arm with the current engine (similarity term, size-weighted relevance, purge balance) on atvbm2, against the 2026-10-25 planner and rules arms on the same box"
   },
   {
    "id": "matrix-C6-atvbm2",
@@ -795,6 +825,21 @@
    "question": "Case-base matrix v2 wave 1, cell C2: TPC-C 100 W: commit-heavy, high concurrency, in memory (none)"
   },
   {
+   "id": "h2h-W4-rules-rerun-atvbmmia",
+   "script": "h2h.sh",
+   "args": [
+    "W4",
+    "rules",
+    "rerun"
+   ],
+   "hosts": [
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head rerun W4: rules + learnings arm with the current engine (similarity term, size-weighted relevance, purge balance) on atvbmmia, against the 2026-10-25 planner and rules arms on the same box"
+  },
+  {
    "id": "matrix-C4-atvbmmia",
    "script": "matrix.sh",
    "args": [
@@ -832,6 +877,21 @@
    "group": false,
    "est_hours": 9,
    "question": "Case-base matrix v2 wave 2, cell P1: read-only, high concurrency, partly cached (none so far); loads ~60 GB"
+  },
+  {
+   "id": "h2h-W4-rules-rerun-atvbmamd",
+   "script": "h2h.sh",
+   "args": [
+    "W4",
+    "rules",
+    "rerun"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head rerun W4: rules + learnings arm with the current engine (similarity term, size-weighted relevance, purge balance) on atvbmamd, against the 2026-10-25 planner and rules arms on the same box"
   },
   {
    "id": "matrix-P5-atvbmamd",
