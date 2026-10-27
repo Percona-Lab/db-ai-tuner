@@ -191,7 +191,9 @@ a multi-GB buffer pool can take a minute.
   * *Unsustainable*: the undo history grows without bound (past 1M, or fast enough to pass it within a day). Such a run
     is INVALID - excluded like an unreliable one: the configuration cannot hold the load. The run-length probe finds a
     stable configuration first (purge triage: concurrency cap, thread pool, purge threads and priority, batches,
-    combinations, and the purge lag bound last); if the calibration or a re-check is unsustainable the triage runs again,
+    combinations, and the purge lag bound last), then measures the warm-up again from a clean start (reset / restart)
+    with the stable settings - not on the server the triage left warm and backlogged; a remedy that does not hold from
+    the clean start does not count as stable; if the calibration or a re-check is unsustainable the triage runs again,
     and when nothing bounds the history autotune stops. `autotune --allow-unstable` tunes anyway (results then drift).
     The lag bound needs both `innodb_max_purge_lag` and `innodb_max_purge_lag_delay`: with a delay of 0 (the default)
     InnoDB applies no delay at all.

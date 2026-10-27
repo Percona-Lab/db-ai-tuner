@@ -2916,18 +2916,9 @@ def _triage_online(c, var):
     return bool(dynamic_in(var, series_of(flavor_of(v)[0], v.get("version")) if v.get("version") else None))
 
 
-def _run_length_probe(c, prof, max_s=3600, target_pct=None):
-    """One continuous run from the benchmark's clean start until every state metric has settled and held its level
-    (warm-up), then the measurement length that keeps the within-run noise inside half the target noise threshold."""
-    target_pct = target_pct or evaluate.NOISE_TARGET
-    if c.state.get("measurement"):
-        raise Fail("a measurement is in progress")
-    if not prof.can_resize():
-        raise Fail("the profile's run command has no {total}/{duration} placeholder: its length cannot be set for one long run")
-    logdir = os.path.join(c.state.dir, "bench")
-    os.makedirs(logdir, exist_ok=True)
-    logfile = os.path.join(logdir, f"run-length-probe-{int(time.time())}.log")
-    t_prep = time.time()  # the run's fixed cost before the benchmark starts (restart / reset), for the window choice
+def _probe_clean_start(c, prof, logfile):
+    """The run-length probe starts as every measured run does: the profile's reset, or a restart with the page cache
+    dropped; then the settings that live only in the running server (resource groups, prerequisites) re-applied."""
     if prof.restart_before_run and (not prof.reset or prof.data_state in ("read-only", "seasoned")):
         log("clean start: restarting mysqld and dropping the OS page cache")
         ok, err = Applier(c.cfg, c.state, c.db, log=log).restart()
@@ -2941,6 +2932,26 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
         _watch_setup(c, "run-length probe")
         _reset_watched(c, prof.reset, logfile + ".reset")
         c.db.connect(retries=30, delay=2)
+        subprocess.run(["sh", "-c", "sync; echo 3 > /proc/sys/vm/drop_caches"], capture_output=True, timeout=1800)
+        try:
+            Applier(c.cfg, c.state, c.db, log=log).reapply_runtime()
+        except Exception as e:  # noqa
+            log(f"WARNING: runtime settings not re-applied after the reset: {e}")
+
+
+def _run_length_probe(c, prof, max_s=3600, target_pct=None):
+    """One continuous run from the benchmark's clean start until every state metric has settled and held its level
+    (warm-up), then the measurement length that keeps the within-run noise inside half the target noise threshold."""
+    target_pct = target_pct or evaluate.NOISE_TARGET
+    if c.state.get("measurement"):
+        raise Fail("a measurement is in progress")
+    if not prof.can_resize():
+        raise Fail("the profile's run command has no {total}/{duration} placeholder: its length cannot be set for one long run")
+    logdir = os.path.join(c.state.dir, "bench")
+    os.makedirs(logdir, exist_ok=True)
+    logfile = os.path.join(logdir, f"run-length-probe-{int(time.time())}.log")
+    t_prep = time.time()  # the run's fixed cost before the benchmark starts (restart / reset), for the window choice
+    _probe_clean_start(c, prof, logfile)
     hold = lambda el: max(600, 0.25 * el)  # noqa: E731  a settled level has to hold this long to count
     log(f"== run-length probe: one continuous run of up to {max_s // 60} min; each state metric must settle and hold its level "
         f"for at least 10 min (and a quarter of the run); then the measurement length for a ±{target_pct:g}% noise target")
@@ -2955,6 +2966,7 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
     r = bench.Running(prof.command(total_s=max_s + TRIAGE_BUDGET_S + 60), logfile)
     done = False
     triage = None
+    restarted_clean = False
     from . import connhealth
     cw, cw_said = connhealth.Watch(c.db), False
     try:
@@ -2998,9 +3010,34 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
                         log("   no stable configuration: the run length is not measured on an unstable one (it would only measure "
                             "the drift); a provisional plan follows")
                         break
-                    log("   stable: the run-length probe starts over on this configuration")
-                    t0 = time.time()
+                    # the server is now warm and carries the history the unstable phase and the triage built up: settling
+                    # times measured from here are the backlog draining, not a warm-up (session 381: "history settled after
+                    # 84 min" -> 101 min warm-up per run, while the cold buffer pool was never measured). Start over from a
+                    # clean start - the reset / restart every run gets - with the triage's settings kept (user, 2026-10-27)
+                    log("   stable: the run-length probe starts over from a clean start (reset / restart) on this configuration")
+                    r.kill()
+                    c.activity("run-length probe", "clean start on the stable configuration")
+                    t_prep = time.time()
+                    _probe_clean_start(c, prof, logfile)
+                    _ensure_requirements(c, prof)
+                    prep_s = int(time.time() - t_prep)
+                    r = bench.Running(prof.command(total_s=max_s + 60), logfile + ".stable")
+                    cw = connhealth.Watch(c.db)
+                    t0 = start = time.time()
+                    restarted_clean = True
                     continue
+            elif triage and triage.get("stable") and restarted_clean and engine.STABILITY_FIRST:
+                # stable during the triage, unbounded again after the clean start (session 388: the probe's remedy did not
+                # hold after the reset): no stable configuration after all - the provisional plan, and the triage again later
+                hmax = max([(x.get("db") or {}).get("history_list_length") or 0 for x in smp_] or [0])
+                if engine.unbounded_hll({"unbounded_growth": res["unbounded"], "history_list_length_max": hmax}):
+                    triage["stable"] = False
+                    triage["unstable_after_clean_start"] = True
+                    log("   the history grows without bound again after the clean start: the triage's remedy does not hold from a "
+                        "clean start; a provisional plan follows")
+                    c.event("purge_triage", "the triage's stable configuration is unbounded again after a clean start "
+                            f"(history {hmax:,}, growing): not stable", {"stable": False, "unstable_after_clean_start": True})
+                    break
             pending = [k for k, x in m.items() if not x["unbounded"] and not x.get("inert")
                        and (x["settled_after_s"] is None or x["plateau_s"] < hold(el))]
             if int(el) % 300 < 60:

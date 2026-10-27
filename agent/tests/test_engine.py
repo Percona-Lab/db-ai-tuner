@@ -3252,6 +3252,124 @@ def test_serverwatch_crash_evidence_parsing():
     assert "ib_log_checkpt 100% CPU" in d and "flush_file_spaces" in d and "innodb_log_writer_threads ON -> OFF" in d
 
 
+def _probe_harness(history_after_clean):
+    """_run_length_probe on a fake clock: an unbounded history triggers the triage, which reports stable; then
+    history_after_clean(minutes since the clean start) drives the samples."""
+    from tuning_agent import cli, collector, bench, connhealth
+    clock = {"t": 1_000_000.0}
+    calls = {"clean": 0, "running": [], "events": []}
+    phase = {"clean_t": None}
+
+    class T:
+        @staticmethod
+        def time():
+            return clock["t"]
+
+        @staticmethod
+        def sleep(s):
+            clock["t"] += s
+
+    class R:
+        def __init__(self, cmd, logfile):
+            calls["running"].append(logfile)
+            self.p = type("P", (), {"returncode": None})()
+
+        def alive(self):
+            return True
+
+        def kill(self):
+            pass
+
+    class Store:
+        def __init__(self, d):
+            pass
+
+        def window(self, t0, t1):
+            out, t = [], t0
+            while t <= t1:
+                if phase["clean_t"] is None:
+                    h = (t - 1_000_000.0) / 60 * 400_000  # +400k/min before the triage
+                else:
+                    h = history_after_clean((t - phase["clean_t"]) / 60)
+                out.append({"ts": t, "db": {"history_list_length": h, "tps": 7000.0, "oldest_trx_s": 1}})
+                t += 10
+            return out
+
+    class C:
+        variables = {"max_connections": "2000"}
+        state = type("S", (), {"dir": "/tmp", "get": lambda self, k, d=None: d})()
+        cfg = {}
+
+        def activity(self, *a, **k):
+            pass
+
+        def event(self, kind, msg, data=None):
+            calls["events"].append((kind, msg))
+
+        def session(self, required=True):
+            return {}
+
+    def clean(c, prof, logfile):
+        calls["clean"] += 1
+        if calls["clean"] == 2:
+            phase["clean_t"] = clock["t"]
+
+    def settle(samples, t0=None):
+        h = [x["db"]["history_list_length"] for x in samples]
+        grow = len(h) > 30 and h[-1] > h[len(h) // 2] + 100_000
+        m = {"history_list_length": {"label": "history list length", "level": h[-1], "settled_after_s": None if grow else 120,
+                                     "plateau_s": 0 if grow else (samples[-1]["ts"] - samples[0]["ts"]) - 120, "unbounded": grow}}
+        return {"metrics": m, "unbounded": [{"metric": "history_list_length", "label": "history list length"}] if grow else [],
+                "elapsed_s": samples[-1]["ts"] - samples[0]["ts"] if samples else 0}
+
+    def triage(c, r, deadline, start_bench):
+        clock["t"] += 1500
+        return {"stable": True, "kept": [("innodb_thread_concurrency", "16")], "steps": [], "running": r}
+
+    class Prof:
+        name, max_duration = "p", None
+        restart_before_run, reset, data_state = False, "/root/reset.sh", "fresh"
+
+        def can_resize(self):
+            return True
+
+        def command(self, total_s=None):
+            return "bench"
+
+    saved = (cli.time, cli.SampleStore, cli._probe_clean_start, cli._ensure_requirements, cli._purge_triage, bench.Running,
+             collector.settle_times, collector.measure_length, connhealth.Watch, cli.engine.STABILITY_FIRST)
+    cli.time, cli.SampleStore, cli._probe_clean_start = T, Store, clean
+    cli._ensure_requirements = lambda c, prof: []
+    cli._purge_triage, bench.Running, collector.settle_times = triage, R, settle
+    collector.measure_length = lambda *a, **k: None
+    connhealth.Watch = type("W", (), {"__init__": lambda self, db: None, "check": lambda self, *a, **k: None})
+    cli.engine.STABILITY_FIRST = True
+    C.db = None
+    try:
+        out = cli._run_length_probe(C(), Prof(), max_s=3600, target_pct=1.0)
+    finally:
+        (cli.time, cli.SampleStore, cli._probe_clean_start, cli._ensure_requirements, cli._purge_triage, bench.Running,
+         collector.settle_times, collector.measure_length, connhealth.Watch, cli.engine.STABILITY_FIRST) = saved
+    return out, calls
+
+
+def test_probe_starts_clean_after_a_stable_triage():
+    """Session 381: after the triage found a stable configuration the probe went on on the warm, backlogged server and
+    recommended a 101-min warm-up (the triage's history draining). It must start over from a clean start (user, 2026-10-27)."""
+    out, calls = _probe_harness(lambda mins: 5000.0)
+    assert calls["clean"] == 2, calls  # the probe's own clean start, then one after the stable triage
+    assert any(f.endswith(".stable") for f in calls["running"]), calls["running"]
+    assert not out["unstable"] and out["recommended_warmup_s"] <= 300, out["recommended_warmup_s"]
+
+
+def test_probe_unbounded_again_after_the_clean_start_is_not_stable():
+    """Session 388: the triage's remedy held on the running benchmark but not from a clean start: no stable configuration."""
+    out, calls = _probe_harness(lambda mins: mins * 300_000)
+    assert calls["clean"] == 2
+    assert out["unstable"] and out["triage"].get("unstable_after_clean_start")
+    assert any(k == "purge_triage" and "after a clean start" in m for k, m in calls["events"])
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
