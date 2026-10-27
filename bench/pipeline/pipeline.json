@@ -868,6 +868,19 @@
    "question": "Head-to-head W4 rules rerun on atvbmmia again: the first rerun (session 382) was spoiled - the calibration was judged a destabilizing change and a -15% thread pool kept (fixed)"
   },
   {
+   "id": "matrix-C4-retry-atvbmmia",
+   "script": "matrix.sh",
+   "args": [
+    "C4"
+   ],
+   "hosts": [
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 11,
+   "question": "Matrix C4 again: TPC-C 1000 W at 1024 threads failed in the warm-up - go-tpc prepares ~24 statements per connection, above max_prepared_stmt_count 16382 (now a prerequisite)"
+  },
+  {
    "id": "matrix-D5-atvbmmia",
    "script": "matrix.sh",
    "args": [

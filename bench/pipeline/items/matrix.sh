@@ -32,6 +32,7 @@ tpmC_whole_run = tpmC: ([\d.]+)
 
 [requires]
 max_connections = $(( $2 * 2 + 100 ))
+max_prepared_stmt_count = 1048576
 INI
 }
 case $CELL in
