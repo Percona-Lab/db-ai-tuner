@@ -907,6 +907,19 @@
    "question": "Case-base matrix v2 wave 2, cell P5: commit-heavy (update_index), medium concurrency, partly cached"
   },
   {
+   "id": "matrix-P5-retry-atvbmamd",
+   "script": "matrix.sh",
+   "args": [
+    "P5"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 9,
+   "question": "Matrix P5 again after the purge triage fix (combinations kept in budget, partial + cutting remedies): the first run found no stable configuration (32 purge threads -88%, concurrency cap -44%, never combined)"
+  },
+  {
    "id": "matrix-P3-atvbmamd",
    "script": "matrix.sh",
    "args": [
