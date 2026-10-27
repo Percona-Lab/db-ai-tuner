@@ -3370,6 +3370,39 @@ def test_probe_unbounded_again_after_the_clean_start_is_not_stable():
     assert any(k == "purge_triage" and "after a clean start" in m for k, m in calls["events"])
 
 
+def test_triage_tries_the_most_purge_threads_right_after_the_online_remedies():
+    """Matrix P5 retry (session 392): 32 purge threads at the highest priority came last, cut the growth 88% with no budget
+    left to combine it. Order: online remedies, then the most purge threads first, then the thread pool, the lag bound last."""
+    from tuning_agent import cli, resgroups
+    v = {"version": "8.4.11-11", "innodb_purge_batch_size": "300", "innodb_thread_concurrency": "0", "thread_handling": "one-thread-per-connection",
+         "thread_pool_size": "12", "thread_pool_oversubscribe": "3", "thread_pool_max_threads": "100000", "thread_pool_stall_limit": "500",
+         "innodb_purge_threads": "2", "innodb_max_purge_lag": "0"}
+
+    class C:
+        db = type("D", (), {"variables": staticmethod(lambda: v)})()
+
+        def os_tuning_allowed(self):
+            return True
+
+        def os_settings(self):
+            return {}
+    saved = (resgroups.available, resgroups.has_cap_sys_nice, cli.os.cpu_count)
+    resgroups.available, resgroups.has_cap_sys_nice, cli.os.cpu_count = (lambda db: True), (lambda: True), (lambda: 12)
+    try:
+        cands = cli._triage_candidates(C())
+    finally:
+        resgroups.available, resgroups.has_cap_sys_nice, cli.os.cpu_count = saved
+    labels = [x["label"] for x in cands]
+    online = [i for i, x in enumerate(cands) if not x["restart"] and not x["last"] and not dict(x["changes"]).get("innodb_purge_threads")]
+    first_restart = min(i for i, x in enumerate(cands) if x["restart"])
+    assert max(online) < first_restart, labels
+    assert labels[first_restart].startswith("32 purge threads at the highest priority"), labels
+    pts = [int(dict(x["changes"])["innodb_purge_threads"]) for x in cands if dict(x["changes"]).get("innodb_purge_threads")]
+    assert pts == sorted(pts, reverse=True), pts
+    assert labels.index([l for l in labels if l.startswith("thread pool")][0]) > labels.index(labels[first_restart])
+    assert cands[-1]["last"] and labels[-1].startswith("purge lag bound")
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

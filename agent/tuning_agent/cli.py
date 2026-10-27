@@ -2671,8 +2671,8 @@ def _per_trx(seg):
 
 def _triage_candidates(c):
     """Purge remedies to try, each measured on its own: [{label, changes: [(var, value)], restart, last}]. Online ones
-    first (cheaper to try), then the ones that need a mysqld restart - the thread pool, more purge threads at a higher
-    priority - and the purge lag bound last: a stopgap that throttles every writer, and one that cannot act while purge
+    first (cheaper to try), then more purge threads (most first), then the other ones that need a mysqld restart - the
+    thread pool, purge on CPUs of its own - and the purge lag bound last: a stopgap that throttles every writer, and one that cannot act while purge
     is stalled (MySQL computes the delay at the start of each purge batch)."""
     from .knowledge import dynamic_in, series_of
     from .mysqldb import flavor_of
@@ -2741,7 +2741,12 @@ def _triage_candidates(c):
                 [("innodb_purge_threads", str(x))] + p_, restart=not pt_online or (bool(prio) and not cap))
     if "innodb_max_purge_lag" in v and int(v.get("innodb_max_purge_lag") or 0) == 0:
         add("purge lag bound (stopgap)", [("innodb_max_purge_lag", "__HLL__"), ("innodb_max_purge_lag_delay", "300000")], last=True)
-    return out
+    # order: the online remedies (5 min each), then the most purge threads first - the biggest lever and the one others
+    # combine with - then the thread pool and the rest. Last, it found the only partial remedy when no budget was left
+    # to combine it (matrix P5 retry, session 392: 32 purge threads cut the growth 88% at 17:12, the triage ended 17:30)
+    pth = lambda x: int(dict(x["changes"]).get("innodb_purge_threads") or 0)  # noqa: E731
+    group = lambda x: 3 if x["last"] else 0 if not x["restart"] and not pth(x) else 1 if pth(x) else 2  # noqa: E731
+    return sorted(out, key=lambda x: (group(x), -pth(x)))
 
 
 RESTART_VARS = ("thread_handling", "os:mysqld_cap_sys_nice")
