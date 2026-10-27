@@ -9,8 +9,10 @@ def _round_down(n, unit):
     return max(unit, (int(n) // unit) * unit)
 
 
-def _tmp_size(ram):
-    return 64 * MiB if ram >= 8 * GiB else 32 * MiB
+# settings earlier baselines set and this one leaves at the server's default: `baseline --apply` stops managing them where a
+# baseline set them (source "baseline"), so an agent that carried them over from an earlier session does not keep them
+RETIRED = ("innodb_read_io_threads", "innodb_write_io_threads", "innodb_log_buffer_size", "innodb_use_fdatasync",
+           "innodb_flush_neighbors", "tmp_table_size", "max_heap_table_size", "innodb_buffer_pool_instances")
 
 
 def generate(hw, variables, flavor, version, opts=None):
@@ -39,8 +41,7 @@ def generate(hw, variables, flavor, version, opts=None):
     # configuration (memory.budget: caches, connections, per-query buffers of 2 x CPUs active connections,
     # performance_schema, fixed overhead), capped at 75% of RAM
     from . import memory
-    planned = dict(variables, max_connections=str(max_conn), innodb_buffer_pool_size="0",
-                   tmp_table_size=str(_tmp_size(ram)), max_heap_table_size=str(_tmp_size(ram)))
+    planned = dict(variables, max_connections=str(max_conn), innodb_buffer_pool_size="0")
     nb = memory.budget(planned, hw)
     overhead = nb["mysqld_bytes"]
     measured = int(opts.get("measured_overhead_bytes") or 0)
@@ -74,12 +75,13 @@ def generate(hw, variables, flavor, version, opts=None):
     topo = numa.topology()
     nodes = topo["nodes"]
     if "innodb_buffer_pool_instances" in variables and flavor != "mariadb":
-        instances = 8 if bp >= 8 * GiB else max(1, bp // GiB)
-        why = f"{instances} instance(s) for a {human_size(bp)} pool (~1 GiB per instance, max 8) to spread mutex contention."
-        if nodes > 1 and bp >= GiB and instances % nodes:
-            instances = max(nodes, -(-instances // nodes) * nodes)  # a multiple of the NUMA nodes: partitions spread evenly
-            why += f" Rounded to a multiple of the {nodes} NUMA nodes."
-        add("innodb_buffer_pool_instances", str(instances), why)
+        # not set (user, 2026-10-27: no low-value settings in the baseline - 34 of 46 instance experiments neutral, 8
+        # efficiency losses, 2 wins): the server's own count, which the pool size is rounded to. MySQL / Percona use 8 for a
+        # pool of 1 GiB or more, 1 below; a count configured outside the agent stays
+        cur_i = int(variables.get("innodb_buffer_pool_instances") or 1)
+        cur_bp_ = int(variables.get("innodb_buffer_pool_size") or 0)
+        default_now = 8 if cur_bp_ >= GiB else 1
+        instances = (8 if bp >= GiB else 1) if cur_i == default_now else cur_i
     node_mem = min((x["mem_bytes"] for x in topo["per_node"] if x["mem_bytes"]), default=0)
     if nodes > 1 and node_mem and bp > 0.8 * node_mem and "innodb_numa_interleave" in variables \
             and str(variables.get("innodb_numa_interleave")).upper() not in ("ON", "1"):
@@ -94,7 +96,7 @@ def generate(hw, variables, flavor, version, opts=None):
             f"{human_size(ram)} RAM - {human_size(reserve)} OS{' + client' if client else ''} reserve"
             + (f" (includes {human_size(rd)} held by RAM disks)" if rd else "") + f" - {human_size(overhead)} server/connection overhead"
             f"{' (measured in the last run)' if measured and overhead == measured else ''} "
-            f"(capped at 75% of RAM), rounded to chunk*instances.")
+            f"(capped at 75% of RAM), rounded to chunk x {instances} instance(s).")
 
     # -- redo log
     redo = min(16 * GiB, max(GiB, ram // 4))
@@ -114,21 +116,19 @@ def generate(hw, variables, flavor, version, opts=None):
         files = int(variables.get("innodb_log_files_in_group") or 2)
         add("innodb_log_file_size", fmt_size(redo // files),
             f"{files} redo files totalling ~25% of RAM (1-16 GiB).")
-    add("innodb_log_buffer_size", "64M", "64 MiB redo buffer avoids log waits on large transactions.")
 
     # -- I/O
     if ssd:
         add("innodb_io_capacity", "2000", "SSD/cloud block storage: ~2000 IOPS of background flushing (MySQL 8.4's default 10000 assumes high-end local NVMe and can flush far more than needed).")
         add("innodb_io_capacity_max", "4000", "Twice innodb_io_capacity for catch-up flushing.")
-        add("innodb_flush_neighbors", "0", "Neighbour flushing only helps rotating disks.")
     else:
         add("innodb_io_capacity", "200", "Rotating disk: modest background flushing budget.")
         add("innodb_io_capacity_max", "400", "Twice innodb_io_capacity.")
-        add("innodb_flush_neighbors", "1", "Group neighbour page writes on rotating disk.")
     if "innodb_flush_method" in variables and variables.get("innodb_flush_method") not in ("O_DIRECT", "O_DIRECT_NO_FSYNC"):
         add("innodb_flush_method", "O_DIRECT", "Bypass the OS page cache for data files (no double buffering).")
-    add("innodb_use_fdatasync", "ON", "fdatasync() skips needless metadata flushes.")
-    # no I/O thread counts: 11 read-thread sweeps (2-16, sessions 150-294) gained nothing, write threads were never shown to
+    # not set either, never measured to matter and mostly the default in current versions: innodb_log_buffer_size (64M
+    # since 8.0), innodb_use_fdatasync (ON in 8.4), innodb_flush_neighbors (0 since 8.0), tmp_table_size /
+    # max_heap_table_size (workload-dependent; sysbench and TPC-C hardly use temporary tables). No I/O thread counts: 11 read-thread sweeps (2-16, sessions 150-294) gained nothing, write threads were never shown to
     # matter - a setting without a measured benefit stays at the server's default (user, 2026-10-27). The engine sweeps them
     # where the evidence points at them (read-ahead at work, flushing falling behind)
 
@@ -139,11 +139,8 @@ def generate(hw, variables, flavor, version, opts=None):
 
     # -- connections / caches
     add("max_connections", str(max_conn), f"{max_conn} connections for {cpus} CPUs (override with --max-connections).")
-    tmp = fmt_size(_tmp_size(ram))
-    add("tmp_table_size", tmp, "In-memory temporary table limit scaled to RAM.")
-    add("max_heap_table_size", tmp, "Matches tmp_table_size (the lower of the two applies).")
     if int(variables.get("table_open_cache", 0) or 0) < 4000:
         add("table_open_cache", "4000", "Enough open table handles for typical schemas.")
     add("performance_schema", "ON", "Required for statement latency measurement.")
-    return out, {"buffer_pool": bp, "redo": redo, "max_connections": max_conn, "reserve": reserve, "bp_starved": starved,
+    return out, {"buffer_pool": bp, "instances": instances, "redo": redo, "max_connections": max_conn, "reserve": reserve, "bp_starved": starved,
                  "ramdisk": int(opts.get("ramdisk_bytes") or 0)}

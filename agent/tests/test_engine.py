@@ -3512,14 +3512,23 @@ def test_reset_hang_or_timeout_is_a_server_down():
         cli.serverwatch.expected, cli.serverwatch.post_mortem, cli.bench.run_shell, cli._service = saved
 
 
-def test_baseline_leaves_io_thread_counts_at_the_defaults():
-    """User, 2026-10-27: no low-value settings in the baseline. 11 read-thread sweeps gained nothing; write threads were
-    never shown to matter: both stay at the server's default."""
+def test_baseline_leaves_low_value_settings_at_the_defaults():
+    """User, 2026-10-27: no low-value settings in the baseline. 11 read-thread sweeps gained nothing; write threads, the
+    log buffer, fdatasync, neighbour flushing and the temporary table sizes were never measured to matter (and are mostly
+    the default in current versions); 34 of 46 buffer pool instance experiments were neutral, 8 efficiency losses. The
+    pool is still rounded to whole chunks of the server's own instance count (8 from 1 GiB)."""
     from tuning_agent import baseline
-    for cpus in (4, 12, 32):
-        items, _ = baseline.generate(dict(HW, cpus=cpus), dict(VARS, innodb_read_io_threads="4", innodb_write_io_threads="4"), "percona", "8.4.11")
-        got = {i["variable"] for i in items}
-        assert not {"innodb_read_io_threads", "innodb_write_io_threads"} & got, sorted(got)
+    old = dict(innodb_read_io_threads="4", innodb_write_io_threads="4", innodb_log_buffer_size="16777216", innodb_use_fdatasync="OFF",
+               innodb_flush_neighbors="1", tmp_table_size="16777216", max_heap_table_size="16777216",
+               innodb_buffer_pool_instances="1", innodb_buffer_pool_size="134217728", innodb_buffer_pool_chunk_size="134217728")
+    for cpus, ram in ((4, 8 * GiB), (12, 32 * GiB), (32, 256 * GiB)):
+        items, calc = baseline.generate(dict(HW, cpus=cpus, ram_bytes=ram), dict(VARS, **old), "percona", "8.4.11")
+        got = {i["variable"]: i["value"] for i in items}
+        assert not set(baseline.RETIRED) & set(got), sorted(got)
+        assert calc["instances"] == 8 and calc["buffer_pool"] % (8 * 128 * 2 ** 20) == 0, calc
+    # a count configured outside the agent (not the default for the current pool) is the one the pool is rounded to
+    _, calc = baseline.generate(dict(HW, cpus=12, ram_bytes=32 * GiB), dict(VARS, **dict(old, innodb_buffer_pool_instances="4")), "percona", "8.4.11")
+    assert calc["instances"] == 4, calc
 
 
 if __name__ == "__main__":

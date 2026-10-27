@@ -848,6 +848,12 @@ def cmd_baseline(a):
         text.append(f" {mark} {it['variable']:<34} {str(it['current']):>14} -> {it['value']:<10} {it['reason']}")
     if a.apply:
         changes = [{"variable": it["variable"], "value": it["value"], "reason": it["reason"], "source": "baseline"} for it in items]
+        # what an earlier baseline set and this one leaves at the server's default (baseline.RETIRED): no longer managed
+        mine = {it["variable"] for it in items}
+        changes += [{"variable": k, "value": None, "source": "baseline",
+                     "reason": "no longer set by the baseline (no measured benefit): back to the server's default"}
+                    for k, m in (c.state.get("managed") or {}).items()
+                    if k in baseline.RETIRED and k not in mine and str(m.get("source") or "") == "baseline"]
         res = _apply_and_record(c, changes, "baseline")
         out["applied"] = res
         text.append("Applied:\n" + _print_apply(res))
