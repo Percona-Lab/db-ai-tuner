@@ -948,6 +948,19 @@
    "question": "Case-base matrix v2 wave 2, cell P3: writes, extreme concurrency, partly cached"
   },
   {
+   "id": "matrix-P3-retry-atvbmamd",
+   "script": "matrix.sh",
+   "args": [
+    "P3"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 9,
+   "question": "Matrix P3 again with the fixed purge triage (combinations in budget): the first run's triage (old agent) found 32 purge threads -58% and nothing to combine"
+  },
+  {
    "id": "matrix-M2-atvbmamd",
    "script": "matrix.sh",
    "args": [
