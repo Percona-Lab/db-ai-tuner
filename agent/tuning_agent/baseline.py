@@ -136,6 +136,14 @@ def generate(hw, variables, flavor, version, opts=None):
     add("innodb_flush_log_at_trx_commit", "1", "Full durability: fsync redo at each commit.")
     if variables.get("log_bin") == "ON":
         add("sync_binlog", "1", "Full durability for the binary log.")
+        # kept for an hour only: benchmark runs write gigabytes of binary log that nothing reads, and the default retention
+        # (30 days) fills the disk. Purged when a log rotates (max_binlog_size) and at startup (user, 2026-10-27)
+        if "binlog_expire_logs_seconds" in variables:
+            add("binlog_expire_logs_seconds", "3600", "Binary logs kept for 1 hour: benchmarks write gigabytes of binary log that "
+                "nothing reads, and the default 30-day retention fills the disk. Production keeps them for point-in-time recovery.")
+        elif "expire_logs_days" in variables:
+            add("expire_logs_days", "1", "Binary logs kept for 1 day (the shortest this version allows): benchmarks write "
+                "gigabytes of binary log that nothing reads. Production keeps them for point-in-time recovery.")
 
     # -- connections / caches
     add("max_connections", str(max_conn), f"{max_conn} connections for {cpus} CPUs (override with --max-connections).")

@@ -3526,6 +3526,14 @@ def test_baseline_leaves_low_value_settings_at_the_defaults():
         got = {i["variable"]: i["value"] for i in items}
         assert not set(baseline.RETIRED) & set(got), sorted(got)
         assert calc["instances"] == 8 and calc["buffer_pool"] % (8 * 128 * 2 ** 20) == 0, calc
+    # binary log on: kept for an hour only - benchmarks write gigabytes nothing reads (user, 2026-10-27)
+    items, _ = baseline.generate(dict(HW, cpus=12, ram_bytes=32 * GiB), dict(VARS, **dict(old, log_bin="ON", binlog_expire_logs_seconds="2592000")),
+                                 "percona", "8.4.11")
+    got = {i["variable"]: i["value"] for i in items}
+    assert got.get("binlog_expire_logs_seconds") == "3600" and got.get("sync_binlog") == "1", got
+    items, _ = baseline.generate(dict(HW, cpus=12, ram_bytes=32 * GiB), dict(VARS, **dict(old, log_bin="OFF", binlog_expire_logs_seconds="2592000")),
+                                 "percona", "8.4.11")
+    assert "binlog_expire_logs_seconds" not in {i["variable"] for i in items}
     # a count configured outside the agent (not the default for the current pool) is the one the pool is rounded to
     _, calc = baseline.generate(dict(HW, cpus=12, ram_bytes=32 * GiB), dict(VARS, **dict(old, innodb_buffer_pool_instances="4")), "percona", "8.4.11")
     assert calc["instances"] == 4, calc

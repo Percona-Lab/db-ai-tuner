@@ -118,7 +118,8 @@ API keys: __SERVER__/#/connect (an account is free; __SERVER__/quickstart walks 
 3. `tuning-agent baseline` (preview) then `tuning-agent baseline --apply` — hardware/version-based
    starting configuration. Use `--reserve-mem 1G` if the benchmark client runs on the same host. It sets only what
    has a measured benefit or a functional need: buffer pool and redo size, the flushing budget, durability, connections,
-   performance_schema (plus swap and the open-files limit). Everything else stays at the server's default - I/O thread
+   performance_schema, and with the binary log on, 1-hour binlog retention (benchmarks write gigabytes nothing reads;
+   production keeps them for point-in-time recovery) - plus swap and the open-files limit. Everything else stays at the server's default - I/O thread
    counts, buffer pool instances, the log buffer, temporary table sizes - and is swept where the evidence points at it;
    settings an earlier baseline set are no longer managed after the next `baseline --apply`.
 4. `tuning-agent session start --goal tps|latency --policy safe|benchmark --name "..." --workload "..."`
