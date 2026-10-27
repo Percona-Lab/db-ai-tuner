@@ -6,7 +6,7 @@ import time
 
 import pymysql
 
-from . import ostune, psprofile, resgroups
+from . import ostune, psprofile, resgroups, serverwatch
 from .knowledge import KB, OPTIONS, dynamic_in, flags_subset, normalize, parse_size, series_of
 
 HEADER = """# Managed by tuning-agent. Do not edit by hand: changes are overwritten.
@@ -142,10 +142,14 @@ class Applier:
         # on a restart that takes seconds)
         self.activity("restarting mysqld", f"systemctl restart {self.service} (gives up after {timeout // 60} min)")
         self.db.close()
-        try:
-            r = subprocess.run(["systemctl", "restart", self.service], capture_output=True, text=True, timeout=timeout)
-        except subprocess.TimeoutExpired:  # still shutting down / recovering: keep waiting for it below instead of failing the session
-            r = None
+        with serverwatch.expected(self.service) as w:  # a hung shutdown / start is noticed, recorded and ended
+            seen = w.incident
+            try:
+                r = subprocess.run(["systemctl", "restart", self.service], capture_output=True, text=True, timeout=timeout)
+            except subprocess.TimeoutExpired:  # still shutting down / recovering: keep waiting for it below instead of failing the session
+                r = None
+            if w.incident is not seen and w.incident["kind"] == "hang":
+                return False, w.incident["diagnosis"]
         if r is not None and r.returncode != 0:
             return False, (r.stderr or r.stdout).strip()[-800:]
         deadline = time.time() + timeout
@@ -164,13 +168,22 @@ class Applier:
     def while_stopped(self, fn, timeout=1800):
         """Runs fn() with mysqld shut down, then starts it again and waits for connections. (ok, fn's result, error)"""
         self.db.close()
-        r = subprocess.run(["systemctl", "stop", self.service], capture_output=True, text=True, timeout=timeout)
+        with serverwatch.expected(self.service) as w:
+            seen = w.incident
+            r = subprocess.run(["systemctl", "stop", self.service], capture_output=True, text=True, timeout=timeout)
+        if w.incident is not seen and w.incident["kind"] == "hang":
+            subprocess.run(["systemctl", "start", self.service], capture_output=True, text=True, timeout=timeout)
+            return False, None, w.incident["diagnosis"]
         if r.returncode != 0:
             return False, None, (r.stderr or r.stdout).strip()[-800:]
         try:
             res = fn()
         finally:
-            subprocess.run(["systemctl", "start", self.service], capture_output=True, text=True, timeout=timeout)
+            with serverwatch.expected(self.service) as w:
+                seen = w.incident
+                subprocess.run(["systemctl", "start", self.service], capture_output=True, text=True, timeout=timeout)
+        if w.incident is not seen and w.incident["kind"] == "hang":
+            return False, res, w.incident["diagnosis"]
         deadline, last = time.time() + timeout, ""
         while time.time() < deadline:
             try:

@@ -15,9 +15,9 @@ import time
 import urllib.parse
 import uuid
 
-from . import __version__, baseline, bench, bottleneck, clientrole, collector, engine, evaluate, hostinfo, llmassist, mechanisms, mysqldb, ostune, planner
+from . import __version__, baseline, bench, bottleneck, clientrole, collector, engine, evaluate, hostinfo, llmassist, mechanisms, mysqldb, ostune, planner, serverwatch
 from .knowledge import added_tradeoffs, run_tradeoffs, start_tradeoffs, tradeoffs_in
-from .applier import Applier
+from .applier import Applier, detect_cnf_path, detect_service
 from .knowledge import OPTIONS as KOPTIONS
 from .client import APIError, Client
 from .knowledge import human_size, normalize
@@ -141,6 +141,10 @@ class Ctx:
         # stability first unless this session or the agent turned it off (agent.ini stability = off / session --stability off)
         sess = self.state.get("session") or {}
         engine.STABILITY_FIRST = str(sess.get("stability") or self.cfg.get("stability", "first")).strip().lower() not in ("off", "no", "false")
+        try:  # a stop / start that hangs is recorded wherever the agent restarts mysqld (serverwatch)
+            _watch_setup(self)
+        except Exception:
+            pass
 
     @property
     def variables(self):
@@ -569,6 +573,9 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
     except Exception as e:  # noqa
         log(f"warning: could not refresh environment facts: {e}")
     c.event("apply", apply_summary(source, res, changes), {"result": res, "requested": changes})
+    if res.get("applied"):  # the suspect when mysqld crashes or hangs next (serverwatch)
+        c.state.set("last_applied", [f"{x['variable']} {x.get('old') if x.get('old') not in (None, '') else '(default)'} -> "
+                                     f"{x.get('new') if x.get('new') is not None else '(default)'}" for x in res["applied"][:8]])
     return res
 
 
@@ -1705,30 +1712,105 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     the measurement start and ended the session)."""
     import pymysql
     t0 = time.time()
-    try:
+    _watch_setup(c, label)
+    with serverwatch.watching(_service(c)) as w:
         try:
-            return _bench_run_once(c, prof, label, notes, warmup_override)
-        except ConnStorm as cs:
-            # stopped in the warm-up, nothing measured: the prerequisite raised, the run started again (once)
-            _raise_conn_requirement(c, cs.info)
-            log("   the run starts again with the raised requirement")
-            return _bench_run_once(c, prof, label, notes, warmup_override)
-    except (pymysql.err.OperationalError, pymysql.err.InterfaceError) as e:
-        oom = _oom_killed_since(t0)
-        try:  # wait for mysqld to come back (systemd restarts it) so the revert can be applied
-            c.db.connect(retries=60, delay=2)
-        except Exception:
-            pass
-        if c.state.get("measurement"):  # a run had been started: it measured nothing
             try:
-                c.client.post(f"/runs/{c.state['measurement']['run_id']}/abort", {"reason": f"mysqld lost: {str(e)[:300]}"})
+                return _bench_run_once(c, prof, label, notes, warmup_override)
+            except ConnStorm as cs:
+                # stopped in the warm-up, nothing measured: the prerequisite raised, the run started again (once)
+                _raise_conn_requirement(c, cs.info)
+                log("   the run starts again with the raised requirement")
+                return _bench_run_once(c, prof, label, notes, warmup_override)
+        except (pymysql.err.OperationalError, pymysql.err.InterfaceError) as e:
+            oom = _oom_killed_since(t0)
+            try:  # wait for mysqld to come back (systemd restarts it) so the revert can be applied
+                c.db.connect(retries=60, delay=2)
             except Exception:
                 pass
-            c.state.data["measurement"] = None
-            c.state.save()
-        if oom:
-            raise BenchFailed("mysqld was OOM-killed during the run (" + oom.split("kernel:")[-1].strip()[:160] + ")")
-        raise ServerDown(f"lost the connection to mysqld during the run: {str(e)[:300]}")
+            if not oom:
+                w.check()  # a crash is told apart from a dropped connection now, not at the watch's next look
+                inc = w.incident or serverwatch.post_mortem(_service(c), t0, "running")
+                if inc:
+                    _abort_measurement(c, inc["diagnosis"])
+                    raise ServerDown(inc["diagnosis"])
+            _abort_measurement(c, f"mysqld lost: {str(e)[:300]}")
+            if oom:
+                raise BenchFailed("mysqld was OOM-killed during the run (" + oom.split("kernel:")[-1].strip()[:160] + ")")
+            raise ServerDown(f"lost the connection to mysqld during the run: {str(e)[:300]}")
+
+
+def _abort_measurement(c, reason):
+    if c.state.get("measurement"):  # a run had been started: it measured nothing
+        try:
+            c.client.post(f"/runs/{c.state['measurement']['run_id']}/abort", {"reason": reason[:900]})
+        except Exception:
+            pass
+        c.state.data["measurement"] = None
+        c.state.save()
+
+
+def _watch_setup(c, label=None):
+    """Where the server watch reports to and what it records with an incident (serverwatch)."""
+    def ping():
+        import pymysql
+        d = mysqldb.DB(c.cfg)
+        try:
+            d.connect()
+            d.conn.ping(reconnect=False)
+            d.scalar("SELECT 1")
+            return True
+        except pymysql.err.OperationalError as e:
+            # refused for lack of slots or credentials: says nothing about a hang; no answer / no listener does
+            return False if e.args and e.args[0] in (2003, 2006, 2013) else None
+        except Exception:
+            return None
+        finally:
+            d.close()
+
+    def context():
+        sess = c.state.get("session") or {}
+        return {"session_id": sess.get("id"), "run": label, "last_changes": c.state.get("last_applied") or [],
+                "server_version": (c._vars or {}).get("version"),
+                "managed": {k: v.get("value") for k, v in (c.state.get("managed") or {}).items()}}
+    errlog = None
+    try:
+        errlog = (c._vars or {}).get("log_error")
+        if errlog and not errlog.startswith("/"):
+            errlog = os.path.join((c._vars or {}).get("datadir") or "/var/lib/mysql", errlog.lstrip("./"))
+    except Exception:
+        pass
+    serverwatch.configure(report=c.event, outdir=os.path.join(c.state.dir, "incidents"), ping=ping, log=log,
+                          context=context, error_log=errlog, cnf_path=c.cfg.get("cnf_path") or detect_cnf_path())
+
+
+def _reset_watched(c, cmd, logfile, timeout=3600):
+    """The benchmark's reset (it stops and starts mysqld itself) under the server watch: a shutdown or start that hangs is
+    recorded and ended instead of holding the session until the timeout (session 381); a crash on the way is recorded."""
+    t0 = time.time()
+    with serverwatch.expected(_service(c)) as w:
+        seen = w.incident
+        try:
+            rc, out = bench.run_shell(cmd, timeout=timeout, log=logfile)
+        except subprocess.TimeoutExpired:
+            rc, out = -1, f"no result after {timeout} s"
+    if w.incident is not seen:
+        raise ServerDown(f"during the reset: {w.incident['diagnosis']}")
+    if rc != 0:
+        inc = serverwatch.post_mortem(_service(c), t0, "reset")
+        raise ServerDown(f"reset command failed ({rc}): " + (inc["diagnosis"] if inc else out[-500:]))
+    return rc, out
+
+
+def _service(c):
+    return c.cfg.get("service_name") or detect_service()
+
+
+def _incident_check(c):
+    """mysqld crashed or hung since the run started (serverwatch): the run measures nothing more."""
+    w = serverwatch.current()
+    if w and w.incident:
+        raise ServerDown(w.incident["diagnosis"])
 
 
 COOLDOWN_S = 15  # the window closes at least this long before a benchmark's planned end ({total} adds 30 s after the window)
@@ -1799,11 +1881,10 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
         log(f"reset: {prof.reset}")
         c.activity("resetting data", prof.reset.split()[0].rsplit("/", 1)[-1])
         c.db.close()
-        rc, out = bench.run_shell(prof.reset, timeout=3600, log=logfile + ".reset")
-        if rc != 0:
-            raise ServerDown(f"reset command failed ({rc}): {out[-500:]}")
+        rc, out = _reset_watched(c, prof.reset, logfile + ".reset")
         c.db.connect(retries=30, delay=2)
         c.state.set("restart_pending", False)
+    _incident_check(c)
 
     def sync_drop():
         # every run starts from the same OS state: the reset's copy written out (its writeback would otherwise run inside
@@ -1952,6 +2033,7 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
                 cw, cw_said = connhealth.Watch(c.db), False
                 while time.time() < deadline and r.alive():
                     time.sleep(1)
+                    _incident_check(c)
                     bad = cw.check(c.variables.get("max_connections"))
                     if bad and bad["kind"] == "refused":
                         r.kill()
@@ -1962,6 +2044,9 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
                         c.event("bench", f"connects failing during the warm-up of {label}: {bad['text']}", bad)
         if not r.alive():
             oom = _oom_killed_since(t_run0)
+            if not oom:
+                serverwatch.current() and serverwatch.current().check()
+                _incident_check(c)
             raise BenchFailed(("mysqld was OOM-killed during the warm-up (" + oom.split("kernel:")[-1].strip()[:160] + "); " if oom else "")
                               + f"benchmark exited during warm-up (code {r.p.returncode}); tail:\n{r.output()[-1500:]}")
         m, warn, url = _measure_start(c, label, notes, warmed=True)
@@ -1992,6 +2077,7 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
             c.activity("measuring", f"run #{m['seq']} {label or ''}", prof.duration)
             while time.time() < deadline and r.alive():
                 time.sleep(1)
+                _incident_check(c)
                 prep_tail = _prepared_tail(c, prep_tail)
             if not r.alive() and deadline - time.time() > 2:
                 # the benchmark ended inside the window: its last seconds (wind-down) are in it - recorded, flagged
@@ -2007,6 +2093,7 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
             deadline = t_start + limit
             while time.time() < deadline and r.alive():
                 time.sleep(2)
+                _incident_check(c)
                 prep_tail = _prepared_tail(c, prep_tail)
             if r.alive():
                 raise TooSlow(f"run exceeded {limit:.0f}s (2.5x the typical run time): configuration rejected")
@@ -2042,6 +2129,9 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
             log("WARNING: " + msg)
             c.event("benchmark", msg, {"run_seq": m.get("seq")})
         rc = r.wait(max(1, limit_ - (time.time() - t_exit)))
+        if serverwatch.current():  # a crash late in the run still means the configuration crashes mysqld
+            serverwatch.current().check()
+        _incident_check(c)
     except BaseException as exc:
         r.kill()
         if c.state.get("measurement"):
@@ -2848,9 +2938,8 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
     if prof.reset:
         log(f"reset: {prof.reset}")
         c.db.close()
-        rc, out = bench.run_shell(prof.reset, timeout=3600, log=logfile + ".reset")
-        if rc != 0:
-            raise ServerDown(f"reset command failed ({rc}): {out[-500:]}")
+        _watch_setup(c, "run-length probe")
+        _reset_watched(c, prof.reset, logfile + ".reset")
         c.db.connect(retries=30, delay=2)
     hold = lambda el: max(600, 0.25 * el)  # noqa: E731  a settled level has to hold this long to count
     log(f"== run-length probe: one continuous run of up to {max_s // 60} min; each state metric must settle and hold its level "
@@ -4353,7 +4442,8 @@ def _autotune(a):
             run, _ = _bench_run(c, prof, f"{nxt}")
         except (TooSlow, ServerDown, BenchFailed) as e:
             why = ("OOM-killed mysqld" if "OOM-killed" in str(e) else "made the benchmark too slow" if isinstance(e, TooSlow)
-                   else "broke the benchmark" if isinstance(e, BenchFailed) else "took mysqld down")
+                   else "broke the benchmark" if isinstance(e, BenchFailed) else "hung mysqld" if "mysqld hung" in str(e)
+                   else "crashed mysqld" if "mysqld crashed" in str(e) else "took mysqld down")
             log(f"   {str(e)[:600]}; reverting {nxt}")
             c.event("experiment", f"{nxt} {why}: reverted, the session continues", {"error": str(e)[:1000]})
             cur = {k: v["value"] for k, v in c.state.get("managed", {}).items()}

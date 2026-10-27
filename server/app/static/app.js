@@ -965,6 +965,24 @@ function clockTile(sm, ck) {
   const bad = ck.level === "flag";
   return `<div class="tile ${bad ? "caution" : "ok"}"><div class="k">CPU clock${info(`Average current CPU frequency over all CPUs during the window (cpufreq), lowest 10 s sample ${num(ck.mhz_min)} MHz, spread ${num(ck.cv_pct)}%${ck.usual_mhz ? `, usually ${num(ck.usual_mhz)} MHz in this session` : ""}; ${num(ck.throttle_events || 0)} thermal throttling events. Cooling or power limits that clock the CPUs down mid-run change the result as steal does. The clock also follows the load (fewer busy cores boost higher), so a different clock flags a run but never excludes it.${bad ? " Flagged: " + ck.why + "." : ""}`)}</div><div class="v">${num(ck.mhz)}<span style="font-size:13px;color:var(--ink-2)"> MHz</span></div><div class="d">${ck.throttle_events ? `${num(ck.throttle_events)} throttling events` : `min ${num(ck.mhz_min)} MHz`}</div></div>`;
 }
+// mysqld crashed or hung during the session (agent serverwatch): what happened, the evidence the agent took
+function incidentsCard(events) {
+  const ev = events.filter(e => e.type === "incident" && e.data).sort((a, b) => a.ts - b.ts);
+  if (!ev.length) return "";
+  const phase = { stopping: "while shutting down", starting: "while starting", running: "while running", reset: "during the data reset" };
+  const one = e => { const x = e.data, th = (x.threads || []).filter(t => t.cpu_pct >= 1 || t.state === "D").slice(0, 8);
+    return `<div style="padding:8px 0;border-bottom:1px solid var(--grid)"><div><span class="badge bad">${x.kind === "hang" ? "hung" : "crashed"}</span> <b>${esc(phase[x.phase] || x.phase || "")}</b> <span class="muted">${fmtTime(e.ts)}${x.run ? ` · ${esc(x.run)}` : ""}${x.killed ? " · killed by the agent to continue" : ""}</span></div>
+      <div style="margin-top:4px">${esc(x.diagnosis || e.message)}</div>
+      <details style="margin-top:4px"><summary class="muted" style="cursor:pointer">Evidence</summary>
+      ${(x.last_changes || []).length ? `<div class="muted" style="margin-top:6px">Last change before it</div><div class="mono">${(x.last_changes || []).map(esc).join("<br>")}</div>` : ""}
+      ${th.length ? `<div class="muted" style="margin-top:6px">Busiest threads (5 s sample)</div><div class="tablewrap"><table><thead><tr><th>Thread</th><th>State</th><th class="num">CPU</th></tr></thead><tbody>${th.map(t => `<tr><td class="mono">${esc(t.name)}</td><td>${esc(t.state)}</td><td class="num">${num(t.cpu_pct)}%</td></tr>`).join("")}</tbody></table></div>` : ""}
+      ${(x.perf_top || []).length ? `<div class="muted" style="margin-top:6px">CPU profile (perf, 10 s)</div><pre class="mono" style="white-space:pre-wrap;word-break:break-all;margin:0">${esc(x.perf_top.join("\n"))}</pre>` : ""}
+      ${(x.error_log || []).length ? `<div class="muted" style="margin-top:6px">Error log</div><pre class="mono" style="white-space:pre-wrap;word-break:break-all;margin:0;max-height:260px;overflow:auto">${esc(x.error_log.join("\n"))}</pre>` : ""}
+      ${(x.journal || []).length ? `<div class="muted" style="margin-top:6px">systemd</div><pre class="mono" style="white-space:pre-wrap;word-break:break-all;margin:0">${esc(x.journal.join("\n"))}</pre>` : ""}
+      ${x.evidence_dir ? `<div class="muted" style="margin-top:6px">Full evidence on the database host: <span class="mono">${esc(x.evidence_dir)}</span></div>` : ""}
+      </details></div>`; };
+  return `<h2>Server incidents${info("mysqld crashed (its process ended without the agent restarting it) or hung (a shutdown or start without disk or file I/O for 3 minutes after 5, or no answer to SELECT 1 for 10 minutes). The agent saves the evidence - busiest threads, kernel stacks, a perf profile, gdb or eu-stack stacks when installed, the error log, the journal and the option file - kills a hung mysqld so the session can go on, and treats the configuration as failed: reverted, not tried again.")}</h2><div class="card">${ev.map(one).join("")}</div>`;
+}
 // purge triage (stability first): each online purge setting tried on the running benchmark, its history growth and cost
 function triageCard(events) {
   const ev = events.filter(e => e.type === "purge_triage").sort((a, b) => a.ts - b.ts);
@@ -1001,7 +1019,7 @@ async function renderEvents(el, _events, _all, scope) {
   const draw = () => {
     if (head) head.textContent = total > 10 ? `Recent activity (${shown.length} of ${total})` : "Recent activity";
     if (!shown.length) { el.innerHTML = '<span class="muted">No activity yet.</span>'; return; }
-    el.innerHTML = shown.map(ev => `<div class="ev"><span class="muted">${fmtTime(ev.ts)}</span><span><span class="badge plain">${esc(ev.type)}</span></span><span>${esc(ev.message)}</span></div>`).join("") +
+    el.innerHTML = shown.map(ev => `<div class="ev"><span class="muted">${fmtTime(ev.ts)}</span><span><span class="badge ${ev.type === "incident" ? "bad" : "plain"}">${esc(ev.type)}</span></span><span>${esc(ev.message)}</span></div>`).join("") +
       (shown.length < total ? `<div style="margin-top:10px"><button class="more">Show ${Math.min(20, total - shown.length)} more</button></div>` : "");
     const b = el.querySelector(".more");
     if (b) b.onclick = async () => { b.disabled = true; const d = await api(`/api/events?${q}&offset=${shown.length}&limit=20`); shown = shown.concat(d.events); total = d.total; draw(); };
@@ -1138,7 +1156,7 @@ async function sessionPage(id) {
   ${bestSafe || bestTrade ? `<details class="card" id="bestcfg" style="margin-top:10px"><summary style="margin:0;cursor:pointer"><b>Best known configuration</b> <span class="muted">· what differs from the defaults (MySQL and OS)</span></summary><div id="bestcfgBody" class="muted" style="margin-top:8px">Loading…</div></details>` : ""}
   ${empty ? "" : `<div class="card" style="margin-top:14px"><div class="row" id="barScopeRow" hidden><span class="spacer"></span><div class="seg small" role="group" aria-label="Runs in the chart" id="barScope"><button data-b="safe">Production-safe runs</button><button data-b="all">All runs</button></div></div><div id="bars"></div></div>`}
   ${benchCard(d.benchmarks || [])}
-  ${triageCard(d.events || [])}
+  ${incidentsCard(d.events || [])}${triageCard(d.events || [])}
   ${d.runs.length ? `<h2>Runs</h2><div id="runFlags"></div><div class="card tablewrap"><table class="runs" data-opt="TPS|Avg ms|CPU ms/trx|IOs/trx|Time"><thead><tr><th>#</th><th>Run</th><th class="chg">Changes</th><th class="num">${esc(unit)}</th><th class="num">Δ parent${info("Change of the goal vs the mean of the parent configuration (the configuration this run was changed from). Coloured only beyond the noise threshold." + (lower ? " Faster = lower response time." : ""))}</th><th class="num">vs start${info(`Change vs the ${refName === "calibrated start" ? "calibrated starting configuration (calibration mean)" : refName} = ${num(refVal)}. Bold: the best configuration known at that point of the session (it took the lead by beating the previous best beyond the noise threshold). Changes shown struck through were rolled back afterwards; ↩ marks settings undone before the run.`)}</th><th>Verdict</th>
    ${cols.tps ? '<th class="num">TPS</th>' : ""}${cols.avg ? '<th class="num">Avg ms</th>' : ""}${cols.perTrx ? '<th class="num">CPU ms/trx</th><th class="num">IOs/trx</th>' : ""}<th class="num">Time</th></tr></thead><tbody id="runs"></tbody></table></div>` : ""}
   ${empty ? "" : `<h2>Experiments${info("Your own experiments: try a set of settings, or sweep one variable over several values (e.g. buffer pool 1G, 2G, 3G). They run before the tuner's own ideas, each value measured from the same parent configuration with the session's benchmark. The best value is kept only if it beats the parent beyond the noise threshold.")}</h2><div class="card" id="exps"></div>

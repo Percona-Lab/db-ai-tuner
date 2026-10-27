@@ -2156,8 +2156,19 @@ def test_lost_mysqld_during_a_run_is_a_failed_configuration():
 
     def boom(*a, **k):
         raise pymysql.err.OperationalError(2013, "Lost connection to MySQL server during query (The read operation timed out)")
-    saved = (cli._bench_run_once, cli._oom_killed_since)
+    import contextlib
+    saved = (cli._bench_run_once, cli._oom_killed_since, cli._watch_setup, cli._service, cli.serverwatch.watching, cli.serverwatch.post_mortem)
     cli._bench_run_once = boom
+
+    class W:
+        incident = None
+
+        def check(self):
+            pass
+    cli._watch_setup = lambda c, label=None: None
+    cli._service = lambda c: "mysql"
+    cli.serverwatch.watching = contextlib.contextmanager(lambda service: (yield W()))
+    cli.serverwatch.post_mortem = lambda service, since, phase: None
     try:
         cli._oom_killed_since = lambda t0: "Oct 24 kernel: Out of memory: Killed process 63351 (mysqld)"
         try:
@@ -2171,8 +2182,16 @@ def test_lost_mysqld_during_a_run_is_a_failed_configuration():
             raise AssertionError("must raise")
         except cli.ServerDown as e:
             assert "lost the connection" in str(e)
+        # a crash report in the error log names what happened (serverwatch.post_mortem)
+        cli.serverwatch.post_mortem = lambda service, since, phase: {"kind": "crash", "diagnosis": "mysqld crashed while running; error log: got signal 11"}
+        try:
+            cli._bench_run(C(), None, "x")
+            raise AssertionError("must raise")
+        except cli.ServerDown as e:
+            assert "mysqld crashed" in str(e) and "signal 11" in str(e)
     finally:
-        cli._bench_run_once, cli._oom_killed_since = saved
+        (cli._bench_run_once, cli._oom_killed_since, cli._watch_setup, cli._service, cli.serverwatch.watching,
+         cli.serverwatch.post_mortem) = saved
 
 
 
@@ -3126,6 +3145,111 @@ def test_resource_groups_recreated_after_a_restored_data_directory():
         assert resgroups.restore(DB(), {"rg:purge": {"value": "prio=-10"}}), "nice 0 must be reported as not in effect"
     finally:
         resgroups.thread_nice = saved
+
+
+def _fake_watch(monkey_states, ios=None, ping=None):
+    """A serverwatch.Watch driven by scripted unit states / I/O counters, evidence collection and kill stubbed."""
+    from tuning_agent import serverwatch as sw
+    calls = {"kill": 0, "collect": []}
+    st = {"unit": monkey_states[0], "io": (0, 0)}
+    sw.unit = lambda service: st["unit"]
+    sw.io = lambda pid: st["io"]
+    sw._sh = lambda argv, timeout=30: calls.__setitem__("kill", calls["kill"] + 1) or ""
+    sw.collect = lambda kind, phase, pid, service, live, detail="": calls["collect"].append((kind, phase, live)) or {
+        "kind": kind, "phase": phase, "diagnosis": sw.diagnose({"kind": kind, "phase": phase, "detail": detail}), "evidence_dir": "/tmp/x"}
+    sw.configure(ping=ping, log=lambda m: None, report=None)
+    return sw, sw.Watch("mysql"), st, calls
+
+
+def _restore_serverwatch():
+    import importlib
+    from tuning_agent import serverwatch as sw
+    importlib.reload(sw)
+
+
+def test_serverwatch_hung_shutdown_killed():
+    # session 381: the shutdown never ends, no I/O (the checkpointer spins on fsyncs of a RAM disk)
+    try:
+        sw, w, st, calls = _fake_watch([("active", "running", 100)])
+        st["unit"] = ("deactivating", "stop-sigterm", 100)
+        t = 1000.0
+        for i in range(40):
+            w.check(now=t + i * 15)
+            if w.incident:
+                break
+        assert w.incident and w.incident["kind"] == "hang" and w.incident["phase"] == "stopping", w.incident
+        assert w.incident["diagnosis"].startswith("mysqld hung while shutting down")
+        assert calls["kill"] == 1 and calls["collect"] == [("hang", "stopping", True)]
+        assert 100 in w.killed
+    finally:
+        _restore_serverwatch()
+
+
+def test_serverwatch_slow_shutdown_making_progress_is_no_hang():
+    try:
+        sw, w, st, calls = _fake_watch([("active", "running", 100)])
+        st["unit"] = ("deactivating", "stop-sigterm", 100)
+        for i in range(80):  # 20 minutes flushing pages: 50 MiB of disk writes every 15 s
+            st["io"] = (i * (50 << 20), i * (50 << 20))
+            w.check(now=1000.0 + i * 15)
+        assert w.incident is None and calls["kill"] == 0
+    finally:
+        _restore_serverwatch()
+
+
+def test_serverwatch_crash_vs_expected_restart():
+    try:
+        sw, w, st, calls = _fake_watch([("active", "running", 100)])
+        with w.expecting():  # the agent's own restart: a new main process is fine
+            st["unit"] = ("active", "running", 200)
+            w.check(now=1000.0)
+        assert w.incident is None and w.pid == 200
+        st["unit"] = ("active", "running", 300)  # systemd restarted it after a crash
+        w.check(now=1100.0)
+        assert w.incident and w.incident["kind"] == "crash" and calls["collect"] == [("crash", "running", False)]
+        assert calls["kill"] == 0
+    finally:
+        _restore_serverwatch()
+
+
+def test_serverwatch_unresponsive_server():
+    try:
+        answers = {"v": False}
+        sw, w, st, calls = _fake_watch([("active", "running", 100)], ping=lambda: answers["v"])
+        for i in range(9):  # 8 minutes without an answer: not yet
+            w.check(now=1000.0 + i * 60)
+        assert w.incident is None
+        answers["v"] = None  # 'Too many connections': unknown, the streak goes on but proves nothing new
+        w.check(now=1000.0 + 9 * 60)
+        answers["v"] = False
+        w.check(now=1000.0 + 10 * 60)
+        assert w.incident and w.incident["kind"] == "hang" and w.incident["phase"] == "running"
+        answers["v"] = True
+        sw2, w2, st2, _ = _fake_watch([("active", "running", 100)], ping=lambda: answers["v"])
+        for i in range(20):
+            answers["v"] = (i % 3 != 0)  # an answer now and then: not hung
+            w2.check(now=1000.0 + i * 60)
+        assert w2.incident is None
+    finally:
+        _restore_serverwatch()
+
+
+def test_serverwatch_crash_evidence_parsing():
+    from tuning_agent import serverwatch as sw
+    lines = ["2026-10-27T11:00:00.1Z 0 [System] [MY-010931] ready for connections",
+             "2026-10-27T11:21:03Z UTC - mysqld got signal 11 ;",
+             "Most likely, you have hit a bug, but this error can also be caused by malfunctioning hardware.",
+             "Thread pointer: 0x7f00", "stack_bottom = 0x7f00 thread_stack 0x100000",
+             " #0 0x1 my_print_stacktrace", " #1 0x2 handle_fatal_signal"]
+    got = sw.crash_lines(lines)
+    assert any("got signal 11" in l for l in got) and any("handle_fatal_signal" in l for l in got)
+    assert sw.crash_lines(lines[:1]) == []
+    assert sw._ts(lines[1]) is not None
+    d = sw.diagnose({"kind": "hang", "phase": "stopping", "detail": "600 s stopping",
+                     "threads": [{"name": "ib_log_checkpt", "cpu_pct": 99.6}, {"name": "mysqld", "cpu_pct": 0.1}],
+                     "perf_top": ["61.2% ib_log_checkpt Fil_shard::flush_file_spaces"],
+                     "last_changes": ["innodb_log_writer_threads ON -> OFF"]})
+    assert "ib_log_checkpt 100% CPU" in d and "flush_file_spaces" in d and "innodb_log_writer_threads ON -> OFF" in d
 
 
 if __name__ == "__main__":

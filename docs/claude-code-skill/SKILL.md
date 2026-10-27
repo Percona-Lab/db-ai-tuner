@@ -229,3 +229,14 @@ a multi-GB buffer pool can take a minute.
   so memory pressure shows as slower runs instead of an OOM kill; a larger existing swap is kept.
 * Do not run `measure` while applying changes; `apply` refuses during a measurement.
 * The server restarting during a window invalidates it (`measure stop` fails; use `measure abort`).
+* **mysqld crashing or hanging** is watched for during every run, reset and restart the agent makes:
+  * crash: the mysqld process ends without the agent restarting it (systemd brings it back, the benchmark may carry on
+    against a cold server);
+  * hang: a shutdown or start with no disk or file I/O for 3 minutes after 5, or no answer to `SELECT 1` for 10 minutes
+    while running ("Too many connections" does not count).
+  The agent saves the evidence under `<state_dir>/incidents/<time>-crash|hang/` (busiest threads, kernel stacks, a perf
+  profile, gdb / eu-stack stacks when installed, the error log, the journal, the managed option file, the last change),
+  kills a hung mysqld (InnoDB recovers; a reset restores the data anyway), records an `incident` event (shown under
+  "Server incidents" on the session page) and treats the configuration as failed: reverted, not tried again, the
+  session goes on. Do not kill mysqld or the agent yourself when a stop seems slow: a shutdown that still writes is not
+  a hang. A crash or hang worth reporting upstream: attach the incident directory.

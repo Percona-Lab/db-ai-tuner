@@ -769,6 +769,9 @@ def session(sid: int, request: Request):
         r["starred"] = r["id"] in stars
     recs = [store.row(r, ("items", "diagnosis", "workload", "llm", "decision")) for r in store.q("SELECT * FROM recommendations WHERE session_id=? ORDER BY id DESC", (sid,))]
     events = [event_view(store.row(r, ("data",))) for r in store.q("SELECT * FROM events WHERE session_id=? ORDER BY ts DESC LIMIT 200", (sid,))]
+    seen = {e["id"] for e in events}  # server incidents always (the card on the session page), however long the session
+    events += [x for x in (event_view(store.row(r, ("data",))) for r in store.q("SELECT * FROM events WHERE session_id=? AND type='incident' ORDER BY ts", (sid,)))
+               if x["id"] not in seen]
     s["activity"] = session_activity(e, sid) if s.get("status") == "active" else None
     if s["calibration"] and not s["calibration"].get("plan"):
         s["calibration"]["plan"] = noise_breakdown(sid, e["id"], s["calibration"])
