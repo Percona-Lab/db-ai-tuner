@@ -1278,7 +1278,9 @@ async function sessionPage(id) {
     const ev = r.evaluation || {};
     const rfb = (d.feedback || []).filter(f => f.run_id === r.id);
     // verdict, then at most one flag; the rest behind a "+N" chip
-    const fl = (flagsOf[r.id] || runFlags(r)).filter(f => !common.includes(f.key));
+    // the most severe flag first: "unsustainable" or "connections refused" must not hide behind a milder one (user, 373)
+    const sev = f => /badge bad/.test(f.html) ? 0 : /badge warn/.test(f.html) ? 1 : 2;
+    const fl = (flagsOf[r.id] || runFlags(r)).filter(f => !common.includes(f.key)).sort((a, b) => sev(a) - sev(b));
     const shownFl = fl.slice(0, 1), restFl = fl.slice(1);
     const vr = vsRef(r.goal_value);
     tr.innerHTML = `<td style="white-space:nowrap">${r.seq}${ME && !ME.share ? starBtn(r.id, r.starred) : ""}</td><td><a href="#/run/${r.id}">${esc(r.label)}</a>${runWhy(r)}${r.status !== "done" ? " " + statusBadge(r.status, r.abort_reason) : ""}${tradeBadge(r.tradeoffs_added || r.tradeoffs)}${fbMark(rfb)}<div class="chg-m">${ch}</div></td><td class="chg">${ch}</td>

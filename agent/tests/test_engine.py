@@ -3032,6 +3032,18 @@ def test_profile_fixed_settings_are_never_tuned():
     assert not fixed & set(p.fixed), fixed & set(p.fixed)
 
 
+def test_unbounded_growth_that_slows_but_stays_large():
+    """Session 373 run 21: the history grew ~4.5M/h in the warm-up and ~2M/h in the window at 1.1-1.3M - slower, but adding
+    more than its level per hour: unbounded, not settling. A curve flattening near its level still settles."""
+    from tuning_agent import collector
+    tail = [{"ts": i * 10, "db": {"history_list_length": 600000 + 12500 * i}} for i in range(40)]
+    win = [{"ts": 400 + i * 10, "db": {"history_list_length": 1126000 + 5500 * i}} for i in range(30)]
+    u = collector.unbounded_growth(win, tail)
+    assert u and u[0]["metric"] == "history_list_length", u
+    flat = [{"ts": 400 + i * 10, "db": {"history_list_length": 1126000 + int(60000 * (1 - 0.9 ** i))}} for i in range(30)]
+    assert not collector.unbounded_growth(flat, tail)
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

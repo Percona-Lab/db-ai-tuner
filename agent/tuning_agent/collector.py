@@ -485,7 +485,10 @@ def unbounded_growth(samples, tail=None):
         tp = [(s.get("ts") or 0, s["db"][key]) for s in (tail or []) if (s.get("db") or {}).get(key) is not None]
         before = _slope(tp) if len(tp) >= 3 else None
         ref = max(x for x in (first, before) if x is not None)
-        if last < 0.5 * ref:  # slowing down clearly: settling, not unbounded
+        # slowing down clearly AND close to a level: settling, not unbounded. A slowdown that still adds more than a quarter
+        # of the level per hour is not settling (session 373 run 21: the history list 1.13M -> 1.29M in the window at ~2M/h,
+        # after ~4.5M/h in the warm-up, passed as settling)
+        if last < 0.5 * ref and last * 3600 < 0.25 * max(pts[-1][1], 1):
             continue
         out.append({"metric": key, "label": label, "start": round(pts[0][1]), "end": round(pts[-1][1]),
                     "rate_per_s": round(last, 1), "rate_first_third_per_s": round(first, 1),
