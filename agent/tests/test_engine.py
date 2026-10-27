@@ -3094,6 +3094,40 @@ def test_calibration_is_not_a_destabilizing_change():
     assert not any(h == 1 for h in (ev2.get("stable_but_slower") or {}).get("stable_runs", [])), ev2
 
 
+def test_resource_groups_recreated_after_a_restored_data_directory():
+    """User report (2026-10-27): a reset that restores the data directory from a copy loses ta_purge / ta_bg; the agent only
+    reassigned threads to groups that no longer existed. restore() recreates them from the managed record."""
+    from tuning_agent import resgroups
+    groups, executed = {}, []
+
+    class DB:
+        def scalar(self, q):
+            return 0
+
+        def execute(self, q, *a):
+            executed.append(q)
+            if q.startswith("CREATE RESOURCE GROUP") or q.startswith("ALTER RESOURCE GROUP"):
+                name = q.split()[3]
+                prio = q.split("THREAD_PRIORITY = ")[1].split()[0] if "THREAD_PRIORITY" in q else 0
+                groups[name] = {"v": "0-11", "p": int(prio), "e": 1}
+
+        def dict_rows(self, q):
+            if "RESOURCE_GROUPS" in q:
+                name = q.split("RESOURCE_GROUP_NAME='")[1].split("'")[0]
+                return [groups[name]] if name in groups else []
+            return []
+    saved = resgroups.thread_nice
+    try:
+        resgroups.thread_nice = lambda db, names: [-10]
+        wrong = resgroups.restore(DB(), {"rg:purge": {"value": "prio=-10"}})
+        assert any(q.startswith("CREATE RESOURCE GROUP ta_purge") for q in executed), executed
+        assert not wrong, wrong
+        resgroups.thread_nice = lambda db, names: [0]
+        assert resgroups.restore(DB(), {"rg:purge": {"value": "prio=-10"}}), "nice 0 must be reported as not in effect"
+    finally:
+        resgroups.thread_nice = saved
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

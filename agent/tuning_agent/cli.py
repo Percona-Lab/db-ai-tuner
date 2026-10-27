@@ -1846,19 +1846,24 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
     # reset that restarts mysqld outside the agent drops them, and the daemon re-assigned them only within a minute and
     # unchecked - session 388: purge at a higher priority bounded the history in the probe, the baseline runs after the
     # reset grew it by ~5M/h with the same setting. Re-applied now, the purge threads' priority verified
-    purge_nice = None
+    purge_nice, rt_wrong = None, []
     try:
         from . import resgroups
-        Applier(c.cfg, c.state, c.db, log=log).reapply_runtime()
+        ap_ = Applier(c.cfg, c.state, c.db, log=log)
+        ap_.reapply_runtime()
+        rt_wrong = getattr(ap_, "rg_wrong", []) or []
         want = resgroups.parse_purge((c.state.get("managed", {}).get("rg:purge") or {}).get("value")).get("prio")
         if want:
-            got = resgroups.thread_nice(c.db, resgroups.PURGE_THREADS)
-            purge_nice = {"want": want, "got": sorted(set(got))}
-            if got and any(x != want for x in got):
-                log(f"WARNING: purge threads run at nice {sorted(set(got))}, not {want}: the purge priority is not in effect")
-                c.event("environment", f"purge threads at nice {sorted(set(got))} instead of {want} before run '{label}'", purge_nice)
-    except Exception as e:  # noqa - never fail a run because of it
-        log(f"note: runtime settings not re-applied: {e}")
+            purge_nice = {"want": want, "got": sorted(set(resgroups.thread_nice(c.db, resgroups.PURGE_THREADS)))}
+        if rt_wrong:
+            # not warning-only: the run measures another configuration than it is labelled with - recorded as a mismatch,
+            # so the run is unreliable and measured again (user report, 2026-10-27)
+            log("WARNING: runtime settings not in effect: " + "; ".join(f"{v} {w} wanted, {n} now" for v, w, n in rt_wrong))
+            c.event("environment", f"run '{label}': runtime settings not in effect - " + "; ".join(f"{v} {w} wanted, {n} now" for v, w, n in rt_wrong),
+                    {"wrong": rt_wrong})
+    except Exception as e:  # noqa - recorded as a mismatch below
+        rt_wrong = [("runtime settings", "re-applied", f"error: {str(e)[:120]}")]
+        log(f"WARNING: runtime settings not re-applied: {e}")
 
     try:  # free space on the data disk before the run: a seasoned / growing data set can fill it (session 222)
         st_ = os.statvfs(c.variables.get("datadir") or "/var/lib/mysql")
@@ -1876,6 +1881,9 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
     # one new since the previous run does
     before = {(x["variable"], str(x["running"])) for x in ((sess.get("runs") or [{}])[-1].get("summary") or {}).get("config_mismatch_all") or []}
     mismatch_all, mismatch = mismatch, [x for x in mismatch if (x["variable"], str(x["running"])) not in before]
+    # runtime settings the agent could not put in effect always count: the run measures something other than its label
+    rt_mm = [{"variable": v, "configured": w, "running": n} for v, w, n in rt_wrong]
+    mismatch, mismatch_all = mismatch + rt_mm, mismatch_all + rt_mm
     cow = None
     if prof.reset or not sess.get("runs"):
         # copy-on-write under the data: a reflink / snapshot clone of the pristine copy makes every first write copy its
@@ -4621,8 +4629,11 @@ def cmd_daemon(a):
                 last_rg = time.time()
                 from . import resgroups
                 try:
-                    if resgroups.ensure(c.db):  # mysqld was restarted outside the agent (e.g. a benchmark reset)
-                        log("re-assigned InnoDB background / purge threads to their resource groups")
+                    # mysqld restarted outside the agent (a benchmark reset): the groups recreated if a restored data directory
+                    # lost them, the threads reassigned
+                    wrong_ = resgroups.restore(c.db, st.get("managed") or {})
+                    if wrong_:
+                        raise RuntimeError("not in effect: " + "; ".join(f"{v} {w} wanted, {n} now" for v, w, n in wrong_))
                 except Exception as e:  # never let it break sampling
                     if str(e) != rg_err:
                         log(f"resource group: {e}")

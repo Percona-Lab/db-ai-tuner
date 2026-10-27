@@ -143,6 +143,40 @@ def thread_nice(db, names):
     return out
 
 
+def _same(var, want, now):
+    """The group as wanted? The purge group by priority and (when given) CPUs - the server lists all CPUs its own way."""
+    if var == PURGE_VAR:
+        w, n = parse_purge(want), parse_purge(now)
+        return w.get("prio") == n.get("prio") and (not w.get("cpus") or w["cpus"] == n.get("cpus"))
+    return str(now or "off") == str(want)
+
+
+def restore(db, managed):
+    """The managed resource groups as the agent recorded them, whatever happened to the server: a data directory restored
+    from a copy (the benchmark guide's reset) brings back a data dictionary without ta_purge / ta_bg, and reassigning
+    threads to groups that no longer exist did nothing (user report, 2026-10-27). Creates or alters each group, then
+    assigns the threads. Returns [(variable, wanted, now)] for what still differs afterwards (empty: in effect)."""
+    wrong = []
+    for var in VARS:
+        want = ((managed or {}).get(var) or {}).get("value") if isinstance((managed or {}).get(var), dict) else (managed or {}).get(var)
+        if want is None:
+            continue
+        cur = current(db).get(var)
+        if not _same(var, want, cur):
+            apply(db, want, var)
+        now = current(db).get(var)
+        if not _same(var, want, now):
+            wrong.append((var, str(want), str(now)))
+    ensure(db)
+    p = parse_purge(((managed or {}).get(PURGE_VAR) or {}).get("value") if isinstance((managed or {}).get(PURGE_VAR), dict)
+                    else (managed or {}).get(PURGE_VAR)).get("prio")
+    if p:
+        got = thread_nice(db, PURGE_THREADS)
+        if got and any(n != p for n in got):
+            wrong.append(("purge threads' nice", str(p), str(sorted(set(got)))))
+    return wrong
+
+
 def ensure(db):
     """(Re)assign threads to the groups that exist; returns how many were moved. Purge threads go to ta_purge when it
     exists, else with the other InnoDB background threads to ta_bg. mysqld disables a group at startup when its CPUs are

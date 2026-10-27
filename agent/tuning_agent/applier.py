@@ -203,11 +203,15 @@ class Applier:
                 psprofile.apply(self.db, self.state["managed"][psprofile.VAR]["value"])
             except Exception:
                 pass
+        self.rg_wrong = []
         if any(v in self.state["managed"] for v in resgroups.VARS):
-            try:
-                resgroups.ensure(self.db)
+            try:  # recreated when a restored data directory lost them, not only reassigned
+                self.rg_wrong = resgroups.restore(self.db, self.state["managed"])
+                if self.rg_wrong:
+                    self.log("resource groups not in effect after re-applying: " + "; ".join(f"{v} {w} wanted, {n} now" for v, w, n in self.rg_wrong))
             except Exception as e:  # noqa
-                self.log(f"resource group re-assignment failed: {e}")
+                self.rg_wrong = [("resource groups", "as managed", f"error: {e}")]
+                self.log(f"resource groups could not be re-applied: {e}")
 
     def _verify_huge_pages(self):
         """mysqld must actually use the reserved huge pages; otherwise they only take memory away from it."""
