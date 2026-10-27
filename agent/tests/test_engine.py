@@ -3051,6 +3051,23 @@ def test_unbounded_growth_that_slows_but_stays_large():
     assert not collector.unbounded_growth(flat, tail)
 
 
+def test_baseline_keeps_the_pool_when_the_reserve_leaves_nothing():
+    """Session 380 (em-b212x): 270 GB RAM, an 80 GB RAM disk already counted as host memory, plus --reserve-mem 204G: the
+    baseline shrank a 32 GB pool to 128 MB silently and lowered max_connections below the benchmark's 2048. Now the pool is
+    kept (with a warning) and max_connections never goes below the current value."""
+    from tuning_agent import baseline
+    G = 1024 ** 3
+    hw = dict(HW, ram_bytes=270 * G, cpus=32)
+    v = dict(VARS, innodb_buffer_pool_size=str(32 * G), max_connections="2048")
+    items, calc = baseline.generate(hw, v, "percona", (9, 7, 2), {"reserve_bytes": 204 * G, "host_other_bytes": 88 * G, "ramdisk_bytes": 80 * G})
+    by = {i["variable"]: i["value"] for i in items}
+    assert calc["bp_starved"] and "innodb_buffer_pool_size" not in by, (calc, by.get("innodb_buffer_pool_size"))
+    assert int(by.get("max_connections", "2048")) >= 2048, by.get("max_connections")
+    items2, calc2 = baseline.generate(hw, v, "percona", (9, 7, 2), {"host_other_bytes": 88 * G, "ramdisk_bytes": 80 * G})
+    bp = [i for i in items2 if i["variable"] == "innodb_buffer_pool_size"][0]
+    assert not calc2["bp_starved"] and "RAM disks" in bp["reason"], bp
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

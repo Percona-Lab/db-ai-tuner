@@ -68,6 +68,7 @@ Run everything as root on the database host. `autotune` takes hours, so start it
 5. **Session and autotune.**
    ```bash
    tuning-agent baseline --apply --reserve-mem 1G   # hardware-sized start; 1G kept for the co-located sysbench
+   # --reserve-mem is only for a co-located client: memory the host already uses (RAM disks / tmpfs included) is measured
    tuning-agent session start --goal tps --policy safe --name "sysbench oltp_read_write on $(hostname)"
    nohup tuning-agent autotune --bench /root/sysbench.ini --close > /root/autotune.log 2>&1 &
    ```

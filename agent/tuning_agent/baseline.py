@@ -20,6 +20,10 @@ def generate(hw, variables, flavor, version, opts=None):
     cpus = int(hw["cpus"] or 1)
     ssd = not hw.get("disk_rotational", False)
     max_conn = int(opts.get("max_connections") or max(151, min(1000, cpus * 50)))
+    if not opts.get("max_connections"):
+        # never below what the server runs now: a benchmark prerequisite raised it (session 381: 2048 -> 1000 under 1024
+        # reconnecting threads)
+        max_conn = max(max_conn, int(variables.get("max_connections") or 0))
     # OS reserve, plus memory for a co-located client when one is declared (--reserve-mem): added, not instead
     client = int(opts.get("reserve_bytes") or 0)
     # the OS reserve: 10% of RAM, or what the host measurably uses outside mysqld when more (a 24 GB pool on a 30 GB host
@@ -46,6 +50,15 @@ def generate(hw, variables, flavor, version, opts=None):
     # memory outside mysqld) put the baseline itself over the budget, so every run became a memory trade-off and the best
     # production-safe configuration fell back to server defaults (h2h W3 on AMD: 0.7 GiB over)
     bp = min(int(ram * 0.75), int((ram * 0.98 - reserve - overhead) / (1 + memory.COST["bp_control"])))
+    starved = None
+    cur_bp = int(variables.get("innodb_buffer_pool_size") or 0)
+    if bp < GiB and cur_bp > max(bp, 128 * MiB):
+        # the reserve and the memory the host already uses leave (almost) nothing: never shrink the pool to the minimum
+        # silently (session 380: 270 GB RAM, an 80 GB RAM disk already counted as host memory, plus --reserve-mem 204G ->
+        # 128 MB) - keep the current size and say why
+        starved = {"computed_bytes": max(bp, 0), "kept_bytes": cur_bp, "ram": ram, "host_other": int(opts.get("host_other_bytes") or 0),
+                   "ramdisk": int(opts.get("ramdisk_bytes") or 0), "client_reserve": client}
+        bp = cur_bp
     bp = max(bp, 128 * MiB)
     # MyRocks holding data shares the memory: its block cache gets the RocksDB share of the data (at least 256 MiB each)
     data = ((opts.get("engines") or {}).get("data")) or {}
@@ -75,10 +88,13 @@ def generate(hw, variables, flavor, version, opts=None):
             f"({human_size(node_mem)}): interleaved across all nodes, no node runs out first.")
     chunk = int(variables.get("innodb_buffer_pool_chunk_size") or 0) or 128 * MiB  # MariaDB 10.11+ reports 0 (auto)
     bp = _round_down(bp, chunk * instances)
-    add("innodb_buffer_pool_size", fmt_size(bp),
-        f"{human_size(ram)} RAM - {human_size(reserve)} OS{' + client' if client else ''} reserve - {human_size(overhead)} server/connection overhead"
-        f"{' (measured in the last run)' if measured and overhead == measured else ''} "
-        f"(capped at 75% of RAM), rounded to chunk*instances.")
+    rd = int(opts.get("ramdisk_bytes") or 0)
+    if not starved:
+        add("innodb_buffer_pool_size", fmt_size(bp),
+            f"{human_size(ram)} RAM - {human_size(reserve)} OS{' + client' if client else ''} reserve"
+            + (f" (includes {human_size(rd)} held by RAM disks)" if rd else "") + f" - {human_size(overhead)} server/connection overhead"
+            f"{' (measured in the last run)' if measured and overhead == measured else ''} "
+            f"(capped at 75% of RAM), rounded to chunk*instances.")
 
     # -- redo log
     redo = min(16 * GiB, max(GiB, ram // 4))
@@ -129,4 +145,5 @@ def generate(hw, variables, flavor, version, opts=None):
     if int(variables.get("table_open_cache", 0) or 0) < 4000:
         add("table_open_cache", "4000", "Enough open table handles for typical schemas.")
     add("performance_schema", "ON", "Required for statement latency measurement.")
-    return out, {"buffer_pool": bp, "redo": redo, "max_connections": max_conn, "reserve": reserve}
+    return out, {"buffer_pool": bp, "redo": redo, "max_connections": max_conn, "reserve": reserve, "bp_starved": starved,
+                 "ramdisk": int(opts.get("ramdisk_bytes") or 0)}

@@ -803,7 +803,17 @@ def cmd_baseline(a):
     except Exception:
         pass
     opts["host_other_bytes"] = _host_other_now()
+    opts["ramdisk_bytes"] = _ramdisk_bytes()
     items, calc = baseline.generate(hw, v, flavor, vt, opts)
+    if calc.get("ramdisk") and opts.get("reserve_bytes"):
+        log(f"note: {human_size(calc['ramdisk'])} held by RAM disks (tmpfs) is already counted as memory the host uses outside "
+            "mysqld; --reserve-mem should cover only a co-located client")
+    if calc.get("bp_starved"):
+        st_ = calc["bp_starved"]
+        log(f"WARNING: the memory left for the buffer pool is {human_size(st_['computed_bytes'])} ({human_size(st_['ram'])} RAM, "
+            f"{human_size(st_['host_other'])} used outside mysqld" + (f" incl. {human_size(st_['ramdisk'])} RAM disks" if st_["ramdisk"] else "")
+            + (f", {human_size(st_['client_reserve'])} --reserve-mem" if st_["client_reserve"] else "") + f"): the buffer pool stays at "
+            f"{human_size(st_['kept_bytes'])} instead of shrinking to the minimum. Check the reserve, or set it yourself.")
     sw = _baseline_swap(c, hw)
     if sw:
         items.append(sw)
@@ -1494,6 +1504,26 @@ def _maybe_offcpu(c, sess, warmup_s, cpu_secs, in_window=False):
     sess.setdefault("offcpu_configs", []).append(key)
     c.state.set("session", sess)
     return o
+
+
+def _ramdisk_bytes():
+    """Bytes held by RAM-backed file systems (tmpfs / ramfs mounts, e.g. a data set on a RAM disk): memory the host uses
+    outside mysqld - already in the host's other memory, named so a reserve does not count it twice (session 380)."""
+    total, seen = 0, set()
+    try:
+        for line in open("/proc/mounts"):
+            f = line.split()
+            if len(f) < 3 or f[2] not in ("tmpfs", "ramfs") or f[1] in seen:
+                continue
+            seen.add(f[1])
+            try:
+                st = os.statvfs(f[1])
+                total += (st.f_blocks - st.f_bfree) * st.f_frsize
+            except OSError:
+                pass
+    except OSError:
+        return 0
+    return total
 
 
 def _host_other_now():
