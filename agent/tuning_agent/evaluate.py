@@ -818,13 +818,26 @@ def state_flags(s):
     return out
 
 
-def verdict(run, history, goal, noise, peers=None):
+def verdict(run, history, goal, noise, peers=None, allow_unstable=False):
     """The run's verdict and its details; every verdict - reference and repeat runs included - carries what the run's
     own samples say about its state (session 231: a 60 s warm-up was flagged on the first baseline only). peers: the runs
     whose usual steal and clock this run is compared with (re-judging: every other run of the session, so the first runs
     are held to the same level and threshold as the rest); default the earlier runs."""
     v, d = _run_verdict(run, history, goal, noise, peers)
     out = dict(state_flags(run.get("summary")), **(d or {}))
+    from .engine import unbounded_hll
+    u = unbounded_hll(run.get("summary"))
+    if u and not allow_unstable and v not in EXCLUDED:
+        # an unsustainable run measures a state the load cannot hold: its result is invalid, whatever it measured (user,
+        # 2026-10-27: unbounded runs are not tuned - the configuration is stabilized first, or the session fails; a session
+        # started with --allow-unstable keeps them)
+        out = dict(out, unsustainable=u, measured_verdict=v,
+                   note=(f"UNSUSTAINABLE: the undo history grows without bound ({u['start']:,.0f} -> {u['end']:,.0f} in the window, "
+                         f"~{u['per_hour']:,.0f} per hour): purge cannot keep up, so this configuration cannot run the load. The result "
+                         f"is invalid (measured: {v}" + (f" {out['goal_delta_pct']:+.1f}%" if out.get("goal_delta_pct") is not None else "")
+                         + ") and excluded from comparisons." + (" It made a stable configuration unbounded: purge remedies are "
+                         "measured with it before it is reverted." if out.get("destabilized") else "")))
+        v = "unreliable"
     ck = clock_check(run.get("summary"), (noise or {}).get("noise_pct"), usual_clock(history if peers is None else peers))
     if ck:
         out["clock"] = ck
@@ -912,14 +925,9 @@ def _run_verdict(run, history, goal, noise, peers=None):
         or any(str(h.get("label") or "").startswith("server defaults") for h in par_)
     # an experiment, not the calibrated start judged against the server's defaults (session 382: the baseline, 7x the
     # defaults' throughput, was flagged as a change that broke stability and the session spent its runs balancing it)
-    if u_ and par_ and not calib_ and v in ("improved", "efficiency-gain") and not any(unbounded_hll(h.get("summary")) for h in par_):
-        d = dict(d, destabilized=True, unsustainable_verdict=v,
-                 note=f"Unsustainable: {v} by {d.get('goal_delta_pct')}%, but the undo history now grows without bound "
-                      f"({u_['start']:,.0f} -> {u_['end']:,.0f}, ~{u_['per_hour']:,.0f} per hour; it did not with the parent "
-                      f"configuration, runs {[h['seq'] for h in par_]}). Part of the gain is purge work left unpaid, and this "
-                      "configuration cannot run the load for long. Treated as no measurable effect."
-                      + ((" " + d["note"]) if d.get("note") else ""))
-        v = "neutral"
+    if u_ and par_ and not calib_ and not any(unbounded_hll(h.get("summary")) for h in par_):
+        # the change made a stable configuration unbounded: marked for the balance step (engine.balance_purge)
+        d = dict(d, destabilized=True, unsustainable_verdict=v)
     stab = stabilized(run, history, d, goal)
     if stab and stab.get("below_stable"):
         d = dict(d, stable_but_slower=stab)

@@ -1964,11 +1964,19 @@ PURGE_UNBOUNDED_MIN = 1000000  # a history list growing past this without slowin
 PURGE_BLOCKED_TRX_S = 300  # a transaction open this long holds a read view purge cannot pass: purge tuning cannot help
 
 
+PURGE_PROJECT_H = 24  # sustained growth that would pass PURGE_UNBOUNDED_MIN within this many hours is unbounded too
+
+
 def unbounded_hll(summary):
-    """The undo history list grew without slowing down in this run (collector.unbounded_growth) and past
-    PURGE_UNBOUNDED_MIN: purge cannot keep up. Growth that stays below it is a level still settling, not a stability problem."""
+    """The undo history list grew without slowing down in this run (collector.unbounded_growth): past PURGE_UNBOUNDED_MIN,
+    or at a rate that would take it there within PURGE_PROJECT_H hours - slow growth is not stable either (user,
+    2026-10-27: the history must be stable for a run to be valid, not merely growing slowly). Growth that flattens is a
+    level still settling (collector), not a stability problem."""
     u = next((u for u in (summary or {}).get("unbounded_growth") or [] if u.get("metric") == "history_list_length"), None)
-    return u if u and max(u.get("end") or 0, (summary or {}).get("history_list_length_max") or 0) >= PURGE_UNBOUNDED_MIN else None
+    if not u:
+        return None
+    level = max(u.get("end") or 0, (summary or {}).get("history_list_length_max") or 0)
+    return u if level >= PURGE_UNBOUNDED_MIN or level + PURGE_PROJECT_H * (u.get("per_hour") or 0) >= PURGE_UNBOUNDED_MIN else None
 
 
 def purge_blocked(summary):
@@ -2167,7 +2175,8 @@ def balance_purge(items, ctx):
     # still on the destabilized change (its configuration, or it plus balance steps)?
     if any(normalize(k, managed.get(k)) != normalize(k, val) for k, val in (dr.get("managed") or {}).items()):
         return items
-    if any((r.get("evaluation") or {}).get("stabilized") for r in after):
+    if any((r.get("evaluation") or {}).get("stabilized") or (str(r.get("label") or "").startswith("balance-")
+                                                              and r.get("verdict") in ("improved", "efficiency-gain")) for r in after):
         return items  # balanced: kept, tuning continues from it
     tries = [r for r in after if str(r.get("label") or "").startswith("balance-")]
     stable_runs = (dr.get("evaluation") or {}).get("parent_runs") or []

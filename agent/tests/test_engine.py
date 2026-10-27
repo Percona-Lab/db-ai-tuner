@@ -2279,8 +2279,10 @@ def test_purge_unbounded_threshold_and_blocked_purge():
     """User: a history list past 1M and still growing is unbounded; below that it is still settling. A transaction open
     for minutes holds purge back: no purge setting can help, so none is tried and the advice names the cause."""
     from tuning_agent import engine
-    g = lambda end: {"unbounded_growth": [{"metric": "history_list_length", "start": 100000, "end": end, "per_hour": 1e6}]}  # noqa: E731
-    assert engine.unbounded_hll(g(900000)) is None and engine.unbounded_hll(g(1100000))
+    g = lambda end, ph=1e6: {"unbounded_growth": [{"metric": "history_list_length", "start": 100000, "end": end, "per_hour": ph}]}  # noqa: E731
+    assert engine.unbounded_hll(g(1100000))
+    # below 1M: sustained growth that would pass 1M within a day is unbounded too (user, 2026-10-27: slow growth is not stable)
+    assert engine.unbounded_hll(g(900000)) and engine.unbounded_hll(g(400000, 30000)) and engine.unbounded_hll(g(400000, 1000)) is None
     assert engine.purge_blocked({"oldest_trx_s_max": 20}) is None and engine.purge_blocked({"oldest_trx_s_max": 900}) == 900
     s = dict(OLTP[0], history_list_length_max=3000000, cpu_busy=95, threads_running_avg=200, oldest_trx_s_max=1800,
              **g(3000000))
@@ -2852,7 +2854,10 @@ def test_destabilizing_gain_is_not_a_win_and_a_costly_remedy_returns_to_the_stab
     r5 = {"seq": 5, "label": "log-writer-threads-off", "managed": lw, "goal_value": 425_000.0, "summary": unb(1_900_000, 2_600_000),
           "changes": [{"variable": "innodb_log_writer_threads", "new": "OFF", "source": "rec:log-writer-threads-off"}]}
     v, d = evaluate.verdict(r5, hist, "tps", {"noise_pct": 2.0})
-    assert v == "neutral" and d.get("destabilized") and "Unsustainable" in d["note"], (v, d.get("note"))
+    # invalid: an unsustainable run is not a result (user, 2026-10-27), marked for the balance step
+    assert v == "unreliable" and d.get("destabilized") and d["note"].startswith("UNSUSTAINABLE"), (v, d.get("note"))
+    v_, d_ = evaluate.verdict(r5, hist, "tps", {"noise_pct": 2.0}, allow_unstable=True)
+    assert v_ == "improved" and d_.get("destabilized"), (v_, d_.get("note"))  # --allow-unstable keeps it
     r5["verdict"], r5["evaluation"] = "improved", {}  # as the old agent judged it: the parent of the remedy
     tp = dict(lw, thread_handling="pool-of-threads")
     r7 = {"seq": 7, "label": "purge-threadpool", "managed": tp, "goal_value": 386_000.0, "summary": dict(ok, history_list_length_max=1200),

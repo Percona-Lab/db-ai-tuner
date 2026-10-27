@@ -188,7 +188,14 @@ a multi-GB buffer pool can take a minute.
     caches synced and dropped, so any CPU (processes, kernel threads, interrupts) or disk traffic is outside work: a
     software RAID resync, a scrub, package updates. Flagged, not excluded: find and stop the outside work, or wait
     for it, before trusting small differences.
-  * *not steady*, *unsustainable* (undo history growing without bound), *low disk space*, *stalls*: see the badges.
+  * *Unsustainable*: the undo history grows without bound (past 1M, or fast enough to pass it within a day). Such a run
+    is INVALID - excluded like an unreliable one: the configuration cannot hold the load. The run-length probe finds a
+    stable configuration first (purge triage: concurrency cap, thread pool, purge threads and priority, batches,
+    combinations, and the purge lag bound last); if the calibration or a re-check is unsustainable the triage runs again,
+    and when nothing bounds the history autotune stops. `autotune --allow-unstable` tunes anyway (results then drift).
+    The lag bound needs both `innodb_max_purge_lag` and `innodb_max_purge_lag_delay`: with a delay of 0 (the default)
+    InnoDB applies no delay at all.
+  * *not steady*, *low disk space*, *stalls*: see the badges.
 * Verdicts are re-judged against all other runs of the session when the noise is recalibrated; after updating the
   agent mid-session, `tuning-agent reevaluate` applies the current rules to earlier runs.
 

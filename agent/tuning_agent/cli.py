@@ -970,6 +970,49 @@ def _ensure_fixed(c, prof):
     return ch
 
 
+def _resolve_unsustainable(c, prof, run, where):
+    """A run of a configuration that should be stable grew the undo history without bound (the calibration, a re-check):
+    the purge triage runs again on it - once per session - and the session continues with what it finds stable; when
+    nothing bounds it the session fails (user, 2026-10-27: unsustainable runs are invalid; tune only a stable
+    configuration, unless --allow-unstable)."""
+    sess = c.session()
+    u = (run.get("evaluation") or {}).get("unsustainable") or {}
+    log(f"== {where}: run {run['seq']} is unsustainable (undo history {u.get('start', 0):,.0f} -> {u.get('end', 0):,.0f}, ~{u.get('per_hour', 0):,.0f}/h)")
+    if sess.get("unsustainable_triaged"):
+        msg = (f"autotune stopped: {where} is unsustainable again after a purge triage made it stable - the history grows without "
+               "bound with this configuration under this load. Lower the concurrency, or run with --allow-unstable to tune anyway.")
+        log("== " + msg)
+        c.event("session", msg, {"run": run["seq"], "unsustainable": u})
+        raise Fail(msg)
+    sess["unsustainable_triaged"] = True
+    c.state.set("session", sess)
+    logdir = os.path.join(c.state.dir, "bench")
+    os.makedirs(logdir, exist_ok=True)
+    _ensure_requirements(c, prof)
+    r = bench.Running(prof.command(total_s=TRIAGE_BUDGET_S + 900), os.path.join(logdir, f"purge-triage-{int(time.time())}.log"))
+    try:
+        t0 = time.time()
+        while r.alive() and time.time() - t0 < 600:  # lead-in: the history grows again first
+            c.activity("purge triage", f"{where} was unsustainable: lead-in {(time.time() - t0) / 60:.0f} of 10 min")
+            time.sleep(30)
+
+        def start_bench():
+            _ensure_requirements(c, prof)
+            return bench.Running(prof.command(total_s=TRIAGE_BUDGET_S + 900), os.path.join(logdir, f"purge-triage-{int(time.time())}.log"))
+        out = _purge_triage(c, r, time.time() + TRIAGE_BUDGET_S, start_bench)
+        r = out.pop("running")
+    finally:
+        if r.alive():
+            r.kill()
+    if not out.get("stable"):
+        msg = (f"autotune stopped: {where} is unsustainable and no purge remedy bounds the history under this load (see the purge "
+               "triage). Lower the concurrency, or run with --allow-unstable to tune anyway.")
+        log("== " + msg)
+        c.event("session", msg, {"run": run["seq"]})
+        raise Fail(msg)
+    log(f"== {where}: stable with {', '.join(f'{k}={v}' for k, v in out.get('kept') or []) or 'the current configuration'}; measuring again")
+
+
 def _same_server(c, sess):
     """A session measures one server: another version under it (a version study installing the next release) belongs in a
     new session - its runs would be compared with the old version's (user, em-b212x 357)."""
@@ -1328,7 +1371,8 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     hint = c.state.get("parent_hint")
     verdict, evaluation = evaluate.verdict({"seq": m.get("seq"), "label": m.get("label"), "managed": m["managed"], "goal_value": gv,
                                             "summary": summary, "changes": m.get("changes"), "parent_hint": hint}, runs, sess["goal"],
-        sess.get("noise") or ({"noise_pct": sess["noise_pct"]} if sess.get("noise_pct") else None))
+        sess.get("noise") or ({"noise_pct": sess["noise_pct"]} if sess.get("noise_pct") else None),
+        allow_unstable=bool(sess.get("allow_unstable")))
     if hint:
         evaluation["parent_hint"] = hint  # a re-evaluation compares with the same parent
     if evaluation.get("parent_runs"):
@@ -1798,6 +1842,24 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
     elif prof.reset:
         sync_drop()
 
+    # settings that live only in the running server (resource groups, prerequisites, the performance_schema profile): a
+    # reset that restarts mysqld outside the agent drops them, and the daemon re-assigned them only within a minute and
+    # unchecked - session 388: purge at a higher priority bounded the history in the probe, the baseline runs after the
+    # reset grew it by ~5M/h with the same setting. Re-applied now, the purge threads' priority verified
+    purge_nice = None
+    try:
+        from . import resgroups
+        Applier(c.cfg, c.state, c.db, log=log).reapply_runtime()
+        want = resgroups.parse_purge((c.state.get("managed", {}).get("rg:purge") or {}).get("value")).get("prio")
+        if want:
+            got = resgroups.thread_nice(c.db, resgroups.PURGE_THREADS)
+            purge_nice = {"want": want, "got": sorted(set(got))}
+            if got and any(x != want for x in got):
+                log(f"WARNING: purge threads run at nice {sorted(set(got))}, not {want}: the purge priority is not in effect")
+                c.event("environment", f"purge threads at nice {sorted(set(got))} instead of {want} before run '{label}'", purge_nice)
+    except Exception as e:  # noqa - never fail a run because of it
+        log(f"note: runtime settings not re-applied: {e}")
+
     try:  # free space on the data disk before the run: a seasoned / growing data set can fill it (session 222)
         st_ = os.statvfs(c.variables.get("datadir") or "/var/lib/mysql")
         free_pct = 100.0 * st_.f_bavail / max(st_.f_blocks, 1)
@@ -2007,6 +2069,8 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
         extra["cow"] = cow
     if quiet is not None:
         extra["quiet_check"] = quiet
+    if purge_nice is not None:
+        extra["purge_nice"] = purge_nice
     if mismatch:
         extra["config_mismatch"] = mismatch
     if mismatch_all:
@@ -3006,7 +3070,8 @@ def _reevaluate(c, sess):
     noise = sess.get("noise") or ({"noise_pct": sess["noise_pct"]} if sess.get("noise_pct") else None)
     changed = []
     for i, r in enumerate(sess["runs"]):
-        v, ev = evaluate.verdict(r, sess["runs"][:i], sess["goal"], noise, peers=sess["runs"][:i] + sess["runs"][i + 1:])
+        v, ev = evaluate.verdict(r, sess["runs"][:i], sess["goal"], noise, peers=sess["runs"][:i] + sess["runs"][i + 1:],
+                                 allow_unstable=bool(sess.get("allow_unstable")))
         # what the verdict does not recompute stays: the hypothesis this run tested and its outcome
         ev = dict(ev, **{k: (r.get("evaluation") or {})[k] for k in KEEP_ON_REJUDGE if k in (r.get("evaluation") or {})})
         if v in ("improved", "efficiency-gain") and r.get("verdict") not in ("improved", "efficiency-gain") and i + 1 < len(sess["runs"]):
@@ -3971,6 +4036,9 @@ def _autotune(a):
             log(f"debug symbols: {e}")
     if getattr(a, "from_defaults", False):
         sess = _start_from_defaults(c, sess)
+    if bool(getattr(a, "allow_unstable", False)) != bool(sess.get("allow_unstable")):
+        sess["allow_unstable"] = bool(getattr(a, "allow_unstable", False))  # unsustainable runs stay valid only when asked
+        c.state.set("session", sess)
     if prof.fixed:
         _ensure_fixed(c, prof)  # before the probe and calibration: every run of the session measures with them
         sess = c.session()
@@ -4028,6 +4096,10 @@ def _autotune(a):
         extra = 0
         while len([r for r in runs if r.get("verdict") not in evaluate.EXCLUDED]) < a.calibrate:
             run, _ = _bench_run(c, prof, f"baseline ({len(runs) + 1}/{a.calibrate + extra})")
+            if (run.get("evaluation") or {}).get("unsustainable") and not c.session().get("allow_unstable"):
+                # the starting configuration cannot hold the load: resolve it before calibrating, or fail
+                _resolve_unsustainable(c, prof, run, "the calibration")
+                continue
             log(f"   run {run['seq']}: goal {run['goal_value']}" + (" (unreliable: CPU steal, measured again)" if run.get("verdict") == "unreliable" else ""))
             runs.append(run)
             cl = evaluate.client_saturated(run.get("summary") or {})
@@ -4188,6 +4260,9 @@ def _autotune(a):
                 log(f"== re-check: measuring the current configuration again ({since} runs since it was last measured) to control drift")
                 run, _ = _bench_run(c, prof, f"re-check (run {mine[-1]['seq']} config)")
                 measured += 1  # a run like any other: --max-runs is the session's cost (r1 HC-3: 26 runs on a budget of 16)
+                if (run.get("evaluation") or {}).get("unsustainable") and not c.session().get("allow_unstable"):
+                    _resolve_unsustainable(c, prof, run, "the current configuration (re-check)")
+                    continue
                 log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}"
                     + (" (DRIFT)" if (run.get('evaluation') or {}).get('drift') else ""))
                 continue
