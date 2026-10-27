@@ -2006,11 +2006,19 @@ def best_config(history, goal="tps", noise=2.0):
     # candidates: configurations that earned their place (kept: confirmed improvement, efficiency gain, reference,
     # accepted best practice) or were measured at least twice and beat the best kept one beyond noise. A single
     # neutral run (e.g. one sweep point) that happens to have the highest number is not a candidate.
+    val = lambda m: m.get("value") if isinstance(m, dict) else m  # noqa: E731
+    first = next((r for r in history if str(r.get("label") or "").startswith("baseline")), None) or \
+        next((r for r in history if r.get("verdict") == "reference"), None)
+    # trade-offs the session started with (a test setup: flush_log_at_trx_commit=2) are the ground every configuration
+    # stands on, not something one gave up (session 393: the accepted best-practices bundle was "not earned" because of
+    # the setup's trx_commit=2, and a rollback after an unrelated regression dropped it)
+    start_tr = {(k, str(val(m))) for k, m in ((first or {}).get("managed") or {}).items() if tradeoff_of(k, val(m))}
+
     def kept(c):
         rs = [r for r in history if config_key(r.get("managed")) == c["key"]]
         # a configuration that gives something up (durability, observability, ...) has to earn it with the goal itself,
         # not with efficiency alone (TATP kept doublewrite OFF for +0.03%)
-        if any(tradeoff_of(k, m.get("value") if isinstance(m, dict) else m) for k, m in (c.get("managed") or {}).items()):
+        if any(tradeoff_of(k, val(m)) and (k, str(val(m))) not in start_tr for k, m in (c.get("managed") or {}).items()):
             return any(r.get("verdict") == "improved" and (r.get("evaluation") or {}).get("confirmed") is not False
                        and not _unearned_unsteady(r) for r in rs)
         # an improvement measured while deferred work (flushing, purge, change-buffer merges) still piled up is not earned

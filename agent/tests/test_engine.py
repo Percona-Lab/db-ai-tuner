@@ -3403,6 +3403,32 @@ def test_triage_tries_the_most_purge_threads_right_after_the_online_remedies():
     assert cands[-1]["last"] and labels[-1].startswith("purge lag bound")
 
 
+def test_start_tradeoffs_do_not_unseat_an_accepted_best_practice():
+    """Session 393: the session's test setup has flush_log_at_trx_commit=2 (a trade-off). The best-practices bundle tied
+    with its parent and was accepted, but every configuration "carried a trade-off", so only the improved parent counted
+    as earned and a rollback after an unrelated regression went back to it - dropping the bundle."""
+    from tuning_agent import engine
+    base = {"innodb_flush_log_at_trx_commit": {"value": "2"}}
+    lw = dict(base, innodb_log_writer_threads={"value": "OFF"})
+    bp = dict(lw, **{"os:vm.swappiness": {"value": "1"}, "os:mount_noatime": {"value": "ON"}})
+    run = lambda seq, label, verdict, g, m, parents=None: {"seq": seq, "label": label, "verdict": verdict, "goal_value": g, "managed": m,  # noqa: E731
+                                                           "summary": {"tps": g}, "evaluation": {"parent_runs": parents} if parents else {},
+                                                           "changes": [{"variable": "os:vm.swappiness", "source": "rec:best-practices"},
+                                                                       {"variable": "os:mount_noatime", "source": "rec:best-practices"}]
+                                                           if label.startswith("best-practices") else []}
+    h = [run(1, "baseline (1/3)", "reference", 3199, base), run(2, "baseline (2/3)", "repeat", 3192, base),
+         run(3, "baseline (3/3)", "repeat", 3207, base),
+         run(4, "log-writer-threads-off", "improved", 3388, lw, [1, 2, 3]), run(5, "log-writer-threads-off (confirm)", "repeat", 3412, lw),
+         run(6, "best-practices", "neutral", 3459, bp, [4, 5]), run(7, "best-practices (repeat: within noise)", "repeat", 3382, bp),
+         run(8, "re-check (run 7 config)", "repeat", 3356, bp)]
+    h[3]["evaluation"]["confirmed"] = True
+    assert engine.best_config(h, "tps", 0.94)["seqs"] == [6, 7, 8]
+    # a trade-off the configuration itself adds still has to be earned with the goal
+    dw = dict(bp, innodb_doublewrite={"value": "OFF"})
+    h2 = h + [run(9, "doublewrite-off", "neutral", 3420, dw, [6, 7, 8]), run(10, "doublewrite-off (repeat)", "repeat", 3415, dw)]
+    assert engine.best_config(h2, "tps", 0.94)["seqs"] == [6, 7, 8]
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
