@@ -853,6 +853,21 @@
    "question": "Case-base matrix v2 wave 1, cell C4: TPC-C 1000 W: commit-heavy, extreme concurrency, on disk, SATA (none)"
   },
   {
+   "id": "h2h-W4-rules-rerun2-atvbmmia",
+   "script": "h2h.sh",
+   "args": [
+    "W4",
+    "rules",
+    "rerun"
+   ],
+   "hosts": [
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Head-to-head W4 rules rerun on atvbmmia again: the first rerun (session 382) was spoiled - the calibration was judged a destabilizing change and a -15% thread pool kept (fixed)"
+  },
+  {
    "id": "matrix-D5-atvbmmia",
    "script": "matrix.sh",
    "args": [
