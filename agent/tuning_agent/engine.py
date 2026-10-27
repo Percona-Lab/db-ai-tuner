@@ -1501,6 +1501,19 @@ def recommend(ctx):
             sweep("sweep-read-io-threads", "Sweep InnoDB read I/O threads", "innodb_read_io_threads", [str(x) for x in vals],
                   f"{s.get('bp_disk_reads'):.0f} page reads/s from disk on {cpus} CPUs: more read threads keep more asynchronous reads "
                   "(read-ahead, prefetch) in flight on NVMe. Needs a restart.", {"bp_disk_reads": s.get("bp_disk_reads")}, impact=1)
+    # write I/O threads complete the page cleaners' asynchronous writes: where flushing falls behind (user threads waiting
+    # for free pages, or the checkpoint age near the redo capacity) on a write load. Not in the baseline (no measured
+    # benefit): measured here where it could matter
+    ck_ = s.get("checkpoint_age_pct_max") or 0
+    if have_run and write_heavy and cpus >= 8 and "innodb_write_io_threads" in v and (wait_free > 0 or ck_ >= 75):
+        wio = _int(v, "innodb_write_io_threads", 4)
+        vals = [x for x in (8, 16) if x > wio]
+        if vals:
+            sweep("sweep-write-io-threads", "Sweep InnoDB write I/O threads", "innodb_write_io_threads", [str(x) for x in vals],
+                  (f"{wait_free:.0f} free-page waits/s" if wait_free > 0 else f"checkpoint age peaked at {ck_:.0f}%")
+                  + f" on a write load: flushing falls behind. More write threads complete more of the page cleaners' "
+                  "asynchronous writes at once; with native AIO they mostly reap completions, so the gain is uncertain - measured, "
+                  "not assumed. Needs a restart.", {"Innodb_buffer_pool_wait_free_per_s": wait_free, "checkpoint_age_pct_max": ck_}, impact=1)
     # read path: InnoDB read-ahead (linear: prefetch the next extent after N sequential page reads; random: prefetch the
     # rest of an extent when many of its pages are already cached). Counters show whether prefetching was used or wasted.
     ra, ra_ev = s.get("read_ahead_per_s") or 0, s.get("read_ahead_evicted_per_s") or 0

@@ -368,7 +368,8 @@ def test_ps_lite_before_ps_off():
 
 
 def test_io_bound_advanced_sweeps():
-    VARS.update({"innodb_max_dirty_pages_pct_lwm": "10", "innodb_lru_scan_depth": "1024", "innodb_read_io_threads": "4"})
+    VARS.update({"innodb_max_dirty_pages_pct_lwm": "10", "innodb_lru_scan_depth": "1024", "innodb_read_io_threads": "4",
+                 "innodb_write_io_threads": "4"})
     try:
         hw = dict(HW, cpus=16, ram_bytes=32 * GiB)
         summ = dict(OLTP[0], bp_hit_pct=93.0, bp_disk_reads=3000, cpu_busy=55)
@@ -377,12 +378,13 @@ def test_io_bound_advanced_sweeps():
         ctx = {"variables": dict(VARS), "summary": summ, "inputs": inp, "hw": hw, "policy": "safe", "goal": "tps", "flavor": "mysql",
                "history": [{"seq": 1, "managed": {}, "goal_value": 1}], "os_tuning": True}
         it = {i["id"] for i in engine.run_engine(ctx)["items"]}
-        assert {"sweep-dirty-lwm", "sweep-lru-depth", "sweep-read-io-threads"} <= it, sorted(it)
-        # without them: neither (r1: 7 neutral read-thread runs at read-ahead 0)
-        it0 = {i["id"] for i in engine.run_engine(dict(ctx, inputs=OLTP[1]))["items"]}
-        assert not {"sweep-lru-depth", "sweep-read-io-threads"} & it0, sorted(it0)
+        # write threads only where flushing falls behind (free-page waits here): no longer set by the baseline (2026-10-27)
+        assert {"sweep-dirty-lwm", "sweep-lru-depth", "sweep-read-io-threads", "sweep-write-io-threads"} <= it, sorted(it)
+        # without them: none (r1: 7 neutral read-thread runs at read-ahead 0)
+        it0 = {i["id"] for i in engine.run_engine(dict(ctx, inputs=OLTP[1], summary=dict(summ, checkpoint_age_pct_max=40)))["items"]}
+        assert not {"sweep-lru-depth", "sweep-read-io-threads", "sweep-write-io-threads"} & it0, sorted(it0)
     finally:
-        for k in ("innodb_max_dirty_pages_pct_lwm", "innodb_lru_scan_depth", "innodb_read_io_threads"):
+        for k in ("innodb_max_dirty_pages_pct_lwm", "innodb_lru_scan_depth", "innodb_read_io_threads", "innodb_write_io_threads"):
             VARS.pop(k)
 
 
@@ -3508,6 +3510,16 @@ def test_reset_hang_or_timeout_is_a_server_down():
             assert "got signal 6" in str(e)
     finally:
         cli.serverwatch.expected, cli.serverwatch.post_mortem, cli.bench.run_shell, cli._service = saved
+
+
+def test_baseline_leaves_io_thread_counts_at_the_defaults():
+    """User, 2026-10-27: no low-value settings in the baseline. 11 read-thread sweeps gained nothing; write threads were
+    never shown to matter: both stay at the server's default."""
+    from tuning_agent import baseline
+    for cpus in (4, 12, 32):
+        items, _ = baseline.generate(dict(HW, cpus=cpus), dict(VARS, innodb_read_io_threads="4", innodb_write_io_threads="4"), "percona", "8.4.11")
+        got = {i["variable"] for i in items}
+        assert not {"innodb_read_io_threads", "innodb_write_io_threads"} & got, sorted(got)
 
 
 if __name__ == "__main__":

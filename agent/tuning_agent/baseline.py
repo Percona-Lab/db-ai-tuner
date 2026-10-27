@@ -128,9 +128,9 @@ def generate(hw, variables, flavor, version, opts=None):
     if "innodb_flush_method" in variables and variables.get("innodb_flush_method") not in ("O_DIRECT", "O_DIRECT_NO_FSYNC"):
         add("innodb_flush_method", "O_DIRECT", "Bypass the OS page cache for data files (no double buffering).")
     add("innodb_use_fdatasync", "ON", "fdatasync() skips needless metadata flushes.")
-    io_threads = 4 if cpus <= 8 else min(16, cpus // 2)
-    add("innodb_read_io_threads", str(io_threads), f"{io_threads} read I/O threads for {cpus} CPUs.")
-    add("innodb_write_io_threads", str(io_threads), f"{io_threads} write I/O threads for {cpus} CPUs.")
+    # no I/O thread counts: 11 read-thread sweeps (2-16, sessions 150-294) gained nothing, write threads were never shown to
+    # matter - a setting without a measured benefit stays at the server's default (user, 2026-10-27). The engine sweeps them
+    # where the evidence points at them (read-ahead at work, flushing falling behind)
 
     # -- durability stays safe in the baseline
     add("innodb_flush_log_at_trx_commit", "1", "Full durability: fsync redo at each commit.")
