@@ -764,7 +764,10 @@ def stabilized(run, history, d, goal):
     out = {"parent_runs": [h["seq"] for h in par], "goal_delta_pct": dg}
     # stability whatever it costs - but not below the last stable configuration: when a change made the history unbounded
     # and a remedy then costs more than that change gained (370: +6.3%, then -9%), going back is stable and faster
+    # the server's defaults are not a configuration to return to (382: a thread pool at -15% was kept as "stable and not
+    # worse" than the defaults run, 7x slower)
     stable = [h for h in history if h.get("goal_value") is not None and h.get("verdict") not in EXCLUDED
+              and not str(h.get("label") or "").startswith("server defaults")
               and (h.get("summary") or {}).get("history_list_length_max") is not None and not unbounded_hll(h.get("summary"))]
     if stable and run.get("goal_value") is not None:
         key = config_key(stable[-1].get("managed"))
@@ -905,7 +908,11 @@ def _run_verdict(run, history, goal, noise, peers=None):
     from .engine import unbounded_hll
     u_ = unbounded_hll(run.get("summary"))
     par_ = [h for h in history if h.get("seq") in ((d or {}).get("parent_runs") or [])]
-    if u_ and par_ and v in ("improved", "efficiency-gain") and not any(unbounded_hll(h.get("summary")) for h in par_):
+    calib_ = str(run.get("label") or "").startswith(("baseline", "calibration", "server defaults")) \
+        or any(str(h.get("label") or "").startswith("server defaults") for h in par_)
+    # an experiment, not the calibrated start judged against the server's defaults (session 382: the baseline, 7x the
+    # defaults' throughput, was flagged as a change that broke stability and the session spent its runs balancing it)
+    if u_ and par_ and not calib_ and v in ("improved", "efficiency-gain") and not any(unbounded_hll(h.get("summary")) for h in par_):
         d = dict(d, destabilized=True, unsustainable_verdict=v,
                  note=f"Unsustainable: {v} by {d.get('goal_delta_pct')}%, but the undo history now grows without bound "
                       f"({u_['start']:,.0f} -> {u_['end']:,.0f}, ~{u_['per_hour']:,.0f} per hour; it did not with the parent "

@@ -3068,6 +3068,27 @@ def test_baseline_keeps_the_pool_when_the_reserve_leaves_nothing():
     assert not calc2["bp_starved"] and "RAM disks" in bp["reason"], bp
 
 
+def test_calibration_is_not_a_destabilizing_change():
+    """Session 382: the calibration baseline (7x the server defaults) was flagged unsustainable against the defaults run, the
+    session balanced it, and a thread pool at -15% was kept as 'stable, not worse than the defaults'. The defaults run is
+    neither a parent that the start can destabilize nor a stable configuration to fall back to."""
+    from tuning_agent import evaluate
+    unb = {"history_list_length_max": 4_300_000, "unbounded_growth": [{"metric": "history_list_length", "label": "history list length",
+                                                                       "start": 2_670_000, "end": 4_320_000, "per_hour": 8_800_000}]}
+    d = [{"seq": 1, "label": "server defaults", "verdict": "reference", "managed": {}, "goal_value": 800.0,
+          "summary": {"history_list_length_max": 778_666}, "changes": []}]
+    b = {"seq": 2, "label": "baseline (1/3)", "managed": {"innodb_buffer_pool_size": "20G"}, "goal_value": 6160.0, "summary": unb,
+         "changes": [{"variable": "innodb_buffer_pool_size", "new": "20G", "source": "baseline"}]}
+    v, ev = evaluate.verdict(b, d, "tps", {"noise_pct": 2.0})
+    assert not ev.get("destabilized"), ev.get("note")
+    tp = {"seq": 6, "label": "balance-threadpool", "managed": {"thread_handling": "pool-of-threads"}, "goal_value": 5200.0,
+          "summary": {"history_list_length_max": 250_000}, "changes": [{"variable": "thread_handling", "new": "pool-of-threads", "source": "rec:x"}]}
+    par = dict(b, verdict="repeat", evaluation={})
+    _, ev2 = evaluate.verdict(tp, d + [par], "tps", {"noise_pct": 2.0})
+    st = ev2.get("stabilized") or {}
+    assert not any(h == 1 for h in (ev2.get("stable_but_slower") or {}).get("stable_runs", [])), ev2
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
