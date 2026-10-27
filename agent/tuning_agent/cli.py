@@ -2757,8 +2757,9 @@ def _purge_triage(c, running, deadline, start_bench=None, measure_all=False):
     running; each remedy is measured on its own for TRIAGE_SEG_S (after a restart, the benchmark is started again and
     warms up first): history growth per minute and throughput. A remedy that brings the growth down to TRIAGE_FIX of the
     reference (or makes the history shrink) is stable; among stable ones the fastest wins - kept whatever it costs
-    (stability first, then performance). Without one: the two best partial remedies (growth per transaction halved)
-    together, then the purge lag bound. start_bench() starts the benchmark again after a restart (None: online remedies
+    (stability first, then performance). Without one: the best partial remedy (growth per transaction halved) combined
+    with the other partial ones, the ones that cut the growth 10%, and the purge-speed ones (TRIAGE_COMBOS at most, time
+    reserved for them), then the purge lag bound. start_bench() starts the benchmark again after a restart (None: online remedies
     only). Returns {"stable", "kept", "steps", "running"}; the winner stays applied, recorded as the session's start."""
     cands = _triage_candidates(c)
     if start_bench is None:

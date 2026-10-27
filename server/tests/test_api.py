@@ -1029,3 +1029,18 @@ def test_similarity_core_is_shared_and_other_accounts_stay_anonymous(user):
     finally:
         similar._cache.clear()
         similar._cache.update(saved)
+
+
+def test_incidents_always_reach_the_session_page(user):
+    """A mysqld crash or hang (agent serverwatch, session 381) is shown in the session's Server incidents card however
+    many events came after it (the page loads the latest 200)."""
+    env = user.hello(uid="incident-agent")
+    sid = user.start_session(env)
+    inc = {"kind": "hang", "phase": "stopping", "diagnosis": "mysqld hung while shutting down", "killed": True}
+    assert user.agent.post("/api/v1/agent/events", json={"environment_id": env, "session_id": sid, "type": "incident",
+                                                         "message": inc["diagnosis"], "data": inc}).status_code == 200
+    for i in range(210):
+        user.agent.post("/api/v1/agent/events", json={"environment_id": env, "session_id": sid, "type": "recommend", "message": f"r{i}"})
+    evs = user.ui.get(f"/api/sessions/{sid}").json()["events"]
+    hit = [e for e in evs if e["type"] == "incident"]
+    assert len(hit) == 1 and hit[0]["data"]["kind"] == "hang", [e["type"] for e in evs][:5]

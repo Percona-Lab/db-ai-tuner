@@ -1995,7 +1995,8 @@ def config_unstable(history, key):
 def best_config(history, goal="tps", noise=2.0):
     """Highest mean wins when it beats the others beyond noise (scaled for the number of runs in each mean). Within
     noise: a configuration confirmed better than another tied one wins over it (an improvement kept over its parent),
-    then configurations that were kept (improved / efficiency-gain / the reference), then the more often measured."""
+    then configurations that were kept (improved / efficiency-gain / the reference), then the more often measured. A
+    configuration that adds a trade-off over the start (not one the session started with) must earn it with the goal."""
     scores = config_scores(history, goal)
     if not scores:
         return None

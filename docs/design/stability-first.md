@@ -18,7 +18,13 @@ reaches a steady state in a benchmark.
 1. **Find a stable configuration before sizing the runs.**
    - The run-length probe watches the history from minute 10. Once it is unbounded, the probe stops sizing and runs
      the purge triage inside the same benchmark run.
-   - Only after that does it measure the warm-up and window, on the stable configuration.
+   - Only after that does it measure the warm-up and window, on the stable configuration - from a clean start: the
+     benchmark is stopped and the profile's reset (or a restart with the page cache dropped) runs as before every
+     measured run, with the triage's settings kept. Measured on the server the triage left behind, the warm-up came out
+     wrong both ways: 101 min in session 381 (the triage's ~10M history backlog draining), 1 min in session 394 (every
+     metric already at its working level after the triage's restart).
+   - Unbounded again after the clean start (session 388: stable during the probe, not after the reset) means not
+     stable: the provisional plan below, and the triage again at the calibration.
    - With no stable configuration, the plan is provisional: the warm-up of the metrics that did settle and at most
      a 10-min window. A longer window would measure the drift, not the configuration.
    - (Session 324 shows the old behaviour: a 41-min warm-up and a 60-min window on an unstable configuration.)
@@ -29,19 +35,24 @@ reaches a steady state in a benchmark.
    - A partial cut is kept only when it at least halves the growth at no more than a 30% throughput cost.
    - The goal is safety with a margin: the triage stops when the growth is down to a quarter of the reference, or the
      history is shrinking. Borderline cuts are reverted.
-   - Candidates, in order of cost to the workload:
-     - purge threads at a higher priority (resource group `rg:purge prio=-10`, when mysqld has CAP_SYS_NICE);
-     - more purge threads where this is online (MariaDB 10.5+; the maximum is 32 everywhere);
-     - 4, 8 and 32 purge threads at a higher priority; 32 (the cap) at the highest priority (-20) is the fastest purge
-       InnoDB can run, the upper bound of what purge alone can do;
-     - `innodb_purge_batch_size` 1000, then 5000;
-     - fewer user threads creating undo at once: `innodb_thread_concurrency` at the vCPU count, then half of it
-       (MySQL / Percona);
+   - Candidates, in this order (the cheap online ones first, then the biggest lever, so that what it combines with
+     fits the budget - matrix P5, session 392: 32 purge threads cut the growth 88% as the last step, with no time left
+     to combine it):
+     - online, 5 min each: purge threads at a higher priority (resource group `rg:purge prio=-10`, when mysqld has
+       CAP_SYS_NICE); `innodb_purge_batch_size` 1000, then 5000; fewer user threads creating undo at once:
+       `innodb_thread_concurrency` at the vCPU count, then half of it (MySQL / Percona);
+     - more purge threads, most first: 32 (the cap) at the highest priority (-20) - the fastest purge InnoDB can run,
+       the upper bound of what purge alone can do - then 8 and 4 at a higher priority (a restart in MySQL / Percona;
+       online in MariaDB 10.5+);
      - the thread pool and its settings (restart to enable): on, oversubscribe 1, half the vCPUs as groups,
        `thread_pool_max_threads` = 2x vCPUs, `thread_pool_stall_limit` 1000 ms;
      - purge threads on their own CPUs (the last 2) at the highest priority;
-     - last, only when no restart-only remedy is left either: `innodb_max_purge_lag` at the level reached, with a 0.3 s
-       delay cap. It is a stopgap that throttles every writer.
+     - combinations: once a remedy cuts the growth per transaction substantially (partial), time for 3 combinations is
+       reserved; it is combined with the other partial ones, with any remedy that cut the growth by 10% or more, and with
+       the purge-speed remedies (a concurrency cap frees CPU for more purge threads);
+     - last, only when nothing else is left: `innodb_max_purge_lag` at the level reached, with a 0.3 s delay cap
+       (`innodb_max_purge_lag_delay`; with its default 0 InnoDB applies no delay at all). It is a stopgap that
+       throttles every writer.
    - The kept settings are recorded as changes (source `stability-triage`) and measured by the calibration that follows.
 3. **Restart-only remedies are the session's first experiments** when the triage did not reach stability:
    - the thread pool (`purge-threadpool`: `thread_handling=pool-of-threads`, `thread_pool_size` = vCPUs; Percona

@@ -3429,6 +3429,87 @@ def test_start_tradeoffs_do_not_unseat_an_accepted_best_practice():
     assert engine.best_config(h2, "tps", 0.94)["seqs"] == [6, 7, 8]
 
 
+def _fake_expected(incident):
+    """serverwatch.expected stand-in: the watch finds `incident` while the wrapped stop / start / reset runs."""
+    import contextlib
+
+    class W:
+        incident = None
+
+    w = W()
+
+    @contextlib.contextmanager
+    def expected(service):
+        yield w
+        if incident:
+            w.incident = incident
+    return expected, w
+
+
+def test_restart_reports_a_hung_shutdown():
+    """Session 381: a shutdown that never ends. The watch ends it; the restart fails with the diagnosis, so the change
+    that caused it is reverted as a failed experiment."""
+    import subprocess as sp
+    from tuning_agent import applier
+    inc = {"kind": "hang", "phase": "stopping", "diagnosis": "mysqld hung while shutting down; busiest: ib_log_checkpt 100% CPU"}
+    expected, w = _fake_expected(None)
+
+    class DB:
+        def close(self):
+            pass
+
+    def run(*a, **k):  # the watch kills the hung mysqld while systemctl waits; systemctl then returns
+        w.incident = inc
+        return sp.CompletedProcess(a, 0, "", "")
+    saved = (applier.serverwatch.expected, applier.subprocess.run)
+    applier.serverwatch.expected = expected
+    applier.subprocess.run = run
+    try:
+        ap = applier.Applier({"cnf_path": "/tmp/x.cnf", "service_name": "mysql"}, None, DB(), log=lambda *a: None)
+        ap.preflush = lambda: None
+        ok, err = ap.restart(timeout=5)
+        assert not ok and "mysqld hung while shutting down" in err, (ok, err)
+    finally:
+        applier.serverwatch.expected, applier.subprocess.run = saved
+
+
+def test_reset_hang_or_timeout_is_a_server_down():
+    """The benchmark's reset stops and starts mysqld itself: a hang found by the watch, or the reset timing out, is a
+    failed configuration (ServerDown), never an unhandled TimeoutExpired that ends the session."""
+    import subprocess as sp
+    from tuning_agent import cli
+    saved = (cli.serverwatch.expected, cli.serverwatch.post_mortem, cli.bench.run_shell, cli._service)
+    cli._service = lambda c: "mysql"
+    try:
+        cli.serverwatch.expected, _ = _fake_expected({"kind": "hang", "diagnosis": "mysqld hung while shutting down"})
+        cli.bench.run_shell = lambda cmd, timeout, log=None: (0, "")
+        try:
+            cli._reset_watched(None, "/root/reset.sh", "/tmp/x.log")
+            raise AssertionError("must raise")
+        except cli.ServerDown as e:
+            assert "during the reset: mysqld hung while shutting down" in str(e)
+        cli.serverwatch.expected, _ = _fake_expected(None)
+
+        def timeout(cmd, timeout, log=None):
+            raise sp.TimeoutExpired(cmd, timeout)
+        cli.bench.run_shell = timeout
+        cli.serverwatch.post_mortem = lambda service, since, phase: None
+        try:
+            cli._reset_watched(None, "/root/reset.sh", "/tmp/x.log", timeout=7)
+            raise AssertionError("must raise")
+        except cli.ServerDown as e:
+            assert "reset command failed (-1): no result after 7 s" in str(e)
+        cli.bench.run_shell = lambda cmd, timeout, log=None: (1, "mysqld did not come back")
+        cli.serverwatch.post_mortem = lambda service, since, phase: {"diagnosis": "mysqld crashed during the data reset; error log: got signal 6"}
+        try:
+            cli._reset_watched(None, "/root/reset.sh", "/tmp/x.log")
+            raise AssertionError("must raise")
+        except cli.ServerDown as e:
+            assert "got signal 6" in str(e)
+    finally:
+        cli.serverwatch.expected, cli.serverwatch.post_mortem, cli.bench.run_shell, cli._service = saved
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
