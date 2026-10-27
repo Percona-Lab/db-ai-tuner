@@ -2355,6 +2355,13 @@ def test_purge_triage_keeps_substantial_cuts_and_tries_the_lag_bound_last():
                   [ref, {"hll_per_min": 180000, "tps": 3000}, {"hll_per_min": -100, "tps": 2000}])
         assert out["stable"] and out["kept"] == [("innodb_max_purge_lag", "10000000")], out
         assert out["steps"][1]["result"] == "no effect", out["steps"]
+        # matrix P5: 32 purge threads partial (-88%), a concurrency cap -44% (below the partial bar), a bigger batch nothing:
+        # the partial one is combined with the cap - and that bounds it
+        out = run([cand("conc 6", [("innodb_thread_concurrency", "6")]), cand("batch 5000", [("innodb_purge_batch_size", "5000")]),
+                   cand("32 purge", [("innodb_purge_threads", "32")], restart=True)],
+                  [ref, {"hll_per_min": 168000, "tps": 4300}, dict(ref, hll_per_min=305000), {"hll_per_min": 36000, "tps": 4200},
+                   {"hll_per_min": -300, "tps": 3900}])
+        assert out["stable"] and out["kept"] == [("innodb_purge_threads", "32"), ("innodb_thread_concurrency", "6")], out
         # nothing works: back to the start, not stable
         out = run([cand("conc 8", [("innodb_thread_concurrency", "8")])], [ref, ref])
         assert not out["stable"] and not out["kept"] and applied[-1][0] == [("innodb_thread_concurrency", None)], applied

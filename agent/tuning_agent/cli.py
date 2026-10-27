@@ -2454,6 +2454,9 @@ TRIAGE_FIX = 0.02        # stable = bounded: the history flat (growth at most 2%
 TRIAGE_FREE_PCT = 5.0    # a stable remedy costing at most this much throughput ends the triage early: nothing cheaper to find
 TRIAGE_BUDGET_S = 7200
 PROVISIONAL_WINDOW_S = 600  # measurement length while no stable configuration exists
+PROVISIONAL_WARMUP_S = 1800  # warm-up cap while no stable configuration exists: settling times measured across the triage's
+                             # restarts are not a warm-up (matrix P5, 2026-10-27: 238 min recommended)
+TRIAGE_COMBOS = 3            # combinations of the best partial remedy with others that cut the growth, before giving up
 
 
 def _segment(c, t0, t1):
@@ -2645,11 +2648,25 @@ def _purge_triage(c, running, deadline, start_bench=None, measure_all=False):
         return time.time() + TRIAGE_SEG_S + (TRIAGE_RESTART_LEAD_S + 120 if cand["restart"] else 0) <= deadline
 
     results = []
+    restart_s = []  # measured cost of a restart remedy (a dirty buffer pool flushed first: ~20 GB took minutes on P5)
+
+    def reserve():
+        # once a partial remedy exists, keep time for combining it (TRIAGE_COMBOS restart segments at the measured cost)
+        if not any(x["result"] == "partial" for x in results):
+            return 0
+        per = (sum(restart_s) / len(restart_s)) if restart_s else TRIAGE_SEG_S + TRIAGE_RESTART_LEAD_S + 120
+        return TRIAGE_COMBOS * per
+
     for cand in [x for x in cands if not x["last"]]:
         if not time_left(cand) or not running.alive():
             break
+        if time.time() + TRIAGE_SEG_S + reserve() > deadline:
+            break  # the rest of the budget goes to combining the partial remedy found
+        t_ = time.time()
         seg = judge(cand)
         results.append(seg)
+        if cand["restart"]:
+            restart_s.append(time.time() - t_)
         if seg["result"] == "stable" and seg["cost_pct"] <= TRIAGE_FREE_PCT and not measure_all:
             break  # bounded at (almost) no cost: nothing better to find
     stable = [x for x in results if x["result"] == "stable"]
@@ -2661,14 +2678,20 @@ def _purge_triage(c, running, deadline, start_bench=None, measure_all=False):
         # more purge threads or a higher priority cannot act until a cap frees room for them (canary 2026-10-25)
         speed = [x for x in results if x["result"] == "no effect" and any(k in ("innodb_purge_threads", "rg:purge") for k, _ in x["_changes"])]
         speed.sort(key=lambda x: -int(dict(x["_changes"]).get("innodb_purge_threads") or 0))
-        for other in part[1:] + speed:
-            if stable or not part:
+        # ... and with any remedy that cut the growth by 10% or more, best first, even below the 'partial' bar (P5: a
+        # concurrency cap at 6 took the growth from 1.27M to 0.72M/min - never combined with 32 purge threads at 0.15M/min)
+        cut = sorted([x for x in results if x["result"] == "no effect" and ref.get("hll_per_min") and x.get("hll_per_min") is not None
+                      and x["hll_per_min"] <= 0.9 * ref["hll_per_min"] and x not in speed], key=lambda x: x["hll_per_min"])
+        tried_combos = 0
+        for other in part[1:] + cut + speed:
+            if stable or not part or tried_combos >= TRIAGE_COMBOS:
                 break
             if set(dict(part[0]["_changes"])) & set(dict(other["_changes"])):
                 continue
             both = {"label": f"{part[0]['label']} + {other['label']}", "changes": part[0]["_changes"] + other["_changes"],
                     "restart": True, "last": False}
             if time_left(both) and running.alive():
+                tried_combos += 1
                 seg = judge(both)
                 results.append(seg)
                 if seg["result"] == "stable":
@@ -2838,7 +2861,9 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
     if unstable:
         # provisional: the settled metrics' warm-up, and a window no longer than PROVISIONAL_WINDOW_S - on a growing history
         # a longer window measures the drift, not the configuration. Probed again once a stable configuration is found
-        txt += f"; provisional (no stable configuration): measurement {min((ml or {}).get('recommended_s') or 600, PROVISIONAL_WINDOW_S)} s"
+        rec = min(rec, PROVISIONAL_WARMUP_S)
+        txt += (f"; provisional (no stable configuration): warm-up {rec} s, measurement "
+                f"{min((ml or {}).get('recommended_s') or 600, PROVISIONAL_WINDOW_S)} s")
     out = {"recommended_warmup_s": rec,
            "recommended_duration_s": min((ml or {}).get("recommended_s") or 600, PROVISIONAL_WINDOW_S) if unstable else (ml or {}).get("recommended_s"),
            "measure": ml, "complete": done and not unsettled and not unstable, "unstable": unstable, "triage": triage, **res}
