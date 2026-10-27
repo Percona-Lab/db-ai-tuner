@@ -974,6 +974,19 @@
    "question": "Matrix P3 again with the fixed purge triage (combinations in budget): the first run's triage (old agent) found 32 purge threads -58% and nothing to combine"
   },
   {
+   "id": "matrix-P5-retry2-atvbmamd",
+   "script": "matrix.sh",
+   "args": [
+    "P5"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 9,
+   "question": "Matrix P5 a third time with the triage order fixed (30def6e: the most purge threads right after the online remedies, so its combinations fit the budget): session 392 found 32 purge threads -88% last, with no time left to combine it"
+  },
+  {
    "id": "matrix-M2-atvbmamd",
    "script": "matrix.sh",
    "args": [
