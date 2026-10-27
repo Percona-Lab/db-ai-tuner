@@ -2,6 +2,20 @@
  "note": "Study pipeline for the Vultr bare-metal boxes, highest priority first. run.py gives each idle box the first pending item it may run; a group item waits for all its hosts (they are held for it). Items without a script are listed for planning only.",
  "items": [
   {
+   "id": "serverwatch-live",
+   "script": "serverwatch_live.sh",
+   "args": [],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 0.5,
+   "question": "Does the agent's crash / hang detection (serverwatch) work on a real mysqld? SIGSEGV while running, SIGSTOP while running (no answer for 10 min), SIGSTOP before the agent's restart (hung shutdown): one incident each with evidence, mysqld back afterwards. Runs on the first box that frees up."
+  },
+  {
    "id": "irdma-off-atvbmamd",
    "script": "irdma-off.sh",
    "args": [],
