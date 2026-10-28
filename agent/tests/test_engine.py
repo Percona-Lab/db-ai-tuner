@@ -3586,6 +3586,27 @@ def test_early_stop_follows_max_fruitless_and_every_idea_left():
         assert all(i.get("relevance") is not None and i["relevance"] <= 1 for i in left), [(i["id"], i.get("relevance")) for i in left]
 
 
+def test_validate_discarded_measures_set_aside_ideas_once():
+    """User, 2026-10-28: "add option to validate discarded ideas". Ideas set aside (within noise earlier, blocked by other
+    sessions' evidence) are measured once, after every normal idea; never one that hurt, failed or was unsustainable here."""
+    from tuning_agent import engine
+    mk = lambda id_, conf, **kw: dict({"id": id_, "kind": "config", "confidence": conf, "safety": "safe", "score": 1, "changes": []}, **kw)  # noqa: E731
+    items = [mk("good", 2), mk("neutral-before", 0, tried_verdict="neutral", note="Already tried in run #5 (neutral)."),
+             mk("blocked", 0, note="Not run: 1285 connections on 32 vCPUs (40 per vCPU): limiting concurrency ..."),
+             mk("hurt", 0, tried_verdict="regressed", note="Already tried in run #7 (regressed)."),
+             mk("unsus", 0, tried_verdict="unreliable", note="Already tried in run #20: the undo history grew without bound (unsustainable)."),
+             mk("crashed", 0, note="Failed earlier in this session (apply/restart failure or run too slow)."),
+             mk("done-validate", 0, tried_verdict="neutral", note="Already tried.")]
+    hist = [{"seq": 9, "label": "done-validate (validate)", "verdict": "neutral"}]
+    out = engine.validate_discarded(items, {"history": hist, "failed": ["crashed"]})
+    ids = [i["id"] for i in out]
+    assert ids[0] == "good" and set(ids[-2:]) == {"neutral-before", "blocked"}, ids
+    by = {i["id"]: i for i in out}
+    assert by["neutral-before"]["confidence"] == 1 and by["neutral-before"]["validate"] and by["blocked"]["validate"]
+    for x in ("hurt", "unsus", "crashed", "done-validate"):
+        assert by[x]["confidence"] == 0 and not by[x].get("validate"), x
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

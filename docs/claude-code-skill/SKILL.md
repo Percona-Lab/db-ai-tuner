@@ -81,6 +81,10 @@ Run everything as root on the database host. `autotune` takes hours, so start it
    Autotune also stops early after 8 experiments in a row without a gain (`--max-fruitless N`, 0 = never): the best
    ideas come first, so a long streak means little is left. When the person wants the whole budget used - including
    less likely and advanced options never tried, suggested by the AI once the rules run out - add `--explore`.
+   To also check what the rules set aside, add `--validate-discarded`: after the normal ideas, each idea measured within
+   noise earlier, or blocked by other sessions' evidence (e.g. concurrency limiters at 16+ connections per vCPU), is
+   measured once (runs labelled "(validate)"); never one that hurt in this session, failed, or made purge unsustainable.
+   It also lifts the early stops. Both options continue an existing session: run `autotune` again with them.
 6. **Watch.** `tuning-agent status --json` (current phase and time left) and `tail /root/autotune.log` every
    few minutes; the session page in the web app shows every run as it lands. Do not run other load or apply
    changes while it runs.

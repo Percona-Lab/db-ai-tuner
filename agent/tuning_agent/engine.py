@@ -3110,6 +3110,8 @@ def run_engine(ctx):
                               "shrinks the commit groups.").strip()
     items = nofile_guard(items, ctx)
     items = balance_purge(items, ctx)
+    if ctx.get("validate_discarded"):
+        items = validate_discarded(items, ctx)
     actionable = [i for i in items if i["kind"] in ("config", "revert") and i["confidence"] > 0]
     safe_next = next((i for i in actionable if i["safety"] == "safe"), None)
     trade_next = next((i for i in actionable if i["safety"] == "trade-off"), None)
@@ -3167,7 +3169,8 @@ def run_engine(ctx):
     if not why and not benchmark and commit_sh >= 50 and gc and gc.get("complete") and w_ms >= 5 and tried_bundle and streak >= 1:
         why = (f"Storage-bound commits: {commit_sh:.0f}% of the time waits for commit flushes of {w_ms:.1f} ms each, and group commit "
                "already batches every waiting commit - no production-safe server setting changes that. See the storage advice.")
-    if why and nxt and nxt["kind"] == "config" and not ctx.get("explore"):  # explore: the run budget decides, not the ceiling
+    if why and nxt and nxt["kind"] == "config" and not ctx.get("explore") and not ctx.get("validate_discarded"):
+        # explore / validate-discarded: the run budget decides, not the ceiling
         stop = why + " What limits the workload: " + "; ".join(d.get("text", "")[:160] for d in ctx["diagnosis"][:2] if d.get("type") != "none")
         nxt = None
     return {"stop_reason": stop,"workload": ctx["workload"], "diagnosis": ctx["diagnosis"], "breakdown": ctx["breakdown"], "items": items, "next": nxt["id"] if nxt else None,
@@ -3175,6 +3178,32 @@ def run_engine(ctx):
             "phase": "safe" if safe_next else ("trade-offs" if nxt else "done"),
             # who chose the next step and which learned data was loaded when it was chosen (the planner overwrites "by")
             "decision": {"by": "rules", "learning": learning_state(ctx)}}
+
+
+VALIDATE_NEVER = ("regressed", "efficiency-loss")
+
+
+def validate_discarded(items, ctx):
+    """autotune --validate-discarded (user, 2026-10-28: "try everything ... so we get more ideas"): ideas the rules set aside -
+    measured within noise earlier in the session, or blocked by evidence from other sessions (oversubscribed limiters, AI
+    ideas after none was kept, admission control on commit-bound loads, ...) - are measured once each, after every normal
+    idea. Never again: an idea that measurably hurt in this session, made the undo history unsustainable, or failed (crash,
+    apply / restart failure, too slow), and one already validated."""
+    hist = ctx.get("history") or []
+    validated = {str(h.get("label") or "").split(" ")[0] for h in hist if str(h.get("label") or "").endswith("(validate)")}
+    failed = set(ctx.get("failed") or [])
+    keep, again = [], []
+    for it in items:
+        note = str(it.get("note") or "")
+        if it["kind"] == "config" and it.get("confidence") == 0 and it["id"] not in failed and it["id"] not in validated \
+                and it.get("tried_verdict") not in VALIDATE_NEVER and "unsustainable" not in note and "Failed earlier" not in note \
+                and not it.get("stability"):
+            it = dict(it, confidence=1, validate=True,
+                      note=(note + " Measured once anyway (--validate-discarded): a set-aside idea is checked, not assumed.").strip())
+            again.append(it)
+        else:
+            keep.append(it)
+    return keep + again
 
 
 def learning_state(ctx):

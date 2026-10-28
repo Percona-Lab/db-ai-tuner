@@ -3380,7 +3380,7 @@ def _engine_ctx(c, sess):
         log(f"note: no experience data ({e})")
     b = (last.get("inputs") or {}).get("bench") or {}
     bench_info = {k: b.get(k) for k in ("name", "run", "warmup", "duration", "goal_metric", "requires") if b.get(k) is not None}
-    return {"bench": bench_info, "diagnosis_basis_run": basis, "explore": bool(sess.get("explore")), "max_fruitless": sess.get("max_fruitless", FRUITLESS_STOP), "goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
+    return {"bench": bench_info, "diagnosis_basis_run": basis, "explore": bool(sess.get("explore")), "validate_discarded": bool(sess.get("validate_discarded")), "max_fruitless": sess.get("max_fruitless", FRUITLESS_STOP), "goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
             "os_tuning": c.os_tuning_allowed() and sess.get("os_tuning", True), "os_facts": osf, "experience": experience,
             # swap = none in agent.ini: no swap by design (a production philosophy) - never add it, size memory for RAM alone
             "no_swap": str(c.cfg.get("swap", "allowed")).strip().lower() in ("none", "no", "off", "false"),
@@ -4288,7 +4288,11 @@ def _autotune(a):
         # and when the rules have nothing left, AI suggestions; ideas never tried are how advanced options get discovered
         sess["explore"] = True
         log(f"== explore: up to {a.max_runs} experiment runs, ideas from the rules first, then AI suggestions")
-    max_fruitless = 0 if getattr(a, "explore", False) else getattr(a, "max_fruitless", FRUITLESS_STOP)
+    if getattr(a, "validate_discarded", False):
+        sess["validate_discarded"] = True
+        log("== validate discarded ideas: after the normal ideas, every idea set aside (within noise earlier, or blocked by other "
+            "sessions' evidence) is measured once; ideas that hurt, failed or made purge unsustainable are not")
+    max_fruitless = 0 if getattr(a, "explore", False) or sess.get("validate_discarded") else getattr(a, "max_fruitless", FRUITLESS_STOP)
     sess["max_fruitless"] = max_fruitless  # the engine's own early stop follows the same limit
     c.state.set("session", sess)
     measured = iterations = 0
@@ -4495,7 +4499,7 @@ def _autotune(a):
         sess["revert_targets"] = []
         c.state.set("session", sess)
         try:
-            run, _ = _bench_run(c, prof, f"{nxt}")
+            run, _ = _bench_run(c, prof, f"{nxt}" + (" (validate)" if item.get("validate") else ""))
         except (TooSlow, ServerDown, BenchFailed) as e:
             why = ("OOM-killed mysqld" if "OOM-killed" in str(e) else "made the benchmark too slow" if isinstance(e, TooSlow)
                    else "broke the benchmark" if isinstance(e, BenchFailed) else "hung mysqld" if "mysqld hung" in str(e)
@@ -5035,6 +5039,9 @@ def main(argv=None):
     s.add_argument("--tradeoffs", action="store_true", help="after safe experiments, continue with trade-offs (policy=benchmark)")
     s.add_argument("--no-confirm", dest="confirm", action="store_false", help="skip the confirmation run of the best config")
     s.add_argument("--close", action="store_true", help="close the session when autotune ends (otherwise it stays open for follow-up experiments)")
+    s.add_argument("--validate-discarded", action="store_true",
+                   help="after the normal ideas, measure once each idea that was set aside (within noise earlier, or blocked by "
+                        "other sessions' evidence); never ideas that hurt here, failed or made purge unsustainable. No early stops")
     s.add_argument("--max-fruitless", type=int, default=FRUITLESS_STOP,
                    help=f"stop (or switch to trade-offs) after this many experiments in a row without a gain (default {FRUITLESS_STOP}; 0 = never)")
     s.add_argument("--explore", action="store_true",
