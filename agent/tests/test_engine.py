@@ -3539,6 +3539,30 @@ def test_baseline_leaves_low_value_settings_at_the_defaults():
     assert calc["instances"] == 4, calc
 
 
+def test_unsustainable_experiment_is_not_tried_again():
+    """Session 399 (matrix P5): binlog-off made the undo history grow without bound in runs 20-21 (unreliable,
+    unsustainable). A later rollback run touched disable_log_bin too, the item matched that 'repeat' run and binlog-off was
+    applied again (run 26), then a drift re-check of it started a purge triage. The rule's own unsustainable run decides."""
+    from tuning_agent import engine
+    base = {"innodb_doublewrite": "OFF"}
+    unsus = {"unsustainable": {"start": 1e6, "end": 3e7, "per_hour": 4e7}}
+    h = [{"seq": 18, "label": "doublewrite-off", "verdict": "improved", "goal_value": 44888, "managed": base, "evaluation": {}, "changes": []},
+         {"seq": 20, "label": "binlog-off", "verdict": "unreliable", "goal_value": 34484, "managed": dict(base, disable_log_bin="ON"),
+          "evaluation": unsus, "changes": [{"variable": "disable_log_bin", "new": "ON", "source": "rec:binlog-off"}]},
+         {"seq": 21, "label": "binlog-off (re-measure: unreliable run)", "verdict": "unreliable", "goal_value": 40508,
+          "managed": dict(base, disable_log_bin="ON"), "evaluation": unsus, "changes": []},
+         {"seq": 25, "label": "re-check (run 18 config)", "verdict": "repeat", "goal_value": 46459, "managed": base, "evaluation": {},
+          "changes": [{"variable": "disable_log_bin", "new": "", "source": "rec:rollback-to-run-18"}]}]
+    saved = engine.STABILITY_FIRST
+    engine.STABILITY_FIRST = True
+    try:
+        it = {"id": "binlog-off", "kind": "config", "changes": [{"variable": "disable_log_bin", "proposed": "ON"}], "confidence": 2}
+        out = engine.apply_history([it], h, managed_now=base)
+        assert out[0]["confidence"] == 0 and out[0]["tried_in_run"] == 20 and "unsustainable" in out[0]["note"], out[0]
+    finally:
+        engine.STABILITY_FIRST = saved
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

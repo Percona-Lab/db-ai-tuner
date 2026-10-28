@@ -4401,6 +4401,12 @@ def _autotune(a):
             # no time-separated repeat yet: the noise threshold is still the conservative default, so re-check early
             no_long_term = not (((sess.get("noise") or {}).get("estimate") or {}).get("long_term_dof"))
             due = since >= (min(a.recheck_every, 3) if no_long_term else a.recheck_every)
+            # a drift re-check measures the configuration the session builds on, never an experiment applied but not yet
+            # measured that happens to match earlier runs (session 399: binlog-off, rejected twice as unsustainable,
+            # was measured again as "re-check (run 21 config)" and started a purge triage on it)
+            noise_ = float((sess.get("noise") or {}).get("noise_pct") or sess.get("noise_pct") or 2.0)
+            best_ = engine.best_config(sess["runs"], sess["goal"], noise_)
+            due = due and best_ is not None and best_["key"] == cur
             # pending changes that only lead back to an already-measured configuration (a revert) do not block a re-check
             if mine and due and (not c.state.get("pending_changes") or _known_config(c, sess)):
                 log(f"== re-check: measuring the current configuration again ({since} runs since it was last measured) to control drift")
@@ -4557,8 +4563,10 @@ def _autotune(a):
                 log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
                 _confirm(c)  # the mean of both runs against the (tighter) two-run threshold
         ue = run.get("evaluation") or {}
+        # an unsustainable run too: the undo history grows without bound with this configuration - a property of it, not a
+        # disturbance (matrix P5, session 399: binlog-off unsustainable in runs 20, 21 and again in 26)
         deterministic = ue.get("config_mismatch") or ue.get("client_saturated") or ue.get("goal_server_mismatch_pct") is not None \
-            or ue.get("client_stalled")
+            or ue.get("client_stalled") or ue.get("unsustainable")
         cf = ue.get("client_failures") or {}
         sm_ = run.get("summary") or {}
         nxt_h = (int(prof.warmup) if str(prof.warmup).isdigit() else 0) / 3600 + prof.duration / 3600

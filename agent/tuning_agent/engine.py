@@ -1764,7 +1764,8 @@ def apply_history(items, history, swap_now_mb=None, managed_now=None):
         prior = [tried.get((c["variable"], normalize(c["variable"], c["proposed"]))) for c in it["changes"]]
         prior = [p for p in prior if p] or ([tried_ids[it["id"]]] if it["id"] in tried_ids and it["kind"] == "config" else [])
         last_ = tried_ids.get(it["id"]) if it["kind"] == "config" else None
-        if last_ is not None and last_.get("verdict") in ("regressed", "efficiency-loss"):
+        unsus = lambda r: STABILITY_FIRST and r.get("verdict") == "unreliable" and bool((r.get("evaluation") or {}).get("unsustainable"))  # noqa: E731
+        if last_ is not None and (last_.get("verdict") in ("regressed", "efficiency-loss") or unsus(last_)):
             # the rule's own last run regressed: that decides, not an earlier run that matched part of its changes (matrix P1,
             # session 377: bp-overcommit kept at run 9, then -57% / -54% / -54% at runs 12, 15, 17 - each bigger step matched
             # run 9's swap file and passed as "tried and kept")
@@ -1775,6 +1776,14 @@ def apply_history(items, history, swap_now_mb=None, managed_now=None):
             p = prior[-1]
             it["tried_in_run"] = p.get("seq")
             it["tried_verdict"] = p.get("verdict")
+            if unsus(p):
+                # the undo history grew without bound with it: a property of the change under this load, not a disturbance a
+                # retest could clear (session 399: binlog-off unsustainable in runs 20-21, then - matched to a later repeat run
+                # whose rollback touched the same variable - tried again in run 26)
+                it["confidence"] = 0
+                it["note"] = f"Already tried in run #{p.get('seq')}: the undo history grew without bound (unsustainable)."
+                out.append(it)
+                continue
             swap_then = (p.get("summary") or {}).get("swap_total_mb")
             from .memory import MEMORY_VARS
             if swap_now_mb is not None and swap_then is not None and abs(swap_now_mb - swap_then) >= 1024 \
