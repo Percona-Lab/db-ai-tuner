@@ -2723,7 +2723,7 @@ ALSO_FROM_DIAGNOSIS = {"io-read", "io-flush"}
 GENERIC_RESOURCE = {"cpu", "cpu-pressure", "sched-delay", "io", "concurrency"}  # diagnoses of a whole resource (or of many runnable threads), not of one way to spend it
 SPECIFIC_KINDS = set().union(*bottleneck.SPECIFIC.values())
 QUEUE_LEVERS = {"thread-pool", "sweep-thread-concurrency"}
-STOP_AFTER_FRUITLESS = 6  # status / OS evidence (read vs write split) the wait classes cannot separate
+STOP_AFTER_FRUITLESS = 8  # the default of autotune --max-fruitless: the early stop below follows the session's limit
 
 
 def run_engine(ctx):
@@ -3147,9 +3147,16 @@ def run_engine(ctx):
     # the ceiling argument (acts on little of the measured time) gives way when similar measured states showed this change
     # winning (similarity term): evidence of an effect the time breakdown does not explain
     sim_backed = nxt is not None and float((nxt.get("similar") or {}).get("pred") or 0) >= 0.5
-    if nxt and nxt["kind"] == "config" and not nxt.get("stability") and not sim_backed and streak >= STOP_AFTER_FRUITLESS and (nxt.get("relevance") or 0) <= 1:
+    # the same limit as autotune --max-fruitless (default 8, 0 = never), and only when every untried idea left is known to act
+    # on little of the time: the next one in line can be a weak idea ranked above a strong one whose share is not known yet
+    # (session 397: stopped after 6-7 fruitless runs at os-jemalloc, relevance 1, with the thread pool's size still untried)
+    limit = int(ctx.get("max_fruitless", STOP_AFTER_FRUITLESS) or 0)
+    untried = [i for i in actionable if i["kind"] == "config" and not i.get("tried_in_run") and not i.get("stability")]
+    all_weak = bool(untried) and all(i.get("relevance") is not None and i["relevance"] <= 1 for i in untried)
+    if nxt and nxt["kind"] == "config" and not nxt.get("stability") and not sim_backed and limit and streak >= limit and all_weak:
         why = f"{streak} experiments in a row kept nothing, and the best remaining idea ({nxt['id']}) acts on little of the measured time."
-    elif nxt and nxt["kind"] == "config" and nxt["safety"] == "safe" and not sim_backed and nxt.get("relevance") is not None and streak >= 3 and ceiling < noise:
+    elif nxt and nxt["kind"] == "config" and nxt["safety"] == "safe" and not sim_backed and nxt.get("relevance") is not None and limit \
+            and streak >= 3 and ceiling < noise and all_weak:
         why = (f"{streak} experiments in a row kept nothing, and the best remaining idea ({nxt['id']}) acts on at most ~{2 * ceiling:.0f}% "
                f"of the time - even halving that is below the ±{noise:.1f}% noise.")
     # safe policy, storage-bound commits: grouping is already complete and each flush is slow - no server setting the

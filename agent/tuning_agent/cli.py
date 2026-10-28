@@ -3380,7 +3380,7 @@ def _engine_ctx(c, sess):
         log(f"note: no experience data ({e})")
     b = (last.get("inputs") or {}).get("bench") or {}
     bench_info = {k: b.get(k) for k in ("name", "run", "warmup", "duration", "goal_metric", "requires") if b.get(k) is not None}
-    return {"bench": bench_info, "diagnosis_basis_run": basis, "explore": bool(sess.get("explore")), "goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
+    return {"bench": bench_info, "diagnosis_basis_run": basis, "explore": bool(sess.get("explore")), "max_fruitless": sess.get("max_fruitless", FRUITLESS_STOP), "goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
             "os_tuning": c.os_tuning_allowed() and sess.get("os_tuning", True), "os_facts": osf, "experience": experience,
             # swap = none in agent.ini: no swap by design (a production philosophy) - never add it, size memory for RAM alone
             "no_swap": str(c.cfg.get("swap", "allowed")).strip().lower() in ("none", "no", "off", "false"),
@@ -4288,8 +4288,9 @@ def _autotune(a):
         # and when the rules have nothing left, AI suggestions; ideas never tried are how advanced options get discovered
         sess["explore"] = True
         log(f"== explore: up to {a.max_runs} experiment runs, ideas from the rules first, then AI suggestions")
-    c.state.set("session", sess)
     max_fruitless = 0 if getattr(a, "explore", False) else getattr(a, "max_fruitless", FRUITLESS_STOP)
+    sess["max_fruitless"] = max_fruitless  # the engine's own early stop follows the same limit
+    c.state.set("session", sess)
     measured = iterations = 0
     while measured < a.max_runs and iterations < a.max_runs * 3:
         iterations += 1

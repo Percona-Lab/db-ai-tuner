@@ -3563,6 +3563,29 @@ def test_unsustainable_experiment_is_not_tried_again():
         engine.STABILITY_FIRST = saved
 
 
+def test_early_stop_follows_max_fruitless_and_every_idea_left():
+    """Session 397: the engine stopped after 6-7 experiments that kept nothing because the next idea (os-jemalloc) acted on
+    little of the time - with the thread pool's size, of unknown share, still untried and --max-fruitless at 8. The early
+    stop now uses the session's limit, and only when every untried idea left is known to act on little."""
+    from tuning_agent import engine
+    def hist(n):
+        return [{"seq": 1, "label": "baseline", "verdict": "reference", "managed": {}, "changes": []}] + [
+            {"seq": i, "label": f"idea{i}", "verdict": "neutral", "managed": {}, "changes": []} for i in range(2, 2 + n)]
+    base = {"goal": "tps", "policy": "safe", "os_tuning": True, "os_facts": {}, "hw": HW, "flavor": "percona", "version": (8, 4, 11),
+            "variables": dict(VARS), "summary": OLTP[0], "inputs": OLTP[1], "noise_pct": 30.0, "managed": {}}
+    # 7 in a row: below the default limit of 8 - never a stop for "acts on little"
+    r7 = engine.run_engine(dict(base, history=hist(7)))
+    assert "experiments in a row kept nothing" not in (r7.get("stop_reason") or ""), r7.get("stop_reason")
+    # --max-fruitless 0: never
+    r0 = engine.run_engine(dict(base, history=hist(12), max_fruitless=0))
+    assert "experiments in a row kept nothing" not in (r0.get("stop_reason") or ""), r0.get("stop_reason")
+    # a stop, when it comes, names a streak at or above the limit and leaves no untried idea of unknown or larger share
+    r12 = engine.run_engine(dict(base, history=hist(12), max_fruitless=8))
+    if r12.get("stop_reason"):
+        left = [i for i in r12["items"] if i["kind"] == "config" and i["confidence"] > 0 and not i.get("tried_in_run")]
+        assert all(i.get("relevance") is not None and i["relevance"] <= 1 for i in left), [(i["id"], i.get("relevance")) for i in left]
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
