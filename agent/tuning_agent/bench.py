@@ -29,7 +29,9 @@ Profile (INI):
 
     mode = continuous                   ; a workload the agent does not drive (always running, reconnects after a restart):
                                         ; no run / reset; duration = the measured window; latency goals usually
-                                        ; (session start --latency-stat p99)
+                                        ; (session start --latency-stat p99); min_qps / min_connections: the load is
+                                        ; running (20 / 4); reconnect_max: seconds its client may take to come back
+                                        ; after a restart (3900)
 
     [requires]                          ; benchmark prerequisites: set before every run (numbers are minimums), never tuned
     max_connections = 1100
@@ -65,6 +67,11 @@ class Profile:
         # online changes in A-B-A order, restarts only for a final validation (continuous.py)
         self.mode = str(b.get("mode", "driven")).strip().lower()
         self.run = b.get("run", "") if self.mode == "continuous" else b["run"]
+        # continuous: what counts as the load running, and how long its client may take to come back after a restart
+        # (Parma Ham's HammerDB users die with the connection; the next hourly run brings the load back - up to ~61 min)
+        self.min_qps = float(b.get("min_qps", "20"))
+        self.min_connections = int(b.get("min_connections", "4"))
+        self.reconnect_max = int(b.get("reconnect_max", "3900"))
         # run length: warm-up and measured window. Not set (or "auto"): the session finds them once with a run-length probe
         # (warm-up until every state metric settles, a window long enough for the noise target); numbers are used as given
         w, d = b.get("warmup"), b.get("duration")

@@ -3674,6 +3674,39 @@ def test_continuous_mode_pieces():
     assert cli._goal_value("latency", {"avg_latency_ms": 2.0, "p99_latency_ms": 9.5}, {}, None)[0] == 2.0
 
 
+def test_continuous_load_check_and_reconnect_wait():
+    """Session 413: a load of 3.4 statements/s from 2 connections (a dashboard polling; Parma Ham's HammerDB users had died
+    with a restart) passed as running. And a client that does not come back within reconnect_max stops the session."""
+    from tuning_agent import continuous, cli
+    class DB:
+        def __init__(self, seq):
+            self.seq = list(seq)
+        def status(self):
+            return self.seq.pop(0) if len(self.seq) > 1 else self.seq[0]
+        def connect(self, **k):
+            pass
+    class C:
+        def __init__(self, seq):
+            self.db = DB(seq)
+        def activity(self, *a, **k):
+            pass
+    saved = continuous.time.sleep
+    continuous.time.sleep = lambda s: None
+    try:
+        dead = C([{"Questions": 1000, "Threads_connected": 2}, {"Questions": 1034, "Threads_connected": 2}])
+        assert continuous.workload_alive(dead)[0] is False
+        live = C([{"Questions": 1000, "Threads_connected": 68}, {"Questions": 29660, "Threads_connected": 68}])
+        assert continuous.workload_alive(live)[0] is True
+        try:
+            continuous.wait_client(C([{"Threads_connected": 3}]), continuous.time.time() - 4000, 68, 3900, "test")
+            raise AssertionError("must fail")
+        except cli.Fail as e:
+            assert "did not come back" in str(e)
+        assert continuous.wait_client(C([{"Threads_connected": 60}]), continuous.time.time(), 68, 3900, "test") >= 0
+    finally:
+        continuous.time.sleep = saved
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

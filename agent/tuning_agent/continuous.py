@@ -37,13 +37,31 @@ def _status(c, *names):
     return {n: float(st.get(n) or 0) for n in names}
 
 
-def workload_alive(c, seconds=10):
-    """The external workload is running: statements executed and clients connected. (ok, info)"""
+def workload_alive(c, min_qps=20, min_conns=4, seconds=10):
+    """The external workload is running: statements executed and clients connected - more than a dashboard or a monitor
+    polling the server (session 413 calibrated 3.4 statements/s from 2 connections: Parma Ham's HammerDB users had died
+    with a restart). (ok, info)"""
     a = _status(c, "Questions", "Threads_connected")
     time.sleep(seconds)
     b = _status(c, "Questions", "Threads_connected")
     qps = (b["Questions"] - a["Questions"]) / seconds
-    return qps > 1 and b["Threads_connected"] > 1, {"qps": round(qps, 1), "connections": int(b["Threads_connected"])}
+    return qps >= min_qps and b["Threads_connected"] >= min_conns, {"qps": round(qps, 1), "connections": int(b["Threads_connected"])}
+
+
+def wait_client(c, t0, want, max_s, label):
+    """After a restart begun at t0: wait until the client's connections are back (RECONNECT_FRAC of want). Seconds taken;
+    Fail when they are not back within max_s - a load that did not come back is never measured as a configuration."""
+    cli = _cli()
+    c.db.connect(retries=60, delay=2)
+    while True:
+        n = _status(c, "Threads_connected")["Threads_connected"]
+        if n >= RECONNECT_FRAC * want:
+            return int(time.time() - t0)
+        if time.time() - t0 > max_s:
+            raise cli.Fail(f"{label}: the workload's client did not come back within {max_s // 60} min of the restart ({int(n)} of "
+                           f"{int(want)} connections) - check the benchmark; reconnect_max in the profile sets the wait")
+        c.activity("waiting for the client", f"{label}: {int(n)} of {int(want)} connections back, {int(time.time() - t0) // 60} min")
+        time.sleep(10)
 
 
 def fingerprint(run):
@@ -155,29 +173,23 @@ def judge(c, sess, run_b, run_a1, run_a2, thr):
     return v, d
 
 
-def restart_probe(c):
+def restart_probe(c, want, max_s):
     """Restart mysqld, then: seconds until the client is back (connections), and until the metrics settle. Returns the
     warm-up to wait after a restart (both + 20%)."""
     from .applier import Applier
     cli = _cli()
-    before = _status(c, "Threads_connected")["Threads_connected"]
-    cli.log(f"== restart probe: {int(before)} connections before the restart")
+    cli.log(f"== restart probe: {int(want)} connections before the restart")
     t0 = time.time()
     ok, err = Applier(c.cfg, c.state, c.db, log=cli.log, activity=c.activity).restart()
     if not ok:
         raise cli.ServerDown(f"restart failed: {err}")
-    c.db.connect(retries=30, delay=2)
-    while time.time() - t0 < RECONNECT_MAX_S:
-        n = _status(c, "Threads_connected")["Threads_connected"]
-        c.activity("restart probe", f"waiting for the client to reconnect: {int(n)} of {int(before)} connections")
-        if n >= RECONNECT_FRAC * before:
-            break
-        time.sleep(5)
-    back = int(time.time() - t0)
+    back = wait_client(c, t0, want, max_s, "restart probe")
     settle, ok_ = wait_settled(c, time.time(), "after the restart", min_s=300, max_s=3600)
-    warm = int((back + settle) * 1.2)
+    # the warm-up counts from the client's return: when it comes back depends on the client (a HammerDB run starting on
+    # the hour), how long the server needs then does not
+    warm = int(settle * 1.2)
     msg = (f"restart probe: the client was back after {back} s, the server settled {settle} s later"
-           + ("" if ok_ else " (not fully)") + f": warm-up after a restart {warm} s")
+           + ("" if ok_ else " (not fully)") + f": warm-up {warm} s after the client is back")
     cli.log("   " + msg)
     c.event("run_length", msg, {"reconnect_s": back, "settle_s": settle, "restart_warmup_s": warm})
     return warm
@@ -195,17 +207,12 @@ def _candidates(res, tried, tradeoffs, restart=False):
     return out
 
 
-def after_restart(c, t0, before, warm, label):
+def after_restart(c, t0, before, warm, label, max_s=3900):
     """After a restart begun at t0: the client back (connections), the measured restart warm-up over, the metrics settled."""
     cli = _cli()
-    c.db.connect(retries=60, delay=2)
-    while time.time() - t0 < RECONNECT_MAX_S:
-        n = _status(c, "Threads_connected")["Threads_connected"]
-        if n >= RECONNECT_FRAC * before:
-            break
-        c.activity("waiting for the client", f"{label}: {int(n)} of {int(before)} connections back")
-        time.sleep(5)
-    left = warm - (time.time() - t0)
+    back = wait_client(c, t0, before, max_s, label)
+    # the warm-up counts from the client's return: a client that took an hour to come back starts its own warm-up then
+    left = warm - (time.time() - (t0 + back))
     if left > 0:
         c.activity("warm-up after the restart", label, left)
         time.sleep(left)
@@ -241,7 +248,7 @@ def autotune(c, prof, a):
         sess["explore"] = True  # the rules first, then AI suggestions, within --max-runs
     c.state.set("session", sess)
     window = int(prof.duration or 300)
-    ok, info = workload_alive(c)
+    ok, info = workload_alive(c, prof.min_qps, prof.min_connections)
     if not ok:
         raise cli.Fail(f"no workload running (qps {info['qps']}, {info['connections']} connections): a continuous profile tunes a "
                        "load that is already running - start the benchmark first")
@@ -271,8 +278,9 @@ def autotune(c, prof, a):
     if thr > NOISE_TARGET_PCT:
         log(f"   NOTE: still ±{thr}% at the longest window ({WINDOW_MAX_S} s): only larger effects can be resolved")
     restart_warm = c.session().get("restart_warmup_s")  # measured once per session (an autotune run again reuses it)
+    want = info["connections"]  # the load's own connection count: what "the client is back" means after a restart
     if not restart_warm and str(c.cfg.get("allow_restart", "true")).lower() == "true":
-        restart_warm = restart_probe(c)
+        restart_warm = restart_probe(c, want, prof.reconnect_max)
         sess = c.session()
         sess["restart_warmup_s"] = restart_warm
         c.state.set("session", sess)
@@ -345,7 +353,7 @@ def autotune(c, prof, a):
             ok, err = Applier(c.cfg, c.state, c.db, log=log, activity=c.activity).restart()
             if not ok:
                 raise cli.ServerDown(f"restart failed: {err}")
-            after_restart(c, t0, before_n, warm, "current configuration")
+            after_restart(c, t0, max(before_n, want), warm, "current configuration", prof.reconnect_max)
             last_ar = measure(c, "A after restart (current configuration)", window)
             last_ar["_key"] = _cfg_key(c)
         before = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
@@ -357,14 +365,14 @@ def autotune(c, prof, a):
         if r.get("errors") or r.get("rolled_back"):
             log(f"   not applied ({r.get('errors')}): skipped")
             continue
-        after_restart(c, t0, before_n, warm, it["id"])
+        after_restart(c, t0, max(before_n, want), warm, it["id"], prof.reconnect_max)
         b = measure(c, f"{it['id']} (after restart)", window)
         measured += 1
         before_n = _status(c, "Threads_connected")["Threads_connected"]
         t1 = time.time()
         # reverting a restart-only setting restarts mysqld (the applier does when a change needs it)
         cli._goto_managed(c, before, f"A-B-A: back to the current configuration after {it['id']}", "continuous")
-        after_restart(c, t1, before_n, warm, f"after reverting {it['id']}")
+        after_restart(c, t1, max(before_n, want), warm, f"after reverting {it['id']}", prof.reconnect_max)
         a2 = measure(c, "A after restart (current configuration)", window)
         a2["_key"] = _cfg_key(c)
         v, d = judge(c, c.session(), b, last_ar, a2, thr)
@@ -373,15 +381,15 @@ def autotune(c, prof, a):
             before_n = _status(c, "Threads_connected")["Threads_connected"]
             t2 = time.time()
             cli._apply_and_record(c, changes, "continuous", restart=True)
-            after_restart(c, t2, before_n, warm, f"{it['id']} (kept)")
+            after_restart(c, t2, max(before_n, want), warm, f"{it['id']} (kept)", prof.reconnect_max)
             last_ar = measure(c, f"A after restart (kept {it['id']})", window)
             last_ar["_key"] = _cfg_key(c)
         else:
             last_ar = a2
-    final_validation(c, start_managed, window, restart_warm)
+    final_validation(c, start_managed, window, restart_warm, want, prof.reconnect_max)
 
 
-def final_validation(c, start_managed, window, restart_warm):
+def final_validation(c, start_managed, window, restart_warm, want=None, max_s=3900):
     """The tuned configuration against the start, each after a full restart: start - tuned - start."""
     from .applier import Applier
     cli = _cli()
@@ -397,14 +405,13 @@ def final_validation(c, start_managed, window, restart_warm):
     log(f"== final validation with full restarts (warm-up {warm} s after each): start - tuned - start")
     runs = []
     for name, cfg in (("start", start_managed), ("tuned", tuned), ("start", start_managed)):
+        before_n = _status(c, "Threads_connected")["Threads_connected"]
+        t0 = time.time()
         cli._goto_managed(c, cfg, f"final validation: {name} configuration", "continuous")
         ok, err = Applier(c.cfg, c.state, c.db, log=log, activity=c.activity).restart()
         if not ok:
             raise cli.ServerDown(f"restart failed in the final validation: {err}")
-        c.db.connect(retries=30, delay=2)
-        c.activity("final validation", f"{name} configuration: warm-up after the restart", warm)
-        time.sleep(warm)
-        wait_settled(c, time.time() - warm, f"{name} after the restart", min_s=0)
+        after_restart(c, t0, max(before_n, want or 0), warm, f"final validation: {name} configuration", max_s)
         runs.append(measure(c, f"validation: {name} configuration (after restart)", window))
     sess = c.session()
     a_vals = [r["goal_value"] for r in sess["runs"] if str(r.get("label", "")).startswith(("baseline", "A "))]
