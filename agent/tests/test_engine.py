@@ -3668,6 +3668,7 @@ def test_continuous_mode_pieces():
                      {"id": "done", "kind": "config", "confidence": 2, "restart": False, "safety": "safe", "changes": []}]}
     assert [i["id"] for i in continuous._candidates(res, {"done"}, False)] == ["bp-grow"]
     assert [i["id"] for i in continuous._candidates(res, {"done"}, True)] == ["bp-grow", "trx-commit-2"]
+    assert [i["id"] for i in continuous._candidates(res, {"done"}, False, restart=True)] == ["redo-grow"]  # restart ideas apart
     # the goal: p99 from the server when the session asks for it
     assert cli._goal_value("latency", {"avg_latency_ms": 2.0, "p99_latency_ms": 9.5}, {}, None, "p99") == (9.5, "performance_schema p99 statement latency (ms)")
     assert cli._goal_value("latency", {"avg_latency_ms": 2.0, "p99_latency_ms": 9.5}, {}, None)[0] == 2.0

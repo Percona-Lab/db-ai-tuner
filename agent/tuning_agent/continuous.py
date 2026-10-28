@@ -183,11 +183,11 @@ def restart_probe(c):
     return warm
 
 
-def _candidates(res, tried, tradeoffs):
-    """Online ideas: config items whose changes need no restart, not tried yet."""
+def _candidates(res, tried, tradeoffs, restart=False):
+    """Ideas not tried yet: config items whose changes apply online (restart=False) or need a restart (restart=True)."""
     out = []
     for it in res.get("items") or []:
-        if it.get("kind") != "config" or (it.get("confidence") or 0) <= 0 or it["id"] in tried or it.get("restart"):
+        if it.get("kind") != "config" or (it.get("confidence") or 0) <= 0 or it["id"] in tried or bool(it.get("restart")) != restart:
             continue
         if it.get("safety") == "trade-off" and not tradeoffs:
             continue
@@ -195,13 +195,50 @@ def _candidates(res, tried, tradeoffs):
     return out
 
 
+def after_restart(c, t0, before, warm, label):
+    """After a restart begun at t0: the client back (connections), the measured restart warm-up over, the metrics settled."""
+    cli = _cli()
+    c.db.connect(retries=60, delay=2)
+    while time.time() - t0 < RECONNECT_MAX_S:
+        n = _status(c, "Threads_connected")["Threads_connected"]
+        if n >= RECONNECT_FRAC * before:
+            break
+        c.activity("waiting for the client", f"{label}: {int(n)} of {int(before)} connections back")
+        time.sleep(5)
+    left = warm - (time.time() - t0)
+    if left > 0:
+        c.activity("warm-up after the restart", label, left)
+        time.sleep(left)
+    wait_settled(c, time.time() - 60, label, min_s=0, max_s=1200)
+    cli.log(f"   {label}: ready {int(time.time() - t0)} s after the restart began")
+
+
+def _cfg_key(c):
+    return _cli().evaluate.config_key({k: v["value"] for k, v in c.state.get("managed", {}).items()})
+
+
+def _next_item(c, a, tried, restart):
+    """The next idea of the kind asked for: the rules first, then (--explore) AI suggestions."""
+    cli = _cli()
+    res = cli._recommend(c, c.session())
+    cands = _candidates(res, tried, a.tradeoffs, restart)
+    if not cands and c.session().get("explore"):
+        cli.log("== explore: asking for AI suggestions" + (" (restart ideas)" if restart else " (online ideas)"))
+        res = cli._recommend(c, c.session(), llm=True)
+        cands = _candidates(res, tried, a.tradeoffs, restart)
+    return cands[0] if cands else None
+
+
 def autotune(c, prof, a):
-    """The continuous-workload tuning loop (see the module doc)."""
+    """The continuous-workload tuning loop (see the module doc): online ideas A-B-A, then restart ideas A-B-A with every
+    window after a restart, then the final validation."""
     cli = _cli()
     log = cli.log
     sess = c.session()
     sess["bench"] = sess.get("bench") or getattr(prof, "path", None)
     sess["continuous"] = True
+    if getattr(a, "explore", False):
+        sess["explore"] = True  # the rules first, then AI suggestions, within --max-runs
     c.state.set("session", sess)
     window = int(prof.duration or 300)
     ok, info = workload_alive(c)
@@ -209,7 +246,7 @@ def autotune(c, prof, a):
         raise cli.Fail(f"no workload running (qps {info['qps']}, {info['connections']} connections): a continuous profile tunes a "
                        "load that is already running - start the benchmark first")
     log(f"== continuous workload: {info['qps']} statements/s, {info['connections']} connections; goal {sess['goal']}"
-        + (f" ({sess['latency_stat']})" if sess.get("latency_stat") else "") + f"; windows of {window} s, changes online, measured A-B-A")
+        + (f" ({sess['latency_stat']})" if sess.get("latency_stat") else "") + f"; changes measured A-B-A")
     # calibration: the current configuration, CALIBRATION_WINDOWS windows after it settled; the window grows until the
     # noise is within NOISE_TARGET_PCT (noise falls ~ 1/sqrt(window): 4x longer halves it), at most WINDOW_MAX_S
     window = int(sess.get("cont_window") or window)
@@ -242,36 +279,43 @@ def autotune(c, prof, a):
         wait_settled(c, time.time(), "after the restart probe", min_s=60)
         a_runs.append(measure(c, "A (after the restart probe)", window))
     start_managed = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
-    tried = set(sess.get("cont_tried") or [])
+    tried = set(c.session().get("cont_tried") or [])
     measured = 0
+    can_restart = str(c.cfg.get("allow_restart", "true")).lower() == "true"
     last_a = a_runs[-1] if a_runs else None
+    last_ar = None  # the latest window of the current configuration measured after a restart (restart experiments' A)
+
+    def mark(it):
+        tried.add(it["id"])
+        s_ = c.session()
+        s_["cont_tried"] = sorted(tried)
+        c.state.set("session", s_)
+
+    def changes_of(it):
+        return [{"variable": ch["variable"], "value": ch["proposed"], "reason": it.get("rationale") or it.get("title"),
+                 "source": f"rec:{it['id']}"} for ch in it["changes"]]
+
+    # 1. online ideas: A - B - A without restarts
     while measured < a.max_runs:
-        res = cli._recommend(c, c.session())
-        cands = _candidates(res, tried, a.tradeoffs)
-        if not cands:
+        it = _next_item(c, a, tried, restart=False)
+        if not it:
             log("== no online idea left")
             break
-        it = cands[0]
-        tried.add(it["id"])
-        sess = c.session()
-        sess["cont_tried"] = sorted(tried)
-        c.state.set("session", sess)
+        mark(it)
         if last_a is None or time.time() - (last_a.get("ended") or 0) > 2 * window + SETTLE_MAX_S:
             last_a = measure(c, "A (current configuration)", window)
         before = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
-        changes = [{"variable": ch["variable"], "value": ch["proposed"], "reason": it.get("rationale") or it.get("title"),
-                    "source": f"rec:{it['id']}"} for ch in it["changes"]]
-        log(f"== {it['id']}: " + ", ".join(f"{ch['variable']}={ch['value']}" for ch in changes))
+        changes = changes_of(it)
+        log(f"== {it['id']} (online): " + ", ".join(f"{ch['variable']}={ch['value']}" for ch in changes))
         t0 = time.time()
         r = cli._apply_and_record(c, changes, "continuous", restart=False)
         if r.get("needs_restart") or r.get("errors") or r.get("rolled_back"):
-            log(f"   not applied online ({r.get('needs_restart') or r.get('errors')}): skipped")
+            log(f"   not applied online ({r.get('needs_restart') or r.get('errors')}): back to the current configuration")
             cli._goto_managed(c, before, f"{it['id']} not applicable online", "continuous")
             continue
         wait_settled(c, t0, it["id"])
         b = measure(c, it["id"], window)
         measured += 1
-        # back to the current configuration for the second neighbour
         t1 = time.time()
         cli._goto_managed(c, before, f"A-B-A: back to the current configuration after {it['id']}", "continuous")
         wait_settled(c, t1, f"after reverting {it['id']}")
@@ -285,6 +329,55 @@ def autotune(c, prof, a):
             last_a = measure(c, f"A (kept {it['id']})", window)
         else:
             last_a = a2
+    # 2. restart ideas: every window after a restart and the measured warm-up, the A windows too (a restart empties the
+    # caches: a restarted B compared with an A that was not restarted would measure the restart)
+    warm = restart_warm or 900
+    while can_restart and measured < a.max_runs:
+        it = _next_item(c, a, tried, restart=True)
+        if not it:
+            log("== no restart idea left")
+            break
+        mark(it)
+        from .applier import Applier
+        if last_ar is None or last_ar.get("_key") != _cfg_key(c):
+            before_n = _status(c, "Threads_connected")["Threads_connected"]
+            t0 = time.time()
+            ok, err = Applier(c.cfg, c.state, c.db, log=log, activity=c.activity).restart()
+            if not ok:
+                raise cli.ServerDown(f"restart failed: {err}")
+            after_restart(c, t0, before_n, warm, "current configuration")
+            last_ar = measure(c, "A after restart (current configuration)", window)
+            last_ar["_key"] = _cfg_key(c)
+        before = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
+        changes = changes_of(it)
+        log(f"== {it['id']} (restart): " + ", ".join(f"{ch['variable']}={ch['value']}" for ch in changes))
+        before_n = _status(c, "Threads_connected")["Threads_connected"]
+        t0 = time.time()
+        r = cli._apply_and_record(c, changes, "continuous", restart=True)
+        if r.get("errors") or r.get("rolled_back"):
+            log(f"   not applied ({r.get('errors')}): skipped")
+            continue
+        after_restart(c, t0, before_n, warm, it["id"])
+        b = measure(c, f"{it['id']} (after restart)", window)
+        measured += 1
+        before_n = _status(c, "Threads_connected")["Threads_connected"]
+        t1 = time.time()
+        # reverting a restart-only setting restarts mysqld (the applier does when a change needs it)
+        cli._goto_managed(c, before, f"A-B-A: back to the current configuration after {it['id']}", "continuous")
+        after_restart(c, t1, before_n, warm, f"after reverting {it['id']}")
+        a2 = measure(c, "A after restart (current configuration)", window)
+        a2["_key"] = _cfg_key(c)
+        v, d = judge(c, c.session(), b, last_ar, a2, thr)
+        log(f"   {it['id']}: {d:+.2f}% vs the neighbours' mean (±{thr}%): {v}" if d is not None else f"   {it['id']}: {v}")
+        if v == "improved":
+            before_n = _status(c, "Threads_connected")["Threads_connected"]
+            t2 = time.time()
+            cli._apply_and_record(c, changes, "continuous", restart=True)
+            after_restart(c, t2, before_n, warm, f"{it['id']} (kept)")
+            last_ar = measure(c, f"A after restart (kept {it['id']})", window)
+            last_ar["_key"] = _cfg_key(c)
+        else:
+            last_ar = a2
     final_validation(c, start_managed, window, restart_warm)
 
 
