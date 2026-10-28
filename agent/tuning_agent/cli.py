@@ -2235,6 +2235,7 @@ def cmd_measure(a):
         c.event("measure_abort", f"measurement of run {m['seq']} aborted", {})
         emit({"ok": True, "aborted": m["run_id"]}, f"Measurement of run {m['seq']} aborted.")
     elif a.action == "run" and a.bench:
+        _remember_bench(c, a.bench)
         run, diag = _bench_run(c, bench.Profile(a.bench), a.label, a.notes, a.warmup)
         emit({"ok": True, "run": run, "diagnosis": diag}, _fmt_run(run, diag, c.session()["goal"]))
     elif a.action == "run":
@@ -4108,6 +4109,8 @@ def cmd_experiment(a):
         if not prof_path:
             raise Fail("experiments are measured with a benchmark profile: pass --bench PROFILE")
         prof = bench.Profile(prof_path)
+        if a.bench:
+            _remember_bench(c, a.bench)
         done = []
         for e in _queued_experiments(c, sess):
             log(f"== experiment #{e['id']} ({e['kind']}, from {e.get('created_by')})")
@@ -4857,6 +4860,14 @@ def cmd_daemon(a):
         c.client._call("POST", "/bye", {"environment_id": c.env_id(), "host_shutdown": st == "stopping"})  # one attempt: never delay the stop
     except Exception:
         pass
+
+
+def _remember_bench(c, path):
+    """The session's benchmark profile, for experiments started later by the daemon (autotune records it too)."""
+    sess = c.session(required=False)
+    if sess and path and sess.get("bench") != os.path.abspath(path):
+        sess["bench"] = os.path.abspath(path)
+        c.state.set("session", sess)
 
 
 def _auto_experiments(c, auto, loading):
