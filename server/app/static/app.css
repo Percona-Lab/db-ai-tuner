@@ -81,6 +81,7 @@ label { display: block; margin: 10px 0 4px; color: var(--ink-2); font-size: 13px
 .form { max-width: 380px; margin: 40px auto; }
 .err { color: var(--crit); margin-top: 8px; min-height: 1.2em; }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+[hidden] { display: none !important; } /* a layout class (.row: flex) must not show an element hidden on purpose */
 .spacer { flex: 1; }
 .hero { padding: 30px 0 10px; }
 .hero h1 { font-size: 30px; }
