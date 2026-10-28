@@ -197,6 +197,9 @@ button.star:hover { color: var(--s4); }
 .fbform[hidden] { display: none; }
 .badge.wrap { white-space: normal; max-width: 100%; align-items: baseline; }
 .unsafe, .unsafe td, tr.unsafe td { color: var(--crit); }
+/* option-file lines that differ from the session's baseline (run page); "mine" = changed by this run */
+.cfgchg, tr.cfgchg td { background: var(--window); font-weight: 600; border-radius: 3px; }
+.cfgchg.mine, tr.cfgchg.mine td { box-shadow: inset 3px 0 0 var(--accent); padding-left: 4px; }
 /* navigation: the previous page dims while the next one loads (after a short delay, so fast pages do not flicker) */
 #view.loading { opacity: .5; transition: opacity .15s .2s; pointer-events: none; }
 @media (max-width: 640px) { .top { position: static; } }

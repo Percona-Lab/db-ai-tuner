@@ -1505,11 +1505,27 @@ function unsafeMap(tradeoffs) {  // variable -> what it gives up, for the settin
   (tradeoffs || []).forEach(t => { if (t.variable && t.variable !== "memory") m[t.variable] = `Not production-safe (${t.category}): ${t.lost}`; });
   return m;
 }
-function cnfBlock(managed, unsafe) {
-  // MySQL option file only: can be copied into my.cnf as is; trade-off settings in red with what they give up
+// what differs from the session's baseline, per setting: tooltip text and whether this run changed it (run page highlight)
+function changedMap(vb) {
+  const m = {};
+  ((vb && vb.settings) || []).forEach(x => {
+    m[x.variable] = { mine: !!x.this_run, tip: `Differs from the baseline (run #${vb.baseline.seq}): ${x.baseline == null ? "(not set)" : val(x.variable, x.baseline)} → ${x.value == null ? "(default)" : val(x.variable, x.value)}`
+      + (x.this_run ? " — changed in this run" : x.set_in ? ` — set in run #${x.set_in.seq} ${x.set_in.label}` : "") };
+  });
+  return m;
+}
+function cnfBlock(managed, unsafe, changed) {
+  // MySQL option file only: can be copied into my.cnf as is; trade-off settings in red with what they give up; on a run
+  // page the lines that differ from the baseline are highlighted (user: the full list below is long and hard to scan)
   const my = Object.entries(managed || {}).filter(([k]) => !/^(os|rg|client):/.test(k));
   const line = (k, v) => esc(k) + (v === "" ? "" : " = " + esc(v));
-  return my.length ? `[mysqld]\n${my.map(([k, v]) => unsafe && unsafe[k] ? `<span class="unsafe" data-tip="${esc(unsafe[k])}" tabindex="0">${line(k, v)}</span>` : line(k, v)).join("\n")}` : "";
+  const one = ([k, v]) => {
+    const c = changed && changed[k], u = unsafe && unsafe[k];
+    if (!c && !u) return line(k, v);
+    const cls = [u ? "unsafe" : "", c ? (c.mine ? "cfgchg mine" : "cfgchg") : ""].filter(Boolean).join(" ");
+    return `<span class="${cls}" data-tip="${esc([c && c.tip, u].filter(Boolean).join("\n"))}" tabindex="0">${line(k, v)}</span>`;
+  };
+  return my.length ? `[mysqld]\n${my.map(one).join("\n")}` : "";
 }
 // resource groups as SQL (thread assignments do not survive a restart: run after every start)
 function rgSql(rg) {
@@ -1543,11 +1559,17 @@ function reqTable(reqs) {
   return `<table class="kvt"><tbody>${reqs.map(q => `<tr><td class="mono">${esc(q.variable)}</td><td class="mono">${q.raised ? `${esc(q.server)} → ` : ""}${esc(q.required)}${/^\d+$/.test(q.required) ? '<span class="muted"> min</span>' : ""}</td><td>${q.error ? `<span class="badge warn" data-tip="${esc(q.error)}" tabindex="0">not set</span>` : q.raised ? '<span class="muted">raised before the run</span>' : '<span class="muted">already met</span>'}</td></tr>`).join("")}</tbody></table>`;
 }
 const REQ_TIP = "Settings the benchmark needs just to run (for example max_connections for 1024 client threads, or max_prepared_stmt_count for 64 threads × 32 tables of prepared statements). Declared in the benchmark profile, applied before every run including the server-defaults run (numbers are minimums), and never changed by the tuner, so they are not part of the tuning result.";
-function configBlocks(managed, reqs, unsafe) {
+function configBlocks(managed, reqs, unsafe, changed) {
   // side by side: the copyable option file, and everything that is not MySQL configuration
-  const my = cnfBlock(managed, unsafe), other = otherChanges(managed);
+  const my = cnfBlock(managed, unsafe, changed), other = otherChanges(managed);
   reqs = reqs || [];
-  const right = other.map(([h, rows, name]) => `<h4 style="margin:0 0 4px">${h}</h4><table class="kvt"><tbody>${rows.map(([k, v]) => `<tr${unsafe && unsafe[k] ? ` class="unsafe" data-tip="${esc(unsafe[k])}" tabindex="0"` : ""}><td class="mono">${esc(name(k))}</td><td class="mono">${esc(v)}</td></tr>`).join("")}</tbody></table>`).join('<div style="height:10px"></div>');
+  const rowAttr = k => {
+    const c = changed && changed[k], u = unsafe && unsafe[k];
+    if (!c && !u) return "";
+    const cls = [u ? "unsafe" : "", c ? (c.mine ? "cfgchg mine" : "cfgchg") : ""].filter(Boolean).join(" ");
+    return ` class="${cls}" data-tip="${esc([c && c.tip, u].filter(Boolean).join("\n"))}" tabindex="0"`;
+  };
+  const right = other.map(([h, rows, name]) => `<h4 style="margin:0 0 4px">${h}</h4><table class="kvt"><tbody>${rows.map(([k, v]) => `<tr${rowAttr(k)}><td class="mono">${esc(name(k))}</td><td class="mono">${esc(v)}</td></tr>`).join("")}</tbody></table>`).join('<div style="height:10px"></div>');
   const reqBox = reqs.length ? `<div class="card" style="padding:10px 12px;margin-top:10px"><h4 style="margin:0 0 4px">Benchmark prerequisites${info(REQ_TIP)}</h4>${reqTable(reqs)}</div>` : "";
   if (!other.length && !reqs.length) return `<pre><code>${my}</code></pre>`;
   if (!other.length) return `<div class="cfgsplit"><div><div class="muted" style="margin-bottom:4px">MySQL option file${info("Can be copied into a my.cnf [mysqld] section as is.")}</div><pre style="margin:0"><code>${my || "# no MySQL settings"}</code></pre></div><div>${reqBox.replace('margin-top:10px', 'margin-top:22px')}</div></div>`;
@@ -1900,7 +1922,7 @@ function renderDiff(el, r) {
   const reqs = ((r.inputs || {}).bench || {}).requirements || [];
   const pinned = (r.at_default || []).filter(k => k in managed);
   const changedManaged = Object.fromEntries(Object.entries(managed).filter(([k]) => !pinned.includes(k)));
-  if (Object.keys(managed).length) h += `<h3>Agent-applied configuration during this run${info("The settings the tuning-agent enforced while this run was measured that differ from the server's compiled defaults: its MySQL option file plus operating-system settings. Everything else was the server default or came from other option files (see Key settings).")}</h3>${configBlocks(changedManaged, reqs, unsafeMap(r.tradeoffs))}`
+  if (Object.keys(managed).length) h += `<h3>Agent-applied configuration during this run${info("The settings the tuning-agent enforced while this run was measured that differ from the server's compiled defaults: its MySQL option file plus operating-system settings. Everything else was the server default or came from other option files (see Key settings).")}</h3>${(r.vs_baseline && (r.vs_baseline.settings || []).length) ? `<p class="muted" style="font-size:12.5px;margin:0 0 6px"><span class="cfgchg">Highlighted</span>: differs from the baseline (run #${r.vs_baseline.baseline.seq}); <span class="cfgchg mine">marked</span>: changed in this run. Hover for the values.</p>` : ""}${configBlocks(changedManaged, reqs, unsafeMap(r.tradeoffs), changedMap(r.vs_baseline))}`
     + (pinned.length ? `<p class="muted" style="font-size:12.5px;margin:6px 0 0">Also written at their compiled default (no change on this server): ${pinned.map(k => `<code>${esc(k)}</code>`).join(" ")}${info("The agent's option file pins these at the value this server version uses anyway. Pinning keeps the configuration the same when the same file is used on another release series, where some defaults differ (e.g. MySQL 8.0 vs 8.4).")}</p>` : "");
   else if (reqs.length) h += `<h3>Benchmark prerequisites${info(REQ_TIP)}</h3><div class="card">${reqTable(reqs)}</div>`;
   el.innerHTML = h;
