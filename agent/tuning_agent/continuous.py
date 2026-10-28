@@ -108,23 +108,34 @@ def wait_settled(c, t0, label, min_s=SETTLE_MIN_S, max_s=SETTLE_MAX_S, hold_s=SE
             return int(el), False
 
 
-CLIENT_CHURN_FRAC = 0.5  # new connections in a window >= this share of the connected clients: the client restarted
+CLIENT_DIP_FRAC = 0.5  # the connected clients fell below this share of their median during the window: the client restarted
+
+
+def client_restarted(c, t0, t1):
+    """The client restarted inside [t0, t1]: the connected count dipped (from the daemon's 10 s samples). Counting new
+    connections does not do: dashboards and monitors open one per poll (session 414: 258 in a steady 20-min window)."""
+    from .state import SampleStore
+    vals = [((x.get("db") or {}).get("threads_connected")) for x in SampleStore(c.state.dir).window(t0, t1)]
+    vals = sorted(v for v in vals if v is not None)
+    if len(vals) < 6:
+        return None
+    med = vals[len(vals) // 2]
+    if med >= 4 and vals[0] < CLIENT_DIP_FRAC * med:
+        return f"the client reconnected during the window (connections fell to {int(vals[0])} from about {int(med)}): not compared"
+    return None
 
 
 def measure(c, label, window_s, notes=None, attempts=3):
     """One measured window of the live workload; the run as recorded (goal from the server). A window during which the
-    client reconnected wholesale (Parma Ham starts a new HammerDB run every hour: 64 users disconnect, reconnect and ramp
-    up - session 414's third calibration window: throughput spread 10.8% vs 0.4-2%, latency +13%) measured the client, not
-    the configuration: flagged unreliable and measured again, up to `attempts` windows."""
+    client restarted (Parma Ham starts a new HammerDB run every hour: 64 users disconnect, reconnect and ramp up - session
+    414's third calibration window: throughput spread 10.8% vs 0.4-2%, latency +13%) measured the client, not the
+    configuration: flagged unreliable and measured again, up to `attempts` windows."""
     for i in range(attempts):
-        a = _status(c, "Connections", "Threads_connected")
-        run = _measure_once(c, label + (f" (again: the client reconnected)" if i else ""), window_s, notes)
-        b = _status(c, "Connections", "Threads_connected")
-        new = b["Connections"] - a["Connections"]
-        conns = max(a["Threads_connected"], b["Threads_connected"], 1)
-        if new < CLIENT_CHURN_FRAC * conns:
+        t0 = time.time()
+        run = _measure_once(c, label + (" (again: the client reconnected)" if i else ""), window_s, notes)
+        why = client_restarted(c, t0, time.time())
+        if not why:
             return run
-        why = f"the client reconnected during the window ({int(new)} new connections for {int(conns)} connected): not compared"
         _cli().log(f"   {label}: {why}")
         run["verdict"] = "unreliable"
         run["evaluation"] = dict(run.get("evaluation") or {}, note=why, client_restart=True)
