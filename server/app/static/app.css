@@ -105,6 +105,7 @@ label { display: block; margin: 10px 0 4px; color: var(--ink-2); font-size: 13px
 .rec .h { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .rec .id { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
 .ev { display: grid; grid-template-columns: 130px 110px 1fr; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--grid); font-size: 13px; }
+.ev > span { min-width: 0; overflow-wrap: anywhere; } /* one long token (optimizer_switch=a=on,b=on,...) must not widen the page */
 details summary { cursor: pointer; color: var(--ink-2); margin: 6px 0; }
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--grid); margin: 18px 0 12px; flex-wrap: wrap; }
 .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--ink-2); padding: 8px 12px; }
