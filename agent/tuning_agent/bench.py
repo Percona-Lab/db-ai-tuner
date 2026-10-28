@@ -27,6 +27,10 @@ Profile (INI):
     "no warm-up step", never "no time limit" (sysbench --time=0 runs forever). A run that goes well past its planned end
     is stopped with a warning.
 
+    mode = continuous                   ; a workload the agent does not drive (always running, reconnects after a restart):
+                                        ; no run / reset; duration = the measured window; latency goals usually
+                                        ; (session start --latency-stat p99)
+
     [requires]                          ; benchmark prerequisites: set before every run (numbers are minimums), never tuned
     max_connections = 1100
 
@@ -56,7 +60,11 @@ class Profile:
         # the agent restarts mysqld and drops the OS page cache before each run, so no run inherits the previous one's
         # caches, swapped-out memory or fragmentation. restart_before_run = false keeps the state (opt-out, stated).
         self.restart_before_run = str(b.get("restart_before_run", "true")).lower() not in ("false", "0", "no", "off")
-        self.run = b["run"]
+        # mode = continuous: a workload the agent does not drive (a third-party benchmark that runs all the time and reconnects
+        # after a restart, e.g. Parma Ham): no run / reset commands; autotune measures windows of the live load and applies
+        # online changes in A-B-A order, restarts only for a final validation (continuous.py)
+        self.mode = str(b.get("mode", "driven")).strip().lower()
+        self.run = b.get("run", "") if self.mode == "continuous" else b["run"]
         # run length: warm-up and measured window. Not set (or "auto"): the session finds them once with a run-length probe
         # (warm-up until every state metric settles, a window long enough for the noise target); numbers are used as given
         w, d = b.get("warmup"), b.get("duration")

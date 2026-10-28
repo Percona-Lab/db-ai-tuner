@@ -1,0 +1,310 @@
+"""Tuning a workload the agent does not drive: a third-party benchmark that runs all the time and reconnects by itself
+after a restart (Parma Ham's permanent HammerDB load) - profile `mode = continuous` (user, 2026-10-28).
+
+* Goal from the server: latency (session start --latency-stat p99: the interpolated p99 of performance_schema's statement
+  histogram) or throughput; every window records a fingerprint of the workload (statement mix, connections) and a window
+  whose workload changed is flagged, not compared.
+* Online changes only during tuning, measured A-B-A: the current configuration, the change, the current configuration
+  again; the change is judged against the mean of its two neighbours, so slow drift (data growing, caches, the load's own
+  phases) cancels out. A change that helps beyond the noise is kept and becomes the next A.
+* After every change: the metrics have to settle (each one level and holding for SETTLE_HOLD_S, at least SETTLE_MIN_S,
+  at most SETTLE_MAX_S) and background work to finish (a buffer pool resize) before a window is measured.
+* Restart probe: how long the client takes to reconnect and the server to reach steady state after a restart.
+* Final validation with full restarts: the start configuration, the tuned one, the start again - each after a restart and
+  the measured restart warm-up - because a setting changed online can act differently from the same setting at startup,
+  and a value that only lived in memory would be gone."""
+import statistics
+import time
+
+SETTLE_MIN_S = 120
+SETTLE_HOLD_S = 120
+SETTLE_MAX_S = 1800
+RECONNECT_FRAC = 0.8  # connections back to this share of the level before the restart = the client has reconnected
+RECONNECT_MAX_S = 900
+CALIBRATION_WINDOWS = 3
+SETTLE_KEYS = ("tps", "avg_latency_ms", "bp_hit_pct", "bp_dirty_pct", "checkpoint_age_pct", "history_list_length")
+
+
+def _cli():
+    from . import cli
+    return cli
+
+
+def _status(c, *names):
+    st = c.db.status()
+    return {n: float(st.get(n) or 0) for n in names}
+
+
+def workload_alive(c, seconds=10):
+    """The external workload is running: statements executed and clients connected. (ok, info)"""
+    a = _status(c, "Questions", "Threads_connected")
+    time.sleep(seconds)
+    b = _status(c, "Questions", "Threads_connected")
+    qps = (b["Questions"] - a["Questions"]) / seconds
+    return qps > 1 and b["Threads_connected"] > 1, {"qps": round(qps, 1), "connections": int(b["Threads_connected"])}
+
+
+def fingerprint(run):
+    """What the load looked like in a window: connections, statements per transaction, the read / write mix."""
+    s = run.get("summary") or {}
+    tps, qps = s.get("tps") or 0, s.get("qps") or 0
+    return {"connections": s.get("threads_connected_avg"), "stmts_per_trx": round(qps / tps, 2) if tps else None,
+            "rows_changed_per_s": s.get("rows_changed_per_s"), "qps": qps}
+
+
+def workload_changed(fa, fb, tol=0.15):
+    """The load itself differs between two windows beyond tol (relative), e.g. the benchmark switched phase. Reason or None."""
+    for k in ("connections", "stmts_per_trx"):
+        a, b = fa.get(k), fb.get(k)
+        if a and b and abs(b - a) / max(abs(a), 1e-9) > tol:
+            return f"{k} {a} -> {b}"
+    return None
+
+
+def wait_settled(c, t0, label, min_s=SETTLE_MIN_S, max_s=SETTLE_MAX_S, hold_s=SETTLE_HOLD_S):
+    """Wait until the live metrics have settled after a change at t0 (and a buffer pool resize has finished). Returns the
+    seconds waited and whether it settled within max_s."""
+    from . import collector
+    from .state import SampleStore
+    cli = _cli()
+    while True:
+        time.sleep(30)
+        el = time.time() - t0
+        try:
+            resize = str(c.db.status().get("Innodb_buffer_pool_resize_status") or "")
+        except Exception:
+            resize = ""
+        busy = resize and not resize.lower().startswith(("completed", "size did not change")) and "resize" in resize.lower()
+        res = collector.settle_times(SampleStore(c.state.dir).window(t0, time.time()), t0)
+        m = res.get("metrics") or {}
+        pending = [k for k in SETTLE_KEYS if k in m and not m[k].get("inert") and not m[k].get("unbounded")
+                   and (m[k]["settled_after_s"] is None or m[k]["plateau_s"] < hold_s)]
+        c.activity("settling", f"{label}: {int(el)} s" + (f", waiting for {', '.join(pending)}" if pending else "")
+                   + (f", buffer pool resize: {resize}" if busy else ""))
+        if el >= min_s and not pending and not busy:
+            return int(el), True
+        if el >= max_s:
+            cli.log(f"   {label}: not settled after {int(el)} s ({', '.join(pending) or resize}): measuring anyway, flagged")
+            return int(el), False
+
+
+def measure(c, label, window_s, notes=None):
+    """One measured window of the live workload; the run as recorded (goal from the server)."""
+    cli = _cli()
+    cli._measure_start(c, label, notes, warmed=True)
+    c.activity("measuring", label, window_s)
+    t = time.time()
+    try:
+        while time.time() - t < window_s:
+            time.sleep(5)
+            cli._incident_check(c)
+    except BaseException:
+        m0 = c.state.get("measurement")
+        if m0:
+            try:
+                c.client.post(f"/runs/{m0['run_id']}/abort", {"reason": "interrupted"})
+            except Exception:
+                pass
+            c.state.data["measurement"] = None
+            c.state.save()
+        raise
+    run, _ = cli._measure_stop(c, {}, None, notes)
+    run["fingerprint"] = fingerprint(run)
+    return run
+
+
+def noise_pct(values):
+    """Threshold from the A windows: twice their coefficient of variation, at least 1%."""
+    vals = [v for v in values if v]
+    if len(vals) < 2:
+        return 3.0
+    return round(max(1.0, 2 * 100.0 * statistics.stdev(vals) / statistics.mean(vals)), 2)
+
+
+def aba_verdict(goal, a_before, b, a_after, thr):
+    """B against the mean of its neighbours: (verdict, delta %, neighbour mean)."""
+    cli = _cli()
+    ref = statistics.mean([a_before, a_after]) if a_after is not None else a_before
+    d = cli._improvement(goal, b, ref)
+    if d is None:
+        return "neutral", None, ref
+    return ("improved" if d > thr else "regressed" if d < -thr else "neutral"), round(d, 2), ref
+
+
+def judge(c, sess, run_b, run_a1, run_a2, thr):
+    """Record the A-B-A verdict on run B (server and local session)."""
+    v, d, ref = aba_verdict(sess["goal"], run_a1["goal_value"], run_b["goal_value"], run_a2["goal_value"] if run_a2 else None, thr)
+    changed = workload_changed(run_a1.get("fingerprint") or {}, run_b.get("fingerprint") or {})
+    if changed:
+        v = "unreliable"
+    ev = dict(run_b.get("evaluation") or {}, method="A-B-A", goal_delta_pct=d, goal_noise_pct=thr, neighbours_mean=round(ref, 4),
+              parent_runs=[r["seq"] for r in (run_a1, run_a2) if r],
+              **({"note": f"the workload changed between the windows ({changed}): not compared"} if changed else {}))
+    run_b["verdict"], run_b["evaluation"] = v, ev
+    try:
+        c.client.post(f"/runs/{run_b['id']}/evaluation", {"verdict": v, "evaluation": ev})
+    except Exception:
+        pass
+    s = c.session()
+    for r in s["runs"]:
+        if r["seq"] == run_b["seq"]:
+            r["verdict"], r["evaluation"] = v, ev
+    c.state.set("session", s)
+    return v, d
+
+
+def restart_probe(c):
+    """Restart mysqld, then: seconds until the client is back (connections), and until the metrics settle. Returns the
+    warm-up to wait after a restart (both + 20%)."""
+    from .applier import Applier
+    cli = _cli()
+    before = _status(c, "Threads_connected")["Threads_connected"]
+    cli.log(f"== restart probe: {int(before)} connections before the restart")
+    t0 = time.time()
+    ok, err = Applier(c.cfg, c.state, c.db, log=cli.log, activity=c.activity).restart()
+    if not ok:
+        raise cli.ServerDown(f"restart failed: {err}")
+    c.db.connect(retries=30, delay=2)
+    while time.time() - t0 < RECONNECT_MAX_S:
+        n = _status(c, "Threads_connected")["Threads_connected"]
+        c.activity("restart probe", f"waiting for the client to reconnect: {int(n)} of {int(before)} connections")
+        if n >= RECONNECT_FRAC * before:
+            break
+        time.sleep(5)
+    back = int(time.time() - t0)
+    settle, ok_ = wait_settled(c, time.time(), "after the restart", min_s=300, max_s=3600)
+    warm = int((back + settle) * 1.2)
+    msg = (f"restart probe: the client was back after {back} s, the server settled {settle} s later"
+           + ("" if ok_ else " (not fully)") + f": warm-up after a restart {warm} s")
+    cli.log("   " + msg)
+    c.event("run_length", msg, {"reconnect_s": back, "settle_s": settle, "restart_warmup_s": warm})
+    return warm
+
+
+def _candidates(res, tried, tradeoffs):
+    """Online ideas: config items whose changes need no restart, not tried yet."""
+    out = []
+    for it in res.get("items") or []:
+        if it.get("kind") != "config" or (it.get("confidence") or 0) <= 0 or it["id"] in tried or it.get("restart"):
+            continue
+        if it.get("safety") == "trade-off" and not tradeoffs:
+            continue
+        out.append(it)
+    return out
+
+
+def autotune(c, prof, a):
+    """The continuous-workload tuning loop (see the module doc)."""
+    cli = _cli()
+    log = cli.log
+    sess = c.session()
+    sess["bench"] = sess.get("bench") or getattr(prof, "path", None)
+    sess["continuous"] = True
+    c.state.set("session", sess)
+    window = int(prof.duration or 300)
+    ok, info = workload_alive(c)
+    if not ok:
+        raise cli.Fail(f"no workload running (qps {info['qps']}, {info['connections']} connections): a continuous profile tunes a "
+                       "load that is already running - start the benchmark first")
+    log(f"== continuous workload: {info['qps']} statements/s, {info['connections']} connections; goal {sess['goal']}"
+        + (f" ({sess['latency_stat']})" if sess.get("latency_stat") else "") + f"; windows of {window} s, changes online, measured A-B-A")
+    # calibration: the current configuration, CALIBRATION_WINDOWS windows after it settled
+    if not sess.get("runs"):
+        wait_settled(c, time.time(), "before the calibration", min_s=60)
+        for i in range(CALIBRATION_WINDOWS):
+            measure(c, f"baseline ({i + 1}/{CALIBRATION_WINDOWS})", window)
+    sess = c.session()
+    a_runs = [r for r in sess["runs"] if str(r.get("label", "")).startswith(("baseline", "A "))]
+    thr = noise_pct([r["goal_value"] for r in a_runs[-CALIBRATION_WINDOWS:]])
+    log(f"   noise from the calibration windows: ±{thr}%")
+    restart_warm = None
+    if getattr(a, "restart_probe", True) and str(c.cfg.get("allow_restart", "true")).lower() == "true":
+        restart_warm = restart_probe(c)
+        wait_settled(c, time.time(), "after the restart probe", min_s=60)
+        a_runs.append(measure(c, "A (after the restart probe)", window))
+    start_managed = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
+    tried = set(sess.get("cont_tried") or [])
+    measured = 0
+    last_a = a_runs[-1] if a_runs else None
+    while measured < a.max_runs:
+        res = cli._recommend(c, c.session())
+        cands = _candidates(res, tried, a.tradeoffs)
+        if not cands:
+            log("== no online idea left")
+            break
+        it = cands[0]
+        tried.add(it["id"])
+        sess = c.session()
+        sess["cont_tried"] = sorted(tried)
+        c.state.set("session", sess)
+        if last_a is None or time.time() - (last_a.get("ended") or 0) > 2 * window + SETTLE_MAX_S:
+            last_a = measure(c, "A (current configuration)", window)
+        before = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
+        changes = [{"variable": ch["variable"], "value": ch["proposed"], "reason": it.get("rationale") or it.get("title"),
+                    "source": f"rec:{it['id']}"} for ch in it["changes"]]
+        log(f"== {it['id']}: " + ", ".join(f"{ch['variable']}={ch['value']}" for ch in changes))
+        t0 = time.time()
+        r = cli._apply_and_record(c, changes, "continuous", restart=False)
+        if r.get("needs_restart") or r.get("errors") or r.get("rolled_back"):
+            log(f"   not applied online ({r.get('needs_restart') or r.get('errors')}): skipped")
+            cli._goto_managed(c, before, f"{it['id']} not applicable online", "continuous")
+            continue
+        wait_settled(c, t0, it["id"])
+        b = measure(c, it["id"], window)
+        measured += 1
+        # back to the current configuration for the second neighbour
+        t1 = time.time()
+        cli._goto_managed(c, before, f"A-B-A: back to the current configuration after {it['id']}", "continuous")
+        wait_settled(c, t1, f"after reverting {it['id']}")
+        a2 = measure(c, "A (current configuration)", window)
+        v, d = judge(c, c.session(), b, last_a, a2, thr)
+        log(f"   {it['id']}: {d:+.2f}% vs the neighbours' mean (±{thr}%): {v}" if d is not None else f"   {it['id']}: {v}")
+        if v == "improved":
+            t2 = time.time()
+            cli._apply_and_record(c, changes, "continuous", restart=False)
+            wait_settled(c, t2, f"{it['id']} (kept)")
+            last_a = measure(c, f"A (kept {it['id']})", window)
+        else:
+            last_a = a2
+    final_validation(c, start_managed, window, restart_warm)
+
+
+def final_validation(c, start_managed, window, restart_warm):
+    """The tuned configuration against the start, each after a full restart: start - tuned - start."""
+    from .applier import Applier
+    cli = _cli()
+    log = cli.log
+    tuned = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
+    if cli.evaluate.config_key(tuned) == cli.evaluate.config_key(start_managed):
+        log("== final validation: nothing was kept, nothing to validate")
+        return None
+    if str(c.cfg.get("allow_restart", "true")).lower() != "true":
+        log("== final validation skipped: restarts are not allowed on this host")
+        return None
+    warm = restart_warm or 900
+    log(f"== final validation with full restarts (warm-up {warm} s after each): start - tuned - start")
+    runs = []
+    for name, cfg in (("start", start_managed), ("tuned", tuned), ("start", start_managed)):
+        cli._goto_managed(c, cfg, f"final validation: {name} configuration", "continuous")
+        ok, err = Applier(c.cfg, c.state, c.db, log=log, activity=c.activity).restart()
+        if not ok:
+            raise cli.ServerDown(f"restart failed in the final validation: {err}")
+        c.db.connect(retries=30, delay=2)
+        c.activity("final validation", f"{name} configuration: warm-up after the restart", warm)
+        time.sleep(warm)
+        wait_settled(c, time.time() - warm, f"{name} after the restart", min_s=0)
+        runs.append(measure(c, f"validation: {name} configuration (after restart)", window))
+    sess = c.session()
+    a_vals = [r["goal_value"] for r in sess["runs"] if str(r.get("label", "")).startswith(("baseline", "A "))]
+    thr = noise_pct(a_vals[-CALIBRATION_WINDOWS:])
+    v, d = judge(c, sess, runs[1], runs[0], runs[2], thr)
+    msg = (f"final validation after full restarts: tuned configuration {d:+.2f}% vs the start (±{thr}%): {v}" if d is not None
+           else f"final validation: {v}")
+    log("== " + msg)
+    c.event("validation", msg, {"runs": [r["seq"] for r in runs], "verdict": v, "delta_pct": d})
+    if v == "regressed":
+        # measured worse after a restart than online: the start configuration stays, and the report says so
+        log("   the tuned configuration lost after full restarts: the start configuration stays")
+        return v, d
+    cli._goto_managed(c, tuned, "final validation done: the tuned configuration stays", "continuous")
+    return v, d

@@ -414,11 +414,14 @@ def _percentile_from_hist(hist_a, hist_b, q):
     if total <= 0:
         return None
     need = q * total
-    acc = 0
+    acc, low = 0, 0
     for high, c in counts:
+        if c and acc + c >= need:
+            # interpolated inside the bucket: performance_schema's buckets are ~4.7% wide, and the bucket edge alone moves
+            # in steps (sysbench's own p95 sat at 29.19 ms in six runs of M6) - small changes must show as small changes
+            return round((low + (high - low) * (need - acc) / c) / 1e9, 4)  # ps -> ms
         acc += c
-        if acc >= need:
-            return round(high / 1e9, 4)  # ps -> ms
+        low = high
     return None
 
 

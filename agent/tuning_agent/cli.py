@@ -924,6 +924,8 @@ def cmd_session(a):
                 "noise_pct": a.noise_pct, "started": time.time(), "runs": [], "best": None, "os_tuning": os_tuning,
                 "stability": getattr(a, "stability", None), "ai": getattr(a, "ai", None),
                 "server_version": c.variables.get("version")}
+        if getattr(a, "latency_stat", None) and a.latency_stat != "avg":
+            sess["latency_stat"] = a.latency_stat
         if r.get("study"):
             sess["study"] = r["study"]
         c.state.set("session", sess)
@@ -1102,7 +1104,7 @@ def _config_meta(c, variables):
     return out
 
 
-def _goal_value(goal, summary, external, explicit):
+def _goal_value(goal, summary, external, explicit, stat=None):
     if explicit is not None:
         return float(explicit), "explicit"
     if goal == "tps":
@@ -1117,6 +1119,9 @@ def _goal_value(goal, summary, external, explicit):
     for k in ("latency", "avg_latency_ms", "latency_ms"):
         if k in external:
             return float(external[k]), f"external:{k}"
+    if stat in ("p95", "p99") and summary.get(f"{stat}_latency_ms") is not None:
+        # session start --latency-stat: the tail of the server's statement latency histogram (user, Parma Ham: p99)
+        return summary[f"{stat}_latency_ms"], f"performance_schema {stat} statement latency (ms)"
     if summary.get("avg_latency_ms") is not None:
         return summary["avg_latency_ms"], "performance_schema avg statement latency (ms)"
     return None, None
@@ -1358,7 +1363,7 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
             if vals:
                 summary["client_" + k] = round(max(vals), 3)
     external = external or {}
-    gv, src = _goal_value(sess["goal"], summary, external, goal_value)
+    gv, src = _goal_value(sess["goal"], summary, external, goal_value, sess.get("latency_stat"))
     if goal_source and goal_value is not None:
         src = goal_source
     summary["goal_value"] = gv
@@ -4178,6 +4183,14 @@ def _autotune(a):
         c.state.set("session", sess)
     if a.tradeoffs and sess["policy"] != "benchmark":
         raise Fail("--tradeoffs needs a session with --policy benchmark")
+    if prof.mode == "continuous":
+        # a workload the agent does not drive (always running, reconnects after a restart): online changes measured A-B-A,
+        # a restart probe, and a final validation with full restarts (continuous.py; user, 2026-10-28)
+        from . import continuous
+        sess["bench"] = os.path.abspath(a.bench)
+        c.state.set("session", sess)
+        continuous.autotune(c, prof, a)
+        return
     if str(c.cfg.get("debug_symbols", "auto")).lower() != "off":
         from . import probes
         try:
@@ -4986,6 +4999,8 @@ def main(argv=None):
     s.add_argument("--workload", help="description of the workload/benchmark")
     s.add_argument("--notes")
     s.add_argument("--noise-pct", type=float, default=None, help="fixed noise threshold (default: 2%% until calibrated)")
+    s.add_argument("--latency-stat", choices=["avg", "p95", "p99"], default="avg",
+                   help="latency goal measured by the server: average, or the 95th / 99th percentile of statement latency")
     s.add_argument("--no-os-tuning", action="store_true", help="do not tune operating-system settings in this session")
     s.add_argument("--scope", help="what may be tuned: knobs,os (default); add 'filesystem' for filesystem experiments")
     s.add_argument("--allow-stale-agent", action="store_true", help="kept for older scripts: a build mismatch is only a warning now")

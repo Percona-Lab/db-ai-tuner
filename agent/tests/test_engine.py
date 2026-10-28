@@ -3640,6 +3640,39 @@ def test_run_lock_and_auto_start_of_queued_experiments():
     assert b.tick(4, **dict(kw, queued=[{"id": 433}, {"id": 434}]))  # a new experiment queued: tried again
 
 
+def test_continuous_mode_pieces():
+    """User, 2026-10-28: tune a workload the agent does not drive (Parma Ham): p99 statement latency from the server,
+    online changes judged A-B-A against the mean of their neighbours, workload changes flagged, restart-only ideas left out."""
+    from tuning_agent import collector, continuous, cli
+    # interpolated p99 (per-bucket counts, as performance_schema reports them): buckets up to 1.0 / 1.047 / 1.096 ms
+    a = [(1_000_000_000, 0), (1_047_000_000, 0), (1_096_000_000, 0)]
+    b = [(1_000_000_000, 900), (1_047_000_000, 100), (1_096_000_000, 0)]
+    p99 = collector._percentile_from_hist(a, b, 0.99)
+    assert 1.0 < p99 < 1.047, p99  # inside the bucket, not its edge
+    b2 = [(1_000_000_000, 950), (1_047_000_000, 50), (1_096_000_000, 0)]
+    assert collector._percentile_from_hist(a, b2, 0.99) < p99  # fewer slow statements: a lower p99, not the same edge
+    # A-B-A on latency (lower is better): B 4.6 ms between A 5.0 and 5.2 ms = -9.8% latency
+    v, d, ref = continuous.aba_verdict("latency", 5.0, 4.6, 5.2, 2.0)
+    assert v == "improved" and 9 < d < 10.5 and ref == 5.1, (v, d, ref)
+    assert continuous.aba_verdict("latency", 5.0, 5.05, 5.0, 2.0)[0] == "neutral"
+    assert continuous.aba_verdict("tps", 100, 90, 100, 2.0)[0] == "regressed"
+    # drift cancels: A rose 4.0 -> 5.0 over time, B in the middle at 4.5 is no change
+    assert continuous.aba_verdict("latency", 4.0, 4.5, 5.0, 2.0)[0] == "neutral"
+    assert continuous.workload_changed({"connections": 64, "stmts_per_trx": 12}, {"connections": 64, "stmts_per_trx": 12.5}) is None
+    assert "connections" in continuous.workload_changed({"connections": 64}, {"connections": 20})
+    assert continuous.noise_pct([5.0, 5.0, 5.0]) == 1.0 and continuous.noise_pct([5.0, 5.5, 4.5]) > 15
+    res = {"items": [{"id": "bp-grow", "kind": "config", "confidence": 2, "restart": False, "safety": "safe", "changes": []},
+                     {"id": "redo-grow", "kind": "config", "confidence": 2, "restart": True, "safety": "safe", "changes": []},
+                     {"id": "trx-commit-2", "kind": "config", "confidence": 2, "restart": False, "safety": "trade-off", "changes": []},
+                     {"id": "advice", "kind": "advice", "confidence": 2, "changes": []},
+                     {"id": "done", "kind": "config", "confidence": 2, "restart": False, "safety": "safe", "changes": []}]}
+    assert [i["id"] for i in continuous._candidates(res, {"done"}, False)] == ["bp-grow"]
+    assert [i["id"] for i in continuous._candidates(res, {"done"}, True)] == ["bp-grow", "trx-commit-2"]
+    # the goal: p99 from the server when the session asks for it
+    assert cli._goal_value("latency", {"avg_latency_ms": 2.0, "p99_latency_ms": 9.5}, {}, None, "p99") == (9.5, "performance_schema p99 statement latency (ms)")
+    assert cli._goal_value("latency", {"avg_latency_ms": 2.0, "p99_latency_ms": 9.5}, {}, None)[0] == 2.0
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
