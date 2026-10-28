@@ -85,6 +85,11 @@ Run everything as root on the database host. `autotune` takes hours, so start it
    noise earlier, or blocked by other sessions' evidence (e.g. concurrency limiters at 16+ connections per vCPU), is
    measured once (runs labelled "(validate)"); never one that hurt in this session, failed, or made purge unsustainable.
    It also lifts the early stops. Both options continue an existing session: run `autotune` again with them.
+   Experiments queued on the session page (or with `tuning-agent experiment add`) after autotune finished start by
+   themselves: the agent's daemon starts them once the session is open and the host has been idle for 5 minutes (no
+   command running, nothing measuring, no data load); log in `<state_dir>/auto-experiments.log`. Only one benchmarking
+   command runs at a time (autotune, measure run, experiment run, run-length, purge-triage): a second one is refused
+   while the first holds the host's run lock. `auto_experiments = false` in agent.ini turns the automatic start off.
 6. **Watch.** `tuning-agent status --json` (current phase and time left) and `tail /root/autotune.log` every
    few minutes; the session page in the web app shows every run as it lands. Do not run other load or apply
    changes while it runs.

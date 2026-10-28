@@ -3607,6 +3607,39 @@ def test_validate_discarded_measures_set_aside_ideas_once():
         assert by[x]["confidence"] == 0 and not by[x].get("validate"), x
 
 
+def test_run_lock_and_auto_start_of_queued_experiments():
+    """User, 2026-10-28: experiments added on the web page (or by the user's agent) after autotune finished should start
+    by themselves. One benchmarking command at a time (run lock); queued experiments start after the host was idle 5 min."""
+    import tempfile
+    from tuning_agent import runlock
+    d = tempfile.mkdtemp()
+    assert runlock.holder(d) is None
+    with runlock.held(d, "autotune"):
+        h = runlock.holder(d)
+        assert h and h["what"] == "autotune", h
+        try:
+            with runlock.held(d, "experiment run"):
+                raise AssertionError("a second command must not start")
+        except runlock.Busy as e:
+            assert "autotune" in str(e)
+    assert runlock.holder(d) is None
+    a = runlock.AutoStart(idle_s=300)
+    q = [{"id": 433}]
+    kw = dict(enabled=True, session=397, measuring=False, lock_holder=None, loading=False, queued=q, bench="/root/p.ini")
+    assert a.tick(1000, **kw) is None and a.tick(1200, **kw) is None  # idle 0 / 200 s
+    assert a.tick(1300, **dict(kw, lock_holder={"what": "autotune"})) is None  # busy again: the idle time restarts
+    assert a.tick(1500, **kw) is None and a.tick(1700, **kw) is None
+    why = a.tick(1800, **kw)
+    assert why and "#433" in why, why
+    for k, v in (("measuring", True), ("loading", True), ("enabled", False), ("queued", []), ("session", None)):
+        b = runlock.AutoStart(idle_s=0)
+        assert b.tick(1, **dict(kw, **{k: v})) is None, k
+    # a queue that does not move after two starts (the experiment fails before it runs) is not started over and over
+    b = runlock.AutoStart(idle_s=0)
+    assert b.tick(1, **kw) and b.tick(2, **kw) and b.tick(3, **kw) is None
+    assert b.tick(4, **dict(kw, queued=[{"id": 433}, {"id": 434}]))  # a new experiment queued: tried again
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

@@ -15,7 +15,7 @@ import time
 import urllib.parse
 import uuid
 
-from . import __version__, baseline, bench, bottleneck, clientrole, collector, engine, evaluate, hostinfo, llmassist, mechanisms, mysqldb, ostune, planner, serverwatch
+from . import __version__, baseline, bench, bottleneck, clientrole, collector, engine, evaluate, hostinfo, llmassist, mechanisms, mysqldb, ostune, planner, runlock, serverwatch
 from .knowledge import added_tradeoffs, run_tradeoffs, start_tradeoffs, tradeoffs_in
 from .applier import Applier, detect_cnf_path, detect_service
 from .knowledge import OPTIONS as KOPTIONS
@@ -4761,10 +4761,11 @@ def cmd_daemon(a):
     last_hello = 0
     device = None
     sampler = None
-    last_prune = last_rg = last_load = 0
+    last_prune = last_rg = last_load = last_auto = last_loading = 0
     rg_err = None
     from . import loaddetect
     loads = None
+    auto = runlock.AutoStart()
     log(f"tuning-agent {__version__} daemon: sampling every {interval:.0f}s, server {c.cfg['server']}")
     while not stop["flag"]:
         t0 = time.time()
@@ -4818,6 +4819,8 @@ def cmd_daemon(a):
             try:
                 loads = loads or loaddetect.Tracker(c.datadir())
                 rep = loads.report(time.time(), c.db if sampler is not None else None)
+                if rep and rep[0] == "loading data":
+                    last_loading = time.time()
                 if rep:
                     st_ = c.state.load().data
                     open_ = (st_.get("session") or {}).get("id")
@@ -4834,6 +4837,12 @@ def cmd_daemon(a):
                     c.activity(rep[0], rep[1])
             except Exception as e:  # never let it break sampling
                 log(f"load detection: {e}")
+        if time.time() - last_auto > 60:
+            last_auto = time.time()
+            try:
+                _auto_experiments(c, auto, time.time() - last_loading < 600)
+            except Exception as e:  # never let it break sampling
+                log(f"queued experiments: {e}")
         if time.time() - last_prune > 3600:
             store.prune()
             last_prune = time.time()
@@ -4848,6 +4857,30 @@ def cmd_daemon(a):
         c.client._call("POST", "/bye", {"environment_id": c.env_id(), "host_shutdown": st == "stopping"})  # one attempt: never delay the stop
     except Exception:
         pass
+
+
+def _auto_experiments(c, auto, loading):
+    """Experiments queued after autotune finished (web page, `experiment add`) start by themselves once the host has been
+    idle for runlock.IDLE_S: the session open, no command holding the run lock, no measurement open, no data load
+    (user, 2026-10-28). `auto_experiments = false` in agent.ini turns it off."""
+    sess = (c.state.load().data.get("session") or {})
+    enabled = str(c.cfg.get("auto_experiments", "true")).lower() not in ("false", "off", "no", "0")
+    lock = runlock.holder(c.state.dir)
+    measuring = bool(c.state.load().data.get("measurement"))
+    queued = _queued_experiments(c, sess) if enabled and sess.get("id") and not lock and not measuring and not loading else []
+    why = auto.tick(time.time(), enabled=enabled, session=sess.get("id"), measuring=measuring, lock_holder=lock, loading=loading,
+                    queued=queued, bench=sess.get("bench"))
+    if not why:
+        return
+    logf = os.path.join(c.state.dir, "auto-experiments.log")
+    log(f"starting queued experiments: {why} (log {logf})")
+    c.activity("starting queued experiments", why)
+    c.event("experiment", f"queued experiments started automatically: {why}; log on the host: {logf}", {"queued": [e["id"] for e in queued]})
+    with open(logf, "a") as out:
+        out.write(f"\n== {time.strftime('%Y-%m-%d %H:%M:%S')} {why}\n")
+        out.flush()
+        subprocess.Popen([sys.executable, "-m", "tuning_agent", "experiment", "run"], stdout=out, stderr=subprocess.STDOUT,
+                         stdin=subprocess.DEVNULL, start_new_session=True, cwd=c.state.dir)
 
 
 GUIDE = """tuning-agent workflow (for people and coding agents)
@@ -5082,7 +5115,18 @@ def main(argv=None):
     a = p.parse_args(argv)
     JSON = a.json
     try:
-        a.fn(a)
+        # commands that drive the benchmark hold the host's run lock: one at a time, and the daemon starts queued
+        # experiments only when nothing holds it (runlock)
+        what = {cmd_autotune: "autotune", cmd_run_length: "run-length", cmd_purge_triage: "purge-triage"}.get(a.fn) or (
+            f"{a.fn.__name__[4:]} run" if a.fn in (cmd_measure, cmd_experiment) and getattr(a, "action", None) == "run" else None)
+        if what:
+            try:
+                with runlock.held(load_cfg().get("state_dir", "/var/lib/tuning-agent"), what):
+                    a.fn(a)
+            except runlock.Busy as e:
+                raise Fail(str(e))
+        else:
+            a.fn(a)
     except Fail as e:
         if JSON:
             print(json.dumps({"ok": False, "error": str(e)}))

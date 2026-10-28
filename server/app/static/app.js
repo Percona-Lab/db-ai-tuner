@@ -1605,7 +1605,7 @@ async function renderExperiments(el, sess) {
   const active = sess.status === "active";
   // queued experiments run inside autotune (first) or `experiment run`: with the agent idle nothing starts them (user, 397)
   const idle = !sess.activity || /^idle/.test(sess.activity.phase || "");
-  const waitNote = active && idle ? `<div class="reason muted">Waiting: the agent is not tuning now. Queued experiments run first in the next <code>tuning-agent autotune</code>, or now with <code>tuning-agent experiment run --bench PROFILE</code> on the database host.</div>` : "";
+  const waitNote = active && idle ? `<div class="reason muted">Starts by itself once the database host has been idle for 5 minutes (nothing measuring or loading data; agent builds from 2026-10-28). Older agents: run <code>tuning-agent experiment run</code> on the host, or the next <code>tuning-agent autotune</code> runs it first.</div>` : "";
   const row = e => {
     const spec = e.kind === "sweep" ? `sweep <span class="mono">${esc(e.spec.variable)}</span> = ${e.spec.values.map(esc).join(", ")}` : `try ${e.spec.changes.map(c => `<span class="mono">${esc(c.variable)}=${esc(c.value)}</span>`).join(", ")}`;
     const res = e.results && e.results.arms ? `<div class="tablewrap" style="margin-top:6px"><table><thead><tr><th>Value</th><th class="num">Runs</th><th class="num">${esc(goalUnit(sess.goal, sess))}</th><th class="num">vs parent</th><th>Result</th></tr></thead><tbody>${e.results.arms.map(a =>
