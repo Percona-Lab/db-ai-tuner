@@ -4100,7 +4100,8 @@ def cmd_experiment(a):
             raise Fail("use --sweep var=v1,v2,... or --try var=value (repeatable)")
         body.update({"repeats": a.repeats, "reason": a.reason, "force": a.force, "created_by": "cli"})
         r = c.client.post(f"/sessions/{sess['id']}/experiments", body)
-        emit({"ok": True, "id": r["id"]}, f"Experiment #{r['id']} queued; autotune runs it next, or run it now with `tuning-agent experiment run --bench PROFILE`.")
+        emit({"ok": True, "id": r["id"]}, f"Experiment #{r['id']} queued: a running autotune runs it next; otherwise the agent starts it once the host has been "
+                                     f"idle for {runlock.IDLE_S // 60} min, or run it now with `tuning-agent experiment run`.")
     elif a.action == "list":
         ex = c.client.get(f"/sessions/{sess['id']}/experiments?status=").get("experiments", [])
         emit({"experiments": ex}, "\n".join(f"#{e['id']} {e['status']:<9} {e['kind']:<5} {json.dumps(e['spec'])[:80]}  {e.get('message') or ''}" for e in ex) or "No experiments.")
