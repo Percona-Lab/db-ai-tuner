@@ -108,8 +108,39 @@ def wait_settled(c, t0, label, min_s=SETTLE_MIN_S, max_s=SETTLE_MAX_S, hold_s=SE
             return int(el), False
 
 
-def measure(c, label, window_s, notes=None):
-    """One measured window of the live workload; the run as recorded (goal from the server)."""
+CLIENT_CHURN_FRAC = 0.5  # new connections in a window >= this share of the connected clients: the client restarted
+
+
+def measure(c, label, window_s, notes=None, attempts=3):
+    """One measured window of the live workload; the run as recorded (goal from the server). A window during which the
+    client reconnected wholesale (Parma Ham starts a new HammerDB run every hour: 64 users disconnect, reconnect and ramp
+    up - session 414's third calibration window: throughput spread 10.8% vs 0.4-2%, latency +13%) measured the client, not
+    the configuration: flagged unreliable and measured again, up to `attempts` windows."""
+    for i in range(attempts):
+        a = _status(c, "Connections", "Threads_connected")
+        run = _measure_once(c, label + (f" (again: the client reconnected)" if i else ""), window_s, notes)
+        b = _status(c, "Connections", "Threads_connected")
+        new = b["Connections"] - a["Connections"]
+        conns = max(a["Threads_connected"], b["Threads_connected"], 1)
+        if new < CLIENT_CHURN_FRAC * conns:
+            return run
+        why = f"the client reconnected during the window ({int(new)} new connections for {int(conns)} connected): not compared"
+        _cli().log(f"   {label}: {why}")
+        run["verdict"] = "unreliable"
+        run["evaluation"] = dict(run.get("evaluation") or {}, note=why, client_restart=True)
+        try:
+            c.client.post(f"/runs/{run['id']}/evaluation", {"verdict": "unreliable", "evaluation": run["evaluation"]})
+        except Exception:
+            pass
+        s_ = c.session()
+        for r in s_["runs"]:
+            if r["seq"] == run["seq"]:
+                r["verdict"], r["evaluation"] = "unreliable", run["evaluation"]
+        c.state.set("session", s_)
+    return run
+
+
+def _measure_once(c, label, window_s, notes=None):
     cli = _cli()
     cli._measure_start(c, label, notes, warmed=True)
     c.activity("measuring", label, window_s)
@@ -262,6 +293,7 @@ def autotune(c, prof, a):
     while True:
         sess = c.session()
         a_runs = [r for r in sess["runs"] if str(r.get("label", "")).startswith(("baseline", "A "))
+                  and r.get("verdict") != "unreliable" and r.get("goal_value") is not None
                   and int((r.get("summary") or {}).get("duration_s") or window) >= 0.9 * window]
         for i in range(len(a_runs), CALIBRATION_WINDOWS):
             a_runs.append(measure(c, f"baseline {window // 60} min ({i + 1}/{CALIBRATION_WINDOWS})", window))

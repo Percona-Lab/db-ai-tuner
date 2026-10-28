@@ -3707,6 +3707,30 @@ def test_continuous_load_check_and_reconnect_wait():
         continuous.time.sleep = saved
 
 
+def test_continuous_window_with_client_restart_is_measured_again():
+    """Session 414: Parma Ham started its hourly HammerDB run inside a calibration window (64 users reconnecting): that window
+    measured the client, not the configuration - flagged unreliable and measured again."""
+    from tuning_agent import continuous
+    seq = iter([{"Connections": 1000, "Threads_connected": 68}, {"Connections": 1066, "Threads_connected": 68},   # churn
+                {"Connections": 1066, "Threads_connected": 68}, {"Connections": 1068, "Threads_connected": 68}])  # quiet
+    runs = iter([{"id": 7, "seq": 7, "goal_value": 1.87}, {"id": 8, "seq": 8, "goal_value": 1.62}])
+
+    class C:
+        client = type("Cl", (), {"post": lambda self, *a, **k: None})()
+        state = type("St", (), {"set": lambda self, *a: None})()
+
+        def session(self):
+            return {"runs": [{"seq": 7}, {"seq": 8}]}
+    saved = (continuous._status, continuous._measure_once)
+    continuous._status = lambda c, *n: next(seq)
+    continuous._measure_once = lambda c, label, w, notes=None: dict(next(runs), label=label)
+    try:
+        r = continuous.measure(C(), "baseline 20 min (3/3)", 1200)
+        assert r["seq"] == 8 and r["goal_value"] == 1.62 and "again" in r["label"], r
+    finally:
+        continuous._status, continuous._measure_once = saved
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
