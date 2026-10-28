@@ -5147,6 +5147,12 @@ def main(argv=None):
         what = {cmd_autotune: "autotune", cmd_run_length: "run-length", cmd_purge_triage: "purge-triage"}.get(a.fn) or (
             f"{a.fn.__name__[4:]} run" if a.fn in (cmd_measure, cmd_experiment) and getattr(a, "action", None) == "run" else None)
         if what:
+            def _stop(*_):
+                # SIGTERM / SIGHUP stop a benchmarking command the way Ctrl-C does: an open measurement is aborted, the
+                # status left truthful (a background autotune ignores SIGINT; session 412 could only be killed outright)
+                raise KeyboardInterrupt
+            signal.signal(signal.SIGTERM, _stop)
+            signal.signal(signal.SIGHUP, _stop)
             try:
                 with runlock.held(load_cfg().get("state_dir", "/var/lib/tuning-agent"), what):
                     a.fn(a)
