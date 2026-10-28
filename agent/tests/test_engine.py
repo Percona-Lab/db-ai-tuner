@@ -3658,6 +3658,16 @@ def test_continuous_mode_pieces():
     assert continuous.aba_verdict("tps", 100, 90, 100, 2.0)[0] == "regressed"
     # drift cancels: A rose 4.0 -> 5.0 over time, B in the middle at 4.5 is no change
     assert continuous.aba_verdict("latency", 4.0, 4.5, 5.0, 2.0)[0] == "neutral"
+    # neighbours that disagree far beyond the noise (session 414: 1.47 vs 30.8 ms) are no reference: unreliable, not "improved"
+    class _C:
+        client = type("Cl", (), {"post": lambda self, *a, **k: None})()
+        state = type("St", (), {"set": lambda self, *a: None})()
+
+        def session(self):
+            return {"runs": [{"seq": 17}]}
+    v, _ = continuous.judge(_C(), {"goal": "latency"}, {"id": 17, "seq": 17, "goal_value": 2.24}, {"seq": 16, "goal_value": 1.47},
+                            {"seq": 19, "goal_value": 30.8}, 5.5)
+    assert v == "unreliable", v
     assert continuous.workload_changed({"connections": 64, "stmts_per_trx": 12}, {"connections": 64, "stmts_per_trx": 12.5}) is None
     assert "connections" in continuous.workload_changed({"connections": 64}, {"connections": 20})
     assert continuous.noise_pct([5.0, 5.0, 5.0]) == 1.0 and continuous.noise_pct([5.0, 5.5, 4.5]) > 15
@@ -3746,6 +3756,48 @@ def test_continuous_window_with_client_restart_is_measured_again():
         assert continuous.client_restarted(C(), 0, 1) is None
     finally:
         st.SampleStore, continuous._measure_once = saved
+
+
+def test_unmanaging_online_restores_the_users_value_not_the_compiled_default():
+    """Session 414: Parma Ham's option file sets innodb_buffer_pool_size = 4736M; an experiment set 5G online and the A-B-A
+    revert unmanaged it - SET GLOBAL ... = DEFAULT left a 128 MB buffer pool under the load (latency 1.5 -> 31 ms)."""
+    from tuning_agent import applier
+    runtime = {"innodb_buffer_pool_size": str(4736 << 20), "version": "9.7.2-2", "version_comment": "Percona Server (GPL)"}
+    sql = []
+
+    class DB:
+        def execute(self, q, args=None):
+            sql.append(q)
+            if q.startswith("SET GLOBAL innodb_buffer_pool_size"):
+                v = q.split("=", 1)[1].strip()
+                runtime["innodb_buffer_pool_size"] = str(134217728 if v == "DEFAULT" else int(v))
+
+        def scalar(self, q):
+            return runtime["innodb_buffer_pool_size"]
+
+        def variables(self):
+            return dict(runtime)
+
+    class St:
+        def __init__(self):
+            self.data = {"managed": {}}
+
+        def __getitem__(self, k):
+            return self.data[k]
+
+        def get(self, k, d=None):
+            return self.data.get(k, d)
+
+        def save(self):
+            pass
+    ap = applier.Applier({"cnf_path": "/tmp/test-ta.cnf", "service_name": "mysql", "allow_os_tuning": "false"}, St(), DB(), log=lambda *a: None)
+    ap.all_settings = lambda: dict(runtime)
+    ap.write_cnf = lambda managed: None
+    ap.apply([{"variable": "innodb_buffer_pool_size", "value": str(5 << 30), "reason": "test", "source": "test"}], allow_restart=False)
+    assert runtime["innodb_buffer_pool_size"] == str(5 << 30), runtime
+    ap.apply([{"variable": "innodb_buffer_pool_size", "value": None, "reason": "revert", "source": "test"}], allow_restart=False)
+    assert runtime["innodb_buffer_pool_size"] == str(4736 << 20), (runtime, sql)
+    assert not any("DEFAULT" in q for q in sql), sql
 
 
 if __name__ == "__main__":

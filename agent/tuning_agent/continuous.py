@@ -197,11 +197,17 @@ def judge(c, sess, run_b, run_a1, run_a2, thr):
     """Record the A-B-A verdict on run B (server and local session)."""
     v, d, ref = aba_verdict(sess["goal"], run_a1["goal_value"], run_b["goal_value"], run_a2["goal_value"] if run_a2 else None, thr)
     changed = workload_changed(run_a1.get("fingerprint") or {}, run_b.get("fingerprint") or {})
+    a1, a2 = run_a1.get("goal_value"), (run_a2 or {}).get("goal_value")
+    if not changed and a1 and a2 and abs(a2 - a1) / min(abs(a1), abs(a2)) * 100 > 3 * thr:
+        # the two neighbours disagree far beyond the noise: the server changed between them, and their mean is no reference
+        # (session 414: A windows of 1.47 and 30.8 ms - the revert had left a 128 MB buffer pool - made a regression "+86%")
+        changed = f"the two neighbouring windows of the current configuration disagree ({a1:.4g} vs {a2:.4g}, beyond 3x the noise)"
+        run_b["_server_changed"] = changed
     if changed:
         v = "unreliable"
     ev = dict(run_b.get("evaluation") or {}, method="A-B-A", goal_delta_pct=d, goal_noise_pct=thr, neighbours_mean=round(ref, 4),
               parent_runs=[r["seq"] for r in (run_a1, run_a2) if r],
-              **({"note": f"the workload changed between the windows ({changed}): not compared"} if changed else {}))
+              **({"note": f"not compared: {changed}"} if changed else {}))
     run_b["verdict"], run_b["evaluation"] = v, ev
     try:
         c.client.post(f"/runs/{run_b['id']}/evaluation", {"verdict": v, "evaluation": ev})
@@ -372,6 +378,10 @@ def autotune(c, prof, a):
         wait_settled(c, t1, f"after reverting {it['id']}")
         a2 = measure(c, "A (current configuration)", window)
         v, d = judge(c, c.session(), b, last_a, a2, thr)
+        if b.get("_server_changed"):
+            # the current configuration itself measured very differently before and after: something changed the server
+            # (an online revert that did not restore the start - session 414) - stop rather than tune a changed server
+            raise cli.Fail(f"stopped: {b['_server_changed']} - check the server's configuration and state before going on")
         log(f"   {it['id']}: {d:+.2f}% vs the neighbours' mean (±{thr}%): {v}" if d is not None else f"   {it['id']}: {v}")
         if v == "improved":
             t2 = time.time()
@@ -419,6 +429,10 @@ def autotune(c, prof, a):
         a2 = measure(c, "A after restart (current configuration)", window)
         a2["_key"] = _cfg_key(c)
         v, d = judge(c, c.session(), b, last_ar, a2, thr)
+        if b.get("_server_changed"):
+            # the current configuration itself measured very differently before and after: something changed the server
+            # (an online revert that did not restore the start - session 414) - stop rather than tune a changed server
+            raise cli.Fail(f"stopped: {b['_server_changed']} - check the server's configuration and state before going on")
         log(f"   {it['id']}: {d:+.2f}% vs the neighbours' mean (±{thr}%): {v}" if d is not None else f"   {it['id']}: {v}")
         if v == "improved":
             before_n = _status(c, "Threads_connected")["Threads_connected"]

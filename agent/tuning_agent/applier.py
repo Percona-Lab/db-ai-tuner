@@ -355,8 +355,14 @@ class Applier:
             if var in OPTIONS or dyn is False or (dyn is None and meta is not None and not meta.get("dynamic")):
                 need_restart.append(var)
                 continue
+            # the value before the agent first changed it - from the user's own option files (Parma Ham's 4736M buffer
+            # pool), not the compiled default: unmanaging online set DEFAULT, and session 414's A-B-A revert left a
+            # 128 MB buffer pool under the load (latency 1.5 -> 31 ms). DEFAULT only when nothing was recorded
+            if var not in originals:
+                originals[var] = before_vars.get(var)
+            back = originals.get(var) if val is None else val
             try:
-                self.db.execute(f"SET GLOBAL {var} = {sql_value(var, 'DEFAULT' if val is None else val)}")
+                self.db.execute(f"SET GLOBAL {var} = {sql_value(var, 'DEFAULT' if back is None else back)}")
             except pymysql.MySQLError as e:
                 code = e.args[0] if e.args else 0
                 if code in (1238, 1621):  # read only / read only, restart needed
