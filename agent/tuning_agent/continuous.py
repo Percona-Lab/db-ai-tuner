@@ -22,6 +22,8 @@ SETTLE_MAX_S = 1800
 RECONNECT_FRAC = 0.8  # connections back to this share of the level before the restart = the client has reconnected
 RECONNECT_MAX_S = 900
 CALIBRATION_WINDOWS = 3
+NOISE_TARGET_PCT = 5.0
+WINDOW_MAX_S = 1200  # a tail percentile needs long windows: p99 over 300 s of Parma Ham moved ±19.6% (session 412)
 SETTLE_KEYS = ("tps", "avg_latency_ms", "bp_hit_pct", "bp_dirty_pct", "checkpoint_age_pct", "history_list_length")
 
 
@@ -208,18 +210,35 @@ def autotune(c, prof, a):
                        "load that is already running - start the benchmark first")
     log(f"== continuous workload: {info['qps']} statements/s, {info['connections']} connections; goal {sess['goal']}"
         + (f" ({sess['latency_stat']})" if sess.get("latency_stat") else "") + f"; windows of {window} s, changes online, measured A-B-A")
-    # calibration: the current configuration, CALIBRATION_WINDOWS windows after it settled
+    # calibration: the current configuration, CALIBRATION_WINDOWS windows after it settled; the window grows until the
+    # noise is within NOISE_TARGET_PCT (noise falls ~ 1/sqrt(window): 4x longer halves it), at most WINDOW_MAX_S
+    window = int(sess.get("cont_window") or window)
     if not sess.get("runs"):
         wait_settled(c, time.time(), "before the calibration", min_s=60)
-        for i in range(CALIBRATION_WINDOWS):
-            measure(c, f"baseline ({i + 1}/{CALIBRATION_WINDOWS})", window)
-    sess = c.session()
-    a_runs = [r for r in sess["runs"] if str(r.get("label", "")).startswith(("baseline", "A "))]
-    thr = noise_pct([r["goal_value"] for r in a_runs[-CALIBRATION_WINDOWS:]])
-    log(f"   noise from the calibration windows: ±{thr}%")
-    restart_warm = None
-    if getattr(a, "restart_probe", True) and str(c.cfg.get("allow_restart", "true")).lower() == "true":
+    while True:
+        sess = c.session()
+        a_runs = [r for r in sess["runs"] if str(r.get("label", "")).startswith(("baseline", "A "))
+                  and int((r.get("summary") or {}).get("duration_s") or window) >= 0.9 * window]
+        for i in range(len(a_runs), CALIBRATION_WINDOWS):
+            a_runs.append(measure(c, f"baseline {window // 60} min ({i + 1}/{CALIBRATION_WINDOWS})", window))
+        thr = noise_pct([r["goal_value"] for r in a_runs[-CALIBRATION_WINDOWS:]])
+        log(f"   noise from {CALIBRATION_WINDOWS} calibration windows of {window} s: ±{thr}%")
+        if thr <= NOISE_TARGET_PCT or window >= WINDOW_MAX_S:
+            break
+        window = min(WINDOW_MAX_S, int(window * min(16.0, (thr / NOISE_TARGET_PCT) ** 2)) // 60 * 60 or 60)
+        log(f"   above the ±{NOISE_TARGET_PCT}% target: windows of {window} s from now, calibration measured again")
+        c.event("noise-plan", f"continuous: noise ±{thr}% with the goal measured over windows that short; windows of {window} s", {"window_s": window})
+        sess = c.session()
+        sess["cont_window"] = window
+        c.state.set("session", sess)
+    if thr > NOISE_TARGET_PCT:
+        log(f"   NOTE: still ±{thr}% at the longest window ({WINDOW_MAX_S} s): only larger effects can be resolved")
+    restart_warm = c.session().get("restart_warmup_s")  # measured once per session (an autotune run again reuses it)
+    if not restart_warm and str(c.cfg.get("allow_restart", "true")).lower() == "true":
         restart_warm = restart_probe(c)
+        sess = c.session()
+        sess["restart_warmup_s"] = restart_warm
+        c.state.set("session", sess)
         wait_settled(c, time.time(), "after the restart probe", min_s=60)
         a_runs.append(measure(c, "A (after the restart probe)", window))
     start_managed = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
