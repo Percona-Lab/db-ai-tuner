@@ -1044,3 +1044,16 @@ def test_incidents_always_reach_the_session_page(user):
     evs = user.ui.get(f"/api/sessions/{sid}").json()["events"]
     hit = [e for e in evs if e["type"] == "incident"]
     assert len(hit) == 1 and hit[0]["data"]["kind"] == "hang", [e["type"] for e in evs][:5]
+
+
+def test_experiment_sweep_with_settings_and_combinations():
+    """User: related settings belong together - a combination is one configuration; a sweep can carry settings applied with
+    every value (thread_pool_size swept with thread_handling=pool-of-threads)."""
+    from app import main
+    kind, spec, _ = main._parse_experiment({"kind": "sweep", "variable": "thread_pool_size", "values": "8, 16, 32",
+                                            "settings": "thread_handling=pool-of-threads"})
+    assert kind == "sweep" and spec["values"] == ["8", "16", "32"] and spec["with"] == [{"variable": "thread_handling", "value": "pool-of-threads"}]
+    kind, spec, _ = main._parse_experiment({"kind": "sweep", "variable": "x", "values": "1, 2"})
+    assert "with" not in spec
+    kind, spec, _ = main._parse_experiment({"kind": "try", "settings": "thread_handling=pool-of-threads, thread_pool_size=16"})
+    assert kind == "try" and len(spec["changes"]) == 2

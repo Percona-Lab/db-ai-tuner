@@ -1607,7 +1607,8 @@ async function renderExperiments(el, sess) {
   const idle = !sess.activity || /^idle/.test(sess.activity.phase || "");
   const waitNote = active && idle ? `<div class="reason muted">Starts by itself once the database host has been idle for 5 minutes (nothing measuring or loading data; agent builds from 2026-10-28). Older agents: run <code>tuning-agent experiment run</code> on the host, or the next <code>tuning-agent autotune</code> runs it first.</div>` : "";
   const row = e => {
-    const spec = e.kind === "sweep" ? `sweep <span class="mono">${esc(e.spec.variable)}</span> = ${e.spec.values.map(esc).join(", ")}` : `try ${e.spec.changes.map(c => `<span class="mono">${esc(c.variable)}=${esc(c.value)}</span>`).join(", ")}`;
+    const kv = cs => cs.map(c => `<span class="mono">${esc(c.variable)}=${esc(c.value)}</span>`).join(", ");
+    const spec = e.kind === "sweep" ? `sweep <span class="mono">${esc(e.spec.variable)}</span> = ${e.spec.values.map(esc).join(", ")}${(e.spec.with || []).length ? `, each with ${kv(e.spec.with)}` : ""}` : `try together: ${kv(e.spec.changes)}`;
     const res = e.results && e.results.arms ? `<div class="tablewrap" style="margin-top:6px"><table><thead><tr><th>Value</th><th class="num">Runs</th><th class="num">${esc(goalUnit(sess.goal, sess))}</th><th class="num">vs parent</th><th>Result</th></tr></thead><tbody>${e.results.arms.map(a =>
       `<tr><td class="mono">${esc(a.arm)}${e.results.kept === a.arm ? ' <span class="badge good">kept</span>' : ""}</td><td class="num">${a.runs || ""}</td><td class="num">${num(a.goal_mean)}</td>
        <td class="num ${a.verdict === "better" ? "up" : a.verdict === "worse" ? "down" : ""}">${a.delta_pct != null ? pct(a.delta_pct) : ""}</td><td>${esc(a.verdict || a.status)}${a.reason ? info(a.reason) : ""}</td></tr>`).join("")}</tbody></table></div>` : "";
@@ -1616,10 +1617,10 @@ async function renderExperiments(el, sess) {
       ${e.reason ? `<div class="reason">${esc(e.reason)}</div>` : ""}${e.message ? `<div class="reason">${esc(e.message)}</div>` : ""}${e.status === "queued" ? waitNote : ""}${res}</div>`;
   };
   el.innerHTML = (active ? `<form id="expf" class="row" style="align-items:flex-end;gap:8px">
-      <div><label>Kind</label><select name="kind" id="ekind" style="width:auto"><option value="sweep">Sweep a variable</option><option value="try">Try settings</option></select></div>
-      <div id="esweep" class="row" style="gap:8px"><div><label>Variable</label><input name="variable" placeholder="innodb_buffer_pool_size" style="width:220px"></div>
-        <div><label>Values</label><input name="values" placeholder="1G, 2G, 3G" style="width:160px"></div></div>
-      <div id="etry" hidden><label>Settings</label><input name="settings" placeholder="var=value, var2=value2" style="width:380px"></div>
+      <div><label>Kind${info("Sweep: one variable over several values, each value measured as its own run (optionally together with fixed settings, e.g. thread_pool_size swept with thread_handling=pool-of-threads). Try a combination: every setting listed is applied together and measured as one configuration - for related settings such as the thread pool and its options. To compare several combinations, queue one per combination.")}</label><select name="kind" id="ekind" style="width:auto"><option value="sweep">Sweep one variable</option><option value="try">Try a combination</option></select></div>
+      <div id="esweep" class="row" style="gap:8px"><div><label>Variable</label><input name="variable" placeholder="thread_pool_size" style="width:220px"></div>
+        <div><label>Values</label><input name="values" placeholder="8, 16, 32" style="width:160px"></div></div>
+      <div><label id="esetl">Together with (optional)</label><input name="settings" id="esettings" placeholder="thread_handling=pool-of-threads" style="width:380px"></div>
       <div><label>Runs per value</label><select name="repeats" style="width:auto"><option>1</option><option>2</option><option>3</option></select></div>
       <div style="flex:1;min-width:160px"><label>Reason</label><input name="reason" placeholder="why (optional)"></div>
       <button class="primary">Queue</button></form><div class="err" id="eerr"></div>` : "") +
@@ -1627,7 +1628,12 @@ async function renderExperiments(el, sess) {
   const f = el.querySelector("#expf");
   if (f) {
     const k = el.querySelector("#ekind");
-    k.onchange = () => { el.querySelector("#esweep").hidden = k.value !== "sweep"; el.querySelector("#etry").hidden = k.value !== "try"; };
+    k.onchange = () => {
+      const sweep = k.value === "sweep";
+      el.querySelector("#esweep").hidden = !sweep;
+      el.querySelector("#esetl").textContent = sweep ? "Together with (optional)" : "Settings, applied together";
+      el.querySelector("#esettings").placeholder = sweep ? "thread_handling=pool-of-threads" : "thread_handling=pool-of-threads, thread_pool_size=16, thread_pool_oversubscribe=3";
+    };
     f.onsubmit = async ev => { ev.preventDefault();
       try { await api(`/api/sessions/${sess.id}/experiments`, { method: "POST", body: Object.fromEntries(new FormData(f)) }); renderExperiments(el, sess); }
       catch (err) { el.querySelector("#eerr").textContent = err.message; } };

@@ -3835,7 +3835,9 @@ def _run_experiment(c, prof, exp):
     """Measure every arm of an experiment from the same parent configuration; keep the best arm only if it beats noise."""
     sess = c.session()
     eid, spec = exp["id"], exp["spec"]
-    arms = [spec["changes"]] if exp["kind"] == "try" else [[{"variable": spec["variable"], "value": x}] for x in spec["values"]]
+    # a sweep's "with" settings go with every value (thread_pool_size swept with thread_handling=pool-of-threads)
+    arms = [spec["changes"]] if exp["kind"] == "try" else [list(spec.get("with") or []) + [{"variable": spec["variable"], "value": x}]
+                                                          for x in spec["values"]]
     label = lambda arm: ", ".join(f"{x['variable']}={x['value']}" for x in arm)
     parent = {k: v["value"] for k, v in c.state.get("managed", {}).items()}
     goal = sess["goal"]
@@ -4099,6 +4101,8 @@ def cmd_experiment(a):
         if a.sweep:
             var, _, vals = a.sweep.partition("=")
             body = {"kind": "sweep", "variable": var, "values": vals}
+            if a.try_:  # --sweep with --try: those settings go with every value of the sweep
+                body["settings"] = "\n".join(a.try_)
         elif a.try_:
             body = {"kind": "try", "settings": "\n".join(a.try_)}
         else:
@@ -5085,7 +5089,8 @@ def main(argv=None):
     s = sp.add_parser("experiment", help="human-specified experiments: try settings or sweep one variable")
     s.add_argument("action", choices=["add", "list", "run"])
     s.add_argument("--sweep", help="var=v1,v2,v3 (e.g. innodb_buffer_pool_size=1G,2G,3G)")
-    s.add_argument("--try", dest="try_", action="append", help="var=value (repeatable): one combined configuration")
+    s.add_argument("--try", dest="try_", action="append", help="var=value (repeatable): one combination, applied together; "
+                                                              "with --sweep: applied with every value of the sweep")
     s.add_argument("--repeats", type=int, default=1)
     s.add_argument("--reason")
     s.add_argument("--force", action="store_true", help="skip the memory-budget guard")

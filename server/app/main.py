@@ -906,16 +906,24 @@ def delete_session(sid: int, request: Request):
     return {"ok": True}
 
 
+def _parse_settings(text):
+    changes = []
+    for line in str(text or "").replace(",", "\n").splitlines():
+        if line.strip():
+            if "=" not in line:
+                raise HTTPException(400, f"expected variable=value, got {line.strip()!r}")
+            k, v = line.split("=", 1)
+            changes.append({"variable": k.strip(), "value": v.strip()})
+    return changes
+
+
 def _parse_experiment(body):
+    """try: one combination - every setting applied together, measured as one configuration. sweep: one variable over
+    several values, each measured; optional settings applied with every value (user: thread_pool_size swept with
+    thread_handling=pool-of-threads switched on)."""
     kind = body.get("kind")
     if kind == "try":
-        changes = []
-        for line in str(body.get("settings") or "").replace(",", "\n").splitlines():
-            if line.strip():
-                if "=" not in line:
-                    raise HTTPException(400, f"expected variable=value, got {line.strip()!r}")
-                k, v = line.split("=", 1)
-                changes.append({"variable": k.strip(), "value": v.strip()})
+        changes = _parse_settings(body.get("settings"))
         if not changes:
             raise HTTPException(400, "add at least one variable=value")
         spec = {"changes": changes}
@@ -925,6 +933,9 @@ def _parse_experiment(body):
         if not var or len(values) < 2:
             raise HTTPException(400, "a sweep needs a variable and at least two comma-separated values")
         spec = {"variable": var, "values": values[:12]}
+        with_ = [c for c in _parse_settings(body.get("settings")) if c["variable"] != var]
+        if with_:
+            spec["with"] = with_
     else:
         raise HTTPException(400, "kind must be 'try' or 'sweep'")
     return kind, spec, max(1, min(int(body.get("repeats") or 1), 5))
