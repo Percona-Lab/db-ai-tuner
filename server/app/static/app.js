@@ -1603,6 +1603,9 @@ const EFF_LABELS = { mysqld_cpu_ms_per_trx: "mysqld CPU ms/trx", host_cpu_ms_per
 async function renderExperiments(el, sess) {
   const d = await api(`/api/sessions/${sess.id}/experiments`);
   const active = sess.status === "active";
+  // queued experiments run inside autotune (first) or `experiment run`: with the agent idle nothing starts them (user, 397)
+  const idle = !sess.activity || /^idle/.test(sess.activity.phase || "");
+  const waitNote = active && idle ? `<div class="reason muted">Waiting: the agent is not tuning now. Queued experiments run first in the next <code>tuning-agent autotune</code>, or now with <code>tuning-agent experiment run --bench PROFILE</code> on the database host.</div>` : "";
   const row = e => {
     const spec = e.kind === "sweep" ? `sweep <span class="mono">${esc(e.spec.variable)}</span> = ${e.spec.values.map(esc).join(", ")}` : `try ${e.spec.changes.map(c => `<span class="mono">${esc(c.variable)}=${esc(c.value)}</span>`).join(", ")}`;
     const res = e.results && e.results.arms ? `<div class="tablewrap" style="margin-top:6px"><table><thead><tr><th>Value</th><th class="num">Runs</th><th class="num">${esc(goalUnit(sess.goal, sess))}</th><th class="num">vs parent</th><th>Result</th></tr></thead><tbody>${e.results.arms.map(a =>
@@ -1610,7 +1613,7 @@ async function renderExperiments(el, sess) {
        <td class="num ${a.verdict === "better" ? "up" : a.verdict === "worse" ? "down" : ""}">${a.delta_pct != null ? pct(a.delta_pct) : ""}</td><td>${esc(a.verdict || a.status)}${a.reason ? info(a.reason) : ""}</td></tr>`).join("")}</tbody></table></div>` : "";
     return `<div class="rec"><div class="h"><b>#${e.id}</b> ${spec}${e.repeats > 1 ? ` · ${e.repeats} runs each` : ""} ${statusBadge(e.status === "running" ? "measuring" : e.status, e.message)}
       <span class="muted" style="font-size:12px">${esc((e.created_by || "").replace("human:", ""))}</span>${e.status === "queued" ? ` <button class="ghost danger" data-cancel="${e.id}">Cancel</button>` : ""}</div>
-      ${e.reason ? `<div class="reason">${esc(e.reason)}</div>` : ""}${e.message ? `<div class="reason">${esc(e.message)}</div>` : ""}${res}</div>`;
+      ${e.reason ? `<div class="reason">${esc(e.reason)}</div>` : ""}${e.message ? `<div class="reason">${esc(e.message)}</div>` : ""}${e.status === "queued" ? waitNote : ""}${res}</div>`;
   };
   el.innerHTML = (active ? `<form id="expf" class="row" style="align-items:flex-end;gap:8px">
       <div><label>Kind</label><select name="kind" id="ekind" style="width:auto"><option value="sweep">Sweep a variable</option><option value="try">Try settings</option></select></div>
