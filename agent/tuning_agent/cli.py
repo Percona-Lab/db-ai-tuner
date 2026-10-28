@@ -4126,6 +4126,9 @@ def cmd_experiment(a):
             log(f"== experiment #{e['id']} ({e['kind']}, from {e.get('created_by')})")
             done.append({"id": e["id"], "result": _run_experiment(c, prof, e)})
         _finish_pending_restart(c)
+        # the session page shows what the agent does: idle again, not the last run's "waiting for the benchmark to exit"
+        # (session 393: that line stayed for 3 h after an experiment run ended, and the watcher reported a hang)
+        c.activity("idle", f"{len(done)} experiment(s) done; session #{sess['id']} still open")
         emit({"ok": True, "ran": done}, "\n".join(f"#{d['id']}: {d['result']}" for d in done) or "No queued experiments.")
 
 
