@@ -23,6 +23,9 @@ ONLINE_S = 60
 
 app = FastAPI(title="AI DB Tuner", docs_url=None, redoc_url=None)
 store.init()
+# runs.workload_type for runs finished before the column existed: filled in the background, never delaying startup
+if not os.environ.get("TUNER_NO_BACKGROUND"):
+    threading.Thread(target=store.backfill_workload_type, name="backfill-workload-type", daemon=True).start()
 
 # ---------------------------------------------------------------------------- read-only share links
 SHARE = contextvars.ContextVar("share", default=None)  # scope of the share link used by the current request
@@ -1539,7 +1542,7 @@ def agent_experience(workload: str = None, cpus: int = None, conns: int = None, 
     account's sessions count (outcome counts per idea, no free text): a user's agent learns from all trial runs, not only
     its own (user 4's 317 runs and the operator's 2,123 never informed each other)."""
     rows = store.q(
-        "SELECT r.changes, r.verdict, r.evaluation, json_extract(r.inputs, '$.workload.type') AS wl, "
+        "SELECT r.changes, r.verdict, r.evaluation, " + store.WL_SQL + " AS wl, "
         "json_extract(e.facts, '$.hardware.cpus') AS cpus, json_extract(r.summary, '$.threads_connected_avg') AS conns, r.session_id, "
         "json_extract(e.facts, '$.db.flavor') AS fl, json_extract(e.facts, '$.db.version') AS ver FROM runs r JOIN tsessions s ON s.id=r.session_id "
         "JOIN environments e ON e.id=s.env_id LEFT JOIN studies st ON st.id=s.study_id WHERE r.status='done' AND r.verdict IN "
@@ -1584,7 +1587,7 @@ def learning_data():
     and concurrency class; hypothesis outcomes by the component they targeted; cached LLM bottleneck analyses. This is
     what agents receive (per account) through /experience; here it is shown whole for review."""
     rows = store.q(
-        "SELECT r.changes, r.verdict, r.evaluation, json_extract(r.inputs, '$.workload.type') AS wl, "
+        "SELECT r.changes, r.verdict, r.evaluation, " + store.WL_SQL + " AS wl, "
         "json_extract(e.facts, '$.hardware.cpus') AS cpus, json_extract(r.summary, '$.threads_connected_avg') AS conns, r.session_id "
         "FROM runs r JOIN tsessions s ON s.id=r.session_id JOIN environments e ON e.id=s.env_id WHERE r.status='done' AND r.verdict IN "
         "('improved','efficiency-gain','neutral','regressed','efficiency-loss')")
@@ -1621,10 +1624,36 @@ def learning_data():
             "llm_analyses": analyses}
 
 
+_LEARN_CACHE = {"t": 0, "data": None}
+LEARN_CACHE_S = 600
+
+
+def _learning_cached():
+    """learning_data() reads every finished run's row - past ~800 MB of run documents stored inline, 10 s on tuner-web
+    (the learning page failed the UI suite's 15 s load check): computed in the background every LEARN_CACHE_S."""
+    if os.environ.get("TUNER_NO_BACKGROUND") or _LEARN_CACHE["data"] is None or now() - _LEARN_CACHE["t"] > LEARN_CACHE_S:
+        _LEARN_CACHE["data"], _LEARN_CACHE["t"] = learning_data(), now()
+    return _LEARN_CACHE["data"]
+
+
+def _learning_warmer():
+    import time as _t
+    while True:
+        try:
+            _LEARN_CACHE["data"], _LEARN_CACHE["t"] = learning_data(), now()
+        except Exception:
+            pass
+        _t.sleep(LEARN_CACHE_S - 60)
+
+
+if not os.environ.get("TUNER_NO_BACKGROUND"):
+    threading.Thread(target=_learning_warmer, name="learning-cache", daemon=True).start()
+
+
 @app.get("/api/admin/learning")
 def admin_learning(request: Request):
     auth.require_admin(request)
-    d = learning_data()
+    d = dict(_learning_cached())
     d["snapshots"] = [dict(r) for r in store.q("SELECT id, created, label, runs FROM learning_snapshots ORDER BY id DESC")]
     return d
 
@@ -2007,10 +2036,11 @@ def agent_run_create(body: dict = Body(...), key=Depends(auth.agent_key)):
 def agent_run_finish(rid: int, body: dict = Body(...), key=Depends(auth.agent_key)):
     agent_run(rid, key)
     store.ex("UPDATE runs SET status='done', ended=?, summary=?, external=?, inputs=?, diagnosis=?, goal_value=?, goal_source=?, "
-             "delta_pct=?, delta_vs_first_pct=?, verdict=?, evaluation=?, notes=COALESCE(?, notes) WHERE id=?",
+             "delta_pct=?, delta_vs_first_pct=?, verdict=?, evaluation=?, notes=COALESCE(?, notes), workload_type=? WHERE id=?",
              (body.get("ended") or now(), store.j(body.get("summary")), store.j(body.get("external")), store.j(body.get("inputs")),
               store.j(body.get("diagnosis")), body.get("goal_value"), body.get("goal_source"), body.get("delta_pct"),
-              body.get("delta_vs_first_pct"), body.get("verdict"), store.j(body.get("evaluation")), body.get("notes"), rid))
+              body.get("delta_vs_first_pct"), body.get("verdict"), store.j(body.get("evaluation")), body.get("notes"),
+              str(((body.get("inputs") or {}).get("workload") or {}).get("type") or ""), rid))
     return {"ok": True}
 
 

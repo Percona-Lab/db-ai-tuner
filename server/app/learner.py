@@ -293,7 +293,7 @@ def validate(settings, direction, cond):
     """Count runs in the observations that changed these settings to these values under these conditions:
     (support, contradict, neutral, sessions)."""
     names = {_norm(s["variable"]): _norm(s["value"]) for s in settings}
-    rows = store.q("SELECT r.session_id, s.env_id, s.agent_version, r.evaluation, r.changes, r.verdict, json_extract(r.inputs, '$.workload.type') wl, "
+    rows = store.q("SELECT r.session_id, s.env_id, s.agent_version, r.evaluation, r.changes, r.verdict, " + store.WL_SQL + " wl, "
                    "json_extract(e.facts, '$.hardware.cpus') cpus, json_extract(r.summary, '$.threads_connected_avg') conns, "
                    "json_extract(r.summary, '$.redo_mbs') redo, json_extract(r.inputs, '$.time_breakdown') tb "
                    "FROM runs r JOIN tsessions s ON s.id=r.session_id JOIN environments e ON e.id=s.env_id "
@@ -514,7 +514,7 @@ def collect_param_evidence(c=None):
     """Per setting and session: experiments that changed this setting alone (companions allowed), with their verdicts and
     goal changes against the parent configuration. Stored per session so it outlives the observations."""
     c = c or db()
-    rows = store.q("SELECT r.session_id, s.agent_version, r.changes, r.verdict, r.evaluation, json_extract(r.inputs, '$.workload.type') wl, "
+    rows = store.q("SELECT r.session_id, s.agent_version, r.changes, r.verdict, r.evaluation, " + store.WL_SQL + " wl, "
                    "json_extract(e.facts, '$.hardware.cpus') cpus, json_extract(e.facts, '$.db.flavor') fl, json_extract(e.facts, '$.db.version') ver "
                    "FROM runs r JOIN tsessions s ON s.id=r.session_id "
                    "JOIN environments e ON e.id=s.env_id WHERE r.status='done' AND r.verdict IN "

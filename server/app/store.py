@@ -127,7 +127,24 @@ MIGRATIONS = [
     ("recommendations", "decision", "TEXT"),
     ("tsessions", "ai", "TEXT"),
     ("tsessions", "run_plan", "TEXT"),
+    ("runs", "workload_type", "TEXT"),
 ]
+
+# the workload class of a run (inputs.workload.type): a column, set when the run finishes - read from the run documents
+# (~800 MB of JSON) it took 10 s for the learning page and the agents' /experience. Rows not filled in yet fall back to
+# the document ('' = filled, no type)
+WL_SQL = "COALESCE(NULLIF(r.workload_type, ''), CASE WHEN r.workload_type IS NULL THEN json_extract(r.inputs, '$.workload.type') END)"
+
+
+def backfill_workload_type(batch=200):
+    """Fill runs.workload_type from the run documents, a batch per transaction (in the background after startup)."""
+    import time as _t
+    while True:
+        ids = [r[0] for r in conn().execute("SELECT id FROM runs WHERE workload_type IS NULL AND status IN ('done', 'aborted') LIMIT ?", (batch,))]
+        if not ids:
+            return
+        conn().execute(f"UPDATE runs SET workload_type = COALESCE(json_extract(inputs, '$.workload.type'), '') WHERE id IN ({','.join('?' * len(ids))})", ids)
+        _t.sleep(0.2)  # leave room for requests
 
 
 def init():

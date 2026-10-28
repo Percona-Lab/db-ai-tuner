@@ -169,7 +169,7 @@ SCHEMA = {
 
 def gate(user_id, workload):
     """Has LLM advice been worth it for this workload class so far?"""
-    rows = store.q("SELECT r.changes, r.verdict, json_extract(r.inputs, '$.workload.type') wl FROM runs r JOIN tsessions s ON s.id=r.session_id "
+    rows = store.q("SELECT r.changes, r.verdict, " + store.WL_SQL + " wl FROM runs r JOIN tsessions s ON s.id=r.session_id "
                    "JOIN environments e ON e.id=s.env_id WHERE e.user_id=? AND r.status='done' AND r.changes LIKE '%rec:llm-%'", (user_id,))
     tries = wins = 0
     for r in rows:
