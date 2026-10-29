@@ -114,7 +114,7 @@ details summary { cursor: pointer; color: var(--ink-2); margin: 6px 0; }
 .diag { padding: 8px 10px; border-radius: 8px; background: var(--surface-2); margin: 6px 0; }
 .kv { display: grid; grid-template-columns: minmax(150px, max-content) 1fr; gap: 4px 12px; font-size: 13px; }
 .kv div:nth-child(odd) { color: var(--ink-2); }
-.note { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; color: var(--ink-2); }
+.note { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; color: var(--ink-2); overflow-wrap: anywhere; }
 .key { font-family: ui-monospace, monospace; background: var(--code); padding: 8px 10px; border-radius: 8px; word-break: break-all; }
 @media (max-width: 900px) { .g3, .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 640px) {
