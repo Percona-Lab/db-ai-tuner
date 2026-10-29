@@ -1192,11 +1192,61 @@
    ],
    "hosts": [
     "atvbm",
-    "atvbmamd"
+    "atvbmamd",
+    "atvbmmia"
    ],
    "group": false,
    "est_hours": 6,
    "question": "Buffer pool instances sweep from 1 on in-memory read-only at 48 threads: contention at medium concurrency, for comparison with M1"
+  },
+  {
+   "id": "sweep-bp-H1",
+   "script": "matrix.sh",
+   "args": [
+    "H1",
+    "sweep",
+    "innodb_buffer_pool_size",
+    "auto-bp"
+   ],
+   "hosts": [
+    "atcanary"
+   ],
+   "group": false,
+   "est_hours": 8,
+   "question": "Buffer pool sweep on HammerDB TPROC-C 200 W, 64 VU (the Parma Ham workload type): where NOPM and latency start to fall as the pool shrinks, and how reads and flushing grow - the memory-saving curve for steady OLTP"
+  },
+  {
+   "id": "sweep-redo-H1",
+   "script": "matrix.sh",
+   "args": [
+    "H1",
+    "sweep",
+    "innodb_redo_log_capacity",
+    "256M,512M,1G,2G,4G,8G,16G"
+   ],
+   "hosts": [
+    "atcanary"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Redo capacity sweep on HammerDB TPROC-C 200 W: checkpoint age, flushing bursts and bytes written per transaction across the range"
+  },
+  {
+   "id": "sweep-redo-C2",
+   "script": "matrix.sh",
+   "args": [
+    "C2",
+    "sweep",
+    "innodb_redo_log_capacity",
+    "256M,512M,1G,2G,4G,8G,16G"
+   ],
+   "hosts": [
+    "atvbmmia",
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Redo capacity sweep on TPC-C 100 W commit-heavy, high concurrency: the same curve at higher write rates, for comparison with H1"
   }
  ]
 }
