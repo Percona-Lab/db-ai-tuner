@@ -91,10 +91,15 @@ def wait_settled(c, t0, label, min_s=SETTLE_MIN_S, max_s=SETTLE_MAX_S, hold_s=SE
         time.sleep(30)
         el = time.time() - t0
         try:
-            resize = str(c.db.status().get("Innodb_buffer_pool_resize_status") or "")
+            st_ = c.db.status()
+            resize = str(st_.get("Innodb_buffer_pool_resize_status") or "")
+            redo = str(st_.get("Innodb_redo_log_resize_status") or "")
         except Exception:
-            resize = ""
+            resize = redo = ""
         busy = resize and not resize.lower().startswith(("completed", "size did not change")) and "resize" in resize.lower()
+        if redo and redo.strip().upper() not in ("OK", ""):
+            # an online redo resize (down: InnoDB flushes until the checkpoint age fits) - session 416's revert of redo-grow
+            busy, resize = True, f"redo log resize: {redo}"
         res = collector.settle_times(SampleStore(c.state.dir).window(t0, time.time()), t0)
         m = res.get("metrics") or {}
         pending = [k for k in SETTLE_KEYS if k in m and not m[k].get("inert") and not m[k].get("unbounded")
@@ -379,6 +384,16 @@ def autotune(c, prof, a):
         a2 = measure(c, "A (current configuration)", window)
         v, d = judge(c, c.session(), b, last_a, a2, thr)
         if b.get("_server_changed"):
+            # the second neighbour may have caught a transient (an online resize still paying off): settle once more and
+            # measure a third window - the two that agree decide; still apart, the server did change
+            log(f"   {b['_server_changed']}: settling and measuring the current configuration once more")
+            b.pop("_server_changed", None)
+            wait_settled(c, time.time(), "after a disagreeing window", min_s=300)
+            a3 = measure(c, "A (current configuration, third)", window)
+            v, d = judge(c, c.session(), b, last_a, a3, thr)
+            if not b.get("_server_changed"):
+                a2 = a3
+        if b.get("_server_changed"):
             # the current configuration itself measured very differently before and after: something changed the server
             # (an online revert that did not restore the start - session 414) - stop rather than tune a changed server
             raise cli.Fail(f"stopped: {b['_server_changed']} - check the server's configuration and state before going on")
@@ -429,6 +444,16 @@ def autotune(c, prof, a):
         a2 = measure(c, "A after restart (current configuration)", window)
         a2["_key"] = _cfg_key(c)
         v, d = judge(c, c.session(), b, last_ar, a2, thr)
+        if b.get("_server_changed"):
+            # the second neighbour may have caught a transient (an online resize still paying off): settle once more and
+            # measure a third window - the two that agree decide; still apart, the server did change
+            log(f"   {b['_server_changed']}: settling and measuring the current configuration once more")
+            b.pop("_server_changed", None)
+            wait_settled(c, time.time(), "after a disagreeing window", min_s=300)
+            a3 = measure(c, "A (current configuration, third)", window)
+            v, d = judge(c, c.session(), b, last_ar, a3, thr)
+            if not b.get("_server_changed"):
+                a2 = a3
         if b.get("_server_changed"):
             # the current configuration itself measured very differently before and after: something changed the server
             # (an online revert that did not restore the start - session 414) - stop rather than tune a changed server
