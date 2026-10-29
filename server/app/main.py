@@ -35,6 +35,7 @@ def _storage_upkeep():
         return  # the other worker does it
     try:
         store.backfill_workload_type()
+        codec.train_if_missing(store.conn())
         codec.migrate(log=lambda m: print(m, flush=True))
     except Exception as e:  # noqa - retried at the next start
         print(f"storage upkeep: {type(e).__name__}: {e}", flush=True)

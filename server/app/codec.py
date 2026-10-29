@@ -20,6 +20,7 @@ _lock = threading.Lock()
 _dicts = {}       # dictionary id -> ZstdCompressionDict
 _metrics_dict = None
 _plain_c = zstd.ZstdCompressor(level=LEVEL)
+_checked = [0.0]  # when this process last looked for a trained dictionary
 _comp = {}        # dictionary id -> compressor (one per thread would be safer; calls are short and serialised by _lock)
 
 
@@ -29,7 +30,7 @@ def _store():
 
 
 def init(c):
-    """Load the dictionaries; train the metrics one from recent samples when there is none yet."""
+    """Load the stored dictionaries (fast: at startup). Training happens in the background (train_if_missing)."""
     global _metrics_dict
     c.execute("CREATE TABLE IF NOT EXISTS zdicts (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, created REAL NOT NULL, data BLOB NOT NULL)")
     for r in c.execute("SELECT id, kind, data FROM zdicts ORDER BY created"):
@@ -37,12 +38,23 @@ def init(c):
         _dicts[d.dict_id()] = d
         if r[1] == "metrics":
             _metrics_dict = d
+
+
+def train_if_missing(c):
+    """Train the samples' dictionary from recent samples when there is none (~15 s of CPU on tuner-web: never at startup -
+    it made the new version miss the deploy's 30 s health check). Until then samples are compressed without one."""
+    global _metrics_dict
+    init(c)
     if _metrics_dict is None:
-        samples = [r[0].encode() if isinstance(r[0], str) else None
-                   for r in c.execute("SELECT data FROM metrics ORDER BY ts DESC LIMIT 3000")]
+        # the newest samples of the most recently active environments, by primary key (sorting the whole table by time
+        # read all of it)
+        samples = []
+        for (env,) in c.execute("SELECT id FROM environments ORDER BY last_seen DESC LIMIT 10").fetchall():
+            samples += [r[0].encode() if isinstance(r[0], str) else None
+                        for r in c.execute("SELECT data FROM metrics WHERE env_id=? ORDER BY ts DESC LIMIT 300", (env,))]
         samples = [s for s in samples if s]
         if len(samples) >= 500:
-            d = zstd.train_dictionary(DICT_SIZE, samples)
+            d = zstd.train_dictionary(DICT_SIZE, samples[:3000])
             try:
                 c.execute("INSERT INTO zdicts(id, kind, created, data) VALUES (?,?,?,?)", (d.dict_id(), "metrics", time.time(), d.as_bytes()))
             except Exception:  # another worker trained one at the same moment: use the stored one
@@ -58,6 +70,13 @@ def pack(value, kind="doc"):
         return None
     text = value if isinstance(value, str) else json.dumps(value, default=str)
     raw = text.encode()
+    if kind == "metrics" and _metrics_dict is None and time.time() - _checked[0] > 300:
+        # trained by the background job of another worker: pick it up (until then, compressed without one)
+        _checked[0] = time.time()
+        try:
+            init(_store().conn())
+        except Exception:
+            pass
     with _lock:
         d = _metrics_dict if kind == "metrics" else None
         if d is None:
