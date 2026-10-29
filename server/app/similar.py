@@ -15,8 +15,9 @@ _building = threading.Event()
 
 
 def _j(x, d=None):
+    from .codec import unpack
     try:
-        return json.loads(x) if x else d
+        return json.loads(unpack(x)) if x else d
     except (TypeError, ValueError):
         return d
 

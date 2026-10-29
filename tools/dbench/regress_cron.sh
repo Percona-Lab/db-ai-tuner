@@ -24,7 +24,7 @@ git -C "$REPO" worktree add -q --detach "$TMP/src" "origin/main" 2>> "$OUT/cron.
 if [ -f "$TMP/src/tools/dbench/extract_cases.py" ]; then
     mkdir -p "$OPS/dbench/knn"
     scp -qF "$OPS/ssh_config" "$TMP/src/tools/dbench/extract_cases.py" "$TMP/src/tools/dbench/features.py" atweb:/tmp/ 2>> "$OUT/cron.log" \
-      && ssh -F "$OPS/ssh_config" atweb "cd /tmp && sudo -n python3 extract_cases.py" > "$OPS/dbench/knn/cases.new" 2>> "$OUT/cron.log" \
+      && ssh -F "$OPS/ssh_config" atweb "cd /tmp && sudo -n /opt/aituner/venv/bin/python extract_cases.py" > "$OPS/dbench/knn/cases.new" 2>> "$OUT/cron.log" \
       && [ -s "$OPS/dbench/knn/cases.new" ] && mv "$OPS/dbench/knn/cases.new" "$OPS/dbench/knn/cases.jsonl" || log "case base refresh failed; using the previous one"
 fi
 TOOL=$TMP/src/tools/dbench/regress.py

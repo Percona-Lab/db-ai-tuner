@@ -4,6 +4,8 @@ import os
 import sqlite3
 import threading
 
+from . import codec
+
 DB_PATH = os.environ.get("TUNER_DB", "/var/lib/aituner/tuner.db")
 
 SCHEMA = """
@@ -133,17 +135,18 @@ MIGRATIONS = [
 # the workload class of a run (inputs.workload.type): a column, set when the run finishes - read from the run documents
 # (~800 MB of JSON) it took 10 s for the learning page and the agents' /experience. Rows not filled in yet fall back to
 # the document ('' = filled, no type)
-WL_SQL = "COALESCE(NULLIF(r.workload_type, ''), CASE WHEN r.workload_type IS NULL THEN json_extract(r.inputs, '$.workload.type') END)"
+WL_SQL = "NULLIF(r.workload_type, '')"
 
 
 def backfill_workload_type(batch=200):
     """Fill runs.workload_type from the run documents, a batch per transaction (in the background after startup)."""
     import time as _t
     while True:
-        ids = [r[0] for r in conn().execute("SELECT id FROM runs WHERE workload_type IS NULL AND status IN ('done', 'aborted') LIMIT ?", (batch,))]
-        if not ids:
+        rows = conn().execute("SELECT id, inputs FROM runs WHERE workload_type IS NULL AND status IN ('done', 'aborted') LIMIT ?", (batch,)).fetchall()
+        if not rows:
             return
-        conn().execute(f"UPDATE runs SET workload_type = COALESCE(json_extract(inputs, '$.workload.type'), '') WHERE id IN ({','.join('?' * len(ids))})", ids)
+        upd = [(str(((uj(r[1], {}) or {}).get("workload") or {}).get("type") or ""), r[0]) for r in rows]
+        conn().executemany("UPDATE runs SET workload_type=? WHERE id=?", upd)
         _t.sleep(0.2)  # leave room for requests
 
 
@@ -157,6 +160,7 @@ def init():
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
             except sqlite3.OperationalError:  # another worker migrated first
                 pass
+    codec.init(c)
 
 
 def q(sql, args=()):
@@ -180,9 +184,14 @@ def uj(v, default=None):
     if v is None:
         return default
     try:
-        return json.loads(v)
+        return json.loads(codec.unpack(v))  # JSON text, or a compressed value (codec)
     except ValueError:
         return default
+
+
+def jz(v, kind="doc"):
+    """A value as stored compressed (codec): run documents ('doc'), samples ('metrics')."""
+    return codec.pack(v, kind) if v is not None else None
 
 
 def row(r, json_fields=()):

@@ -14,7 +14,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, learner, llm, status, store
+from . import codec, auth, learner, llm, status, store
 
 APP_DIR = os.path.dirname(__file__)
 AGENT_DIR = os.environ.get("TUNER_AGENT_DIR", os.path.join(APP_DIR, "..", "..", "agent"))
@@ -24,8 +24,24 @@ ONLINE_S = 60
 app = FastAPI(title="AI DB Tuner", docs_url=None, redoc_url=None)
 store.init()
 # runs.workload_type for runs finished before the column existed: filled in the background, never delaying startup
+def _storage_upkeep():
+    """Background, one worker only (a file lock): runs.workload_type filled, then everything stored before compression
+    converted (codec.migrate) - in short batches, the server keeps serving."""
+    import fcntl
+    try:
+        f = open(os.path.join(os.path.dirname(store.DB_PATH) or ".", "storage-upkeep.lock"), "w")
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return  # the other worker does it
+    try:
+        store.backfill_workload_type()
+        codec.migrate(log=lambda m: print(m, flush=True))
+    except Exception as e:  # noqa - retried at the next start
+        print(f"storage upkeep: {type(e).__name__}: {e}", flush=True)
+
+
 if not os.environ.get("TUNER_NO_BACKGROUND"):
-    threading.Thread(target=store.backfill_workload_type, name="backfill-workload-type", daemon=True).start()
+    threading.Thread(target=_storage_upkeep, name="storage-upkeep", daemon=True).start()
 
 # ---------------------------------------------------------------------------- read-only share links
 SHARE = contextvars.ContextVar("share", default=None)  # scope of the share link used by the current request
@@ -791,8 +807,8 @@ def session_benchmarks(sid):
     scripts it calls (agents from 2026-10-22; older runs give command / reset / phases). Runs with the same specification
     are grouped, so a mid-session change (e.g. a lengthened warm-up) shows as a second entry with its runs."""
     out, by = [], {}
-    for r in store.q("SELECT seq, json_extract(inputs, '$.bench') b FROM runs WHERE session_id=? AND inputs IS NOT NULL ORDER BY seq", (sid,)):
-        b = store.uj(r["b"]) if r["b"] else None
+    for r in store.q("SELECT seq, inputs FROM runs WHERE session_id=? AND inputs IS NOT NULL ORDER BY seq", (sid,)):
+        b = (store.uj(r["inputs"], {}) or {}).get("bench")  # the documents are compressed: read in Python, not with json_extract
         if not b:
             continue
         key = b.get("spec_sha") or json.dumps([b.get("command") or b.get("run"), b.get("reset"), b.get("warmup"), b.get("duration")])
@@ -879,11 +895,11 @@ def data_state_derived(sid, cal):
 
 def session_requirements(sid):
     """Benchmark prerequisites of the session (settings the benchmark needs to run at all), from its latest run."""
-    r = store.q1("SELECT inputs FROM runs WHERE session_id=? AND inputs IS NOT NULL AND inputs LIKE '%\"requirements\"%' ORDER BY seq DESC LIMIT 1", (sid,))
-    if not r:
-        return []
-    b = (store.uj(r["inputs"]) or {}).get("bench") or {}
-    return b.get("requirements") or []
+    for r in store.q("SELECT inputs FROM runs WHERE session_id=? AND inputs IS NOT NULL ORDER BY seq DESC LIMIT 20", (sid,)):
+        b = (store.uj(r["inputs"]) or {}).get("bench") or {}
+        if b.get("requirements"):
+            return b["requirements"]
+    return []
 
 
 @app.patch("/api/sessions/{sid}")
@@ -1249,8 +1265,8 @@ def run_metrics(run_id: int, request: Request, pad: float = 60, points: int = 40
     s = own_session(r["session_id"], u["id"])
     # the warm-up before the measured window: the agent records what it waited (and any delay before the window); older
     # runs fall back to the profile's warm-up setting
-    w = store.q1("SELECT json_extract(inputs, '$.bench.warmup_s') ws, json_extract(inputs, '$.bench.warmup') wp, "
-                 "json_extract(inputs, '$.bench.window_start_delay_s') wd FROM runs WHERE id=?", (run_id,))
+    bw = (store.uj((store.q1("SELECT inputs FROM runs WHERE id=?", (run_id,)) or {"inputs": None})["inputs"], {}) or {}).get("bench") or {}
+    w = {"ws": bw.get("warmup_s"), "wp": bw.get("warmup"), "wd": bw.get("window_start_delay_s")} if bw else None
     warm = None
     try:
         secs = float(w["ws"]) if w and w["ws"] is not None else float(w["wp"]) if w and w["wp"] not in (None, "", "auto") else 0
@@ -1261,9 +1277,10 @@ def run_metrics(run_id: int, request: Request, pad: float = 60, points: int = 40
     if warm is None and r["started"] and r["status"] == "measuring":
         # a run still measuring has no inputs yet: its warm-up is the session's planned one, else the previous run's
         plan = store.uj(s.get("run_plan")) or {}
-        prev = store.q1("SELECT json_extract(inputs, '$.bench.warmup_s') ws FROM runs WHERE session_id=? AND seq<? AND "
-                        "json_extract(inputs, '$.bench.warmup_s') IS NOT NULL ORDER BY seq DESC LIMIT 1", (r["session_id"], r["seq"]))
-        secs = plan.get("warmup_s") or (prev["ws"] if prev else None)
+        prev = next((((store.uj(x["inputs"], {}) or {}).get("bench") or {}).get("warmup_s") for x in store.q(
+            "SELECT inputs FROM runs WHERE session_id=? AND seq<? AND inputs IS NOT NULL ORDER BY seq DESC LIMIT 5", (r["session_id"], r["seq"]))
+            if ((store.uj(x["inputs"], {}) or {}).get("bench") or {}).get("warmup_s") is not None), None)
+        secs = plan.get("warmup_s") or prev
         try:
             warm = [r["started"] - float(secs), r["started"]] if secs else None
         except (TypeError, ValueError):
@@ -1338,7 +1355,7 @@ def agent_metrics(body: dict = Body(...), key=Depends(auth.agent_key)):
     rows = []
     for s in (body.get("samples") or [])[:2000]:
         if isinstance(s, dict) and isinstance(s.get("ts"), (int, float)):
-            rows.append((e["id"], float(s["ts"]), store.j({k: s.get(k) for k in ("os", "db", "db_up", "db_error", "session_id", "run_id", "waits")})))
+            rows.append((e["id"], float(s["ts"]), store.jz({k: s.get(k) for k in ("os", "db", "db_up", "db_error", "session_id", "run_id", "waits")}, "metrics")))
     c = store.conn()
     c.execute("BEGIN")
     c.executemany("INSERT OR REPLACE INTO metrics(env_id, ts, data) VALUES (?,?,?)", rows)
@@ -1378,8 +1395,10 @@ def steal_profile(env_id):
         return hit[1]
     if not store.q1("SELECT 1 FROM steal_backfilled WHERE env_id=?", (env_id,)):
         # once per environment: the samples stored before steal_samples existed (a full read of a week of metrics)
-        store.ex("INSERT OR IGNORE INTO steal_samples(env_id, ts, v) SELECT env_id, ts, json_extract(data, '$.os.cpu_steal') FROM metrics "
-                 "WHERE env_id=? AND ts>? AND json_extract(data, '$.os.cpu_steal') IS NOT NULL", (env_id, now() - STEAL_WINDOW_S))
+        # the samples may be compressed (codec): read in Python
+        vals_ = [(env_id, x["ts"], ((store.uj(x["data"], {}) or {}).get("os") or {}).get("cpu_steal"))
+                 for x in store.q("SELECT ts, data FROM metrics WHERE env_id=? AND ts>?", (env_id, now() - STEAL_WINDOW_S))]
+        store.conn().executemany("INSERT OR IGNORE INTO steal_samples(env_id, ts, v) VALUES (?,?,?)", [v_ for v_ in vals_ if isinstance(v_[2], (int, float))])
         store.ex("INSERT OR IGNORE INTO steal_backfilled(env_id) VALUES (?)", (env_id,))
     vals = sorted(r[0] for r in store.q("SELECT v FROM steal_samples WHERE env_id=? AND ts>?", (env_id, now() - STEAL_WINDOW_S)))
     out = None
@@ -1953,7 +1972,7 @@ def agent_host_hello(body: dict = Body(...), key=Depends(auth.agent_key)):
 @app.post("/api/v1/agent/hosts/{hid}/metrics")
 def agent_host_metrics(hid: int, body: dict = Body(...), key=Depends(auth.agent_key)):
     agent_host(hid, key)
-    rows = [(hid, float(x["ts"]), store.j({k: x.get(k) for k in ("os",)})) for x in (body.get("samples") or [])[:2000]
+    rows = [(hid, float(x["ts"]), store.jz({k: x.get(k) for k in ("os",)}, "metrics")) for x in (body.get("samples") or [])[:2000]
             if isinstance(x, dict) and isinstance(x.get("ts"), (int, float))]
     c = store.conn()
     c.execute("BEGIN")
@@ -2027,7 +2046,7 @@ def agent_run_create(body: dict = Body(...), key=Depends(auth.agent_key)):
     rid = store.ex("INSERT INTO runs(session_id, seq, label, notes, status, started, config, managed, changes, config_meta, tradeoffs) "
                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                    (s["id"], body.get("seq"), (body.get("label") or "")[:120], body.get("notes"), "measuring", body.get("started") or now(),
-                    store.j(body.get("config")), store.j(body.get("managed")), store.j(body.get("changes")),
+                    store.jz(body.get("config")), store.j(body.get("managed")), store.j(body.get("changes")),
                     store.j(body.get("config_meta")), store.j(body.get("tradeoffs") or [])))
     return {"run_id": rid, "url": f"{PUBLIC_URL}/#/run/{rid}"}
 
@@ -2037,8 +2056,8 @@ def agent_run_finish(rid: int, body: dict = Body(...), key=Depends(auth.agent_ke
     agent_run(rid, key)
     store.ex("UPDATE runs SET status='done', ended=?, summary=?, external=?, inputs=?, diagnosis=?, goal_value=?, goal_source=?, "
              "delta_pct=?, delta_vs_first_pct=?, verdict=?, evaluation=?, notes=COALESCE(?, notes), workload_type=? WHERE id=?",
-             (body.get("ended") or now(), store.j(body.get("summary")), store.j(body.get("external")), store.j(body.get("inputs")),
-              store.j(body.get("diagnosis")), body.get("goal_value"), body.get("goal_source"), body.get("delta_pct"),
+             (body.get("ended") or now(), store.j(body.get("summary")), store.j(body.get("external")), store.jz(body.get("inputs")),
+              store.jz(body.get("diagnosis")), body.get("goal_value"), body.get("goal_source"), body.get("delta_pct"),
               body.get("delta_vs_first_pct"), body.get("verdict"), store.j(body.get("evaluation")), body.get("notes"),
               str(((body.get("inputs") or {}).get("workload") or {}).get("type") or ""), rid))
     return {"ok": True}

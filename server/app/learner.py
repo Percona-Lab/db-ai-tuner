@@ -109,8 +109,9 @@ def _j(x):
 
 
 def _uj(s, d=None):
+    from .codec import unpack
     try:
-        return json.loads(s) if s else d
+        return json.loads(unpack(s)) if s else d
     except (TypeError, ValueError):
         return d
 
@@ -295,7 +296,7 @@ def validate(settings, direction, cond):
     names = {_norm(s["variable"]): _norm(s["value"]) for s in settings}
     rows = store.q("SELECT r.session_id, s.env_id, s.agent_version, r.evaluation, r.changes, r.verdict, " + store.WL_SQL + " wl, "
                    "json_extract(e.facts, '$.hardware.cpus') cpus, json_extract(r.summary, '$.threads_connected_avg') conns, "
-                   "json_extract(r.summary, '$.redo_mbs') redo, json_extract(r.inputs, '$.time_breakdown') tb "
+                   "json_extract(r.summary, '$.redo_mbs') redo, r.inputs "
                    "FROM runs r JOIN tsessions s ON s.id=r.session_id JOIN environments e ON e.id=s.env_id "
                    "WHERE r.status='done' AND r.verdict IN ('improved','efficiency-gain','neutral','regressed','efficiency-loss')")
     per = {}
@@ -316,7 +317,7 @@ def validate(settings, direction, cond):
         if cond.get("workload") and r["wl"] and cond["workload"] != r["wl"]:
             continue
         if cond.get("write_class"):  # older insights have none: they match any write intensity until re-learned
-            wc = _write_class({"redo_mbs": r["redo"]}, {"time_breakdown": _uj(r["tb"], [])})
+            wc = _write_class({"redo_mbs": r["redo"]}, {"time_breakdown": (_uj(r["inputs"], {}) or {}).get("time_breakdown") or []})
             if wc and wc != cond["write_class"]:
                 continue
         if cond.get("cpu_class") and r["cpus"] and _cpu_class(r["cpus"]) != cond["cpu_class"]:

@@ -16,9 +16,25 @@ import features  # noqa: E402
 MEASURED = ("improved", "efficiency-gain", "neutral", "regressed", "efficiency-loss")
 
 
+_DB = None
+_DICTS = {}
+
+
+def _text(x):
+    """JSON text of a stored value: run documents are zstd-compressed since 2026-10-29 (server/app/codec.py)."""
+    if x is None or isinstance(x, str) or not bytes(x).startswith(b"\x28\xb5\x2f\xfd"):
+        return x.decode() if isinstance(x, (bytes, memoryview)) else x
+    import zstandard as zstd
+    b = bytes(x)
+    did = zstd.get_frame_parameters(b).dict_id
+    if did and did not in _DICTS:
+        _DICTS[did] = zstd.ZstdCompressionDict(bytes(_DB.execute("SELECT data FROM zdicts WHERE id=?", (did,)).fetchone()[0]))
+    return (zstd.ZstdDecompressor(dict_data=_DICTS[did]) if did else zstd.ZstdDecompressor()).decompress(b).decode()
+
+
 def J(x, d=None):
     try:
-        return json.loads(x) if x else d
+        return json.loads(_text(x)) if x else d
     except (TypeError, ValueError):
         return d
 
@@ -27,7 +43,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="/var/lib/aituner/tuner.db")
     a = ap.parse_args()
-    c = sqlite3.connect(f"file:{a.db}?mode=ro", uri=True)
+    global _DB
+    c = _DB = sqlite3.connect(f"file:{a.db}?mode=ro", uri=True)
     c.row_factory = sqlite3.Row
     sess = {r["id"]: r for r in c.execute(
         "SELECT s.id, s.name, s.goal, s.policy, s.noise_pct, s.created, s.env_id, e.facts, COALESCE(st.name,'') study "
