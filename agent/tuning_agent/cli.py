@@ -21,6 +21,7 @@ from .applier import Applier, detect_cnf_path, detect_service
 from .knowledge import OPTIONS as KOPTIONS
 from .client import APIError, Client
 from .knowledge import human_size, normalize
+from .knowledge import KB as KBASE, flags_subset
 from .state import SampleStore, State
 
 CONFIG_PATH = os.environ.get("TUNING_AGENT_CONFIG", "/etc/tuning-agent/agent.ini")
@@ -455,12 +456,32 @@ def _config_mismatches(c):
                 except (TypeError, ValueError):
                     if str(now_vars.get(var)).lower() == str(req[var]).lower():
                         continue
-            if normalize(var, now_vars.get(var)) != normalize(var, m.get("value")):
-                out.append({"variable": var, "configured": m.get("value"), "running": now_vars.get(var)})
-                log(f"WARNING: {var} is {now_vars.get(var)}, configured {m.get('value')} - the run does not measure the configuration")
+            if (KBASE.get(var) or {}).get("kind") == "flags":
+                # optimizer_switch and the like run as the full flag list: the configured flags must be in it (a plain
+                # comparison made every optimizer_switch experiment "unreliable", session 408 run 6)
+                if flags_subset(m.get("value"), now_vars.get(var)):
+                    continue
+            elif normalize(var, now_vars.get(var)) == normalize(var, m.get("value")):
+                continue
+            elif var == "innodb_buffer_pool_size" and _bp_rounded(now_vars, m.get("value")):
+                continue  # rounded by the server to whole chunks x instances: what it can run
+            out.append({"variable": var, "configured": m.get("value"), "running": now_vars.get(var)})
+            log(f"WARNING: {var} is {now_vars.get(var)}, configured {m.get('value')} - the run does not measure the configuration")
     except Exception:
         pass
     return out
+
+
+def _bp_rounded(now_vars, configured):
+    """The running buffer pool is the configured size rounded up to whole chunk x instances (MySQL 8.4 picks the instance
+    count from the CPUs - 6 on a 24-thread box: 23G ran as 23.25G, session 408 run 2): not a different configuration."""
+    from .knowledge import parse_size
+    try:
+        want, run_ = parse_size(configured), int(float(now_vars.get("innodb_buffer_pool_size")))
+        unit = int(float(now_vars.get("innodb_buffer_pool_chunk_size") or 134217728)) * int(now_vars.get("innodb_buffer_pool_instances") or 1)
+        return want is not None and 0 <= run_ - want < unit
+    except (TypeError, ValueError):
+        return False
 
 
 def _bp_companions(vs, cur, source):
@@ -1267,6 +1288,10 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
     started = [o.get("started_at") for o in ((extra_inputs or {}).get("bench") or {}).get("observed") or []
                if o.get("started_at") and win0 - 5 <= o["started_at"] <= win0 + 30]
     summary, inputs = collector.analyze_window(a_snap, b_snap, samples, wu_s, tail, min(started) if started else None)
+    if ((extra_inputs or {}).get("bench") or {}).get("shape") == "passes" and summary.get("steady_state"):
+        # fixed work (a query set, a batch): the load changes with each query by design - "steady" does not apply, and a
+        # throughput "-50% from the middle to the last third" is the next query, not unpaid deferred work (learner, D5)
+        summary["steady_state"] = {"steady": True, "not_applicable": "fixed work: the load follows the queries"}
     try:  # who holds swapped-out memory at the end of the window
         top = hostinfo.swap_top()
         if top:
@@ -4500,9 +4525,12 @@ def _autotune(a):
         log(f"== experiment: {nxt} ({item['title']}) [{item.get('safety')}]")
         if item.get("hypothesis"):
             log(f"   why: {item['hypothesis']['text']}")
-            sess = c.session()
-            sess["pending_hypothesis"] = dict(item["hypothesis"], id=nxt)
-            c.state.set("session", sess)
+            # a bundle of unrelated settings (best practices) targets everything at once: no hypothesis outcome is
+            # recorded for it - one listing 17 components can be neither supported nor refuted (learner, session 409)
+            if not item.get("practice") and len(item["hypothesis"].get("target") or []) <= 6:
+                sess = c.session()
+                sess["pending_hypothesis"] = dict(item["hypothesis"], id=nxt)
+                c.state.set("session", sess)
         c.activity("applying changes", f"{nxt}: {item['title']}" + (" (restart)" if item.get("restart") else ""))
         changes = [{"variable": ch["variable"], "value": None if ch.get("unset") else ch["proposed"], "reason": item["rationale"],
                     "source": f"rec:{nxt}"} for ch in item["changes"]]

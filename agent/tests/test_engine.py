@@ -3809,6 +3809,36 @@ def test_client_start_failure_is_recognised():
     assert not re.search(cli.CLIENT_START_RE, "FATAL: mysql_stmt_execute() returned error 1213 (Deadlock found)")
 
 
+def test_learner_reported_bugs_2026_10_29():
+    """Learner proposals 655/658 and what they uncovered: a calibration run is the reference (never 'improved +69%' against
+    server defaults), optimizer_switch flags are compared as flags, a buffer pool rounded to chunk x instances is the
+    configured size, and a bundle's 17-component hypothesis is never recorded."""
+    from tuning_agent import evaluate, cli
+    hist = [{"seq": 1, "label": "server defaults", "verdict": "reference", "managed": {}, "goal_value": 6596.8, "summary": {}},
+            {"seq": 2, "label": "baseline (1/3)", "verdict": "unreliable", "managed": {"innodb_buffer_pool_size": "23G"}, "goal_value": 2042.1, "summary": {}}]
+    v, ev = evaluate._verdict({"seq": 3, "label": "baseline (2/4)", "managed": {"innodb_buffer_pool_size": "23G"}, "goal_value": 2041.7,
+                               "summary": {}}, hist, "latency", {"noise_pct": 2.0})
+    assert v == "reference", (v, ev)
+
+    class DB:
+        def variables(self):
+            return {"optimizer_switch": "index_merge=on,subquery_to_derived=on,hash_join=on", "innodb_buffer_pool_size": "24964497408",
+                    "innodb_buffer_pool_chunk_size": "134217728", "innodb_buffer_pool_instances": "6"}
+
+    class St:
+        data = {"managed": {"optimizer_switch": {"value": "subquery_to_derived=on"}, "innodb_buffer_pool_size": {"value": "23G"}}}
+
+        def get(self, k, d=None):
+            return self.data.get(k, d)
+
+    class C:
+        db = DB()
+        state = St()
+    assert cli._config_mismatches(C()) == [], cli._config_mismatches(C())
+    St.data["managed"]["optimizer_switch"]["value"] = "subquery_to_derived=off"
+    assert [m["variable"] for m in cli._config_mismatches(C())] == ["optimizer_switch"]
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

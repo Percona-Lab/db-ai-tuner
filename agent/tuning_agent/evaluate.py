@@ -1109,6 +1109,10 @@ def _verdict(run, history, goal, noise):
         return "reference", {}
     key = config_key(run.get("managed"))
     same = config_means(history, key, recent=RECENT)
+    if not same and str(run.get("label") or "").startswith("baseline"):
+        # the first usable calibration run is the session's reference, never an experiment verdict against the server
+        # defaults run (session 408: the first baseline run was unreliable, the second came out "improved +69%")
+        return "reference", {"note": "first calibration run of the starting configuration: the session's reference"}
     if same:  # this configuration was measured before: a repeat, and a drift check
         goal_noise = (noise or {}).get("noise_pct") or DEFAULT_GOAL_NOISE
         dev = improvement(goal, run.get("goal_value"), same["goal"])

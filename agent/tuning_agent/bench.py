@@ -168,7 +168,7 @@ class Profile:
         return cmd
 
     def describe(self):
-        return {"name": self.name, "profile": self.path, "reset": self.reset, "restart_before_run": self.restart_before_run,
+        return {"name": self.name, "profile": self.path, "shape": self.shape, "reset": self.reset, "restart_before_run": self.restart_before_run,
                 "run": self.run, "warmup": self.warmup,
                 "duration": self.duration, "goal_metric": self.goal_metric, "metrics": list(self.metrics), "command": self.command(),
                 "data_state": self.data_state, "copy_on_write": self.copy_on_write,

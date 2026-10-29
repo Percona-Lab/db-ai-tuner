@@ -64,6 +64,14 @@ fi
 echo "set \$aituner_upstream http://127.0.0.1:$NEW;" > /etc/nginx/aituner-upstream.conf
 nginx -t -q && systemctl reload nginx
 sleep 5   # let in-flight requests on the old version finish
+# a learner pass runs inside the old version: wait for it (at most 20 min) instead of cutting it off (the 15:28 pass of
+# 2026-10-28 ended "interrupted (service restart)" by a deploy)
+for i in $(seq 1 120); do
+  n=$(sqlite3 -readonly /var/lib/aituner/learning.db "SELECT COUNT(*) FROM learner_runs WHERE ended IS NULL AND started > strftime('%s','now') - 3600" 2>/dev/null || echo 0)
+  [ "${n:-0}" = 0 ] && break
+  [ $i = 1 ] && echo "a learner pass is running on the old version: waiting for it before stopping it"
+  sleep 10
+done
 systemctl stop aituner@$CUR 2>/dev/null || true
 systemctl disable -q aituner@$CUR 2>/dev/null || true
 systemctl enable -q aituner@$NEW
