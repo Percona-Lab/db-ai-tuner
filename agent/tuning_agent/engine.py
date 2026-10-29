@@ -2726,34 +2726,10 @@ QUEUE_LEVERS = {"thread-pool", "sweep-thread-concurrency"}
 STOP_AFTER_FRUITLESS = 8  # the default of autotune --max-fruitless: the early stop below follows the session's limit
 
 
-def run_engine(ctx):
-    ctx = dict(ctx)
-    ctx["workload"] = classify_workload(ctx.get("summary"), ctx.get("inputs")) if ctx.get("summary") else {"type": None}
-    # where the database's time goes (on CPU by profile category, waiting for CPU / I/O / locks / latches / the client)
-    inp = ctx.get("inputs") or {}
-    ctx["breakdown"] = inp.get("time_breakdown") or bottleneck.breakdown(ctx.get("summary"), inp, (ctx.get("hw") or {}).get("cpus"))
-    ctx["diagnosis"] = diagnose(ctx) if ctx.get("summary") else []
-    items = recommend(ctx)
-    items = apply_history(items, ctx.get("history") or [], (ctx.get("summary") or {}).get("swap_total_mb"), ctx.get("managed"))
-    items = practice_bundle(items, ctx.get("history") or [])
-    items = stack_small_wins(items, ctx)
-    items = items + per_query_hints(ctx.get("history") or [], ctx["variables"])
-    items = revert_suggestions(ctx.get("history") or [], ctx["variables"], ctx.get("goal", "tps"),
-                               float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0), ctx.get("managed"),
-                               harmful_rules(ctx.get("experience"))) + items
-    items = [it for it in items if not _breaks_requirement(it, (ctx.get("bench") or {}).get("requires") or {})]
-    # the account's parameter policy (admin defaults + the user's own list): blocked settings never become experiments;
-    # returning a blocked setting to an earlier value (revert / rollback) is still allowed
-    blocked = set(ctx.get("blocked") or [])
-    if blocked:
-        keep = []
-        for it in items:
-            hit = sorted({n for c in it.get("changes") or [] for n in [c["variable"]] + knowledge.setting_names(c["variable"], c.get("proposed"), c.get("current"))} & blocked)
-            if hit and it["kind"] != "revert" and not it["id"].startswith(("revert", "rollback")):
-                ctx.setdefault("_blocked_items", []).append({"id": it["id"], "variables": hit})
-                continue
-            keep.append(it)
-        items = keep
+def memory_gate(items, ctx):
+    """Memory-related changes checked against this host's memory budget (in place): over it a trade-off, beyond RAM +
+    free swap not run (or with a swap file). Applied to the rules' items in run_engine and to AI suggestions, which
+    are added after it (pmh-ps97, session 414: an AI 5 GiB buffer pool on a 7.9 GiB host shared with HammerDB swapped)."""
     # memory: a change to a memory-related setting must keep the configuration within this host's memory budget
     # (memory.budget: caches, connections, 2 x CPUs active connections with their per-query buffers); beyond it the
     # configuration may swap or be OOM-killed under load - a trade-off, never a safe change
@@ -2841,6 +2817,37 @@ def run_engine(ctx):
                     "variable": ", ".join(sorted(ch)), "value": ", ".join(f"{k}={v}" for k, v in ch.items()), "category": "memory",
                     "lost": f"Production safety: the configuration would need {_mem.text(nb)} - under load it can swap or be "
                             "OOM-killed. Measured only as a benchmark trade-off."}]
+
+
+def run_engine(ctx):
+    ctx = dict(ctx)
+    ctx["workload"] = classify_workload(ctx.get("summary"), ctx.get("inputs")) if ctx.get("summary") else {"type": None}
+    # where the database's time goes (on CPU by profile category, waiting for CPU / I/O / locks / latches / the client)
+    inp = ctx.get("inputs") or {}
+    ctx["breakdown"] = inp.get("time_breakdown") or bottleneck.breakdown(ctx.get("summary"), inp, (ctx.get("hw") or {}).get("cpus"))
+    ctx["diagnosis"] = diagnose(ctx) if ctx.get("summary") else []
+    items = recommend(ctx)
+    items = apply_history(items, ctx.get("history") or [], (ctx.get("summary") or {}).get("swap_total_mb"), ctx.get("managed"))
+    items = practice_bundle(items, ctx.get("history") or [])
+    items = stack_small_wins(items, ctx)
+    items = items + per_query_hints(ctx.get("history") or [], ctx["variables"])
+    items = revert_suggestions(ctx.get("history") or [], ctx["variables"], ctx.get("goal", "tps"),
+                               float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0), ctx.get("managed"),
+                               harmful_rules(ctx.get("experience"))) + items
+    items = [it for it in items if not _breaks_requirement(it, (ctx.get("bench") or {}).get("requires") or {})]
+    # the account's parameter policy (admin defaults + the user's own list): blocked settings never become experiments;
+    # returning a blocked setting to an earlier value (revert / rollback) is still allowed
+    blocked = set(ctx.get("blocked") or [])
+    if blocked:
+        keep = []
+        for it in items:
+            hit = sorted({n for c in it.get("changes") or [] for n in [c["variable"]] + knowledge.setting_names(c["variable"], c.get("proposed"), c.get("current"))} & blocked)
+            if hit and it["kind"] != "revert" and not it["id"].startswith(("revert", "rollback")):
+                ctx.setdefault("_blocked_items", []).append({"id": it["id"], "variables": hit})
+                continue
+            keep.append(it)
+        items = keep
+    memory_gate(items, ctx)
     benchmark = ctx.get("policy") == "benchmark"
     has_major = any(d.get("severity") in ("high", "medium") and d["type"] != "none" for d in ctx["diagnosis"])
     exp = ctx.get("experience") or {}

@@ -4,6 +4,8 @@
 # production-safe first then trade-offs, 16 runs - whose runs become cases for the similarity ranking. Cells sharing a data
 # set reuse its pristine copy.
 CELL=$1
+# matrix.sh <cell> sweep <variable> <values|auto-bp> [with]: a characterization sweep of the cell's workload instead of tuning
+if [ "${2:-}" = sweep ]; then SWEEP_VAR=$3; SWEEP_VALUES=$4; SWEEP_WITH=${5:-}; fi
 . /root/bench/pipeline/lib.sh
 set -x
 ensure_ps84
@@ -12,9 +14,11 @@ GOAL=tps
 auto_len() {  # the run length from the run-length probe (warm-up and window), not fixed numbers
   sed -i -e 's/^warmup = .*/warmup = auto/' -e 's/^duration = .*/duration = auto/' -e 's/^timeout = .*/timeout = 14400/' $1
 }
-latency_goal() {  # latency goal: the benchmark's 95th percentile, lower is better
-  sed -i 's/^goal_metric = .*/goal_metric = sysbench_p95_ms/' $1
+latency_goal() {  # latency goal: the server's p95 statement latency (performance_schema histogram, interpolated), lower is
+  # better - sysbench's own p95 comes from coarse buckets (M6: 29.19 ms in six of eight runs), the server's does not
+  sed -i '/^goal_metric = /d' $1
   GOAL=latency
+  export LATENCY_STAT=p95
 }
 tpcc_profile() {  # tpcc_profile <warehouses> <threads>; goal: transactions/s measured by the server in the window (go-tpc's
   # tpmC covers the whole run, warm-up included, and its interval lines carry no time to cut the window from)
@@ -103,5 +107,18 @@ esac
 grep -q "^warmup = auto" $P || [ $CELL = D5 ] || [ $CELL = D6 ] || [ $CELL = H1 ] || auto_len $P
 # the explore cells use the AI once the rules run out (autotune --explore); the others run without AI
 if [ -n "${EXPLORE_CELL:-}" ]; then export EXPLORE=1; else export AI_OFF=1; fi
-STUDY="${MATRIX_STUDY:-case-base matrix v2 2026-10-26}" run_session $P "matrix $CELL ($(hostname))" $GOAL 16
+if [ -n "${SWEEP_VAR:-}" ]; then
+  # characterization sweep (user, 2026-10-29): the cell's workload, calibrated, then one setting across its whole range -
+  # buffer pool from far too small to as large as memory allows, buffer pool instances from 1 - each value measured and
+  # profiled, nothing tuned: response curves and contention profiles as evidence for the rules and the case base
+  if [ "$SWEEP_VALUES" = auto-bp ]; then
+    maxg=$(awk '/MemTotal/ { printf "%d", $2 * 0.7 / 1048576 }' /proc/meminfo)
+    SWEEP_VALUES=$(for v in 1 2 4 8 16 24 32 48; do [ $v -le $maxg ] && printf "%sG," $v; done; echo "${maxg}G")
+    SWEEP_VALUES="512M,$(echo "$SWEEP_VALUES" | tr ',' '\n' | awk '!seen[$0]++' | paste -sd,)"
+  fi
+  export SWEEP_VAR SWEEP_VALUES SWEEP_WITH POST=/root/bench/pipeline/items/sweep-post.sh
+  STUDY="characterization sweeps 2026-10-29" run_session $P "sweep $SWEEP_VAR: matrix $CELL ($(hostname))" $GOAL 0
+else
+  STUDY="${MATRIX_STUDY:-case-base matrix v2 2026-10-26}" run_session $P "matrix $CELL ($(hostname))" $GOAL 16
+fi
 echo PIPEOK

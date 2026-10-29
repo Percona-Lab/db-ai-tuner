@@ -1352,6 +1352,8 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
         summary["max_connections"] = c.variables.get("max_connections")
     if extra_inputs:
         inputs.update(extra_inputs)
+        if any(((extra_inputs.get(k) or {}).get("in_measured_window")) for k in ("cpu_profile", "offcpu")):
+            summary["profiled_in_window"] = True  # its own overhead is in the goal: a gain from it is confirmed by an unprofiled run
         if (extra_inputs.get("cow") or {}).get("issues"):
             summary["cow_issues"] = extra_inputs["cow"]["issues"]
         if extra_inputs.get("config_mismatch"):
@@ -3571,6 +3573,9 @@ def _recommend(c, sess, llm=False):
                                        for sg in fresh if not sg.get("_analysis")])
     sess["llm_pending"] = keep
     if extra:
+        # the same memory budget as the rules' ideas: AI ideas are added after the engine ran (pmh-ps97, session 414: an AI
+        # 5 GiB buffer pool on a 7.9 GiB host shared with HammerDB swapped, latency +49%)
+        engine.memory_gate(extra, ctx)
         for it in extra:
             it["score"] = engine.score(it, ctx.get("goal", "tps")) + (2 if why not in (None, "routine") else 0) - (10 if it.get("no_mechanism") else 0)
             it["score_parts"] = [x for x in engine.score_parts(it, ctx.get("goal", "tps")) + [["AI asked because the rules ran out or the bottleneck is unclear", 2 if why not in (None, "routine") else 0],
@@ -4588,7 +4593,10 @@ def _autotune(a):
         log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
         ev0 = run.get("evaluation") or {}
         d0, nz0 = ev0.get("goal_delta_pct"), float(ev0.get("goal_noise_pct") or 0)
-        if run["verdict"] == "improved" and d0 is not None and nz0 and d0 >= CONFIRM_MARGIN * nz0 and (sess.get("noise") or {}).get("runs"):
+        # ... unless the profiler ran inside the measured window (benchmarks without a warm-up): then the decision rests on an
+        # unprofiled confirmation run (learner: profiled gains that the unprofiled repeat did not keep)
+        if run["verdict"] == "improved" and d0 is not None and nz0 and d0 >= CONFIRM_MARGIN * nz0 and (sess.get("noise") or {}).get("runs") \
+                and not (run.get("summary") or {}).get("profiled_in_window"):
             # far beyond the threshold, luck cannot explain it: 112 confirmations of gains at 2x the threshold or more, 0 failed
             # (all 6 failures were below 1.1x). Kept without a repeat - re-checks later still catch drift
             r0 = next((x for x in c.session()["runs"] if x["seq"] == run["seq"]), run)

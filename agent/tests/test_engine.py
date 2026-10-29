@@ -3839,6 +3839,20 @@ def test_learner_reported_bugs_2026_10_29():
     assert [m["variable"] for m in cli._config_mismatches(C())] == ["optimizer_switch"]
 
 
+def test_memory_gate_applies_to_ai_ideas():
+    """An AI buffer pool idea beyond the host's memory is a trade-off (or not run), as the rules' ideas are (session 414)."""
+    from tuning_agent import engine
+    GiB_ = 2 ** 30
+    hw = dict(HW, ram_bytes=8 * GiB_, cpus=4)
+    ctx = {"variables": dict(VARS, innodb_buffer_pool_size=str(4736 << 20), max_connections="300"), "hw": hw,
+           "summary": dict(OLTP[0], swap_total_mb=496, swap_used_mb=200, dbproc_pss_mb=5600, mem_available_mb=1300), "os_tuning": False}
+    it = {"id": "llm-innodb-buffer-pool-size", "kind": "config", "confidence": 2, "safety": "safe", "tradeoffs": [],
+          "changes": [{"variable": "innodb_buffer_pool_size", "current": str(4736 << 20), "proposed": str(7 * GiB_)}]}
+    engine.memory_gate([it], ctx)
+    assert it["safety"] == "trade-off" or it["confidence"] == 0, it
+    assert "memory_budget" in (it.get("evidence") or {})
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

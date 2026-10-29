@@ -1094,6 +1094,109 @@
    "group": false,
    "est_hours": 9,
    "question": "Case-base matrix cell H1: HammerDB TPROC-C 200 W, 64 VU, NOPM on tuner-canary (8 vCPU): commit-heavy at medium concurrency, a second TPC-C implementation next to go-tpc"
+  },
+  {
+   "id": "sweep-bp-M2",
+   "script": "matrix.sh",
+   "args": [
+    "M2",
+    "sweep",
+    "innodb_buffer_pool_size",
+    "auto-bp"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 6,
+   "question": "Buffer pool sweep, 512M to ~70% of RAM, on in-memory read-only (8 GB of data, 48 threads): where the curve flattens once the data fits"
+  },
+  {
+   "id": "sweep-bp-P1",
+   "script": "matrix.sh",
+   "args": [
+    "P1",
+    "sweep",
+    "innodb_buffer_pool_size",
+    "auto-bp"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbmamd",
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Buffer pool sweep on partly cached read-only (60 GB of data, 256 threads): hit rate, reads and throughput across pool / data ratios"
+  },
+  {
+   "id": "sweep-bp-P4",
+   "script": "matrix.sh",
+   "args": [
+    "P4",
+    "sweep",
+    "innodb_buffer_pool_size",
+    "auto-bp"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbmamd",
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Buffer pool sweep on partly cached read-write (60 GB, 8 threads): reads and flushing (dirty pages, checkpoint age) across pool sizes"
+  },
+  {
+   "id": "sweep-bp-D1",
+   "script": "matrix.sh",
+   "args": [
+    "D1",
+    "sweep",
+    "innodb_buffer_pool_size",
+    "auto-bp"
+   ],
+   "hosts": [
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 8,
+   "question": "Buffer pool sweep on mostly-on-disk read-only (220 GB, 48 threads): the far end of the curve, where more memory still matters"
+  },
+  {
+   "id": "sweep-inst-M1",
+   "script": "matrix.sh",
+   "args": [
+    "M1",
+    "sweep",
+    "innodb_buffer_pool_instances",
+    "1,2,4,8,16,32"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 6,
+   "question": "Buffer pool instances sweep from 1 on in-memory point selects at 1024 threads: the contention profile (buffer pool mutexes, page hash latches, futex / spinning) and what each step removes"
+  },
+  {
+   "id": "sweep-inst-M2",
+   "script": "matrix.sh",
+   "args": [
+    "M2",
+    "sweep",
+    "innodb_buffer_pool_instances",
+    "1,2,4,8,16,32"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 6,
+   "question": "Buffer pool instances sweep from 1 on in-memory read-only at 48 threads: contention at medium concurrency, for comparison with M1"
   }
  ]
 }
