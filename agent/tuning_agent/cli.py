@@ -555,6 +555,15 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
                 changes = [ch for ch in changes if ch["variable"] not in {x["variable"] for x in comp}] + comp
         except Exception:
             pass
+    # Percona Server's thread pool and resource groups exclude each other (error 3658: "Feature Resource Groups is
+    # unsupported (Thread pool plugin enabled)"): switching the pool on unmanages the resource groups the agent placed
+    # (session 432: purge priority from the triage + balance-threadpool -> a run that did not run its configuration)
+    vs = {ch["variable"]: ch for ch in changes}
+    tp = vs.get("thread_handling")
+    if tp and str(tp.get("value")).lower() == "pool-of-threads":
+        for k in [k for k in c.state.get("managed", {}) if k.startswith("rg:") and k not in vs]:
+            changes.append({"variable": k, "value": None, "source": tp.get("source") or source,
+                            "reason": "companion: resource groups are unsupported while the thread pool is enabled"})
     try:
         changes = _order_pairs(changes, c.db.variables())
     except Exception:
@@ -4489,8 +4498,14 @@ def _autotune(a):
             if trade:
                 log(f"== trade-off budget: {measured} of {a.max_runs} runs used, switching to trade-off experiments")
                 item, nxt = trade, trade["id"]
-        last3 = [r.get("verdict") for r in sess["runs"][-3:]]
-        if len(last3) == 3 and all(v == "unreliable" for v in last3):
+        # unreliable because of the environment (steal, a busy host, a stalled client) - not because the configuration under
+        # test cannot hold the load or could not be applied: those are results of their experiments (session 432 stopped
+        # its 100-run exploration after ps-off and two remedies were unsustainable or incompatible)
+        def env_unreliable(r):
+            ev = r.get("evaluation") or {}
+            return r.get("verdict") == "unreliable" and not ev.get("unsustainable") and not ev.get("config_mismatch")
+        last3 = sess["runs"][-3:]
+        if len(last3) == 3 and all(env_unreliable(r) for r in last3):
             # the environment, not the configuration: 303 measured 25 runs, every one unreliable (steady 2-2.7% steal under
             # the old absolute rule), each experiment twice
             why = ("Stopped: the last 3 runs were all unreliable (" + "; ".join(sorted({str((r.get("evaluation") or {}).get("note") or "")[:80]

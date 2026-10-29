@@ -3908,6 +3908,21 @@ def test_steady_state_throughput_drift_needs_a_trend():
     rise = [{"ts": 10 * i, "db": {"tps": (1000 + 0.6 * i) * (1 + rnd.gauss(0, 0.05))}} for i in range(240)]
     assert any(g.startswith("throughput") for g in collector.steady_state(rise)["growing"])
 
+def test_thread_pool_and_resource_groups_exclude_each_other():
+    """Session 432: balance-threadpool kept the triage's rg:purge and every run failed with error 3658. Ideas setting a
+    resource group on the thread pool are not run; ideas switching the pool off are."""
+    from tuning_agent import engine
+    ctx = {"variables": {"thread_handling": "pool-of-threads"}}
+    rg = {"id": "purge-prio", "kind": "config", "confidence": 2, "changes": [{"variable": "rg:purge", "proposed": "prio=-10"}]}
+    both = {"id": "x", "kind": "config", "confidence": 2, "changes": [{"variable": "thread_handling", "proposed": "one-thread-per-connection"},
+                                                                       {"variable": "rg:purge", "proposed": "prio=-10"}]}
+    engine.thread_pool_guard([rg, both], ctx)
+    assert rg["confidence"] == 0 and "thread pool" in rg["note"] and both["confidence"] == 2
+    off = {"id": "y", "kind": "config", "confidence": 2, "changes": [{"variable": "rg:purge", "proposed": "prio=-10"}]}
+    engine.thread_pool_guard([off], {"variables": {"thread_handling": "one-thread-per-connection"}})
+    assert off["confidence"] == 2
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

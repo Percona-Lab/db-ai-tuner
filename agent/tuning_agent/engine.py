@@ -2726,6 +2726,23 @@ QUEUE_LEVERS = {"thread-pool", "sweep-thread-concurrency"}
 STOP_AFTER_FRUITLESS = 8  # the default of autotune --max-fruitless: the early stop below follows the session's limit
 
 
+def thread_pool_guard(items, ctx):
+    """Percona Server refuses resource groups while the thread pool plugin is enabled (error 3658): an idea that sets a
+    resource group on top of the thread pool can never run its configuration - not run (confidence 0), with the reason."""
+    v = ctx.get("variables") or {}
+    if str(v.get("thread_handling", "")).lower() != "pool-of-threads":
+        return items
+    for it in items:
+        sets_tp_off = any(c["variable"] == "thread_handling" and str(c.get("proposed")).lower() != "pool-of-threads"
+                          for c in it.get("changes") or [])
+        if it.get("kind") == "config" and not sets_tp_off and any(
+                str(c["variable"]).startswith("rg:") and not c.get("unset") and str(c.get("proposed") or "").lower() not in ("", "off")
+                for c in it.get("changes") or []):
+            it["confidence"] = 0
+            it["note"] = (it.get("note", "") + " Not run: resource groups are unsupported while the thread pool is enabled.").strip()
+    return items
+
+
 def memory_fits(ctx, var, val):
     """(fits, text): a memory setting at this value against the host's memory budget as memory_gate measures it (model
     corrected by mysqld's measured memory, free swap, the no-swap margin). For experiments a person or a pipeline asks for:
@@ -3141,6 +3158,7 @@ def run_engine(ctx):
                 it["note"] = (it.get("note", "") + f" Not run: commits take {commit_sh:.0f}% of the time - limiting admission "
                               "shrinks the commit groups.").strip()
     items = nofile_guard(items, ctx)
+    items = thread_pool_guard(items, ctx)
     items = balance_purge(items, ctx)
     if ctx.get("validate_discarded"):
         items = validate_discarded(items, ctx)
@@ -3150,7 +3168,12 @@ def run_engine(ctx):
     nxt = safe_next or (trade_next if benchmark else None)
     # benchmark policy: a trade-off backed by evidence goes before a safe idea that has none, or that scores far lower
     # (trx-commit-2 / ps-off / doublewrite-off had the top scores in five sessions and ran last or never)
-    if benchmark and safe_next and trade_next and safe_next["kind"] == "config" and (
+    # Not when the trade-off switches performance_schema off: every later run then loses the statement latency and wait
+    # data the diagnosis stands on, for a gain everyone knows (session 432 ran ps-off as its 8th run of 100). And not in
+    # an explore session: it exists to learn from real tuning, its trade-off budget (the last 30%) has room for them
+    blinds = any(c["variable"] == "performance_schema" and str(c.get("proposed")).upper() in ("OFF", "0")
+                 for c in (trade_next or {}).get("changes") or [])
+    if benchmark and safe_next and trade_next and safe_next["kind"] == "config" and not blinds and not ctx.get("explore") and (
             trade_next["score"] > safe_next["score"] + 4
             or ((safe_next.get("no_mechanism") or (safe_next.get("relevance") or 0) <= 1) and (trade_next.get("relevance") or 0) >= 2)):
         nxt = trade_next
