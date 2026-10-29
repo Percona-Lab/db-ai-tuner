@@ -111,11 +111,8 @@ if [ -n "${SWEEP_VAR:-}" ]; then
   # characterization sweep (user, 2026-10-29): the cell's workload, calibrated, then one setting across its whole range -
   # buffer pool from far too small to as large as memory allows, buffer pool instances from 1 - each value measured and
   # profiled, nothing tuned: response curves and contention profiles as evidence for the rules and the case base
-  if [ "$SWEEP_VALUES" = auto-bp ]; then
-    maxg=$(awk '/MemTotal/ { printf "%d", $2 * 0.7 / 1048576 }' /proc/meminfo)
-    SWEEP_VALUES=$(for v in 1 2 4 8 16 24 32 48; do [ $v -le $maxg ] && printf "%sG," $v; done; echo "${maxg}G")
-    SWEEP_VALUES="512M,$(echo "$SWEEP_VALUES" | tr ',' '\n' | awk '!seen[$0]++' | paste -sd,)"
-  fi
+  # auto-bp is expanded by sweep-post.sh once the calibration has set the tuned pool: the range runs up to that size
+  # (70% of RAM stopped at 21G below a 23-25G tuned pool, and P1 / P4 were still rising there)
   export SWEEP_VAR SWEEP_VALUES SWEEP_WITH POST=/root/bench/pipeline/items/sweep-post.sh
   STUDY="characterization sweeps 2026-10-29" run_session $P "sweep $SWEEP_VAR: matrix $CELL ($(hostname))" $GOAL 0
 else

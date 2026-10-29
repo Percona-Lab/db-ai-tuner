@@ -442,6 +442,12 @@ class Applier:
                 normalize(var, after.get(var)) == normalize(var, c["value"])
             if c.get("value") is not None and not ok and var not in result["needs_restart"]:
                 result["mismatches"].append({"variable": var, "wanted": c["value"], "actual": after.get(var)})
+            if c.get("value") is not None and not ok and var not in result["needs_restart"] and \
+                    normalize(var, entry["old"]) != normalize(var, c["value"]):
+                # written to the option file but not in effect yet (a 25 GiB -> 512 MiB pool shrink outlasts the wait above):
+                # still this run's change - the sweep's first point was recorded with no change at all (sessions 422-425)
+                entry["new"] = c["value"]
+                entry["effect"] = f"not in effect yet when applied (server: {after.get(var)})"
             if normalize(var, entry["old"]) != normalize(var, entry["new"]) or var in result["needs_restart"]:
                 result["applied"].append(entry)
         rg_now = [c for c in changes if c["variable"].startswith("rg:") and c.get("value") is not None]

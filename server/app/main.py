@@ -953,6 +953,8 @@ def _parse_experiment(body):
         if not var or len(values) < 2:
             raise HTTPException(400, "a sweep needs a variable and at least two comma-separated values")
         spec = {"variable": var, "values": values[:12]}
+        if int(body.get("refine") or 0) > 0:  # more points inside the steepest measured step (the agent picks them)
+            spec["refine"] = min(int(body["refine"]), 4)
         with_ = [c for c in _parse_settings(body.get("settings")) if c["variable"] != var]
         if with_:
             spec["with"] = with_

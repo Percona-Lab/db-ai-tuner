@@ -153,8 +153,11 @@ API keys: __SERVER__/#/connect (an account is free; __SERVER__/quickstart walks 
    `tuning-agent experiment add --sweep innodb_buffer_pool_size=1G,2G,3G --repeats 2 --reason "..."` or
    `tuning-agent experiment add --try var=value --try var2=value2`; `experiment run --bench PROFILE` (or the next
    `autotune` iteration) measures every value from the same parent configuration and keeps the best one only if it
-   beats the noise threshold. `experiment list --json` shows per-value results. The engine and the LLM queue sweeps
-   themselves when a numeric knob's best value is uncertain.
+   beats the noise threshold. `experiment list --json` shows per-value results. Every value of a sweep is judged
+   against the sweep's parent configuration. `--refine N` adds up to N more points inside the steepest measured step
+   of the curve (the knee), e.g. between a 4G and an 8G buffer pool. Memory settings are checked against the host's
+   memory budget (measured mysqld memory and connections included); `--force` overrides. The engine and the LLM queue
+   sweeps themselves when a numeric knob's best value is uncertain.
 8. `tuning-agent apply --next` or `--rec ID` or `--set var=value --reason "why"` (your own idea;
    always give a reason, it is shown in the web UI). `--unset var` stops managing a variable.
 9. Measure again with the same duration and load. The run is compared with the MEAN of its parent

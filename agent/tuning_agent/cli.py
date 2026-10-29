@@ -541,8 +541,16 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
     vs = {ch["variable"]: ch for ch in changes}
     if "innodb_buffer_pool_instances" in vs or "innodb_buffer_pool_size" in vs or "innodb_buffer_pool_chunk_size" in vs:
         try:
-            cur = c.db.variables()
-            comp = _bp_companions(vs, cur, source)
+            # the configured instances and chunk size, not the running ones: below 1 GiB MySQL runs one instance, and a
+            # sweep's 1G step after 512M saw 1 and left the size alone - the restart then made it 1.125 GiB (3 x 3 x 128 MiB)
+            cur = dict(c.db.variables())
+            for k in ("innodb_buffer_pool_instances", "innodb_buffer_pool_chunk_size"):
+                mv = (c.state.get("managed", {}).get(k) or {}).get("value")
+                if mv is not None:
+                    from .knowledge import parse_size as _psz
+                    cur[k] = _psz(str(mv))
+            main = vs.get("innodb_buffer_pool_size") or vs.get("innodb_buffer_pool_instances") or {}
+            comp = _bp_companions(vs, cur, main.get("source") or source)
             if comp:
                 changes = [ch for ch in changes if ch["variable"] not in {x["variable"] for x in comp}] + comp
         except Exception:
@@ -3771,9 +3779,23 @@ def _validate_changes(c, changes, force=False):
             n = _ps(val) if _KB.get(var, {}).get("kind") == "size" else None
             if n is not None and ram and not force and n > ram * (0.85 if var == "innodb_buffer_pool_size" else 0.25):
                 errors.append(f"{var}={val} exceeds the memory budget of this {ram / 2 ** 30:.1f} GiB host (use force to override)")
+            elif not force and (fit := _memory_fit(c, var, val)):
+                errors.append(fit + " (use force to override)")
             else:
                 ok.append({"variable": var, "value": val})
     return ok, errors
+
+
+def _memory_fit(c, var, val):
+    """Why var=val does not fit this host's memory (the engine's budget, measured overhead included), or None."""
+    try:
+        sess = c.session()
+        if not sess or not sess.get("runs"):
+            return None
+        ok, why = engine.memory_fits(_engine_ctx(c, sess), var, val)
+        return None if ok else why
+    except Exception:
+        return None
 
 
 def _goto_managed(c, target, reason, source):
@@ -3878,6 +3900,31 @@ def _good_enough(measured, best, noise, var, pv, shape):
     return min(tied, key=key)
 
 
+def _knee_point(var, points, noise, tried):
+    """A value inside the steepest step between neighbouring measured points of a sweep (the goal changing by more than
+    twice the noise, values at least 1.3x apart): the geometric middle, rounded (sizes to 256 MiB, 64 MiB below 1 GiB).
+    None when no step qualifies or its middle was tried already."""
+    from .knowledge import KB as _KB
+    pts = sorted((x, g) for x, g in ((_sv(var, v), g) for v, g in points) if x is not None and x > 0 and g)
+    best = None
+    for (x1, g1), (x2, g2) in zip(pts, pts[1:]):
+        rel = abs(g2 - g1) / max(abs(g1), abs(g2)) * 100
+        if rel > 2 * noise and x2 >= 1.3 * x1 and (best is None or rel > best[0]):
+            best = (rel, x1, x2)
+    if not best:
+        return None
+    mid = (best[1] * best[2]) ** 0.5
+    if (_KB.get(var) or {}).get("kind") == "size":
+        step = 256 * 2 ** 20 if mid >= 2 ** 30 else 64 * 2 ** 20
+        val = f"{int(round(mid / step) * step) // 2 ** 20}M"
+    else:
+        val = str(int(round(mid)))
+    xv = _sv(var, val)
+    if xv is None or xv <= best[1] or xv >= best[2] or any(_sv(var, t) == xv for t in tried):
+        return None
+    return val
+
+
 def _run_experiment(c, prof, exp):
     """Measure every arm of an experiment from the same parent configuration; keep the best arm only if it beats noise."""
     sess = c.session()
@@ -3909,6 +3956,7 @@ def _run_experiment(c, prof, exp):
     from .knowledge import response_shape
     shape = response_shape(spec.get("variable")) if exp["kind"] == "sweep" else None
     extended = 0
+    refine, refined, points = int(spec.get("refine") or 0) if exp["kind"] == "sweep" else 0, 0, []
     arms = list(arms)
     screen = auto and pv is not None and shape in ("saturating", "optimum")
     if screen:
@@ -3920,15 +3968,23 @@ def _run_experiment(c, prof, exp):
     i = -1
     while True:
         if i + 1 >= len(arms):
-            # an inner optimum may lie beyond the best value when it is the farthest one tried on its side and beat the
-            # parent: one more step that way (at most twice), with a round value
-            nxt = _extend_optimum(results, pv, noise, worse_at, arms[-1][0]["value"], spec) if (
-                auto and shape == "optimum" and extended < 2 and pv is not None) else None
-            if not nxt:
-                break
-            arms.append([{"variable": spec["variable"], "value": nxt}])
-            extended += 1
-            log(f"   optimum may lie beyond the best value so far: one more step, {spec['variable']}={nxt}")
+            # a characterization sweep asked to refine: one more point inside the steepest measured step (the knee), up
+            # to `refine` times (M2's pool sweep jumped from 3849 at 4G to 8583 at 8G and stopped there)
+            knee = _knee_point(spec["variable"], points, noise, [a[-1]["value"] for a in arms]) if refined < refine else None
+            if knee:
+                arms.append(list(spec.get("with") or []) + [{"variable": spec["variable"], "value": knee}])
+                refined += 1
+                log(f"   refining the steepest step of the curve: {spec['variable']}={knee}")
+            else:
+                # an inner optimum may lie beyond the best value when it is the farthest one tried on its side and beat the
+                # parent: one more step that way (at most twice), with a round value
+                nxt = _extend_optimum(results, pv, noise, worse_at, arms[-1][0]["value"], spec) if (
+                    auto and shape == "optimum" and extended < 2 and pv is not None) else None
+                if not nxt:
+                    break
+                arms.append([{"variable": spec["variable"], "value": nxt}])
+                extended += 1
+                log(f"   optimum may lie beyond the best value so far: one more step, {spec['variable']}={nxt}")
         i += 1
         arm = arms[i]
         side = side_of(arm)
@@ -3967,16 +4023,25 @@ def _run_experiment(c, prof, exp):
             continue
         vals = []
         crashed = None
-        for rep in range(int(exp.get("repeats") or 1)):  # not `i`: that is the arm index of the while loop (#142 re-ran one arm forever)
-            try:
-                run, _ = _bench_run(c, prof, f"exp#{eid} {label(arm)}" + (f" ({rep + 1}/{exp['repeats']})" if (exp.get("repeats") or 1) > 1 else ""))
-            except (TooSlow, ServerDown, BenchFailed) as e:
-                # one value that OOM-kills mysqld or breaks the benchmark is a result of the sweep, not the end of the session
-                # (suite r2 RO-4.ns: buffer pool 12G on a 15.6 GiB host without swap ended the session)
-                crashed = str(e)[:300]
-                break
-            if run.get("goal_value") is not None:
-                vals.append(run["goal_value"])
+        # every point is judged against the experiment's parent configuration, never against the previous point (sessions
+        # 422-425: steps labelled "improved" / "efficiency-loss" against their neighbour on a curve rising all the way)
+        hint0 = c.state.get("parent_hint")
+        if pm and exp["kind"] == "sweep":
+            c.state.data["parent_hint"] = list(pm["seqs"])
+        try:
+            for rep in range(int(exp.get("repeats") or 1)):  # not `i`: that is the arm index of the while loop (#142 re-ran one arm forever)
+                try:
+                    run, _ = _bench_run(c, prof, f"exp#{eid} {label(arm)}" + (f" ({rep + 1}/{exp['repeats']})" if (exp.get("repeats") or 1) > 1 else ""))
+                except (TooSlow, ServerDown, BenchFailed) as e:
+                    # one value that OOM-kills mysqld or breaks the benchmark is a result of the sweep, not the end of the session
+                    # (suite r2 RO-4.ns: buffer pool 12G on a 15.6 GiB host without swap ended the session)
+                    crashed = str(e)[:300]
+                    break
+                if run.get("goal_value") is not None:
+                    vals.append(run["goal_value"])
+        finally:
+            if pm and exp["kind"] == "sweep":
+                c.state.data["parent_hint"] = hint0
         if crashed:
             log(f"   {label(arm)}: failed - {crashed}; back to the parent configuration")
             results.append({"arm": label(arm), "status": "failed", "reason": crashed})
@@ -3989,6 +4054,8 @@ def _run_experiment(c, prof, exp):
                 oom_at[sd] = min(oom_at.get(sd, float("inf")), abs(x - pv))
             continue
         mean = sum(vals) / len(vals) if vals else None
+        if mean is not None and exp["kind"] == "sweep":
+            points.append((arm[-1]["value"], mean))
         d = _improvement(goal, mean, pm["goal"]) if (pm and mean is not None) else None
         results.append({"arm": label(arm), "status": "measured", "runs": len(vals), "goal_mean": round(mean, 4) if mean is not None else None,
                         "delta_pct": d, "verdict": None if d is None else ("better" if d > noise else "worse" if d < -noise else "within noise")})
@@ -4148,6 +4215,8 @@ def cmd_experiment(a):
         if a.sweep:
             var, _, vals = a.sweep.partition("=")
             body = {"kind": "sweep", "variable": var, "values": vals}
+            if getattr(a, "refine", None):
+                body["refine"] = a.refine
             if a.try_:  # --sweep with --try: those settings go with every value of the sweep
                 body["settings"] = "\n".join(a.try_)
         elif a.try_:
@@ -5145,6 +5214,8 @@ def main(argv=None):
     s = sp.add_parser("experiment", help="human-specified experiments: try settings or sweep one variable")
     s.add_argument("action", choices=["add", "list", "run"])
     s.add_argument("--sweep", help="var=v1,v2,v3 (e.g. innodb_buffer_pool_size=1G,2G,3G)")
+    s.add_argument("--refine", type=int, default=0, help="with --sweep: after the listed values, up to N more points inside "
+                                                          "the steepest measured step of the curve (the knee)")
     s.add_argument("--try", dest="try_", action="append", help="var=value (repeatable): one combination, applied together; "
                                                               "with --sweep: applied with every value of the sweep")
     s.add_argument("--repeats", type=int, default=1)

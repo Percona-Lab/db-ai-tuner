@@ -2726,6 +2726,31 @@ QUEUE_LEVERS = {"thread-pool", "sweep-thread-concurrency"}
 STOP_AFTER_FRUITLESS = 8  # the default of autotune --max-fruitless: the early stop below follows the session's limit
 
 
+def memory_fits(ctx, var, val):
+    """(fits, text): a memory setting at this value against the host's memory budget as memory_gate measures it (model
+    corrected by mysqld's measured memory, free swap, the no-swap margin). For experiments a person or a pipeline asks for:
+    a buffer pool of 25.5 GiB on a 31 GB host at 1024 threads passed the 85%-of-RAM check and lost 45% (session 404)."""
+    from . import memory as _mem
+    hw_ = ctx.get("hw") or {}
+    if var not in _mem.MEMORY_VARS or not hw_.get("ram_bytes") or not ctx.get("variables"):
+        return True, ""
+    sm = ctx.get("summary") or {}
+    other = _mem.host_other_bytes(sm, hw_["ram_bytes"])
+    act = _mem.active_from(sm)
+    cur = _mem.budget(ctx["variables"], hw_, ctx.get("client_reserve") or 0, host_other=other, active_measured=act)
+    huge = (sm.get("hugepages_total_mb") or 0) if str(ctx["variables"].get("large_pages", "")).upper() in ("ON", "1") else 0
+    seen = ((sm.get("dbproc_pss_mb") or 0) + (sm.get("dbproc_swap_pss_mb") or 0) + huge) * MiB
+    offset = max(0, seen - cur["mysqld_bytes"]) if sm.get("dbproc_pss_mb") else 0
+    nb = _mem.budget(dict(ctx["variables"], **{var: val}), hw_, ctx.get("client_reserve") or 0, host_other=other, active_measured=act)
+    swap_free = max(0, (sm.get("swap_total_mb") or 0) - (sm.get("swap_used_mb") or 0)) * MiB
+    margin = max(GiB, int(0.05 * nb["ram"])) if swap_free < GiB else 0
+    need = nb["needed"] + offset
+    if need + margin <= nb["ram"] or need <= cur["needed"] + offset:
+        return True, ""
+    return False, (f"{var}={val} needs about {need / GiB:.1f} GiB with the measured connections and mysqld overhead, "
+                   f"{'over' if need > nb['ram'] else 'within ' + format(margin / GiB, '.1f') + ' GiB of'} the {nb['ram'] / GiB:.1f} GiB of RAM")
+
+
 def memory_gate(items, ctx):
     """Memory-related changes checked against this host's memory budget (in place): over it a trade-off, beyond RAM +
     free swap not run (or with a swap file). Applied to the rules' items in run_engine and to AI suggestions, which

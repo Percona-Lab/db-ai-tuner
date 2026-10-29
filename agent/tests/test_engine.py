@@ -1023,6 +1023,7 @@ def _sweep_sim(values, goals, parent="0", var="innodb_thread_concurrency", noise
     class St:
         def __init__(self):
             self.d = {"managed": {var: {"value": parent}} if parent is not None else {}}
+            self.data = self.d
         def get(self, k, default=None):
             return self.d.get(k, default)
 
@@ -3851,6 +3852,32 @@ def test_memory_gate_applies_to_ai_ideas():
     engine.memory_gate([it], ctx)
     assert it["safety"] == "trade-off" or it["confidence"] == 0, it
     assert "memory_budget" in (it.get("evidence") or {})
+
+
+def test_memory_fits_for_experiments():
+    """Experiments a person or pipeline asks for get the engine's memory budget, not only 85% of RAM (session 404: a
+    25.5 GiB pool on a 31 GB host at 1024 threads lost 45%)."""
+    from tuning_agent import engine
+    GiB_ = 2 ** 30
+    hw = dict(HW, ram_bytes=8 * GiB_, cpus=4)
+    ctx = {"variables": dict(VARS, innodb_buffer_pool_size=str(4736 << 20), max_connections="300"), "hw": hw,
+           "summary": dict(OLTP[0], swap_total_mb=0, swap_used_mb=0, dbproc_pss_mb=5600, mem_available_mb=1300)}
+    ok, why = engine.memory_fits(ctx, "innodb_buffer_pool_size", str(7 * GiB_))
+    assert not ok and "GiB" in why, why
+    assert engine.memory_fits(ctx, "innodb_buffer_pool_size", "1G")[0]       # smaller always fits
+    assert engine.memory_fits(ctx, "innodb_io_capacity", "4000")[0]           # not a memory setting
+
+
+def test_knee_point_refines_steepest_step():
+    """A sweep's extra point goes inside the steepest step (M2: 3849 at 4G, 8583 at 8G), rounded, never one tried."""
+    from tuning_agent import cli
+    pts = [("512M", 1664), ("1G", 1838), ("2G", 2197), ("4G", 3849), ("8G", 8583), ("16G", 8588)]
+    k = cli._knee_point("innodb_buffer_pool_size", pts, 2.0, [p[0] for p in pts])
+    assert k == "5888M", k
+    k2 = cli._knee_point("innodb_buffer_pool_size", pts + [(k, 6000)], 2.0, [p[0] for p in pts] + [k])
+    assert k2 and k2 != k, k2
+    flat = [("8G", 8583), ("16G", 8588), ("21G", 8602)]
+    assert cli._knee_point("innodb_buffer_pool_size", flat, 2.0, [p[0] for p in flat]) is None
 
 
 if __name__ == "__main__":
