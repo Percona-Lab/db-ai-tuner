@@ -3800,6 +3800,15 @@ def test_unmanaging_online_restores_the_users_value_not_the_compiled_default():
     assert not any("DEFAULT" in q for q in sql), sql
 
 
+def test_client_start_failure_is_recognised():
+    """h2h W4 on SATA (session 390): sysbench 1.0.20 gives 1024 threads a fixed 30 s to start - a client hiccup the agent
+    retries once, not a failed configuration."""
+    import re
+    from tuning_agent import cli
+    assert re.search(cli.CLIENT_START_RE, "Initializing worker threads...\n\nFATAL: Worker threads failed to initialize within 30 seconds!")
+    assert not re.search(cli.CLIENT_START_RE, "FATAL: mysql_stmt_execute() returned error 1213 (Deadlock found)")
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

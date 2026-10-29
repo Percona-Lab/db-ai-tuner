@@ -1053,6 +1053,47 @@
    "group": false,
    "est_hours": 12,
    "question": "Case-base matrix v2 wave 2, cell D6: TPC-H SF30, warm passes, total-time goal"
+  },
+  {
+   "id": "matrix-P3-retry2-atvbm",
+   "script": "matrix.sh",
+   "args": [
+    "P3"
+   ],
+   "hosts": [
+    "atvbm"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Matrix P3 (writes, 1024 threads, partly cached) a third time, with the purge triage fixes that made P5 stable (most purge threads first, combinations kept in budget, clean-start probe): both earlier tries ran on older builds and stopped unsustainable"
+  },
+  {
+   "id": "h2h-W4-rules-rerun3-atvbmmia",
+   "script": "h2h.sh",
+   "args": [
+    "W4",
+    "rules",
+    "rerun"
+   ],
+   "hosts": [
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 8,
+   "question": "Head-to-head W4 rules arm on atvbmmia a third time: the second try failed when sysbench 1.0.20 could not start its 1024 threads within its fixed 30 s; the agent now starts such a run again once"
+  },
+  {
+   "id": "matrix-H1-atcanary",
+   "script": "matrix.sh",
+   "args": [
+    "H1"
+   ],
+   "hosts": [
+    "atcanary"
+   ],
+   "group": false,
+   "est_hours": 9,
+   "question": "Case-base matrix cell H1: HammerDB TPROC-C 200 W, 64 VU, NOPM on tuner-canary (8 vCPU): commit-heavy at medium concurrency, a second TPC-C implementation next to go-tpc"
   }
  ]
 }

@@ -70,9 +70,37 @@ case $CELL in
           -e "s/max_execution_time=120000/max_execution_time=900000/" -e "s/^timeout = .*/timeout = 28800/" -e "/^capped_queries/d" -e "/^reset = /d" /root/bench/tpch.ini > $P
       printf 'passes = warm\nwarm_passes = 1\n' >> /tmp/matrix-d6-extra && sed -i "/^\[bench\]/r /tmp/matrix-d6-extra" $P && rm -f /tmp/matrix-d6-extra
       GOAL=latency ;;
+  # tuner-canary (8 vCPU): HammerDB TPROC-C 200 W, 64 virtual users, NOPM (HammerDB reports it for the timed part only, so
+  # its own ramp-up is the warm-up: split shape, fixed lengths). The schema is built once; session.sh snapshots the
+  # pristine copy (sbtest and tpcc) for the resets
+  H1) if ! mysql -N -e "SELECT 1 FROM tpcc.warehouse LIMIT 1" >/dev/null 2>&1; then
+        mysql -e "CREATE USER IF NOT EXISTS 'tpcc'@'localhost' IDENTIFIED BY 'tpcc'; GRANT ALL ON tpcc.* TO 'tpcc'@'localhost'" || exit 1
+        step bash -c "cd /opt/HammerDB-6.0 && LD_LIBRARY_PATH=/opt/mysqlclient TMP=/tmp HDB_WH=200 HDB_BUILD_VU=8 ./hammerdbcli auto /root/bench/hdb_build200.tcl > /root/bench/build200-h1.log 2>&1"
+        mysql -N -e "SELECT COUNT(*) FROM tpcc.warehouse" | grep -qx 200 || { echo "QUEUEFAILED: TPROC-C build incomplete"; exit 1; }
+        rm -rf /var/lib/mysql_base/*  # the pristine copy is taken again with the new schema
+      fi
+      cat > $P <<INI
+[bench]
+name = matrix H1: HammerDB TPROC-C 200 W, 64 VU, 5 min ramp-up + 10 min ($(hostname))
+reset = /root/bench/reset_datadir.sh
+run = cd /opt/HammerDB-6.0 && LD_LIBRARY_PATH=/opt/mysqlclient TMP=/tmp HDB_VU=64 HDB_RAMPUP=5 HDB_DURATION=10 ./hammerdbcli auto /root/bench/hdb_run.tcl
+shape = split
+warmup = 305
+duration = 600
+timeout = 1500
+goal_metric = nopm
+
+[metrics]
+nopm = achieved (\d+) NOPM
+tpm = from (\d+) MySQL TPM
+
+[requires]
+max_connections = 228
+INI
+      ;;
   *) echo "QUEUEFAILED: unknown cell $CELL"; exit 1 ;;
 esac
-grep -q "^warmup = auto" $P || [ $CELL = D5 ] || [ $CELL = D6 ] || auto_len $P
+grep -q "^warmup = auto" $P || [ $CELL = D5 ] || [ $CELL = D6 ] || [ $CELL = H1 ] || auto_len $P
 # the explore cells use the AI once the rules run out (autotune --explore); the others run without AI
 if [ -n "${EXPLORE_CELL:-}" ]; then export EXPLORE=1; else export AI_OFF=1; fi
 STUDY="${MATRIX_STUDY:-case-base matrix v2 2026-10-26}" run_session $P "matrix $CELL ($(hostname))" $GOAL 16

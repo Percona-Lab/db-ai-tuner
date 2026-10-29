@@ -91,6 +91,15 @@ def _raise_conn_requirement(c, info):
                                "reason": f"max_connections {new} needs ~{need:,} open files", "source": "requirement"}], "requirement")
 
 
+class ClientStart(Fail):
+    """The benchmark client failed while starting its threads (sysbench 1.0.20 gives 1024 threads a fixed 30 s:
+    "Worker threads failed to initialize within 30 seconds!" - h2h W4 on SATA, session 390): a client hiccup, not the
+    configuration. The run starts again once."""
+
+
+CLIENT_START_RE = r"failed to initialize within \d+ seconds|Threads? (failed|could not) (to )?start"
+
+
 class BenchFailed(Fail):
     """The benchmark itself failed under this configuration (exited during warm-up: e.g. mysqld OOM-killed, connections
     not accepted in time). Under an experiment: a failed experiment (reverted), not the end of the session."""
@@ -1727,7 +1736,13 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     with serverwatch.watching(_service(c)) as w:
         try:
             try:
-                return _bench_run_once(c, prof, label, notes, warmup_override)
+                try:
+                    return _bench_run_once(c, prof, label, notes, warmup_override)
+                except ClientStart as cs:
+                    log(f"   the benchmark client failed to start its threads ({str(cs)[:160]}): starting the run again in 60 s")
+                    c.event("bench", f"run '{label}': the client failed to start its threads - started again once", {"output": str(cs)[:300]})
+                    time.sleep(60)
+                    return _bench_run_once(c, prof, label, notes, warmup_override)
             except ConnStorm as cs:
                 # stopped in the warm-up, nothing measured: the prerequisite raised, the run started again (once)
                 _raise_conn_requirement(c, cs.info)
@@ -2058,6 +2073,8 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
             if not oom:
                 serverwatch.current() and serverwatch.current().check()
                 _incident_check(c)
+            if not oom and re.search(CLIENT_START_RE, r.output()[-4000:]):
+                raise ClientStart(r.output()[-300:].strip())
             raise BenchFailed(("mysqld was OOM-killed during the warm-up (" + oom.split("kernel:")[-1].strip()[:160] + "); " if oom else "")
                               + f"benchmark exited during warm-up (code {r.p.returncode}); tail:\n{r.output()[-1500:]}")
         m, warn, url = _measure_start(c, label, notes, warmed=True)
