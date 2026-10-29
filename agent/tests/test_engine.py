@@ -1676,7 +1676,10 @@ def test_settle_times_for_warmup_probe():
     r = collector.settle_times(smp, 0)
     m = r["metrics"]
     assert m["tps"]["settled_after_s"] is not None and m["tps"]["settled_after_s"] < 1500, m["tps"]
-    assert m["checkpoint_age_pct"]["settled_after_s"] > m["tps"]["settled_after_s"], m
+    # slower (tau 15 min): settles later than throughput, or is still climbing at the probe's end (~8 points after the
+    # band was reached - a window there would fail the steady-state check)
+    ca = m["checkpoint_age_pct"]
+    assert ca.get("drifting") or ca["settled_after_s"] > m["tps"]["settled_after_s"], m
     assert m["history_list_length"]["unbounded"], m["history_list_length"]
 
 
@@ -3879,6 +3882,31 @@ def test_knee_point_refines_steepest_step():
     flat = [("8G", 8583), ("16G", 8588), ("21G", 8602)]
     assert cli._knee_point("innodb_buffer_pool_size", flat, 2.0, [p[0] for p in flat]) is None
 
+
+def test_settle_times_sees_slow_drift_on_noisy_storage():
+    """Session 434's probe: dirty pages climbed ~20% per 10 min under heavy scatter, yet stayed inside a +-10-point band
+    and counted as settled. A clear trend since settling keeps the metric moving; a flat noisy series settles."""
+    import random
+    from tuning_agent import collector
+    rnd = random.Random(7)
+    def series(slope):
+        return [{"ts": 1000 + 10 * i, "db": {"bp_dirty_pct": 60 + slope * i + rnd.gauss(0, 4), "tps": 1000 * (1 + rnd.gauss(0, 0.16))}}
+                for i in range(240)]
+    d = collector.settle_times(series(0.04), 1000)["metrics"]["bp_dirty_pct"]
+    assert d["settled_after_s"] is None and d.get("drifting"), d
+    assert collector.settle_times(series(0.0), 1000)["metrics"]["bp_dirty_pct"]["settled_after_s"] is not None
+    assert collector.settle_times(series(0.0), 1000)["metrics"]["tps"]["settled_after_s"] is not None
+
+
+def test_steady_state_throughput_drift_needs_a_trend():
+    """A flat window on very uneven storage is not 'not steady' by chance; a real climb (run 6167: +5.4%, t = 2.3) still is."""
+    import random
+    from tuning_agent import collector
+    rnd = random.Random(3)
+    flat = [{"ts": 10 * i, "db": {"tps": 1000 * (1 + rnd.gauss(0, 0.35))}} for i in range(240)]
+    assert not any(g.startswith("throughput") for g in (collector.steady_state(flat) or {}).get("growing", [])), collector.steady_state(flat)
+    rise = [{"ts": 10 * i, "db": {"tps": (1000 + 0.6 * i) * (1 + rnd.gauss(0, 0.05))}} for i in range(240)]
+    assert any(g.startswith("throughput") for g in collector.steady_state(rise)["growing"])
 
 if __name__ == "__main__":
     fails = 0

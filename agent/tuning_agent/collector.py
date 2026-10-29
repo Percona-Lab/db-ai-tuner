@@ -425,6 +425,30 @@ def _percentile_from_hist(hist_a, hist_b, q):
     return None
 
 
+def block_means(vals, b=6):
+    """Means of consecutive blocks of b samples (6 x 10 s = 1 minute): short-term storage jitter averages out, a trend
+    stays (session 434: throughput 16% CV per 10 s sample on a 100 GB I/O-bound set)."""
+    return [sum(vals[i:i + b]) / b for i in range(0, len(vals) - b + 1, b)]
+
+
+def trend(vals, b=6):
+    """Linear trend of 1-minute block means: (change per block, its standard error, mean, blocks), or None below 6 blocks.
+    The error is widened for correlated residuals (lag-1). A slow climb under heavy short-term scatter shows as a slope
+    many errors away from zero (session 434's probe: dirty pages +20% per 10 min at t = 9.6, inside a +-10-point band)."""
+    bm = block_means(vals, b)
+    n = len(bm)
+    if n < 6:
+        return None
+    mx, my = (n - 1) / 2, sum(bm) / n
+    sxx = sum((x - mx) ** 2 for x in range(n))
+    sl = sum((x - mx) * (y - my) for x, y in zip(range(n), bm)) / sxx
+    res = [y - (my + sl * (x - mx)) for x, y in zip(range(n), bm)]
+    ss = sum(r * r for r in res)
+    r1 = max(0.0, min(0.9, sum(res[i] * res[i + 1] for i in range(n - 1)) / ss)) if ss else 0.0
+    se = (ss / (n - 2) / sxx) ** 0.5 * ((1 + r1) / (1 - r1)) ** 0.5
+    return sl, se, my, n
+
+
 def steady_state(samples):
     """Is the measured window in steady state, or is deferred work still piling up? Flushing (dirty pages, checkpoint
     age), purge (history list) and change-buffer merges can be postponed: a window that ends while that debt grows
@@ -451,7 +475,14 @@ def steady_state(samples):
     if tp and tp[0]:
         drift = 100.0 * (tp[1] - tp[0]) / tp[0]
         ev["throughput_drift_pct"] = round(drift, 1)
-        if abs(drift) >= 3:  # falling: debt being paid; rising: still warming up (caches filling, #124 +4-9%)
+        # on uneven storage the thirds also differ by chance: a 3% difference counts when the window's trend agrees (the
+        # slope of 1-minute means at least 2 errors from zero) - run 6167's +5.4% had t = 2.3, a flat window rarely does
+        key = "tps" if thirds("tps") else "qps"
+        tr = trend([s["db"][key] for s in samples if s.get("db", {}).get(key) is not None])
+        t_ = (tr[0] / tr[1]) if tr and tr[1] else None
+        if t_ is not None:
+            ev["throughput_trend_t"] = round(t_, 1)
+        if abs(drift) >= 3 and (t_ is None or abs(t_) >= 2):  # falling: debt being paid; rising: still warming up (#124 +4-9%)
             growing.append(f"throughput {drift:+.0f}% from the middle to the last third")
     return {"steady": not growing, "growing": growing, "evidence": ev} if ev else None
 
@@ -509,6 +540,11 @@ WARMUP_SIGNALS = (("checkpoint_age_pct", "checkpoint age %", 3.0, 0.15), ("bp_di
                   ("history_list_length", "history list length", 20000, 0.25), ("ibuf_size", "change buffer pages", 1000, 0.25),
                   ("tps", "throughput", 0.0, 0.05), ("avg_latency_ms", "average latency", 0.0, 0.10))
 
+
+# change since "settling" (a clear trend, t >= 3) that keeps a metric moving in the run-length probe: the steady-state
+# check's thresholds for the measured window, so a probe that ends settled predicts windows that pass it
+SETTLE_DRIFT = {"bp_dirty_pct": (1.5, 0.075), "checkpoint_age_pct": (2.5, 0.075), "history_list_length": (25000, 0.125),
+                "ibuf_size": (1000, 0.125), "tps": (0.0, 0.03), "avg_latency_ms": (0.0, 0.05)}
 
 MEASURE_CANDIDATES_S = (120, 180, 300, 450, 600, 900, 1200, 1800, 2400, 2700, 3600)
 WINDOW_CAP_S = 2400       # measured window at most 40 min by default: beyond that more runs buy more than longer ones
@@ -611,14 +647,34 @@ def settle_times(samples, t0=None):
         tail_n = max(18, len(pts) // 5)
         last = [v for _, v in pts[-tail_n:]]
         level = sum(last) / len(last)
-        sd = (sum((v - level) ** 2 for v in last) / max(len(last) - 1, 1)) ** 0.5
+        # the scatter of 1-minute means, not of 10 s samples: on uneven storage single samples scatter so widely (throughput
+        # +-35% in session 434) that a slow climb of 25% stayed inside the band and "settled" after 17 s
+        bl = block_means(last) if len(last) >= 18 else last
+        bm_ = sum(bl) / len(bl)
+        sd = (sum((v - bm_) ** 2 for v in bl) / max(len(bl) - 1, 1)) ** 0.5
         tol = max(absmin, rel * abs(level), 2 * sd, 1e-9)
         w = 18  # 3 minutes of 10 s samples
         sm = [(pts[i][0], sum(v for _, v in pts[max(0, i - w + 1):i + 1]) / len(pts[max(0, i - w + 1):i + 1])) for i in range(len(pts))]
         settled = next((sm[i][0] for i in range(len(sm)) if all(abs(v - level) <= tol for _, v in sm[i:])), None)
+        drift = None
+        if settled is not None and key in SETTLE_DRIFT:
+            # still trending after "settling": the middle and last thirds since then differ by more than the steady-state
+            # check allows and beyond the block-to-block noise - the calibration runs would fail that check (session 434:
+            # dirty pages 66% at the probe's end, 77% in the runs; throughput +5% through every window)
+            since = [v for t, v in pts if t >= settled]
+            tr = trend(since)
+            if tr and tr[1]:
+                sl, se, mean_, nb = tr
+                amin, arel = SETTLE_DRIFT[key]
+                change = sl * nb  # over the time since "settling"
+                if abs(sl / se) >= 3 and abs(change) >= max(amin, arel * abs(mean_)):
+                    drift = round(change, 2)
+                    settled = None
         out[key] = {"label": label, "level": round(level, 2), "tolerance": round(tol, 2),
                     "settled_after_s": int(settled - t0) if settled is not None else None,
                     "plateau_s": int(end - settled) if settled is not None else 0, "unbounded": key in unb}
+        if drift is not None:
+            out[key]["drifting"] = drift
     if "bp_free_pct" in out and bp_free_inert(samples):
         out["bp_free_pct"]["inert"] = True  # reported, but it sets no warm-up (bp_free_inert)
     return {"metrics": out, "unbounded": list(unb.values()), "elapsed_s": int(end - t0)}

@@ -2589,7 +2589,10 @@ def _noise_plan(c, prof, runs, n):
             base = int(getattr(prof, "base_warmup", prof.warmup) if str(prof.warmup).isdigit() else 0)
             cap = max(3 * base, 3600)  # up to an hour: large I/O-bound sets take long to reach steady state
             if prof.adaptive and prof.can_resize() and base and int(prof.warmup) < cap:
-                new = min(cap, int(prof.warmup) * 2)
+                # at least double, or straight to what the runs themselves show (warm-up plus the time state took to settle
+                # inside the window): session 434 doubled 960 -> 1920 s while its windows said ~3360 s - one more failed round
+                sug = max([((r.get("summary") or {}).get("warmup_signals") or {}).get("suggest_warmup_s") or 0 for r in runs] or [0])
+                new = min(cap, max(int(prof.warmup) * 2, int(-(-sug // 60)) * 60))
                 sess["warmup_seconds"] = new
                 wu["applied_warmup_s"] = new
                 note = f"Measured with a {prof.warmup} s warm-up that did not reach steady state; superseded by calibration with {new} s."
@@ -3145,7 +3148,8 @@ def _run_length_probe(c, prof, max_s=3600, target_pct=None):
         log(f"   {x['label']:28} " + ("grows without bound - no warm-up settles it (unsustainable configuration)" if x["unbounded"]
             else "falling while every needed page is cached (hit rate >= 99.5%, no reads): the pool filling, not a warm-up"
             if x.get("inert") else f"settled after {x['settled_after_s'] // 60} min {x['settled_after_s'] % 60:02d} s at {x['level']:,} (held {x['plateau_s'] // 60} min)"
-            if x["settled_after_s"] is not None else "did not settle within the probe"))
+            if x["settled_after_s"] is not None else f"still drifting at the end ({x['drifting']:+,} between the last two thirds)"
+            if x.get("drifting") is not None else "did not settle within the probe"))
     txt = (f"recommended warm-up: {rec} s ({rec // 60} min; longest settling time + 20%)"
            + (f"; not settled: {', '.join(unsettled)} - run the probe longer" if unsettled else "")
            + (f"; growing without bound: {', '.join(u['label'] for u in res['unbounded'])}" if res["unbounded"] else ""))
