@@ -252,6 +252,8 @@ def aba_verdict(goal, a_before, b, a_after, thr):
 # whole purge cycles): neighbouring unchanged windows differed by 1.7% in CPU per commit, 2.7% fsyncs, 2.9% redo, 4.9%
 # write I/Os - and by 10% (28% worst) in statement latency, which drifted 1.4 -> 2.6 ms over the day
 EFF_KEYS = ("mysqld_cpu_ms_per_trx", "fsyncs_per_trx", "redo_kb_per_trx", "disk_ios_per_trx", "disk_kb_per_trx", "db_mem_mb")
+EFF_DECIDE = ("mysqld_cpu_ms_per_trx", "fsyncs_per_trx", "redo_kb_per_trx")
+PERIOD_LOOKBACK_S = 7200
 EFF_MIN_NOISE = 1.0  # % - below this a difference is not worth a decision however steady the windows
 EFF_DEFAULT_NOISE = 5.0
 
@@ -518,14 +520,16 @@ def autotune(c, prof, a):
         thr = noise_pct([r["goal_value"] for r in a_runs[-CALIBRATION_WINDOWS:]])
         cal = a_runs[-CALIBRATION_WINDOWS:]
         eff = noise_table(c.session(), list(zip(cal, cal[1:])))
-        best_eff = min([v for k, v in eff.items() if k in EFF_KEYS] or [thr])
+        # the per-transaction work metrics that decide verdicts; memory barely moves (+-1%) and says nothing about the windows
+        best_eff = min([v for k, v in eff.items() if k in EFF_DECIDE] or [thr])
         log(f"   noise from {CALIBRATION_WINDOWS} calibration windows of {window} s: goal ±{thr}%; "
             + ", ".join(f"{k} ±{v}%" for k, v in eff.items() if k in EFF_KEYS))
         sess = c.session()
         if not sess.get("cont_period_checked"):
             # the load's own cycle (a purge job, a batch every N minutes): windows of whole cycles, then calibrate again
             from .state import SampleStore
-            per = load_period(SampleStore(c.state.dir).window(min(r.get("started") or time.time() for r in cal), time.time()))
+            # the load ran before the session too: the daemon's last 2 hours show its cycle (15 min of calibration cannot)
+            per = load_period(SampleStore(c.state.dir).window(time.time() - PERIOD_LOOKBACK_S, time.time()))
             sess["cont_period_checked"], sess["cont_period_s"] = True, per
             c.state.set("session", sess)
             if per:
@@ -546,8 +550,8 @@ def autotune(c, prof, a):
         sess = c.session()
         sess["cont_window"] = window
         c.state.set("session", sess)
-    if thr > NOISE_TARGET_PCT:
-        log(f"   NOTE: still ±{thr}% at the longest window ({WINDOW_MAX_S} s): only larger effects can be resolved")
+    if min(thr, best_eff) > NOISE_TARGET_PCT:
+        log(f"   NOTE: still ±{min(thr, best_eff)}% at windows of {window} s: only larger effects can be resolved")
     restart_warm = c.session().get("restart_warmup_s")  # measured once per session (an autotune run again reuses it)
     want = info["connections"]  # the load's own connection count: what "the client is back" means after a restart
     if not restart_warm and str(c.cfg.get("allow_restart", "true")).lower() == "true":
