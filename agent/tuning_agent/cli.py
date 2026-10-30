@@ -1506,6 +1506,83 @@ def _update_best(sess):
                          **({"start_tradeoffs": start} if start else {})}
 
 
+def cmd_confirm(a):
+    """Cross-host confirmation (TUNA, EuroSys 2025: 'best' configurations found on one machine often lose 30%+ on
+    another): another session's start configuration and its best configurations, measured on this host in interleaved
+    rounds (start, best, start, best, ...), and the result reported to that session. Run inside an open, calibrated
+    session on a host with the same hardware and workload."""
+    c = Ctx()
+    sess = c.session(required=True)
+    if not sess.get("noise"):
+        raise Fail("calibrate this session first (its noise threshold judges the confirmation)")
+    prof = bench.Profile(a.bench or sess.get("bench") or "")
+    src = c.client.get(f"/sessions/{a.source}/runs")
+    sruns = src.get("runs") or []
+    if src["session"]["goal"] != sess["goal"]:
+        raise Fail(f"session #{a.source} tuned for {src['session']['goal']}, this one for {sess['goal']}: not comparable")
+    tmp = {"goal": sess["goal"], "runs": sruns, "noise": sess.get("noise")}
+    _update_best(tmp)
+    val = lambda m: {k: (v.get("value") if isinstance(v, dict) else v) for k, v in (m or {}).items()}  # noqa: E731
+    first = next((r for r in sruns if str(r.get("label", "")).startswith("baseline")), None)
+    if not first:
+        raise Fail(f"session #{a.source} has no baseline run")
+    start = val(first["managed"])
+    targets = []
+    for key, name in (("best_safe", "best production-safe"), ("best", "best with trade-offs")):
+        b = tmp.get(key)
+        if not b or (targets and b["seq"] == targets[-1][2]["seq"]):
+            continue
+        cfg = val(next(r["managed"] for r in sruns if r["seq"] == b["seq"]))
+        if evaluate.config_key(cfg) != evaluate.config_key(start):
+            targets.append((name, cfg, b))
+    if not targets:
+        log(f"== session #{a.source} kept nothing beyond its start configuration: nothing to confirm")
+        return
+    noise = float(sess["noise"].get("noise_pct") or 2.0)
+    results = []
+    for name, cfg, b in targets:
+        src_ref = [r["goal_value"] for r in sruns if evaluate.config_key(val(r["managed"])) == evaluate.config_key(start)
+                   and r.get("goal_value") is not None and r.get("verdict") not in evaluate.EXCLUDED]
+        src_gain = _improvement(sess["goal"], b["goal_value"], sum(src_ref) / len(src_ref)) if src_ref else None
+        log(f"== cross-host confirmation of session #{a.source}'s {name} configuration (run {b['seq']}, "
+            f"{'%+.1f%%' % src_gain if src_gain is not None else '?'} there): {a.pairs} interleaved rounds")
+        av, bv = [], []
+        for i in range(a.pairs):
+            for which, conf in (("start", start), (name, cfg)):
+                _goto_managed(c, conf, f"cross-host confirmation of session #{a.source}: {which} configuration", "confirm")
+                run, _ = _bench_run(c, prof, f"confirm #{a.source} {which} ({i + 1}/{a.pairs})")
+                (av if which == "start" else bv).append(run.get("goal_value"))
+        av, bv = [x for x in av if x is not None], [x for x in bv if x is not None]
+        gain = _improvement(sess["goal"], sum(bv) / len(bv), sum(av) / len(av)) if av and bv else None
+        thr = evaluate.mean_noise(noise, len(bv), len(av))
+        # its runs here spread far beyond the noise: the same flag best_config uses (engine.config_erratic)
+        rr = 100.0 * (max(bv) - min(bv)) / abs(sum(bv) / len(bv)) if len(bv) >= 2 and sum(bv) else 0.0
+        spread = round(rr, 1) if rr >= max(engine.ERRATIC_MIN_PCT, 5 * noise) else None
+        if gain is None:
+            verdict = "not measured"
+        elif spread:
+            verdict = f"unstable here (its runs spread {spread}%)"
+        elif gain > thr:
+            verdict = "confirmed" if src_gain is None or gain >= 0.5 * src_gain else "smaller here"
+        elif gain < -thr:
+            verdict = "lost here"
+        else:
+            verdict = "not reproduced (within noise)"
+        msg = (f"cross-host confirmation on {c.cfg.get('name') or 'another host'} (session #{sess['id']}): {name} configuration "
+               f"(run {b['seq']}) {'%+.1f%%' % gain if gain is not None else '?'} vs the start "
+               f"({'%+.1f%%' % src_gain if src_gain is not None else '?'} here) over {a.pairs} interleaved rounds, ±{thr:.1f}%: {verdict}")
+        log("   " + msg)
+        results.append({"which": name, "source_run": b["seq"], "gain_pct": gain, "source_gain_pct": src_gain, "noise_pct": thr,
+                         "verdict": verdict, "start_runs": av, "best_runs": bv})
+        c.event("cross_host", msg, results[-1])
+        try:
+            c.client.post(f"/sessions/{a.source}/cross-host", {"message": msg, "data": dict(results[-1], session_id=sess["id"])})
+        except Exception as e:
+            log(f"   could not record it on session #{a.source}: {e}")
+    _goto_managed(c, start, "cross-host confirmation done: back to the start configuration", "confirm")
+    emit({"ok": True, "results": results}, "\n".join(f"{r['which']}: {r['verdict']}" for r in results))
+
+
 def _fmt_run(run, diagnosis, goal):
     s = run["summary"]
     src = str(s.get("goal_source") or "")
@@ -5253,6 +5330,11 @@ def main(argv=None):
     s.add_argument("--bench", help="benchmark profile to run for each calibration run")
     s.set_defaults(fn=cmd_calibrate)
 
+    s = sp.add_parser("confirm", help="re-measure another session's best configurations on this host (cross-host confirmation)")
+    s.add_argument("--source", type=int, required=True, help="the session whose best configurations are confirmed")
+    s.add_argument("--bench", help="benchmark profile (default: this session's)")
+    s.add_argument("--pairs", type=int, default=2, help="interleaved rounds of start / best (default 2)")
+    s.set_defaults(fn=cmd_confirm)
     s = sp.add_parser("experiment", help="human-specified experiments: try settings or sweep one variable")
     s.add_argument("action", choices=["add", "list", "run"])
     s.add_argument("--sweep", help="var=v1,v2,v3 (e.g. innodb_buffer_pool_size=1G,2G,3G)")

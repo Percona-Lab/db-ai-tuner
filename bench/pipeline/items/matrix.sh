@@ -6,6 +6,9 @@
 CELL=$1
 # matrix.sh <cell> sweep <variable> <values|auto-bp> [with]: a characterization sweep of the cell's workload instead of tuning
 if [ "${2:-}" = sweep ]; then SWEEP_VAR=$3; SWEEP_VALUES=$4; SWEEP_WITH=${5:-}; fi
+# matrix.sh <cell> confirm <session>: the cell's workload on this box, calibrated, then that session's best configurations
+# against its start configuration in interleaved rounds (cross-host confirmation, tuning-agent confirm)
+if [ "${2:-}" = confirm ]; then CONFIRM_SESSION=$3; fi
 . /root/bench/pipeline/lib.sh
 set -x
 ensure_ps84
@@ -107,7 +110,10 @@ esac
 grep -q "^warmup = auto" $P || [ $CELL = D5 ] || [ $CELL = D6 ] || [ $CELL = H1 ] || auto_len $P
 # the explore cells use the AI once the rules run out (autotune --explore); the others run without AI
 if [ -n "${EXPLORE_CELL:-}" ]; then export EXPLORE=1; else export AI_OFF=1; fi
-if [ -n "${SWEEP_VAR:-}" ]; then
+if [ -n "${CONFIRM_SESSION:-}" ]; then
+  export CONFIRM_SESSION POST=/root/bench/pipeline/items/confirm-post.sh
+  STUDY="cross-host confirmations" run_session $P "confirm session #$CONFIRM_SESSION: matrix $CELL ($(hostname))" $GOAL 0
+elif [ -n "${SWEEP_VAR:-}" ]; then
   # characterization sweep (user, 2026-10-29): the cell's workload, calibrated, then one setting across its whole range -
   # buffer pool from far too small to as large as memory allows, buffer pool instances from 1 - each value measured and
   # profiled, nothing tuned: response curves and contention profiles as evidence for the rules and the case base

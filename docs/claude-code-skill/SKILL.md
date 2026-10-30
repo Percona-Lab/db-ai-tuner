@@ -157,6 +157,13 @@ API keys: __SERVER__/#/connect (an account is free; __SERVER__/quickstart walks 
    against the sweep's parent configuration. `--refine N` adds up to N more points inside the steepest measured step
    of the curve (the knee), e.g. between a 4G and an 8G buffer pool. Memory settings are checked against the host's
    memory budget (measured mysqld memory and connections included); `--force` overrides.
+   `tuning-agent confirm --source N [--pairs 2]` (in an open, calibrated session on an identical host with the same
+   workload) measures session N's best production-safe and best trade-off configurations against its start
+   configuration in interleaved rounds and records the result on session N ("Confirmed on another host"). A
+   configuration whose repeated runs spread far beyond the noise (range >= max(15%, 5 x noise)) is never chosen as best.
+   Continuous mode (a load that is always running) judges each change A-B-A on resource use per transaction (CPU,
+   fsyncs, redo, I/O, memory) with the goal and throughput as guards; windows span whole cycles of the load, noise per
+   metric is learned from every pair of unchanged windows, and a result near the noise gets one more interleaved B / A pair.
    Combinations the server refuses with an "unsupported / incompatible" error (e.g. resource groups while Percona
    Server's thread pool is on, error 3658) are recorded and shared by flavor and release series: no agent proposes
    them again, and ideas that would produce one show "Not run: ... was refused by this release before". The engine and the LLM queue

@@ -790,7 +790,7 @@ def session(sid: int, request: Request):
     recs = [store.row(r, ("items", "diagnosis", "workload", "llm", "decision")) for r in store.q("SELECT * FROM recommendations WHERE session_id=? ORDER BY id DESC", (sid,))]
     events = [event_view(store.row(r, ("data",))) for r in store.q("SELECT * FROM events WHERE session_id=? ORDER BY ts DESC LIMIT 200", (sid,))]
     seen = {e["id"] for e in events}  # server incidents always (the card on the session page), however long the session
-    events += [x for x in (event_view(store.row(r, ("data",))) for r in store.q("SELECT * FROM events WHERE session_id=? AND type='incident' ORDER BY ts", (sid,)))
+    events += [x for x in (event_view(store.row(r, ("data",))) for r in store.q("SELECT * FROM events WHERE session_id=? AND type IN ('incident', 'cross_host') ORDER BY ts", (sid,)))
                if x["id"] not in seen]
     s["activity"] = session_activity(e, sid) if s.get("status") == "active" else None
     if s["calibration"] and not s["calibration"].get("plan"):
@@ -1251,6 +1251,29 @@ def agent_feedback(sid: int, key=Depends(auth.agent_key), items: str = ""):
                       "WHERE e.user_id=?)" % ",".join("?" * len(ids)), (s["id"], *ids, key["user_id"])) if ids else []
     keep = ("run_seq", "run_label", "about", "item_id", "verdict", "alternative", "comment", "created", "session_id")
     return {"session": [{k: f.get(k) for k in keep} for f in here], "other_sessions": [{k: f.get(k) for k in keep} for f in other[-40:]]}
+
+
+@app.get("/api/v1/agent/sessions/{sid}/runs")
+def agent_session_runs(sid: int, key=Depends(auth.agent_key)):
+    """Another session of the same account, as its agent saw it (runs with configuration, verdict, evaluation, summary):
+    what a cross-host confirmation needs to know which configurations that session found best."""
+    s = agent_session(sid, key)
+    rows = store.q("SELECT seq, label, managed, goal_value, verdict, evaluation, summary FROM runs WHERE session_id=? AND status='done' "
+                   "ORDER BY seq", (s["id"],))
+    return {"session": {"id": s["id"], "name": s["name"], "goal": s["goal"], "policy": s["policy"], "env_id": s["env_id"]},
+            "runs": [{"seq": r["seq"], "label": r["label"], "managed": store.uj(r["managed"], {}), "goal_value": r["goal_value"],
+                      "verdict": r["verdict"], "evaluation": store.uj(r["evaluation"], {}), "summary": store.uj(r["summary"], {})}
+                     for r in rows]}
+
+
+@app.post("/api/v1/agent/sessions/{sid}/cross-host")
+def agent_cross_host(sid: int, body: dict = Body(...), key=Depends(auth.agent_key)):
+    """The result of re-measuring this session's best configurations on another host (TUNA, EuroSys 2025: a 'best'
+    configuration found on one machine often loses on another), recorded on this session."""
+    s = agent_session(sid, key)
+    store.ex("INSERT INTO events(env_id, session_id, ts, type, message, data) VALUES (?,?,?,?,?,?)",
+             (s["env_id"], s["id"], now(), "cross_host", str(body.get("message") or "")[:500], store.j(body.get("data"))))
+    return {"ok": True}
 
 
 @app.get("/api/runs/{run_id}/config")

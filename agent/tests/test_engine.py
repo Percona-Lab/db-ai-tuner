@@ -3981,6 +3981,61 @@ def test_remedy_on_an_excluded_parent_is_judged_against_the_last_usable_configur
     assert v == "regressed" and d["parent_runs"] == [7, 8] and d.get("parent_fallback"), (v, d)
 
 
+def test_continuous_efficiency_verdict_under_guards():
+    """pmh-ps97 cycle experiment: log writer threads ON cost +57% CPU per commit (latency +33%, beyond its 10% noise),
+    the adaptive hash index saved CPU / I/O at the same latency, io_capacity 200 traded I/O for latency."""
+    from tuning_agent import continuous as cm
+    noise = {"goal": 10.0, "tps": 1.5, "mysqld_cpu_ms_per_trx": 2.0, "fsyncs_per_trx": 3.0, "redo_kb_per_trx": 3.0,
+             "disk_ios_per_trx": 5.0, "disk_kb_per_trx": 12.0}
+    def run(lat, tps, cpu, fs, redo, ios, kb):
+        return {"goal_value": lat, "summary": {"tps": tps, "mysqld_cpu_ms_per_trx": cpu, "fsyncs_per_trx": fs, "redo_kb_per_trx": redo,
+                                               "disk_ios_per_trx": ios, "disk_kb_per_trx": kb}}
+    a1, a2 = run(1.63, 990, 1.78, 1.6, 4.6, 3.2, 57), run(1.66, 995, 1.79, 1.6, 4.6, 3.2, 56)
+    v, d = cm.eff_verdict("latency", a1, run(2.23, 986, 2.82, 4.2, 13.2, 5.3, 47), a2, noise)
+    assert v == "regressed", (v, d)
+    v, d = cm.eff_verdict("latency", a1, run(1.60, 992, 1.70, 1.6, 4.15, 3.0, 49), a2, noise)
+    assert v == "improved" and "CPU" in d["why"], (v, d)
+    v, d = cm.eff_verdict("latency", a1, run(1.66, 992, 1.79, 1.33, 4.6, 2.2, 35), a2, noise)
+    assert v == "improved", (v, d)   # less I/O, latency within its noise
+    v, d = cm.eff_verdict("latency", a1, run(2.10, 992, 1.79, 1.33, 4.6, 2.2, 35), a2, noise)
+    assert v == "regressed" and "goal" in d["why"], (v, d)   # same, but latency +28%: the guard
+    v, d = cm.eff_verdict("latency", a1, run(1.64, 993, 1.70, 1.6, 5.2, 3.2, 57), a2, noise)
+    assert v == "neutral" and "trade" in d["why"], (v, d)
+    assert cm.borderline({"goal_delta_pct": 1.0, "goal_noise_pct": 10, "metrics": {"x": {"improvement_pct": 3.0, "noise_pct": 2.0}}})
+    assert not cm.borderline({"goal_delta_pct": 1.0, "goal_noise_pct": 10, "metrics": {"x": {"improvement_pct": 30.0, "noise_pct": 2.0}}})
+
+
+def test_continuous_load_period_and_pair_noise():
+    """A 15-minute purge cycle in the latency is found and windows round up to whole cycles; noise comes from A/A pairs."""
+    import math, random
+    from tuning_agent import continuous as cm
+    rnd = random.Random(1)
+    smp = [{"ts": 10 * i, "db": {"avg_latency_ms": 1.5 + (0.6 if (10 * i) % 900 < 120 else 0) + rnd.gauss(0, 0.1)}} for i in range(6 * 90)]
+    per = cm.load_period(smp)
+    assert per == 900, per
+    assert cm.cycle_window(1200, per) == 1800 and cm.cycle_window(1200, None) == 1200
+    flat = [{"ts": 10 * i, "db": {"avg_latency_ms": 1.5 + rnd.gauss(0, 0.1)}} for i in range(6 * 90)]
+    assert cm.load_period(flat) is None
+    pairs = [({"goal_value": 1.0, "summary": {"mysqld_cpu_ms_per_trx": 1.78}}, {"goal_value": 1.1, "summary": {"mysqld_cpu_ms_per_trx": 1.80}}),
+             ({"goal_value": 1.2, "summary": {"mysqld_cpu_ms_per_trx": 1.81}}, {"goal_value": 1.05, "summary": {"mysqld_cpu_ms_per_trx": 1.79}})]
+    n_cpu, n_goal = cm.pair_noise(pairs, "mysqld_cpu_ms_per_trx"), cm.pair_noise(pairs, "goal")
+    assert 1.0 <= n_cpu < 3 and n_goal > 10, (n_cpu, n_goal)
+
+
+def test_erratic_configuration_is_not_best():
+    """A configuration whose repeats spread far beyond the noise (relative range >= max(15%, 5 x noise)) is not chosen
+    as best even with the highest mean (TUNA: such 'best' picks lose 30%+ elsewhere)."""
+    from tuning_agent import engine
+    A, B = {"x": "1"}, {"x": "2"}
+    hist = [{"seq": 1, "label": "baseline (1/3)", "managed": A, "goal_value": 1000, "verdict": "reference", "changes": []},
+            {"seq": 2, "label": "baseline (2/3)", "managed": A, "goal_value": 1010, "verdict": "repeat", "changes": []},
+            {"seq": 3, "label": "erratic", "managed": B, "goal_value": 1400, "verdict": "improved", "changes": [], "evaluation": {"confirmed": True}},
+            {"seq": 4, "label": "erratic (confirm)", "managed": B, "goal_value": 1050, "verdict": "repeat", "changes": []}]
+    assert engine.config_erratic(hist, engine.config_key(B), 1.5) and not engine.config_erratic(hist, engine.config_key(A), 1.5)
+    best = engine.best_config(hist, "tps", 1.5)
+    assert best["managed"] == A, best
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

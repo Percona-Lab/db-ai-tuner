@@ -1075,3 +1075,19 @@ def test_incompatible_combinations_are_shared_by_release(user, make_user):
     assert other.agent.get("/api/v1/agent/incompat", params={"flavor": "percona", "series": "8.4"}).json()["incompatible"] == []
     bad = dict(body, conditions=body["conditions"][:1])
     assert user.agent.post("/api/v1/agent/incompat", json=bad).status_code == 400
+
+
+def test_cross_host_confirmation_endpoints(user, make_user):
+    """An agent reads another session of the same account (its runs) and records a cross-host result on it; other
+    accounts get 404."""
+    env = user.hello()
+    sid = user.start_session(env)
+    r = user.agent.get(f"/api/v1/agent/sessions/{sid}/runs").json()
+    assert r["session"]["id"] == sid and r["runs"] == []
+    assert user.agent.post(f"/api/v1/agent/sessions/{sid}/cross-host", json={"message": "best safe +4.1% here: confirmed",
+                                                                              "data": {"gain_pct": 4.1}}).status_code == 200
+    ev = store.q1("SELECT type, message FROM events WHERE session_id=? AND type='cross_host'", (sid,))
+    assert ev and "confirmed" in ev["message"]
+    other = make_user()
+    other.hello(uid="agent-y")
+    assert other.agent.get(f"/api/v1/agent/sessions/{sid}/runs").status_code == 404

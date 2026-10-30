@@ -2014,6 +2014,22 @@ def config_unstable(history, key):
     return bool(rs) and all(unbounded_hll(r.get("summary")) for r in rs)
 
 
+ERRATIC_MIN_PCT = 15.0  # TUNA (EuroSys 2025) flags configurations whose samples span >= 15-30% of their mean
+
+
+def config_erratic(history, key, noise=2.0):
+    """The configuration's repeated runs spread far beyond the session's noise: relative range (max - min) / mean at least
+    max(15%, 5 x noise) over 2+ usable runs. Such a configuration is a gamble wherever it is deployed (TUNA: 39% of
+    PostgreSQL TPC-C configurations were unstable, and 'best' picks lost 30%+ on other machines). Returns the range %."""
+    vals = [r["goal_value"] for r in history if config_key(r.get("managed")) == key and r.get("goal_value") is not None
+            and r.get("verdict") not in ("unreliable", "superseded")]
+    if len(vals) < 2:
+        return None
+    m = sum(vals) / len(vals)
+    rr = 100.0 * (max(vals) - min(vals)) / abs(m) if m else 0.0
+    return round(rr, 1) if rr >= max(ERRATIC_MIN_PCT, 5 * (noise or 2.0)) else None
+
+
 def best_config(history, goal="tps", noise=2.0):
     """Highest mean wins when it beats the others beyond noise (scaled for the number of runs in each mean). Within
     noise: a configuration confirmed better than another tied one wins over it (an improvement kept over its parent),
@@ -2026,6 +2042,9 @@ def best_config(history, goal="tps", noise=2.0):
         stable = [c for c in scores if not config_unstable(history, c["key"])]
         if stable and len(stable) < len(scores):
             scores = stable
+    steady = [c for c in scores if not config_erratic(history, c["key"], noise)]
+    if steady and len(steady) < len(scores):
+        scores = steady
     # candidates: configurations that earned their place (kept: confirmed improvement, efficiency gain, reference,
     # accepted best practice) or were measured at least twice and beat the best kept one beyond noise. A single
     # neutral run (e.g. one sweep point) that happens to have the highest number is not a candidate.

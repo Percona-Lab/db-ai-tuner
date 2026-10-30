@@ -995,6 +995,18 @@ function incidentsCard(events) {
       </details></div>`; };
   return `<h2>Server incidents${info("mysqld crashed (its process ended without the agent restarting it) or hung (a shutdown or start without disk or file I/O for 3 minutes after 5, or no answer to SELECT 1 for 10 minutes). The agent saves the evidence - busiest threads, kernel stacks, a perf profile, gdb or eu-stack stacks when installed, the error log, the journal and the option file - kills a hung mysqld so the session can go on, and treats the configuration as failed: reverted, not tried again.")}</h2><div class="card">${ev.map(one).join("")}</div>`;
 }
+// cross-host confirmation: this session's best configurations re-measured on an identical box, interleaved with its start
+function crossHostCard(events) {
+  const ev = events.filter(e => e.type === "cross_host" && e.data && e.data.session_id).sort((a, b) => a.ts - b.ts);
+  if (!ev.length) return "";
+  const pct = v => v == null ? "?" : (v > 0 ? "+" : "") + Number(v).toFixed(1) + "%";
+  const cls = v => /^confirmed/.test(v) ? "good" : /lost|unstable/.test(v) ? "bad" : "warn";
+  return `<h2>Confirmed on another host${info("The best configurations this session found, measured again on a box with the same hardware and workload, in interleaved rounds against the start configuration. A configuration that wins on one machine only is a gamble wherever it is deployed.")}</h2>
+  <div class="card tablewrap"><table><thead><tr><th>Configuration</th><th class="num">Here</th><th class="num">There</th><th>Result</th></tr></thead><tbody>
+  ${ev.map(e => { const x = e.data; return `<tr><td>${esc(x.which)} <span class="muted">(run ${esc(String(x.source_run))})</span></td><td class="num">${pct(x.source_gain_pct)}</td>
+    <td class="num"><a href="#/session/${x.session_id}">${pct(x.gain_pct)}</a> <span class="muted">±${Number(x.noise_pct || 0).toFixed(1)}%</span></td><td><span class="badge ${cls(x.verdict)}">${esc(x.verdict)}</span></td></tr>`; }).join("")}
+  </tbody></table></div>`;
+}
 // purge triage (stability first): each online purge setting tried on the running benchmark, its history growth and cost
 function triageCard(events) {
   const ev = events.filter(e => e.type === "purge_triage").sort((a, b) => a.ts - b.ts);
@@ -1168,7 +1180,7 @@ async function sessionPage(id) {
   ${bestSafe || bestTrade ? `<details class="card" id="bestcfg" style="margin-top:10px"><summary style="margin:0;cursor:pointer"><b>Best known configuration</b> <span class="muted">· what differs from the defaults (MySQL and OS)</span></summary><div id="bestcfgBody" class="muted" style="margin-top:8px">Loading…</div></details>` : ""}
   ${empty ? "" : `<div class="card" style="margin-top:14px"><div class="row" id="barScopeRow" hidden><span class="spacer"></span><div class="seg small" role="group" aria-label="Runs in the chart" id="barScope"><button data-b="safe">Production-safe runs</button><button data-b="all">All runs</button></div></div><div id="bars"></div></div>`}
   ${benchCard(d.benchmarks || [])}
-  ${incidentsCard(d.events || [])}${triageCard(d.events || [])}
+  ${incidentsCard(d.events || [])}${crossHostCard(d.events || [])}${triageCard(d.events || [])}
   ${d.runs.length ? `<h2>Runs</h2><div id="runFlags"></div><div class="card tablewrap"><table class="runs" data-opt="TPS|Avg ms|CPU ms/trx|IOs/trx|Time"><thead><tr><th>#</th><th>Run</th><th class="chg">Changes</th><th class="num">${esc(unit)}</th><th class="num">Δ parent${info("Change of the goal vs the mean of the parent configuration (the configuration this run was changed from). Coloured only beyond the noise threshold." + (lower ? " Faster = lower response time." : ""))}</th><th class="num">vs start${info(`Change vs the ${refName === "calibrated start" ? "calibrated starting configuration (calibration mean)" : refName} = ${num(refVal)}. Bold: the best configuration known at that point of the session (it took the lead by beating the previous best beyond the noise threshold). Changes shown struck through were rolled back afterwards; ↩ marks settings undone before the run.`)}</th><th>Verdict</th>
    ${cols.tps ? '<th class="num">TPS</th>' : ""}${cols.avg ? '<th class="num">Avg ms</th>' : ""}${cols.perTrx ? '<th class="num">CPU ms/trx</th><th class="num">IOs/trx</th>' : ""}<th class="num">Time</th></tr></thead><tbody id="runs"></tbody></table></div>` : ""}
   ${empty ? "" : `<h2>Experiments${info("Your own experiments: try a set of settings, or sweep one variable over several values (e.g. buffer pool 1G, 2G, 3G). They run before the tuner's own ideas, each value measured from the same parent configuration with the session's benchmark. The best value is kept only if it beats the parent beyond the noise threshold.")}</h2><div class="card" id="exps"></div>

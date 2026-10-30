@@ -29,13 +29,49 @@ def log(msg):
         f.write(line + "\n")
 
 
+# boxes with the same hardware: a matrix cell's best configurations are confirmed on a sibling (cross-host confirmation,
+# user 2026-10-30 after TUNA, EuroSys 2025: 'best' configurations found on one machine often lose 30%+ on another)
+SIBLINGS = [{"atvbm", "atvbm2", "atvbmmia"}]
+
+
 def load():
     items = json.load(open(os.path.join(ROOT, "bench", "pipeline", "pipeline.json")))["items"]
     try:
         st = json.load(open(STATE))
     except (OSError, ValueError):
         st = {}
-    return items, st
+    return items + list(st.get("_auto_items") or []), st
+
+
+def source_session(iid, host):
+    """The tuning session a finished item ran (its collected session log says 'Session #N started')."""
+    import glob
+    import re
+    ids = []
+    for f in sorted(glob.glob(os.path.join(OPS, "pipeline", iid, host, "session-pipe-*.log"))):
+        ids += [int(x) for x in re.findall(r"Session #(\d+) started", open(f, errors="replace").read())]
+    return ids[-1] if ids else None
+
+
+def queue_confirm(iid, s, items, st):
+    """After a matrix cell finished on one box, its best configurations re-measured on a sibling box (matrix.sh confirm)."""
+    it = next((i for i in items if i["id"] == iid), None)
+    if not it or it.get("script") != "matrix.sh" or len(it.get("args") or []) != 1 or iid.startswith("confirm-"):
+        return
+    host = s["hosts"][0]
+    sib = next((g for g in SIBLINGS if host in g), None)
+    sid = source_session(iid, host)
+    if not sib or not sid:
+        return
+    cid = f"confirm-{iid}"
+    if any(i["id"] == cid for i in items):
+        return
+    st.setdefault("_auto_items", []).append({
+        "id": cid, "script": "matrix.sh", "args": [it["args"][0], "confirm", str(sid)], "hosts": sorted(sib - {host}),
+        "group": False, "est_hours": 5, "auto": True,
+        "question": f"Cross-host confirmation of session #{sid} ({iid} on {host}): its best configurations vs its start on an "
+                    "identical box, interleaved"})
+    log(f"{cid}: queued (session #{sid} confirmed on {', '.join(sorted(sib - {host}))})")
 
 
 def save(st):
@@ -144,6 +180,9 @@ def tick():
             s["status"] = "done" if all(v == "ok" for v in res.values()) else "failed"
             s["ended"], s["per_host"] = time.time(), res
             log(f"{iid}: {s['status']} {res}")
+            if s["status"] == "done":
+                queue_confirm(iid, s, items, st)
+                items = items + [i for i in st.get("_auto_items") or [] if i not in items]
             script = next((i.get("script") for i in items if i["id"] == iid), None)
             if s["status"] == "failed" and script and s["ended"] - s["started"] < FAST_FAIL_S:
                 # failed within minutes: most likely the script or the box, not the study - hold the other items using the
