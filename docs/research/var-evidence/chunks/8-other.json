@@ -1,0 +1,352 @@
+{
+ "binlog_transaction_dependency_history_size": {
+  "category": "binlog",
+  "description": "Rows kept in the WRITESET dependency history for parallel replication.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": "the workload writes (redo / flushing active)",
+  "mechanism_tags": [
+   "commit",
+   "cpu-commit"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": {
+   "mysql 8.0": "25000",
+   "mysql 8.4": "25000",
+   "mysql 9.7": "10000000",
+   "percona 8.0": "25000",
+   "percona 8.4": "25000",
+   "percona 9.7": "10000000",
+   "pxc 8.4": "25000"
+  }
+ },
+ "innodb_checksum_algorithm": {
+  "category": "",
+  "description": "",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "durability",
+  "restart": null,
+  "scope": "mysql",
+  "releases": "all",
+  "default": {
+   "mariadb 10.11": "full_crc32",
+   "mariadb 11.4": "full_crc32",
+   "mariadb 11.8": "full_crc32",
+   "mysql 8.0": "crc32",
+   "mysql 8.4": "crc32",
+   "mysql 9.7": "crc32",
+   "percona 8.0": "crc32",
+   "percona 8.4": "crc32",
+   "percona 9.7": "crc32",
+   "pxc 8.4": "crc32"
+  }
+ },
+ "innodb_ddl_buffer_size": {
+  "category": "ddl",
+  "description": "Buffer per DDL thread (8.0.27+).",
+  "impact": "low",
+  "when": "index builds",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "1048576"
+ },
+ "innodb_ddl_threads": {
+  "category": "ddl",
+  "description": "Threads used by parallel index builds (8.0.27+).",
+  "impact": "low",
+  "when": "index builds",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": null
+ },
+ "innodb_fill_factor": {
+  "category": "ddl",
+  "description": "Page fill during sorted index builds.",
+  "impact": "low",
+  "when": "index builds followed by inserts in key order",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "100"
+ },
+ "innodb_lock_wait_timeout": {
+  "category": "locking",
+  "description": "Seconds a transaction waits for a row lock.",
+  "impact": "none",
+  "when": "lock waits: changes errors, not throughput",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "semantics",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "50"
+ },
+ "innodb_max_purge_lag": {
+  "category": "purge",
+  "description": "History list length above which DML is delayed so purge can catch up (0 = never).",
+  "impact": "low",
+  "when": "history list growth hurting reads; slows writers",
+  "precondition": "the workload writes (redo / flushing active)",
+  "mechanism_tags": [
+   "io",
+   "locks",
+   "memory"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "0"
+ },
+ "innodb_max_purge_lag_delay": {
+  "category": "purge",
+  "description": "Maximum delay in microseconds imposed by innodb_max_purge_lag.",
+  "impact": "low",
+  "when": "with innodb_max_purge_lag set: the longest delay per DML",
+  "precondition": "the workload writes (redo / flushing active)",
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "0"
+ },
+ "innodb_page_size": {
+  "category": "storage",
+  "description": "InnoDB page size (initialization only).",
+  "impact": "medium",
+  "when": "set at initialization only; small pages for point lookups, larger for scans / compression",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": true,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "16384"
+ },
+ "innodb_purge_batch_size": {
+  "category": "purge",
+  "description": "Undo log pages purged per batch.",
+  "impact": "low",
+  "when": "history list growing under write load",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": {
+   "mariadb 10.11": "127",
+   "mariadb 11.4": "127",
+   "mariadb 11.8": "127",
+   "mysql 8.0": "300",
+   "mysql 8.4": "300",
+   "mysql 9.7": "300",
+   "percona 8.0": "300",
+   "percona 8.4": "300",
+   "percona 9.7": "300",
+   "pxc 8.4": "300"
+  }
+ },
+ "innodb_snapshot_isolation": {
+  "category": "locking",
+  "description": "Snapshot isolation for REPEATABLE READ (MariaDB).",
+  "impact": "none",
+  "when": "MariaDB 11.6+: write conflicts become errors under REPEATABLE READ",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "semantics",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": {
+   "mariadb 10.11": "OFF",
+   "mariadb 11.4": "OFF",
+   "mariadb 11.8": "ON"
+  }
+ },
+ "innodb_sort_buffer_size": {
+  "category": "ddl",
+  "description": "Sort buffer per index build.",
+  "impact": "low",
+  "when": "index builds (ALTER TABLE, data loads)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": true,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "1048576"
+ },
+ "innodb_undo_log_truncate": {
+  "category": "purge",
+  "description": "Truncate undo tablespaces above innodb_max_undo_log_size.",
+  "impact": "low",
+  "when": "undo tablespaces growing",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": {
+   "mariadb 10.11": "OFF",
+   "mariadb 11.4": "OFF",
+   "mariadb 11.8": "OFF",
+   "mysql 8.0": "ON",
+   "mysql 8.4": "ON",
+   "mysql 9.7": "ON",
+   "percona 8.0": "ON",
+   "percona 8.4": "ON",
+   "percona 9.7": "ON",
+   "pxc 8.4": "ON"
+  }
+ },
+ "os:transparent_hugepage": {
+  "category": "",
+  "description": "",
+  "impact": "low",
+  "when": "page-fault / compaction stalls in the kernel profile",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": null,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "ps:profile": {
+  "category": "mysql/observability",
+  "description": "performance_schema instrumentation: full (server default) or lite (only what the tuner reads: digests, latency histogram, wait summaries); lite loses statement history and memory accounting.",
+  "impact": "medium",
+  "when": "as performance_schema, keeping digests and wait summaries",
+  "precondition": null,
+  "mechanism_tags": [
+   "cpu-pfs",
+   "cpu-pressure"
+  ],
+  "safety": "observability",
+  "restart": false,
+  "scope": "pseudo",
+  "releases": null,
+  "default": null
+ },
+ "query_cache_size": {
+  "category": "cache",
+  "description": "Query cache size (MariaDB).",
+  "impact": "medium",
+  "when": "as query_cache_type",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "1048576"
+ },
+ "query_cache_type": {
+  "category": "cache",
+  "description": "Query cache (removed in MySQL 8.0).",
+  "impact": "medium",
+  "when": "MariaDB only: read-mostly, few writes (otherwise invalidation contention)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "OFF"
+ },
+ "rg:innodb_bg_cpus": {
+  "category": "mysql/cpu",
+  "description": "CPUs for InnoDB background threads via a MySQL resource group (off / CPU list); keeps flushing bursts off the query CPUs.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "sched-delay"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "pseudo",
+  "releases": null,
+  "default": null
+ },
+ "transaction_isolation": {
+  "category": "semantics",
+  "description": "Default transaction isolation level.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "semantics",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 11.4",
+   "mariadb 11.8",
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "REPEATABLE-READ"
+ }
+}

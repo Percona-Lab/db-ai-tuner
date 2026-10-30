@@ -1,0 +1,939 @@
+[
+ {
+  "variable": "back_log",
+  "relevant_to": "all flavors; effective value is min(back_log, net.core.somaxconn) on Linux. Cannot matter when clients use a fixed connection pool established before the measured window (no connects during the run).",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "nstat TcpExtListenOverflows and TcpExtListenDrops (/proc/net/netstat) deltas during the run",
+    "points_to": "raise",
+    "condition": "> 0 during the measured window",
+    "why": "SYNs/ACKs are dropped when the accept queue of the listen socket is full; clients retry after 1s+ SYN retransmit timeouts."
+   },
+   {
+    "source": "os",
+    "metric": "ss -ltn: Recv-Q vs Send-Q of the mysqld listen socket (current accept queue vs its limit)",
+    "points_to": "raise",
+    "condition": "Recv-Q reaches Send-Q during connect bursts",
+    "why": "Send-Q shows the effective backlog; a full queue means drops."
+   },
+   {
+    "source": "status",
+    "metric": "Connections rate (new connects/s)",
+    "points_to": "no change needed",
+    "condition": "near-zero connects/s during the window",
+    "why": "without connection churn the accept queue is never used."
+   }
+  ],
+  "impact_bound": "At most the time clients lose to SYN retransmits (>=1s per dropped connect) times dropped connects; zero with persistent connections. Typical: none for pooled benchmarks; high only for connect-per-request workloads with bursts.",
+  "experiment": {
+   "change": "raise back_log (and net.core.somaxconn to at least the same value), restart",
+   "predict": "TcpExtListenOverflows/ListenDrops delta -> 0; connect latency p99 drops",
+   "confirm_or_refute": "no drops after change confirms; if drops were already 0 the change cannot help",
+   "cost_or_risk": "restart; slightly more kernel memory for queued connections"
+  },
+  "collected": "no: add nstat TcpExtListenOverflows/TcpExtListenDrops deltas and ss -ltn listen-socket queue sampling",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_back_log",
+   "https://docs.kernel.org/networking/ip-sysctl.html",
+   "https://mariadb.com/kb/en/server-system-variables/#back_log"
+  ]
+ },
+ {
+  "variable": "binlog_rows_query_log_events",
+  "relevant_to": "MySQL/Percona 8.0+ with log_bin=ON and binlog_format=ROW (MariaDB equivalent: binlog_annotate_row_events, default ON). Cannot matter with binary log off or statement format.",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name SUM_NUMBER_OF_BYTES_WRITE for EVENT_NAME='wait/io/file/sql/binlog' per transaction",
+    "points_to": "disable",
+    "condition": "ON and statement text is a material share of binlog bytes per transaction (compare bytes/trx with the setting on vs off)",
+    "why": "each row-event group gets a Rows_query event with the full statement text, adding binlog bytes and write/sync time."
+   },
+   {
+    "source": "derived",
+    "metric": "binlog bytes per trx vs row-image bytes per trx",
+    "points_to": "disable",
+    "condition": "large statements (long INSERT/UPDATE text) relative to rows changed",
+    "why": "the overhead scales with statement length, not with rows."
+   }
+  ],
+  "impact_bound": "Bounded by the extra binlog bytes per transaction times binlog write/fsync cost share of commit time; typically low (<1-2%) except bulk multi-row INSERTs with long text.",
+  "experiment": {
+   "change": "set binlog_rows_query_log_events=OFF (dynamic, session-level effect for new sessions)",
+   "predict": "binlog bytes/trx falls; commit-time binlog write share falls",
+   "confirm_or_refute": "no measurable change in binlog bytes/trx means it was already off or statements are short",
+   "cost_or_risk": "loses statement text for auditing/point-in-time analysis (observability only)"
+  },
+  "collected": "partly: add binlog bytes written per trx (P_S file_summary for wait/io/file/sql/binlog, or Binlog_bytes_written on MariaDB)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html#sysvar_binlog_rows_query_log_events",
+   "https://mariadb.com/kb/en/replication-and-binary-log-system-variables/#binlog_annotate_row_events"
+  ]
+ },
+ {
+  "variable": "general_log",
+  "relevant_to": "all flavors; matters only when ON (default OFF). Must be OFF for any benchmark unless explicitly measuring logging.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "@@general_log (configuration check)",
+    "points_to": "disable",
+    "condition": "ON during a benchmark",
+    "why": "every statement is written (and serialized by the log lock) to file or mysql.general_log table."
+   },
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name for 'wait/io/file/sql/query_log' (bytes and SUM_TIMER_WAIT)",
+    "points_to": "disable",
+    "condition": "non-zero write time during the run",
+    "why": "direct cost of writing the log on the statement path."
+   },
+   {
+    "source": "os",
+    "metric": "disk write MB/s on the log file's device; CPU share in file write syscalls",
+    "points_to": "disable",
+    "condition": "material share of writes or CPU attributable to the log file",
+    "why": "log writes compete with data/redo I/O."
+   }
+  ],
+  "impact_bound": "Bounded by the measured query_log write time per statement plus contention on the log mutex; in practice high (10-50% throughput loss at high QPS, more with log_output=TABLE).",
+  "experiment": {
+   "change": "SET GLOBAL general_log=OFF",
+   "predict": "QPS up, query_log write waits -> 0, CPU sys time down",
+   "confirm_or_refute": "improvement proportional to statement rate confirms",
+   "cost_or_risk": "loses the statement trace"
+  },
+  "collected": "partly: config value is known; add P_S file I/O summary for wait/io/file/sql/query_log",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/query-log.html",
+   "https://mariadb.com/kb/en/general-query-log/"
+  ]
+ },
+ {
+  "variable": "host_cache_size",
+  "relevant_to": "all flavors; matters only when skip_name_resolve=OFF and clients connect during the run from more distinct hosts than the cache holds. 0 disables the cache (every connect resolves). Irrelevant with skip_name_resolve=ON or Unix-socket/localhost connects.",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "performance_schema.host_cache row count vs @@host_cache_size; COUNT_NAMEINFO_TRANSIENT_ERRORS, COUNT_ADDRINFO_TRANSIENT_ERRORS",
+    "points_to": "raise",
+    "condition": "rows == host_cache_size while connects/s > 0 (evictions force re-resolution), or host_cache_size=0 with name resolution on",
+    "why": "a cache miss costs reverse+forward DNS lookups on the connect path."
+   },
+   {
+    "source": "ebpf",
+    "metric": "off-CPU time of connection threads in getnameinfo/getaddrinfo (or network wait on port 53) during connect",
+    "points_to": "raise",
+    "condition": "a material share of connect time",
+    "why": "directly measures the time a bigger cache would remove."
+   }
+  ],
+  "impact_bound": "At most the DNS-resolution time per connect times connects/s; zero with persistent connections. Typical: none-low.",
+  "experiment": {
+   "change": "raise host_cache_size above the number of distinct client IPs (or enable skip_name_resolve)",
+   "predict": "DNS lookups/connect latency fall; host_cache rows stabilize",
+   "confirm_or_refute": "no change in connect latency refutes",
+   "cost_or_risk": "small memory; none functional"
+  },
+  "collected": "no: add performance_schema.host_cache sampling and DNS-time attribution (eBPF uprobe on getnameinfo or port-53 traffic)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/host-cache.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/performance-schema-host-cache-table.html",
+   "https://mariadb.com/kb/en/server-system-variables/#host_cache_size"
+  ]
+ },
+ {
+  "variable": "innodb_cmp_per_index_enabled",
+  "relevant_to": "all flavors; matters only when ON and ROW_FORMAT=COMPRESSED tables are accessed (and MariaDB page_compressed does not use it). Default OFF.",
+  "signals": [
+   {
+    "source": "information_schema",
+    "metric": "INNODB_CMP COMPRESS_OPS/UNCOMPRESS_OPS deltas",
+    "points_to": "no change needed",
+    "condition": "zero (no compressed tables) -> setting is inert",
+    "why": "statistics are only collected for compressed page operations."
+   },
+   {
+    "source": "derived",
+    "metric": "CPU profile share in compression statistics code (page_zip_* / dict_index_zip_*) while ON",
+    "points_to": "disable",
+    "condition": "ON with measurable CPU in per-index stat updates",
+    "why": "per-index stats take a mutex and update counters per compress/uncompress."
+   }
+  ],
+  "impact_bound": "Bounded by CPU share of the stats bookkeeping, a fraction of compression CPU; low.",
+  "experiment": {
+   "change": "SET GLOBAL innodb_cmp_per_index_enabled=OFF",
+   "predict": "CPU/trx down slightly with compressed tables",
+   "confirm_or_refute": "no change in CPU/trx at noise level = inert",
+   "cost_or_risk": "loses INNODB_CMP_PER_INDEX diagnostics"
+  },
+  "collected": "partly: add INNODB_CMP COMPRESS_OPS/UNCOMPRESS_OPS deltas",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_cmp_per_index_enabled",
+   "https://dev.mysql.com/doc/refman/8.4/en/information-schema-innodb-cmp-per-index-table.html"
+  ]
+ },
+ {
+  "variable": "innodb_monitor_enable",
+  "relevant_to": "MySQL/Percona and MariaDB (INNODB_METRICS). Enabling extra counter modules adds atomic increments; disabling may remove counters the tuner itself reads.",
+  "signals": [
+   {
+    "source": "information_schema",
+    "metric": "INNODB_METRICS rows with STATUS='enabled' (count, and which modules)",
+    "points_to": "a specific value",
+    "condition": "more modules than the tuner needs, or modules the tuner needs are disabled",
+    "why": "each enabled counter adds an atomic update on its code path."
+   },
+   {
+    "source": "derived",
+    "metric": "CPU profile share in InnoDB monitor counter updates (srv_mon_* / MONITOR_INC paths)",
+    "points_to": "lower",
+    "condition": "measurable share with 'all' enabled",
+    "why": "only measurable on high-QPS CPU-bound runs."
+   }
+  ],
+  "impact_bound": "Bounded by CPU share of monitor updates; typically none-low (<1%) even with 'all'. Mainly a functional need for observability.",
+  "experiment": {
+   "change": "enable exactly the counters the tuner reads (e.g. module_log, module_buffer, lock_deadlocks) and nothing else",
+   "predict": "no throughput change beyond noise; needed counters present",
+   "confirm_or_refute": "throughput change > noise would indicate counter overhead",
+   "cost_or_risk": "none"
+  },
+  "collected": "partly: record which INNODB_METRICS counters are enabled at run start",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_monitor_enable",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-information-schema-metrics-table.html"
+  ]
+ },
+ {
+  "variable": "innodb_print_all_deadlocks",
+  "relevant_to": "all flavors; matters only when deadlocks occur. With zero deadlocks it is inert.",
+  "signals": [
+   {
+    "source": "innodb_metrics",
+    "metric": "INNODB_METRICS lock_deadlocks (MySQL/Percona); status Innodb_deadlocks (MariaDB) - rate",
+    "points_to": "enable",
+    "condition": "deadlocks/s > 0 and their cause is unknown (diagnostic value)",
+    "why": "each deadlock is written to the error log; cost scales with deadlock rate."
+   },
+   {
+    "source": "derived",
+    "metric": "deadlocks/s x error-log write cost",
+    "points_to": "disable",
+    "condition": "very high deadlock rates (hundreds/s) with the option ON",
+    "why": "error-log writes happen under the lock-system latch during deadlock resolution."
+   }
+  ],
+  "impact_bound": "No measurable performance signal at normal deadlock rates; impact none-low. Its value is diagnostic: turning it ON lets the tuner see which statements deadlock.",
+  "experiment": {
+   "change": "enable for one run when deadlocks/s > 0",
+   "predict": "error log lists deadlock pairs; throughput unchanged within noise",
+   "confirm_or_refute": "throughput drop > noise at very high deadlock rates means disable",
+   "cost_or_risk": "error-log growth"
+  },
+  "collected": "partly: add lock_deadlocks (MySQL/Percona) / Innodb_deadlocks (MariaDB) rate",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_print_all_deadlocks",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-deadlock-detection.html",
+   "https://mariadb.com/kb/en/innodb-status-variables/#innodb_deadlocks"
+  ]
+ },
+ {
+  "variable": "innodb_status_output",
+  "relevant_to": "all flavors; when ON, writes SHOW ENGINE INNODB STATUS output to the error log about every 15 s.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "@@innodb_status_output (configuration check)",
+    "points_to": "disable",
+    "condition": "ON during a benchmark without a need for it",
+    "why": "a periodic monitor print briefly takes InnoDB latches (lock_sys, trx list) and writes to the error log."
+   }
+  ],
+  "impact_bound": "No measurable signal at 15 s period; impact none-low (can stall briefly with very long transaction lists).",
+  "experiment": {
+   "change": "SET GLOBAL innodb_status_output=OFF",
+   "predict": "no change beyond noise",
+   "confirm_or_refute": "any gain beyond noise would be surprising",
+   "cost_or_risk": "loses periodic diagnostics"
+  },
+  "collected": "yes (configuration only)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-enabling-monitors.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_status_output"
+  ]
+ },
+ {
+  "variable": "log_slow_rate_limit",
+  "relevant_to": "Percona Server (with log_slow_rate_type=session|query) and MariaDB; matters only when slow_query_log=ON and many statements exceed long_query_time.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Slow_queries rate vs Questions rate",
+    "points_to": "raise",
+    "condition": "slow log on and a material share of statements are logged",
+    "why": "sampling 1 of N cuts log write volume proportionally."
+   },
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name 'wait/io/file/sql/slow_log' SUM_TIMER_WAIT / bytes",
+    "points_to": "raise",
+    "condition": "measurable slow-log write time during the run",
+    "why": "direct cost of logging on the statement path."
+   }
+  ],
+  "impact_bound": "At most the measured slow_log write time (plus Percona extended verbosity cost); low unless long_query_time is near 0 at high QPS, then medium.",
+  "experiment": {
+   "change": "raise log_slow_rate_limit (e.g. 100) keeping long_query_time",
+   "predict": "slow_log bytes and write time fall ~N-fold; QPS up by at most the measured log-write share",
+   "confirm_or_refute": "gain bounded by and consistent with the log-time share confirms",
+   "cost_or_risk": "less complete slow log for analysis"
+  },
+  "collected": "partly: Slow_queries collected via status; add P_S file I/O for wait/io/file/sql/slow_log",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.4/slow-extended.html",
+   "https://mariadb.com/kb/en/slow-query-log-extended-statistics/"
+  ]
+ },
+ {
+  "variable": "long_query_time",
+  "relevant_to": "all flavors; matters only with slow_query_log=ON. 0 logs every statement.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Slow_queries / Questions (rate)",
+    "points_to": "raise",
+    "condition": "slow log on and a material share of statements logged",
+    "why": "each logged statement costs a formatted write to the slow log file/table."
+   },
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name 'wait/io/file/sql/slow_log' SUM_TIMER_WAIT",
+    "points_to": "raise",
+    "condition": "measurable share of statement time",
+    "why": "direct logging cost."
+   }
+  ],
+  "impact_bound": "At most the slow_log write time share; none if slow log off; medium-high with long_query_time=0 at high QPS.",
+  "experiment": {
+   "change": "raise long_query_time (or disable slow_query_log) for the benchmark",
+   "predict": "Slow_queries/s and slow_log write time fall; QPS rises",
+   "confirm_or_refute": "no change if few statements were logged",
+   "cost_or_risk": "lose slow-statement detail (P_S digests still available)"
+  },
+  "collected": "partly: add P_S file I/O for wait/io/file/sql/slow_log",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/slow-query-log.html",
+   "https://mariadb.com/kb/en/slow-query-log-overview/"
+  ]
+ },
+ {
+  "variable": "max_allowed_packet",
+  "relevant_to": "all flavors; a functional limit, not a performance knob. Matters only if a statement/row exceeds it.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Aborted_clients / client errors ER_NET_PACKET_TOO_LARGE (1153) in benchmark output",
+    "points_to": "raise",
+    "condition": "any such error",
+    "why": "larger packets are rejected and the connection aborted."
+   }
+  ],
+  "impact_bound": "No measurable performance signal; impact none (buffers grow to it only on demand).",
+  "experiment": {
+   "change": "raise only if packet-too-large errors appear",
+   "predict": "errors disappear",
+   "confirm_or_refute": "n/a",
+   "cost_or_risk": "larger worst-case per-connection memory"
+  },
+  "collected": "partly: add benchmark-client error counts by error code",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/packet-too-large.html",
+   "https://mariadb.com/kb/en/server-system-variables/#max_allowed_packet"
+  ]
+ },
+ {
+  "variable": "max_connections",
+  "relevant_to": "all flavors; a benchmark prerequisite (must exceed client threads). Also feeds autosizing of open_files_limit, table caches and P_S tables (MySQL).",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Max_used_connections vs @@max_connections; Connection_errors_max_connections delta",
+    "points_to": "raise",
+    "condition": "Connection_errors_max_connections > 0 or Max_used_connections == max_connections",
+    "why": "connects are refused once the limit is hit."
+   },
+   {
+    "source": "performance_schema",
+    "metric": "memory_summary_global_by_event_name memory/performance_schema/% total",
+    "points_to": "lower",
+    "condition": "max_connections far above Max_used_connections and P_S memory is a material share of RAM",
+    "why": "P_S per-thread tables are autosized from max_connections and allocated as threads appear."
+   }
+  ],
+  "impact_bound": "Raising: functional only. Lowering: at most the memory freed (P_S + per-connection buffers), which only helps when memory is constrained; impact none-low.",
+  "experiment": {
+   "change": "set max_connections ~ max clients x 1.2",
+   "predict": "no refusals; memory slightly lower",
+   "confirm_or_refute": "Connection_errors_max_connections stays 0",
+   "cost_or_risk": "too low causes refused connections"
+  },
+  "collected": "partly: add Connection_errors_max_connections and Max_used_connections to the checked signals (status deltas exist)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_max_connections",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-status-variables.html#statvar_Connection_errors_xxx"
+  ]
+ },
+ {
+  "variable": "net_buffer_length",
+  "relevant_to": "all flavors; initial size of the per-connection net buffer, which grows up to max_allowed_packet as needed and is shrunk back after the statement.",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "memory_summary_global_by_event_name 'memory/sql/NET::buff' COUNT_ALLOC/COUNT_FREE rates",
+    "points_to": "raise",
+    "condition": "high allocation rate (buffer repeatedly grown/shrunk for large rows)",
+    "why": "each oversize statement/result reallocates the buffer."
+   }
+  ],
+  "impact_bound": "No reliable time signal; bounded by malloc/realloc CPU share for NET buffers; impact none-low.",
+  "experiment": {
+   "change": "raise to typical row/statement size (e.g. 64K-1M)",
+   "predict": "NET::buff alloc rate falls; CPU/trx unchanged or slightly lower",
+   "confirm_or_refute": "no CPU change = inert",
+   "cost_or_risk": "per-connection memory x connections"
+  },
+  "collected": "no: add P_S memory instrument memory/sql/NET::buff alloc counts",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_net_buffer_length"
+  ]
+ },
+ {
+  "variable": "open_files_limit",
+  "relevant_to": "all flavors; effective value is set at startup from ulimit and max_connections/table_open_cache. Matters only if it forces mysqld to reduce table_open_cache/max_connections or file opens fail.",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "effective @@open_files_limit vs required (table_open_cache*2 + max_connections + InnoDB files); error log 'Changed limits' warnings",
+    "points_to": "raise",
+    "condition": "startup lowered table_open_cache or max_connections",
+    "why": "the server shrinks caches to fit the descriptor limit, causing table reopen churn."
+   },
+   {
+    "source": "status",
+    "metric": "Open_files vs @@open_files_limit; Opened_files rate",
+    "points_to": "raise",
+    "condition": "Open_files near the limit or EMFILE errors",
+    "why": "descriptor exhaustion forces closes or fails opens."
+   }
+  ],
+  "impact_bound": "Indirect: at most the gain from the table_open_cache it allows; none if no limit-induced reductions. Impact none-low.",
+  "experiment": {
+   "change": "raise LimitNOFILE / open_files_limit, restart",
+   "predict": "effective table_open_cache equals configured; Table_open_cache_misses/overflows fall",
+   "confirm_or_refute": "no change in caches = inert",
+   "cost_or_risk": "restart"
+  },
+  "collected": "partly: add Open_files, Opened_files and effective vs configured table_open_cache/max_connections",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_open_files_limit",
+   "https://dev.mysql.com/doc/refman/8.4/en/not-enough-file-handles.html"
+  ]
+ },
+ {
+  "variable": "performance_schema",
+  "relevant_to": "all flavors (default ON in MySQL/Percona, OFF in MariaDB); the tuner needs it for latency/wait measurement, so disabling trades observability for speed.",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "CPU profile category 'performance_schema' share of mysqld CPU",
+    "points_to": "disable",
+    "condition": "a material share (several %) on CPU-bound short-statement workloads",
+    "why": "instrumentation code runs on every instrumented wait/statement."
+   },
+   {
+    "source": "performance_schema",
+    "metric": "memory_summary_global_by_event_name sum for 'memory/performance_schema/%'",
+    "points_to": "disable",
+    "condition": "a material share of RAM when memory-bound",
+    "why": "P_S tables are preallocated/autosized."
+   },
+   {
+    "source": "performance_schema",
+    "metric": "setup_instruments/setup_consumers enabled counts (vs defaults)",
+    "points_to": "a specific value",
+    "condition": "many non-default instruments (e.g. all wait/synch) enabled",
+    "why": "overhead grows with enabled instruments and consumers."
+   }
+  ],
+  "impact_bound": "At most the measured P_S CPU share (plus its cache effects); measured 3-5% typical, up to ~25% CPU on 2 vCPU with full instrumentation: medium.",
+  "experiment": {
+   "change": "prefer reducing instruments/consumers over OFF; if testing OFF, restart and compare",
+   "predict": "CPU/trx down by ~the P_S CPU share; QPS up when CPU-bound",
+   "confirm_or_refute": "gain consistent with profile share confirms; tuner loses digest/wait data in that run",
+   "cost_or_risk": "restart; loses latency/wait observability (keep ON for diagnosis runs)"
+  },
+  "collected": "yes (CPU profile performance_schema category); partly for P_S memory",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/performance-schema-startup-configuration.html",
+   "https://mariadb.com/kb/en/performance-schema-overview/"
+  ]
+ },
+ {
+  "variable": "performance_schema_max_digest_length",
+  "relevant_to": "all flavors with performance_schema ON; also bounded by max_digest_length. Affects digest text length/memory, not grouping speed materially.",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "events_statements_summary_by_digest DIGEST_TEXT ending in '...' (truncated)",
+    "points_to": "raise",
+    "condition": "distinct statements collapse into one digest or text is cut",
+    "why": "truncation can merge different statements and hides the statement text the tuner analyzes."
+   },
+   {
+    "source": "status",
+    "metric": "Performance_schema_digest_lost",
+    "points_to": "no change needed",
+    "condition": "> 0 indicates performance_schema_digests_size is too small, not this variable",
+    "why": "different knob."
+   }
+  ],
+  "impact_bound": "No performance signal; memory = length x (digest rows + statement history rows); impact none-low.",
+  "experiment": {
+   "change": "raise to 4096 when truncated digests appear (restart)",
+   "predict": "no truncated DIGEST_TEXT; distinct digests count may rise",
+   "confirm_or_refute": "n/a",
+   "cost_or_risk": "restart; more P_S memory"
+  },
+  "collected": "partly: add a check for truncated DIGEST_TEXT",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/performance-schema-system-variables.html#sysvar_performance_schema_max_digest_length",
+   "https://dev.mysql.com/doc/refman/8.4/en/performance-schema-statement-digests.html"
+  ]
+ },
+ {
+  "variable": "skip_name_resolve",
+  "relevant_to": "all flavors; matters only for TCP connects during the run; changes semantics (host-name grants stop matching).",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "performance_schema.host_cache rows and COUNT_NAMEINFO_TRANSIENT_ERRORS/COUNT_NAMEINFO_PERMANENT_ERRORS, COUNT_FCRDNS_ERRORS",
+    "points_to": "enable",
+    "condition": "resolution happening (rows populated) with DNS errors or many connects",
+    "why": "each new host costs reverse+forward DNS lookups; failures/timeouts add seconds."
+   },
+   {
+    "source": "ebpf",
+    "metric": "off-CPU time of connection threads in getnameinfo/getaddrinfo during connect",
+    "points_to": "enable",
+    "condition": "a material share of connect time",
+    "why": "direct DNS time on the connect path."
+   },
+   {
+    "source": "status",
+    "metric": "Connection_errors_peer_address",
+    "points_to": "enable",
+    "condition": "> 0",
+    "why": "peer-address resolution errors."
+   }
+  ],
+  "impact_bound": "At most DNS time per connect x connects/s; none with persistent connections; high only when DNS is slow/broken and connects are frequent.",
+  "experiment": {
+   "change": "enable skip_name_resolve (restart) after confirming grants use IPs",
+   "predict": "connect latency and DNS time fall; host_cache stays empty",
+   "confirm_or_refute": "no change in connect latency = inert",
+   "cost_or_risk": "host-name based grants stop working"
+  },
+  "collected": "no: add host_cache sampling and DNS-time attribution",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/host-cache.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_skip_name_resolve"
+  ]
+ },
+ {
+  "variable": "slow_query_log",
+  "relevant_to": "all flavors; costs scale with how many statements pass long_query_time (and log_slow_rate_limit / log_slow_verbosity on Percona/MariaDB).",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Slow_queries / Questions (rate)",
+    "points_to": "disable",
+    "condition": "ON with a material share of statements logged",
+    "why": "each logged statement is formatted and written."
+   },
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name 'wait/io/file/sql/slow_log' SUM_TIMER_WAIT",
+    "points_to": "disable",
+    "condition": "measurable share of statement time",
+    "why": "direct logging cost."
+   }
+  ],
+  "impact_bound": "At most the slow-log write time share; none-low normally; medium-high with long_query_time=0 at high QPS.",
+  "experiment": {
+   "change": "SET GLOBAL slow_query_log=OFF",
+   "predict": "slow_log I/O -> 0; QPS up by about the logging share",
+   "confirm_or_refute": "gain bounded by the measured share confirms",
+   "cost_or_risk": "loses slow log"
+  },
+  "collected": "partly: add P_S file I/O for wait/io/file/sql/slow_log",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/slow-query-log.html",
+   "https://docs.percona.com/percona-server/8.4/slow-extended.html"
+  ]
+ },
+ {
+  "variable": "table_definition_cache",
+  "relevant_to": "all flavors; matters only when more distinct tables (incl. partitions) are touched than the cache holds. MySQL 8 uses the data dictionary for definitions.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Opened_table_definitions rate during the window; Open_table_definitions vs @@table_definition_cache",
+    "points_to": "raise",
+    "condition": "Opened_table_definitions/s > 0 after warm-up and Open_table_definitions == table_definition_cache",
+    "why": "each miss re-reads the table definition (DD / .frm) and builds a TABLE_SHARE."
+   },
+   {
+    "source": "derived",
+    "metric": "CPU profile share in table open / share creation code (cpu-tablecache)",
+    "points_to": "raise",
+    "condition": "a material share of CPU",
+    "why": "measures the time the misses cost."
+   }
+  ],
+  "impact_bound": "At most the CPU share of table-share creation; none once all tables fit (most benchmarks); low-medium only for schemas with many thousands of tables.",
+  "experiment": {
+   "change": "raise table_definition_cache above the number of tables touched",
+   "predict": "Opened_table_definitions/s -> 0; CPU/trx down by the share",
+   "confirm_or_refute": "no CPU change = inert",
+   "cost_or_risk": "memory per cached definition"
+  },
+  "collected": "yes (status deltas and CPU profile)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_table_definition_cache",
+   "https://mariadb.com/kb/en/server-system-variables/#table_definition_cache"
+  ]
+ },
+ {
+  "variable": "table_open_cache",
+  "relevant_to": "all flavors; matters when concurrent sessions x tables per query exceed the cache (per instance: table_open_cache / table_open_cache_instances).",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Table_open_cache_misses and Table_open_cache_overflows rates; Opened_tables rate",
+    "points_to": "raise",
+    "condition": "misses/overflows per second > 0 after warm-up",
+    "why": "each miss opens a new TABLE handle (handler open, possibly share lookup); overflows evict handles."
+   },
+   {
+    "source": "performance_schema",
+    "metric": "events_waits_summary_global_by_event_name for 'wait/synch/mutex/sql/LOCK_table_cache' (and MariaDB TDC mutexes)",
+    "points_to": "raise",
+    "condition": "a material share of wait time (only if mutex instruments enabled)",
+    "why": "cache maintenance under a mutex serializes sessions."
+   },
+   {
+    "source": "derived",
+    "metric": "CPU profile share in table open/close code (cpu-tablecache)",
+    "points_to": "raise",
+    "condition": "a material share of CPU",
+    "why": "time spent opening tables."
+   }
+  ],
+  "impact_bound": "At most the CPU+mutex time in table open/close; none when misses are ~0 (typical after warm-up); low-medium with many tables and high concurrency.",
+  "experiment": {
+   "change": "raise table_open_cache (check open_files_limit)",
+   "predict": "Table_open_cache_misses/overflows -> ~0; CPU/trx falls by the share",
+   "confirm_or_refute": "no CPU/latency change = inert",
+   "cost_or_risk": "memory and file descriptors"
+  },
+  "collected": "partly: Opened_tables collected; add Table_open_cache_misses/overflows/hits explicitly and LOCK_table_cache wait",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/table-cache.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-status-variables.html#statvar_Table_open_cache_misses",
+   "https://mariadb.com/kb/en/server-status-variables/#table_open_cache_misses"
+  ]
+ },
+ {
+  "variable": "table_open_cache_instances",
+  "relevant_to": "all flavors; matters only with high concurrency (many CPUs) when table cache mutex contention exists. MariaDB auto-raises instances under contention (up to the configured value).",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "wait/synch/mutex/sql/LOCK_table_cache SUM_TIMER_WAIT share (requires mutex instrument)",
+    "points_to": "raise",
+    "condition": "a material share of wait time",
+    "why": "sessions hash to cache instances; fewer instances means more contention on each instance mutex."
+   },
+   {
+    "source": "ebpf",
+    "metric": "latch/futex off-CPU share attributed to table cache mutex",
+    "points_to": "raise",
+    "condition": "a material share of foreground time",
+    "why": "direct contention time."
+   },
+   {
+    "source": "status",
+    "metric": "Table_open_cache_overflows",
+    "points_to": "lower",
+    "condition": "overflows > 0 with per-instance capacity too small",
+    "why": "the cache is split; each instance holds table_open_cache/instances."
+   }
+  ],
+  "impact_bound": "At most the measured LOCK_table_cache contention time; typically none-low on <=16 vCPU.",
+  "experiment": {
+   "change": "raise instances (restart; MySQL) keeping table_open_cache/instances large enough",
+   "predict": "LOCK_table_cache wait and futex time fall",
+   "confirm_or_refute": "no change in wait time = inert",
+   "cost_or_risk": "restart; split capacity may raise overflows"
+  },
+  "collected": "partly: P_S wait summaries exist, but the specific mutex instrument must be enabled; futex attribution to this mutex is missing",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_table_open_cache_instances",
+   "https://mariadb.com/kb/en/server-system-variables/#table_open_cache_instances"
+  ]
+ },
+ {
+  "variable": "thread_cache_size",
+  "relevant_to": "all flavors; matters only with one-thread-per-connection and connects during the run.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Threads_created rate vs Connections rate",
+    "points_to": "raise",
+    "condition": "Threads_created/s > 0 during the window (cache misses)",
+    "why": "a miss creates an OS thread (mmap stack, clone) instead of reusing one."
+   },
+   {
+    "source": "derived",
+    "metric": "CPU profile share in thread creation / memory mapping (cpu-mm) during connects",
+    "points_to": "raise",
+    "condition": "a material share of CPU",
+    "why": "measures the time a bigger cache removes."
+   }
+  ],
+  "impact_bound": "At most Threads_created/s x thread creation cost (~tens of microseconds each); none with persistent connections; low otherwise.",
+  "experiment": {
+   "change": "raise thread_cache_size to the peak connection churn",
+   "predict": "Threads_created/s -> ~0; sys CPU per connect down",
+   "confirm_or_refute": "no CPU change = inert",
+   "cost_or_risk": "idle threads keep stacks (small memory)"
+  },
+  "collected": "yes (status deltas)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_thread_cache_size",
+   "https://dev.mysql.com/doc/refman/8.4/en/connection-management.html"
+  ]
+ },
+ {
+  "variable": "thread_pool_high_prio_mode",
+  "relevant_to": "Percona Server with thread_handling=pool-of-threads only (MariaDB analog: thread_pool_priority). Inert with one-thread-per-connection.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Threadpool_requests_waiting_in_hp_queue vs Threadpool_requests_waiting_in_queue; Threadpool_average_hp_queue_wait_us vs Threadpool_average_queue_wait_us; Threadpool_requests_starved_in_queue (current Percona docs; values are cnt/avg/min/max/dev strings)",
+    "points_to": "a specific value",
+    "condition": "normal-queue waits high and starvation > 0 -> consider 'none'/'statements'; row-lock waits high while open transactions queue -> keep 'transactions'",
+    "why": "which queue a statement enters decides whether lock-holding transactions finish first."
+   },
+   {
+    "source": "status",
+    "metric": "Innodb_row_lock_time / Innodb_row_lock_waits with pool on",
+    "points_to": "a specific value",
+    "condition": "row-lock time rises when transactions wait in the normal queue",
+    "why": "prioritizing open transactions shortens lock hold time."
+   }
+  ],
+  "impact_bound": "At most the queue wait time of statements in open transactions (and resulting lock-hold time); low typically, medium for lock-heavy OLTP with pool saturation.",
+  "experiment": {
+   "change": "compare 'transactions' vs 'statements'",
+   "predict": "queue wait (hp vs normal) and row-lock time move; TPS up if lock holders were queued",
+   "confirm_or_refute": "no change in queue waits = inert",
+   "cost_or_risk": "starvation of autocommit statements"
+  },
+  "collected": "no: add Percona Threadpool_* status variables (parse the cnt/avg strings)",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.4/threadpool.html"
+  ]
+ },
+ {
+  "variable": "thread_pool_high_prio_tickets",
+  "relevant_to": "Percona Server with thread pool and high_prio_mode=transactions.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Threadpool_requests_starved_in_queue and Threadpool_average_queue_wait_us",
+    "points_to": "lower",
+    "condition": "starvation > 0 / normal-queue wait high while hp queue dominates",
+    "why": "unlimited tickets let long transactions monopolize the high-priority queue."
+   }
+  ],
+  "impact_bound": "Bounded by normal-queue wait time; low.",
+  "experiment": {
+   "change": "lower tickets (e.g. 4-16)",
+   "predict": "normal-queue wait/starvation falls; hp wait may rise",
+   "confirm_or_refute": "overall latency improves -> keep",
+   "cost_or_risk": "long transactions may hold locks longer"
+  },
+  "collected": "no: add Percona Threadpool_* status variables",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.4/threadpool.html"
+  ]
+ },
+ {
+  "variable": "thread_pool_idle_timeout",
+  "relevant_to": "Percona and MariaDB thread pool only.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Threadpool_threads oscillation; MariaDB INFORMATION_SCHEMA.THREAD_POOL_STATS THREAD_CREATIONS rate",
+    "points_to": "raise",
+    "condition": "threads repeatedly created after idle exits in bursty load",
+    "why": "re-creating workers costs thread creation and wakeup latency."
+   }
+  ],
+  "impact_bound": "At most thread creation cost x creations; none-low.",
+  "experiment": {
+   "change": "raise idle timeout",
+   "predict": "thread creations fall",
+   "confirm_or_refute": "no latency change = inert",
+   "cost_or_risk": "idle threads memory"
+  },
+  "collected": "no: add Threadpool_threads/Threadpool_idle_threads and MariaDB THREAD_POOL_STATS",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.4/threadpool.html",
+   "https://mariadb.com/kb/en/thread-pool-system-status-variables/"
+  ]
+ },
+ {
+  "variable": "thread_pool_max_threads",
+  "relevant_to": "Percona and MariaDB thread pool only; a cap, rarely hit.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Threadpool_threads vs @@thread_pool_max_threads; MariaDB THREAD_POOL_STATS THROTTLES",
+    "points_to": "raise",
+    "condition": "Threadpool_threads reaches the cap with queued requests (risk of deadlock-like stalls)",
+    "why": "new workers cannot be created to unblock stalled groups."
+   }
+  ],
+  "impact_bound": "Functional; none unless the cap is reached.",
+  "experiment": {
+   "change": "raise if the cap is reached",
+   "predict": "queued requests drain; stalls end",
+   "confirm_or_refute": "n/a",
+   "cost_or_risk": "more threads"
+  },
+  "collected": "no: add Threadpool_threads",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.4/threadpool.html",
+   "https://mariadb.com/kb/en/thread-pool-system-status-variables/"
+  ]
+ },
+ {
+  "variable": "thread_pool_oversubscribe",
+  "relevant_to": "Percona and MariaDB thread pool only.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Percona Threadpool_average_queue_wait_us with low CPU utilization; MariaDB THREAD_POOL_GROUPS ACTIVE_THREADS, QUEUE_LENGTH; THREAD_POOL_STATS THROTTLES",
+    "points_to": "raise",
+    "condition": "requests queue while CPUs are idle (statements block on I/O/locks inside a group)",
+    "why": "more active threads per group fill CPU while others wait on I/O."
+   },
+   {
+    "source": "os",
+    "metric": "run-queue wait per thread (scheduler latency) and CPU utilization",
+    "points_to": "lower",
+    "condition": "high run-queue wait with CPUs saturated",
+    "why": "too many active threads per group oversubscribe CPUs and add context switches."
+   },
+   {
+    "source": "ebpf",
+    "metric": "off-CPU share of connection threads in data page read / row lock while queue wait is high",
+    "points_to": "raise",
+    "condition": "a material share",
+    "why": "blocked threads hold group slots."
+   }
+  ],
+  "impact_bound": "At most the measured queue wait time (raise) or run-queue wait time (lower); medium for I/O- or lock-bound workloads with the pool.",
+  "experiment": {
+   "change": "step oversubscribe 3 -> 6 (or 3 -> 1)",
+   "predict": "queue wait down and CPU up (raise) / run-queue wait down (lower)",
+   "confirm_or_refute": "throughput moves consistently with the wait component",
+   "cost_or_risk": "overload or idle CPU"
+  },
+  "collected": "partly: OS run-queue and eBPF collected; add Threadpool_* (Percona) and THREAD_POOL_GROUPS/STATS (MariaDB)",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.4/threadpool.html",
+   "https://mariadb.com/kb/en/information-schema-thread_pool_groups-table/",
+   "https://mariadb.com/kb/en/information-schema-thread_pool_stats-table/"
+  ]
+ },
+ {
+  "variable": "thread_pool_stall_limit",
+  "relevant_to": "Percona and MariaDB thread pool only.",
+  "signals": [
+   {
+    "source": "information_schema",
+    "metric": "MariaDB THREAD_POOL_STATS STALLS, THREAD_CREATIONS_DUE_TO_STALL, WAKES_DUE_TO_STALL; THREAD_POOL_QUEUES QUEUEING_TIME_MICROSECONDS",
+    "points_to": "lower",
+    "condition": "frequent stalls with long queueing time behind long statements",
+    "why": "the pool waits stall_limit ms before adding a worker to a stalled group."
+   },
+   {
+    "source": "status",
+    "metric": "Percona Threadpool_average_queue_wait_us max/avg vs stall_limit",
+    "points_to": "lower",
+    "condition": "queue waits cluster near stall_limit",
+    "why": "a long statement blocks the group until the limit passes."
+   },
+   {
+    "source": "os",
+    "metric": "context switches and thread count growth",
+    "points_to": "raise",
+    "condition": "many stall-driven thread creations causing oversubscription",
+    "why": "too low a limit creates extra threads for normal statements."
+   }
+  ],
+  "impact_bound": "At most queue time spent waiting for stall detection; medium for mixes of long and short statements, none for uniform short OLTP.",
+  "experiment": {
+   "change": "lower stall_limit (e.g. 500 -> 100 ms) or raise if stall creations are excessive",
+   "predict": "queue wait max/avg falls (lower) or thread creations fall (raise)",
+   "confirm_or_refute": "p99 latency moves with queue wait",
+   "cost_or_risk": "extra threads / context switches"
+  },
+  "collected": "no: add Percona Threadpool_* and MariaDB THREAD_POOL_STATS/QUEUES",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.4/threadpool.html",
+   "https://mariadb.com/kb/en/information-schema-thread_pool_stats-table/",
+   "https://mariadb.com/kb/en/information-schema-thread_pool_queues-table/"
+  ]
+ },
+ {
+  "variable": "thread_stack",
+  "relevant_to": "all flavors; a minimum for recursion/stored programs, not a tuning knob.",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "errors ER_STACK_OVERRUN_NEED_MORE (1436) in benchmark output",
+    "points_to": "raise",
+    "condition": "any such error",
+    "why": "deep recursion overruns the thread stack."
+   }
+  ],
+  "impact_bound": "No measurable performance signal; impact none (stacks are virtual memory touched on demand).",
+  "experiment": {
+   "change": "raise only on stack-overrun errors",
+   "predict": "errors disappear",
+   "confirm_or_refute": "n/a",
+   "cost_or_risk": "virtual memory per thread"
+  },
+  "collected": "partly: add client error counts by code",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_thread_stack"
+  ]
+ }
+]

@@ -1,0 +1,685 @@
+{
+ "os:cpu_affinity": {
+  "category": "os/cpu",
+  "description": "CPUs the database process may run on (all / CPU list such as 1-3), e.g. to keep it off the CPUs handling network interrupts.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "network-rtt",
+   "sched-delay",
+   "softirq"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:cpu_governor": {
+  "category": "os/cpu",
+  "description": "CPU frequency governor.",
+  "impact": "medium",
+  "when": "CPU-bound on hosts that scale the clock down",
+  "precondition": null,
+  "mechanism_tags": [
+   "cpu"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:datadir_fs": {
+  "category": "os/io",
+  "description": "Filesystem of the data directory on the experiment device (scope 'filesystem' only).",
+  "impact": "medium",
+  "when": "I/O or commit-bound: file system choice changes allocation and journaling",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "durability",
+  "restart": true,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:disk_write_cache": {
+  "category": "os/durability",
+  "description": "Volatile write cache of the data drive (hdparm -W / SCSI WCE / NVMe feature 6; none: the drive has none). ON without power-loss protection: DURABILITY TRADE-OFF.",
+  "impact": "high",
+  "when": "write / commit-bound with the drive cache off (slow writes, ms per write); durability trade-off without power-loss protection",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "durability",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:fs.aio-max-nr": {
+  "category": "os/io",
+  "description": "System-wide limit of in-flight asynchronous I/O requests (InnoDB native AIO).",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "io"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:hugepages": {
+  "category": "os/memory",
+  "description": "Number of 2 MiB huge pages reserved (used by the buffer pool when large_pages=ON).",
+  "impact": "medium",
+  "when": "as large_pages",
+  "precondition": null,
+  "mechanism_tags": [
+   "cpu",
+   "memory"
+  ],
+  "safety": "safe",
+  "restart": true,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:kernel.numa_balancing": {
+  "category": "os/cpu",
+  "description": "Automatic NUMA page migration (multi-socket hosts).",
+  "impact": "low",
+  "when": "multi-socket hosts",
+  "precondition": null,
+  "mechanism_tags": [
+   "cpu",
+   "memory",
+   "numa"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:kernel.sched_autogroup_enabled": {
+  "category": "os/cpu",
+  "description": "Group CPU time per terminal session (desktop feature).",
+  "impact": "low",
+  "when": "run-queue waits with other process groups on the host",
+  "precondition": null,
+  "mechanism_tags": [
+   "cpu-pressure",
+   "sched-delay"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:malloc": {
+  "category": "os/memory",
+  "description": "Memory allocator for mysqld: glibc[:arena_max=N], jemalloc[:MALLOC_CONF], tcmalloc, mimalloc (LD_PRELOAD).",
+  "impact": "medium",
+  "when": "allocator time in the CPU profile, many threads",
+  "precondition": null,
+  "mechanism_tags": [
+   "concurrency",
+   "cpu-allocator",
+   "cpu-pressure"
+  ],
+  "safety": "safe",
+  "restart": true,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:mount_barrier": {
+  "category": "os/durability",
+  "description": "ext4 write barriers (OFF = nobarrier: DURABILITY TRADE-OFF).",
+  "impact": "medium",
+  "when": "commit-bound on disks with a volatile write cache; durability trade-off",
+  "precondition": null,
+  "mechanism_tags": [
+   "commit",
+   "io"
+  ],
+  "safety": "durability",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:mount_noatime": {
+  "category": "os/io",
+  "description": "Mount the data directory filesystem with noatime.",
+  "impact": "low",
+  "when": "metadata writes on file access",
+  "precondition": null,
+  "mechanism_tags": [
+   "io"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:mysqld_numa_policy": {
+  "category": "os/memory",
+  "description": "NUMA memory policy of mysqld (default / interleave across all nodes / bind:N or preferred:N to one node), via systemd NUMAPolicy.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "memory",
+   "numa"
+  ],
+  "safety": "safe",
+  "restart": true,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.core.default_qdisc": {
+  "category": "os/network",
+  "description": "Default queueing discipline (fq pairs with bbr).",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "network-loss",
+   "network-rtt"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.core.netdev_budget": {
+  "category": "os/network",
+  "description": "Packets processed per softirq round.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "softirq"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.core.netdev_budget_usecs": {
+  "category": "os/network",
+  "description": "Time budget per softirq round.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "softirq"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.core.netdev_max_backlog": {
+  "category": "os/network",
+  "description": "Per-CPU packet backlog before softnet drops.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "network-loss",
+   "softirq"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.core.rmem_max": {
+  "category": "os/network",
+  "description": "Max receive buffer an application may set.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.core.rps_sock_flow_entries": {
+  "category": "os/network",
+  "description": "RFS global flow table.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.core.somaxconn": {
+  "category": "os/network",
+  "description": "Upper bound of listen backlogs (MySQL back_log is capped by it).",
+  "impact": "low",
+  "when": "accept-queue overflows",
+  "precondition": "accept queue overflows during the run (listen_drops > 0)",
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.core.wmem_max": {
+  "category": "os/network",
+  "description": "Max send buffer an application may set.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.ipv4.ip_local_port_range": {
+  "category": "os/network",
+  "description": "Ephemeral ports for outgoing connections (clients).",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.ipv4.tcp_congestion_control": {
+  "category": "os/network",
+  "description": "TCP congestion control algorithm (cubic / bbr).",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "network-loss",
+   "network-rtt"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.ipv4.tcp_keepalive_intvl": {
+  "category": "os/network",
+  "description": "Interval between keepalive probes.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.ipv4.tcp_keepalive_probes": {
+  "category": "os/network",
+  "description": "Keepalive probes before the connection is dropped.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.ipv4.tcp_keepalive_time": {
+  "category": "os/network",
+  "description": "Idle time before TCP keepalive probes.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.ipv4.tcp_max_syn_backlog": {
+  "category": "os/network",
+  "description": "Half-open connection queue.",
+  "impact": "low",
+  "when": "SYN-queue drops",
+  "precondition": "SYN queue drops during the run (syn_drops > 0)",
+  "mechanism_tags": [
+   "connections"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.ipv4.tcp_rmem": {
+  "category": "os/network",
+  "description": "TCP receive buffer min/default/max (autotuning ceiling).",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.ipv4.tcp_slow_start_after_idle": {
+  "category": "os/network",
+  "description": "Shrink the congestion window after idle (hurts pooled connections over WAN).",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "network-rtt"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.ipv4.tcp_tw_reuse": {
+  "category": "os/network",
+  "description": "Reuse TIME_WAIT sockets for new outgoing connections (clients).",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.ipv4.tcp_wmem": {
+  "category": "os/network",
+  "description": "TCP send buffer min/default/max.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net.netfilter.nf_conntrack_max": {
+  "category": "os/network",
+  "description": "Connection tracking table size (firewalled hosts).",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "connections",
+   "network-loss"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:net_irq_cpus": {
+  "category": "os/network",
+  "description": "CPUs that handle the network card interrupts (auto / CPU list); irqbalance is stopped while managed.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "network-rtt",
+   "sched-delay",
+   "softirq"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:read_ahead_kb": {
+  "category": "os/io",
+  "description": "OS read-ahead of the data device (no effect on InnoDB data files opened with O_DIRECT).",
+  "impact": "low",
+  "when": "sequential scans read from disk",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:rps": {
+  "category": "os/network",
+  "description": "Receive Packet Steering over all CPUs for every RX queue (spreads softirq).",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "cpu-pressure",
+   "softirq"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:scheduler": {
+  "category": "os/io",
+  "description": "Block I/O scheduler of the data device.",
+  "impact": "low",
+  "when": "I/O-bound on SSD / NVMe",
+  "precondition": null,
+  "mechanism_tags": [
+   "io"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:swapfile": {
+  "category": "os/memory",
+  "description": "Extra swap file managed by the agent (size, 0 = none): room for cold memory so caches can grow.",
+  "impact": "low",
+  "when": "safety net for memory experiments; no effect without memory pressure",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:thp": {
+  "category": "os/memory",
+  "description": "Transparent Huge Pages (never / madvise / always).",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "cpu-mm",
+   "memory"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:vm.dirty_background_bytes": {
+  "category": "os/io",
+  "description": "Dirty page cache that starts background writeback (affects buffered binlog/redo writes).",
+  "impact": "low",
+  "when": "as vm.dirty_bytes",
+  "precondition": "the workload writes (redo / flushing active)",
+  "mechanism_tags": [
+   "commit",
+   "io"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:vm.dirty_background_ratio": {
+  "category": "os/io",
+  "description": "Dirty page cache (% of memory) that starts background writeback (used when dirty_background_bytes is 0).",
+  "impact": "unknown",
+  "when": "",
+  "precondition": "the workload writes (redo / flushing active)",
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:vm.dirty_bytes": {
+  "category": "os/io",
+  "description": "Dirty page cache at which writers are throttled.",
+  "impact": "low",
+  "when": "fsync stalls from large page-cache writeback",
+  "precondition": "the workload writes (redo / flushing active)",
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:vm.dirty_expire_centisecs": {
+  "category": "os/io",
+  "description": "Age at which dirty page cache must be written back.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": "the workload writes (redo / flushing active)",
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:vm.dirty_ratio": {
+  "category": "os/io",
+  "description": "Dirty page cache (% of memory) at which writers are throttled (used when dirty_bytes is 0).",
+  "impact": "unknown",
+  "when": "",
+  "precondition": "the workload writes (redo / flushing active)",
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:vm.dirty_writeback_centisecs": {
+  "category": "os/io",
+  "description": "Interval of the background writeback thread.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": "the workload writes (redo / flushing active)",
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:vm.min_free_kbytes": {
+  "category": "os/memory",
+  "description": "Free memory the kernel keeps for atomic (network/driver) allocations.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:vm.swappiness": {
+  "category": "os/memory",
+  "description": "Kernel preference for swapping anonymous memory (1 = only under real pressure).",
+  "impact": "medium",
+  "when": "memory pressure with mysqld memory swapped out",
+  "precondition": null,
+  "mechanism_tags": [
+   "memory-pressure",
+   "swap"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:vm.zone_reclaim_mode": {
+  "category": "os/memory",
+  "description": "Reclaim memory on the local NUMA node (drop cache, swap) before allocating on another node (0 = allocate remotely).",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "memory",
+   "numa",
+   "swap"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ },
+ "os:zswap": {
+  "category": "os/memory",
+  "description": "Compressed in-memory cache for swapped pages (off / on[:compressor]): cheaper swap-ins.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "os",
+  "releases": null,
+  "default": null
+ }
+}

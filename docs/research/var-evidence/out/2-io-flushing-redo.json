@@ -1,0 +1,1459 @@
+[
+ {
+  "variable": "innodb_adaptive_flushing",
+  "relevant_to": "all flavors; cannot matter for read-only workloads or when redo never fills past innodb_adaptive_flushing_lwm",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "checkpoint age = Innodb_redo_log_current_lsn - Innodb_redo_log_checkpoint_lsn (MySQL 8.0.30+), innodb_metrics log_lsn_checkpoint_age, Innodb_checkpoint_age (Percona/MariaDB) / redo capacity",
+    "points_to": "enable",
+    "condition": "checkpoint age repeatedly reaches log_max_modified_age_async / _sync (innodb_metrics) while ON is expected; if OFF and age swings to sync, enable",
+    "why": "adaptive flushing scales flushing to the redo generation rate so checkpoint age does not hit the sync-flush wall"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "buffer_flush_sync_total_pages, buffer_flush_sync_waits",
+    "points_to": "enable",
+    "condition": "non-zero rate with adaptive flushing OFF",
+    "why": "sync (furious) flushing stalls user threads until checkpoint age drops"
+   }
+  ],
+  "impact_bound": "bounded by the foreground time lost to sync-flush stalls (buffer_flush_sync_waits x stall time, eBPF off-CPU 'redo flush'/'latch' during stalls) plus throughput dips visible in per-second TPS; typical: none when ON (default), high only if someone disabled it",
+  "experiment": {
+   "change": "toggle OFF->ON (or ON->OFF only as a control)",
+   "predict": "with ON: lower variance of checkpoint age, fewer buffer_flush_sync_total_pages, fewer TPS dips; same or lower pages flushed per trx",
+   "confirm_or_refute": "ON is right if p99 latency / TPS stddev drop without more pages flushed per trx",
+   "cost_or_risk": "OFF risks sync-flush stalls; ON may flush slightly more than strictly needed"
+  },
+  "collected": "partly: checkpoint age and pages flushed collected; add innodb_metrics buffer_flush_sync_total_pages, buffer_flush_sync_waits, buffer_flush_adaptive_total_pages, log_max_modified_age_async/_sync and per-second TPS series",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-buffer-pool-flushing.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-information-schema-metrics-table.html"
+  ]
+ },
+ {
+  "variable": "innodb_adaptive_flushing_lwm",
+  "relevant_to": "all flavors (MySQL/Percona/MariaDB); cannot matter when checkpoint age stays below the lwm % of redo capacity or for read-only load",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "checkpoint age / redo capacity (%) over the run",
+    "points_to": "raise",
+    "condition": "checkpoint age stays only slightly above lwm while pages flushed per trx are high and the disk is busy",
+    "why": "adaptive flushing starts early and flushes pages that would be re-dirtied (write amplification)"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "buffer_flush_pct_for_lsn, buffer_flush_sync_total_pages",
+    "points_to": "lower",
+    "condition": "sync flushing occurs or checkpoint age approaches log_max_modified_age_async with bursty writes",
+    "why": "starting adaptive flushing earlier gives more headroom before sync flushing"
+   }
+  ],
+  "impact_bound": "bounded by the share of disk write IOPS spent on page flushing (Innodb_buffer_pool_pages_flushed rate vs device IOPS) that could be avoided by re-dirtying, and by sync-flush stall time; typical low (the redo capacity matters far more)",
+  "experiment": {
+   "change": "raise from 10 to 20-30 (or lower to 5 when sync flushing occurs)",
+   "predict": "raise: Innodb_buffer_pool_pages_flushed per trx down, disk write IOPS down, no new buffer_flush_sync pages",
+   "confirm_or_refute": "confirm if flush work per trx falls and TPS holds/improves; refute if sync flushing appears",
+   "cost_or_risk": "higher values reduce headroom for bursts"
+  },
+  "collected": "partly: add buffer_flush_pct_for_lsn and buffer_flush_sync_total_pages",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-buffer-pool-flushing.html"
+  ]
+ },
+ {
+  "variable": "innodb_autoextend_increment",
+  "relevant_to": "all flavors; only the system tablespace (ibdata*) and, on MySQL, not file-per-table tablespaces (those use AUTOEXTEND_SIZE / internal rules); cannot matter when ibdata does not grow",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "growth rate of ibdata1 file size during the run",
+    "points_to": "raise",
+    "condition": "ibdata1 grows during the benchmark (e.g. tables in the system tablespace) and file extension shows up in waits",
+    "why": "each extension is a file-extend + write of zeros/fallocate serialised under the tablespace latch"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_instance for ibdata1: COUNT_WRITE / SUM_TIMER_WRITE beyond page writes",
+    "points_to": "raise",
+    "condition": "material write time on ibdata1 not explained by page/dblwr writes",
+    "why": "extension writes add I/O"
+   }
+  ],
+  "impact_bound": "no measurable signal in normal OLTP benchmarks with file-per-table; bound = time spent in ibdata extension writes (file I/O wait on ibdata1); typical none/low",
+  "experiment": {
+   "change": "raise 64 -> 256 MB",
+   "predict": "fewer extension events, lower ibdata1 write wait",
+   "confirm_or_refute": "confirm only if ibdata1 extension waits shrink",
+   "cost_or_risk": "disk space allocated earlier"
+  },
+  "collected": "partly: file I/O by type collected; add file size growth of ibdata1 per run",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-system-tablespace.html"
+  ]
+ },
+ {
+  "variable": "innodb_change_buffering",
+  "relevant_to": "MySQL 8.0/8.4/9.x, Percona 8.0/8.4/9.x, MariaDB 10.11 only (change buffer removed in MariaDB 11.0); only secondary non-unique index changes on pages not in the buffer pool; cannot matter when data fits in memory or tables have no such indexes",
+  "signals": [
+   {
+    "source": "engine_status",
+    "metric": "INSERT BUFFER AND ADAPTIVE HASH INDEX: 'merged operations' and 'Ibuf: size'; innodb_metrics ibuf_merges, ibuf_merges_insert, ibuf_size (MySQL); Innodb_ibuf_merges, Innodb_ibuf_size (MariaDB status)",
+    "points_to": "enable",
+    "condition": "buffering is none AND write statements spend a material share of off-CPU time on data page reads of secondary index leaf pages (eBPF 'data page read' during INSERT/UPDATE digests)",
+    "why": "buffering defers random secondary-index page reads to background merges"
+   },
+   {
+    "source": "derived",
+    "metric": "ibuf_merges rate and ibuf_size with buffering=all while read-heavy statements show page reads into ibuf merges",
+    "points_to": "disable",
+    "condition": "merges happen in foreground reads (pages read in and merged on access) or change buffer occupies a material part of the pool with little saved I/O",
+    "why": "merging cost and pool space can exceed the saved reads, and bugs/crash-recovery cost exist (reason 8.4 defaults to none)"
+   },
+   {
+    "source": "status",
+    "metric": "Innodb_buffer_pool_reads per write trx (per-run summary disk I/Os per trx)",
+    "points_to": "enable",
+    "condition": "I/O-bound write workload with many secondary indexes",
+    "why": "fewer synchronous reads per write"
+   }
+  ],
+  "impact_bound": "at most the share of foreground time in write statements spent waiting on secondary-index page reads (eBPF data page read off-CPU x write share); practice: high for ingest into larger-than-memory tables (measured -23% to -88% when off), none when data fits in memory",
+  "experiment": {
+   "change": "switch none <-> all (dynamic)",
+   "predict": "enable: disk reads per write trx down, ibuf_size up, off-CPU data-page-read time in INSERT/UPDATE digests down; later ibuf_merges rate up",
+   "confirm_or_refute": "confirm if per-trx reads and latency of write digests drop and read digests do not slow; watch history/merge backlog at end of run",
+   "cost_or_risk": "pool space used by the change buffer; slow shutdown/merge backlog; known corruption bugs led MySQL 8.4 to default none"
+  },
+  "collected": "partly: change-buffer size and data reads collected; add innodb_metrics ibuf_merges*/ibuf_size (or Innodb_ibuf_* on MariaDB) and per-digest off-CPU page-read time",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-change-buffer.html",
+   "https://mariadb.com/kb/en/innodb-status-variables/"
+  ]
+ },
+ {
+  "variable": "innodb_cleaner_lsn_age_factor",
+  "relevant_to": "Percona Server 8.0/8.4/9.x only; cannot matter when checkpoint age stays low (below the adaptive flushing lwm)",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "checkpoint age = Innodb_redo_log_current_lsn - Innodb_redo_log_checkpoint_lsn (MySQL 8.0.30+), innodb_metrics log_lsn_checkpoint_age, Innodb_checkpoint_age (Percona/MariaDB) vs max checkpoint age (Innodb_checkpoint_max_age)",
+    "points_to": "a specific value",
+    "condition": "high_checkpoint lets age approach the sync point and sync flushing (buffer_flush_sync_total_pages) appears: try legacy; legacy flushes much more than needed with age low: keep high_checkpoint",
+    "why": "high_checkpoint flushes less at low age and more aggressively near the limit; legacy starts earlier"
+   }
+  ],
+  "impact_bound": "bounded by sync-flush stall time plus avoidable page flushes (pages flushed per trx difference); typical low",
+  "experiment": {
+   "change": "switch high_checkpoint <-> legacy",
+   "predict": "legacy: lower peak checkpoint age, more pages flushed per trx; high_checkpoint: fewer flushes, higher age",
+   "confirm_or_refute": "keep the one with better TPS and no sync flushing at equal or lower flush work",
+   "cost_or_risk": "legacy raises write IOPS"
+  },
+  "collected": "partly: checkpoint age collected; add Innodb_checkpoint_max_age and buffer_flush_sync_total_pages",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.4/xtradb-performance-improvements.html"
+  ]
+ },
+ {
+  "variable": "innodb_data_file_write_through",
+  "relevant_to": "MariaDB 11.0+ (11.4, 11.8) only; only matters with writes to data files and when the device/FS honours O_DSYNC/FUA efficiently",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Innodb_data_fsyncs rate x fsync latency (performance_schema file_summary_by_event_name 'wait/io/file/innodb/innodb_data_file' SUM_TIMER_MISC)",
+    "points_to": "enable",
+    "condition": "fsyncs of data files take a material share of page-cleaner/doublewrite time and the device supports FUA write-through",
+    "why": "write-through makes each write durable and removes separate fdatasync() calls"
+   }
+  ],
+  "impact_bound": "bounded by time spent in data-file fsync calls (page cleaner / dblwr path; usually background so user-visible only when flushing is the bottleneck); typical low; can be negative on devices without FUA",
+  "experiment": {
+   "change": "SET GLOBAL innodb_data_file_write_through=ON",
+   "predict": "Innodb_data_fsyncs down, page-flush throughput up, write latency per page up",
+   "confirm_or_refute": "confirm if pages flushed/s at the same disk util rises and TPS holds",
+   "cost_or_risk": "on devices without efficient FUA each write becomes slower"
+  },
+  "collected": "partly: data fsyncs and file I/O collected; add per-event SUM_TIMER_MISC for data files and device FUA support (/sys/block/*/queue/fua)",
+  "sources": [
+   "https://mariadb.com/kb/en/innodb-system-variables/",
+   "https://mariadb.com/docs/server/server-usage/storage-engines/innodb/innodb-flush-method"
+  ]
+ },
+ {
+  "variable": "innodb_doublewrite_dir",
+  "relevant_to": "MySQL 8.0.20+, Percona 8.0.20+; only when innodb_doublewrite=ON and a second, faster or idle device exists; cannot matter for read-only or with doublewrite OFF/DETECT_ONLY",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name 'wait/io/file/innodb/innodb_dblwr_file' SUM_TIMER_WRITE+SUM_TIMER_MISC share of total InnoDB file I/O time",
+    "points_to": "a specific value",
+    "condition": "dblwr writes/syncs are a material share of write I/O time on a saturated data device while another device has headroom",
+    "why": "moving doublewrite writes to another device removes ~half the page-flush write bytes from the data device"
+   },
+   {
+    "source": "os",
+    "metric": "data device util/await high, other device util low",
+    "points_to": "a specific value",
+    "condition": "as above",
+    "why": "shifts sequential dblwr I/O off the contended device"
+   }
+  ],
+  "impact_bound": "at most the doublewrite share of the data device's busy time (dblwr KiB / total write KiB) when that device is the bottleneck; measured +6% with dblwr on its own SATA device; none without a second device",
+  "experiment": {
+   "change": "restart with innodb_doublewrite_dir on the other device",
+   "predict": "data device write MB/s down by about Innodb_dblwr_pages_written x page size, its await down; pages flushed/s up",
+   "confirm_or_refute": "confirm if data-device util drops and flush-bound TPS rises",
+   "cost_or_risk": "needs a second device; restart; if that device dies, crash recovery loses torn-page protection"
+  },
+  "collected": "partly: file I/O by type and disk metrics collected; add per-device mapping of dblwr files",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-doublewrite-buffer.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html"
+  ]
+ },
+ {
+  "variable": "innodb_doublewrite_files",
+  "relevant_to": "MySQL/Percona 8.0.20+; only with doublewrite ON and flush-bound load",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "wait/synch/mutex/innodb/dblwr_mutex (and dblwr file I/O waits) in events_waits_summary_global_by_event_name",
+    "points_to": "raise",
+    "condition": "material wait time on doublewrite mutexes/files with several page cleaners or LRU flushes",
+    "why": "more files = more independent doublewrite batches (flush list vs LRU per instance)"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "dblwr_flush_wait_events (dblwr module, disabled by default)",
+    "points_to": "raise",
+    "condition": "non-zero rate under flush-bound load",
+    "why": "threads wait for a dblwr segment to be flushed"
+   }
+  ],
+  "impact_bound": "bounded by dblwr mutex/flush-wait time in page cleaners; user-visible only via free-page waits or sync flushing; typical low",
+  "experiment": {
+   "change": "restart with doubled innodb_doublewrite_files",
+   "predict": "dblwr_flush_wait_events and dblwr mutex waits down, pages flushed/s up",
+   "confirm_or_refute": "refute if waits were already ~0",
+   "cost_or_risk": "restart, a little more disk space"
+  },
+  "collected": "no: enable dblwr innodb_metrics module and collect dblwr mutex waits",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-doublewrite-buffer.html",
+   "https://github.com/mysql/mysql-server/blob/8.4/storage/innobase/srv/srv0mon.cc"
+  ]
+ },
+ {
+  "variable": "innodb_doublewrite_pages",
+  "relevant_to": "MySQL/Percona 8.0.20+ (default 4 in 8.0 = write_io_threads, 128 in 8.4+); only with doublewrite ON and flush-bound load",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "Innodb_dblwr_pages_written / Innodb_dblwr_writes (pages per dblwr write)",
+    "points_to": "raise",
+    "condition": "pages per dblwr write is at the configured limit and dblwr writes/s are a material part of device IOPS (8.0 default 4)",
+    "why": "small batches mean many small sequential writes + syncs per page flushed"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "dblwr_flush_wait_events, dblwr_sync_requests",
+    "points_to": "raise",
+    "condition": "waits non-zero under flush-bound load",
+    "why": "batch slots full forces waits"
+   }
+  ],
+  "impact_bound": "bounded by dblwr write IOPS share of the device and dblwr wait time; on 8.0 with default 4 can be medium for flush-bound loads (Percona blog), otherwise low",
+  "experiment": {
+   "change": "restart with 64-128 on 8.0",
+   "predict": "Innodb_dblwr_writes per page down, device write IOPS down, pages flushed/s up",
+   "confirm_or_refute": "confirm by per-trx disk I/Os falling",
+   "cost_or_risk": "restart; slightly larger dblwr files"
+  },
+  "collected": "partly: dblwr writes collected; add Innodb_dblwr_pages_written and dblwr module metrics",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-doublewrite-buffer.html",
+   "https://www.percona.com/blog/surprise-with-innodb_doublewrite_pages-in-mysql-8-0-20/"
+  ]
+ },
+ {
+  "variable": "innodb_empty_free_list_algorithm",
+  "relevant_to": "Percona Server only; only when user threads find the free list empty (I/O-bound with eviction)",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Innodb_buffer_pool_wait_free rate; innodb_metrics buffer_LRU_get_free_waits, buffer_LRU_single_flush_num_scan",
+    "points_to": "a specific value",
+    "condition": "free-page waits are a material share of foreground time",
+    "why": "backoff makes user threads sleep and let the LRU cleaner refill instead of all threads doing single-page flushes and contending on mutexes"
+   },
+   {
+    "source": "ebpf",
+    "metric": "latch/futex off-CPU time in buf_LRU_get_free_block path (CPU profile 'buffer pool' share)",
+    "points_to": "a specific value",
+    "condition": "high latch/spin share during free-page waits",
+    "why": "contention on LRU/free-list mutex"
+   }
+  ],
+  "impact_bound": "at most the foreground time in free-page waits and buffer-pool mutex contention; typical low (raising io_capacity/lru_scan_depth or pool size usually fixes the root cause)",
+  "experiment": {
+   "change": "switch legacy -> backoff",
+   "predict": "wait_free count may stay, but latch/spin CPU and single-page flushes drop, TPS up at high concurrency",
+   "confirm_or_refute": "refute if TPS falls (threads sleep too long)",
+   "cost_or_risk": "backoff can add latency at low concurrency"
+  },
+  "collected": "partly: wait_free collected; add buffer_LRU_get_free_waits, buffer_LRU_single_flush_* metrics",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.4/xtradb-performance-improvements.html",
+   "https://github.com/mysql/mysql-server/blob/8.4/storage/innobase/srv/srv0mon.cc"
+  ]
+ },
+ {
+  "variable": "innodb_extend_and_initialize",
+  "relevant_to": "MySQL/Percona 8.0.22+ on Linux; only when tablespaces grow during the run (inserts)",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "Innodb_data_written - (Innodb_pages_written x page size + dblwr bytes + redo bytes)",
+    "points_to": "disable",
+    "condition": "material unexplained bytes written to data files during growth",
+    "why": "ON writes zeroes into new extents; OFF uses fallocate() and skips the writes"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name innodb_data_file SUM_TIMER_WRITE share during insert-heavy runs",
+    "points_to": "disable",
+    "condition": "extension writes are visible in write time",
+    "why": "fewer bytes written per extension"
+   }
+  ],
+  "impact_bound": "bounded by bytes/IO of extension writes (derived above) as share of device write bandwidth; typical low",
+  "experiment": {
+   "change": "SET GLOBAL innodb_extend_and_initialize=OFF",
+   "predict": "data-file write bytes per inserted row down",
+   "confirm_or_refute": "refute if write bytes unchanged",
+   "cost_or_risk": "on some filesystems fallocated (unwritten) extents cost on first write (extent conversion), possibly slower"
+  },
+  "collected": "partly: data writes collected; add Innodb_data_written and Innodb_pages_written split for the derived formula",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html"
+  ]
+ },
+ {
+  "variable": "innodb_flush_method",
+  "relevant_to": "all flavors (MySQL 8.0 Linux default fsync, 8.4+ O_DIRECT; MariaDB 11.0+ deprecates it in favour of innodb_*_file_buffering/_write_through); matters only for data/log file I/O",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "page cache holding InnoDB data files (fincore/cgroup memory.stat 'file') while flush_method=fsync",
+    "points_to": "a specific value",
+    "condition": "material memory used by cached data files that the buffer pool already caches (double buffering) or memory pressure/swap",
+    "why": "O_DIRECT bypasses the page cache, freeing memory for the pool and avoiding a copy"
+   },
+   {
+    "source": "derived",
+    "metric": "Innodb_data_reads vs disk read IOPS",
+    "points_to": "a specific value",
+    "condition": "with O_DIRECT: if data set > pool and device reads are high while free RAM is large, the page cache was serving reads (fsync mode helped)",
+    "why": "with fsync mode the OS cache acts as an L2 cache"
+   },
+   {
+    "source": "status",
+    "metric": "Innodb_data_fsyncs rate and fsync latency (performance_schema innodb_data_file SUM_TIMER_MISC)",
+    "points_to": "a specific value",
+    "condition": "material fsync time on data files with O_DIRECT on a device with safe write cache: consider O_DIRECT_NO_FSYNC",
+    "why": "skips fsync after data writes"
+   }
+  ],
+  "impact_bound": "bounded by memory freed for the pool (translated via the pool-size miss curve) plus CPU of copying (CPU profile kernel copy share) plus data fsync time; typical medium for 8.0 defaults (fsync), low elsewhere",
+  "experiment": {
+   "change": "restart with O_DIRECT (or O_DIRECT_NO_FSYNC)",
+   "predict": "OS file cache for datadir down, buffer pool hit-rate up if pool resized, sys CPU down, data fsync time down (NO_FSYNC)",
+   "confirm_or_refute": "confirm with per-trx disk reads and CPU ms; refute if reads per trx rise (OS cache was helping)",
+   "cost_or_risk": "restart; O_DIRECT_NO_FSYNC unsafe on some filesystems/devices without proper metadata sync (XFS ok per docs since 8.0.14)"
+  },
+  "collected": "partly: OS memory, data fsyncs collected; add per-file page cache (fincore) and fsync latency per file type",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/optimizing-innodb-diskio.html",
+   "https://mariadb.com/docs/server/server-usage/storage-engines/innodb/innodb-flush-method"
+  ]
+ },
+ {
+  "variable": "innodb_flush_neighbors",
+  "relevant_to": "all flavors; matters only on rotational disks (check /sys/block/<dev>/queue/rotational); MariaDB 10.4+ already skips neighbour flushing for files on non-rotational storage",
+  "signals": [
+   {
+    "source": "innodb_metrics",
+    "metric": "buffer_flush_neighbor_total_pages / Innodb_buffer_pool_pages_flushed",
+    "points_to": "disable",
+    "condition": "material share of neighbour pages on SSD/NVMe",
+    "why": "neighbour pages are flushed early and re-dirtied, adding writes without seek savings"
+   },
+   {
+    "source": "os",
+    "metric": "/sys/block/<dev>/queue/rotational = 1 and high write await",
+    "points_to": "enable",
+    "condition": "rotational device, flush-bound",
+    "why": "merging adjacent writes saves seeks"
+   }
+  ],
+  "impact_bound": "bounded by neighbour pages share of flushed pages (extra write IOPS on SSD); typical none on SSD with 8.0 default 0, high on HDD",
+  "experiment": {
+   "change": "toggle 0 <-> 1",
+   "predict": "SSD: pages flushed per trx down with 0; HDD: write await down with 1",
+   "confirm_or_refute": "confirm via flushed pages per trx and disk util",
+   "cost_or_risk": "none notable"
+  },
+  "collected": "partly: pages flushed collected; add buffer_flush_neighbor_total_pages and device rotational flag",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-buffer-pool-flushing.html"
+  ]
+ },
+ {
+  "variable": "innodb_flush_sync",
+  "relevant_to": "all flavors; only when checkpoint age reaches the sync-flush point",
+  "signals": [
+   {
+    "source": "innodb_metrics",
+    "metric": "buffer_flush_sync_total_pages, buffer_flush_sync_waits",
+    "points_to": "disable",
+    "condition": "sync flushing bursts saturate the device (util ~100%) and read latency of user threads spikes while sync flush runs",
+    "why": "OFF keeps flushing within innodb_io_capacity_max, protecting reads"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "buffer_flush_sync_waits with checkpoint age at the limit",
+    "points_to": "enable",
+    "condition": "OFF and user threads wait for redo space (log_on_file_space_waits) longer",
+    "why": "ON flushes as fast as possible to free redo space"
+   }
+  ],
+  "impact_bound": "bounded by time user threads wait on redo space (innodb_metrics log_on_file_space_waits, eBPF redo off-CPU) vs added read latency during sync bursts; typical none/low (fix redo capacity instead)",
+  "experiment": {
+   "change": "toggle ON->OFF only when sync flushing occurs",
+   "predict": "OFF: lower read await during bursts but more redo-space waits",
+   "confirm_or_refute": "pick the one with better p99; usually ON",
+   "cost_or_risk": "OFF can stall writes longer when redo is full"
+  },
+  "collected": "no: add buffer_flush_sync_* and log_on_file_space_* innodb_metrics",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://github.com/mysql/mysql-server/blob/8.4/storage/innobase/srv/srv0mon.cc"
+  ]
+ },
+ {
+  "variable": "innodb_flushing_avg_loops",
+  "relevant_to": "all flavors; only with bursty write load (steady benchmarks give no signal)",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "coefficient of variation of per-second checkpoint age and Innodb_buffer_pool_pages_flushed",
+    "points_to": "lower",
+    "condition": "flushing lags load changes: checkpoint age spikes towards async/sync after write bursts",
+    "why": "fewer averaging loops make adaptive flushing react faster"
+   },
+   {
+    "source": "derived",
+    "metric": "oscillating flush rate with steady load",
+    "points_to": "raise",
+    "condition": "flush rate swings although load is steady",
+    "why": "more loops smooth flushing"
+   }
+  ],
+  "impact_bound": "no measurable signal for steady load; bound = sync-flush stall time and TPS dips during bursts; typical low",
+  "experiment": {
+   "change": "lower 30 -> 5-10 on bursty load",
+   "predict": "lower peak checkpoint age, fewer sync flush pages",
+   "confirm_or_refute": "confirm by smaller TPS dips",
+   "cost_or_risk": "more variable I/O"
+  },
+  "collected": "partly: need per-second time series of checkpoint age and flushed pages",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-buffer-pool-flushing.html"
+  ]
+ },
+ {
+  "variable": "innodb_fsync_threshold",
+  "relevant_to": "MySQL/Percona 8.0.13+; only when large files are created/extended (CREATE TABLESPACE, big table rebuilds, undo/temp growth); cannot matter in steady OLTP",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "bursts of dirty page-cache writeback / disk await spikes during file creation (vmstat Dirty, writeback)",
+    "points_to": "a specific value",
+    "condition": "file creation causes I/O stalls for other queries",
+    "why": "periodic fsyncs during creation avoid one huge flush at the end"
+   }
+  ],
+  "impact_bound": "no measurable signal in normal benchmark runs; bound = latency spikes during file creation; typical none",
+  "experiment": {
+   "change": "set e.g. 64-256 MB for DDL/load tests",
+   "predict": "smaller writeback spikes",
+   "confirm_or_refute": "only meaningful in DDL-heavy tests",
+   "cost_or_risk": "more fsync calls"
+  },
+  "collected": "no: OS Dirty/Writeback memory per second would be needed",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html"
+  ]
+ },
+ {
+  "variable": "innodb_idle_flush_pct",
+  "relevant_to": "MySQL/Percona 8.0.18+; only when the server is idle (between benchmark runs/bursts)",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "dirty pages at the start of each run (Innodb_buffer_pool_pages_dirty) and flush I/O while idle",
+    "points_to": "raise",
+    "condition": "runs start with many dirty pages left from previous idle period, adding flush pressure",
+    "why": "higher idle flushing cleans the pool before load returns"
+   },
+   {
+    "source": "os",
+    "metric": "disk writes while idle on shared/limited-IOPS (cloud) storage",
+    "points_to": "lower",
+    "condition": "idle flushing consumes IOPS credits or disturbs neighbours",
+    "why": "lower idle flushing saves device wear/IOPS"
+   }
+  ],
+  "impact_bound": "no measurable signal under constant load; typical none for benchmark throughput",
+  "experiment": {
+   "change": "lower to 10-25 or keep 100",
+   "predict": "only idle-period disk writes change",
+   "confirm_or_refute": "no effect expected on steady runs",
+   "cost_or_risk": "none"
+  },
+  "collected": "partly: dirty pages collected; idle-time I/O not",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html"
+  ]
+ },
+ {
+  "variable": "innodb_io_capacity",
+  "relevant_to": "all flavors (defaults: 200 in MySQL 8.0/MariaDB, 10000 in 8.4+); only for write load",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "checkpoint age = Innodb_redo_log_current_lsn - Innodb_redo_log_checkpoint_lsn (MySQL 8.0.30+), innodb_metrics log_lsn_checkpoint_age, Innodb_checkpoint_age (Percona/MariaDB) relative to log_max_modified_age_async, plus Innodb_buffer_pool_pages_dirty / total",
+    "points_to": "raise",
+    "condition": "checkpoint age near async/sync points or dirty share at max_dirty_pages_pct while the device has headroom (util/await low)",
+    "why": "background flushing is capped by io_capacity and falls behind redo/dirty generation"
+   },
+   {
+    "source": "os",
+    "metric": "device util ~100% / read await rising while Innodb_buffer_pool_pages_flushed per trx is high",
+    "points_to": "lower",
+    "condition": "flushing competes with foreground reads, checkpoint age low",
+    "why": "excess flushing writes pages that will be re-dirtied and steals IOPS from reads (raising on saturated disk measured -12% to -35%)"
+   },
+   {
+    "source": "status",
+    "metric": "Innodb_buffer_pool_wait_free",
+    "points_to": "raise",
+    "condition": "free-page waits (LRU flushing tied to io_capacity on MySQL via lru_scan_depth / MariaDB)",
+    "why": "not enough clean pages"
+   }
+  ],
+  "impact_bound": "at most the foreground time lost to sync flushing / free-page waits (raise), or the read-wait time inflated by flush I/O on a saturated disk (lower); typical medium",
+  "experiment": {
+   "change": "raise/lower by 2x (dynamic)",
+   "predict": "raise: lower checkpoint age, fewer sync flush pages, more pages flushed/s; lower: fewer pages flushed per trx, lower read await",
+   "confirm_or_refute": "confirm by TPS and per-trx disk I/Os; refute if disk saturates and read latency grows",
+   "cost_or_risk": "over-flushing wastes IOPS and SSD endurance"
+  },
+  "collected": "partly: checkpoint age, dirty, flushed, disk util collected; add log_max_modified_age_async/_sync and buffer_flush_sync_total_pages",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-configuring-io-capacity.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-buffer-pool-flushing.html"
+  ]
+ },
+ {
+  "variable": "innodb_io_capacity_max",
+  "relevant_to": "all flavors; matters when flushing is behind (adaptive flushing asks for more than io_capacity), not under light writes",
+  "signals": [
+   {
+    "source": "innodb_metrics",
+    "metric": "buffer_flush_n_to_flush_requested vs buffer_flush_adaptive_pages / buffer_flush_avg_page_rate",
+    "points_to": "raise",
+    "condition": "requested flush rate is clipped at io_capacity_max while checkpoint age keeps rising and the device has headroom",
+    "why": "adaptive flushing cannot exceed io_capacity_max"
+   },
+   {
+    "source": "os",
+    "metric": "device saturated during flush peaks, read await up",
+    "points_to": "lower",
+    "condition": "flush peaks hurt foreground reads with checkpoint age safely low",
+    "why": "cap background bursts"
+   }
+  ],
+  "impact_bound": "same as innodb_io_capacity: sync-flush stall time (raise) or read-wait inflation by flush bursts (lower); typical medium",
+  "experiment": {
+   "change": "raise to 2x io_capacity..device IOPS",
+   "predict": "peak pages flushed/s up, max checkpoint age down, no sync flushing",
+   "confirm_or_refute": "confirm by fewer sync flushes; refute if read await worsens",
+   "cost_or_risk": "bursty device load"
+  },
+  "collected": "no: add buffer_flush_n_to_flush_requested, buffer_flush_avg_page_rate",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-configuring-io-capacity.html"
+  ]
+ },
+ {
+  "variable": "innodb_log_buffer_size",
+  "relevant_to": "all flavors; only for write load, mostly large transactions or very high redo rates",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Innodb_log_waits (rate)",
+    "points_to": "raise",
+    "condition": "non-zero rate (documented: should be 0)",
+    "why": "user threads wait for free space in the log buffer"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "log_on_buffer_space_waits / log_on_buffer_space_wait_loops (MySQL 8.0+)",
+    "points_to": "raise",
+    "condition": "non-zero",
+    "why": "same wait measured in the 8.0 redo design"
+   }
+  ],
+  "impact_bound": "at most the time user threads wait for log buffer space (log_waits count x redo write latency, or eBPF redo off-CPU outside commit); typical none/low (8.4 default 64 MB)",
+  "experiment": {
+   "change": "double the size (dynamic in 8.0+)",
+   "predict": "Innodb_log_waits -> 0",
+   "confirm_or_refute": "refute if log_waits already 0 (then no effect expected)",
+   "cost_or_risk": "memory only"
+  },
+  "collected": "partly: log_waits collected; add log_on_buffer_space_* metrics",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://mariadb.com/kb/en/innodb-status-variables/",
+   "https://github.com/mysql/mysql-server/blob/8.4/storage/innobase/srv/srv0mon.cc"
+  ]
+ },
+ {
+  "variable": "innodb_log_file_buffering",
+  "relevant_to": "MariaDB 10.8+ (10.11/11.x) on Linux; only when redo writes happen",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "page cache occupied by ib_logfile0 (fincore) and memory pressure",
+    "points_to": "disable",
+    "condition": "ON and the redo file occupies a material part of RAM",
+    "why": "ON caches redo in the page cache (useful only for backup reading the log)"
+   },
+   {
+    "source": "ebpf",
+    "metric": "redo flush off-CPU share of foreground time vs redo write latency",
+    "points_to": "enable",
+    "condition": "OFF (O_DIRECT) on a device where O_DIRECT small writes are slow and commit time dominates",
+    "why": "buffered writes + fdatasync can be faster on some devices"
+   }
+  ],
+  "impact_bound": "bounded by commit wait time (eBPF redo flush share) and memory used by cached redo; typical low",
+  "experiment": {
+   "change": "SET GLOBAL innodb_log_file_buffering toggle",
+   "predict": "redo flush wait time per commit changes; page cache for log changes",
+   "confirm_or_refute": "keep the one with lower commit wait at equal durability",
+   "cost_or_risk": "none (durability unchanged)"
+  },
+  "collected": "partly: eBPF redo flush collected; add fincore for log file",
+  "sources": [
+   "https://mariadb.com/kb/en/innodb-system-variables/",
+   "https://mariadb.com/docs/server/ref/mdb/system-variables/innodb_log_file_buffering"
+  ]
+ },
+ {
+  "variable": "innodb_log_file_size",
+  "relevant_to": "MySQL/Percona 8.0 < 8.0.30 (total = size x files_in_group), MariaDB all (single ib_logfile0, dynamic since 10.9); on MySQL 8.0.30+ superseded by innodb_redo_log_capacity",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "checkpoint age = Innodb_redo_log_current_lsn - Innodb_redo_log_checkpoint_lsn (MySQL 8.0.30+), innodb_metrics log_lsn_checkpoint_age, Innodb_checkpoint_age (Percona/MariaDB) / (innodb_log_file_size x files) ",
+    "points_to": "raise",
+    "condition": "checkpoint age repeatedly near the async point (MySQL ~7/8 of capacity; MariaDB Innodb_checkpoint_max_age) or sync flushing",
+    "why": "small redo forces flushing to advance the checkpoint, so pages are flushed before they can absorb more changes"
+   },
+   {
+    "source": "derived",
+    "metric": "Innodb_buffer_pool_pages_flushed per trx vs redo KiB per trx",
+    "points_to": "raise",
+    "condition": "flush work per trx is high while the dirty pages are hot (re-dirtied)",
+    "why": "a larger redo lets hot pages stay dirty longer -> fewer page writes"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "buffer_flush_sync_total_pages, log_on_file_space_waits",
+    "points_to": "raise",
+    "condition": "non-zero",
+    "why": "writes stall for redo space"
+   }
+  ],
+  "impact_bound": "bounded by page-flush I/O per trx that is due to checkpoint pressure (pages flushed per trx with redo-age flushing vs dirty-pct flushing, buffer_flush_n_to_flush_by_age share) plus redo-space stall time; typical high for write-heavy loads (measured +2-10%), none when checkpoint age stays low",
+  "experiment": {
+   "change": "double total redo size (restart on MySQL; SET GLOBAL on MariaDB 10.9+)",
+   "predict": "peak checkpoint age share down, pages flushed per trx down, sync flushing gone",
+   "confirm_or_refute": "confirm if per-trx disk writes fall and TPS rises; refute if checkpoint age was already low",
+   "cost_or_risk": "longer crash recovery, disk space"
+  },
+  "collected": "partly: checkpoint age collected; add buffer_flush_n_to_flush_by_age, buffer_flush_sync_total_pages, log_on_file_space_waits",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-redo-log.html",
+   "https://mariadb.com/kb/en/innodb-system-variables/"
+  ]
+ },
+ {
+  "variable": "innodb_log_file_write_through",
+  "relevant_to": "MariaDB 11.0+ (11.4/11.8); only commit-bound workloads with durable commits",
+  "signals": [
+   {
+    "source": "ebpf",
+    "metric": "redo flush off-CPU share of connection-thread time; Innodb_os_log_fsyncs rate",
+    "points_to": "enable",
+    "condition": "commits wait materially on redo fsync and the device supports FUA (/sys/block/<dev>/queue/fua = 1)",
+    "why": "O_DSYNC writes make each redo write durable without a separate fdatasync()"
+   }
+  ],
+  "impact_bound": "at most the redo flush wait share of foreground time times the fsync-call overhead fraction; typical low; may be negative without FUA",
+  "experiment": {
+   "change": "SET GLOBAL innodb_log_file_write_through=ON",
+   "predict": "Innodb_os_log_fsyncs -> ~0, commit latency down",
+   "confirm_or_refute": "refute if commit latency rises",
+   "cost_or_risk": "device-dependent; slower on devices emulating FUA by cache flush"
+  },
+  "collected": "partly: redo fsyncs and eBPF redo collected; add device FUA flag",
+  "sources": [
+   "https://mariadb.com/kb/en/innodb-system-variables/"
+  ]
+ },
+ {
+  "variable": "innodb_log_files_in_group",
+  "relevant_to": "MySQL/Percona 8.0 before 8.0.30 (deprecated, replaced by innodb_redo_log_capacity); matters only via total redo size",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "same as innodb_log_file_size: checkpoint age / total redo size",
+    "points_to": "raise",
+    "condition": "checkpoint age near the async point",
+    "why": "only the total size (size x files) matters"
+   }
+  ],
+  "impact_bound": "no independent signal: the number of files has no measurable effect beyond total size; typical none",
+  "experiment": {
+   "change": "change only together with innodb_log_file_size to change total capacity",
+   "predict": "as innodb_log_file_size",
+   "confirm_or_refute": "as innodb_log_file_size",
+   "cost_or_risk": "restart"
+  },
+  "collected": "partly: as innodb_log_file_size",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-redo-log.html"
+  ]
+ },
+ {
+  "variable": "innodb_log_spin_cpu_abs_lwm",
+  "relevant_to": "MySQL/Percona 8.0.16+ (8.0.17+ hwm), only with durable commits (innodb_flush_log_at_trx_commit=1) on fast redo devices; cannot matter when commit waits are tiny or flush time exceeds the spin hwm",
+  "signals": [
+   {
+    "source": "innodb_metrics",
+    "metric": "log_on_flush_wait_loops / log_on_flush_waits (spin loops per wait), log_flush_avg_time",
+    "points_to": "a specific value",
+    "condition": "many spin loops per wait while CPU profile shows a material 'latch/spin' share and run-queue wait is high -> reduce spinning; or commit latency dominated by sleep/wakeup with idle CPU -> allow spinning",
+    "why": "user threads spin on the flushed LSN instead of sleeping; saves wakeup latency but burns CPU"
+   },
+   {
+    "source": "os",
+    "metric": "mysqld CPU utilisation vs abs_lwm (% of one core) and pct_hwm (% of all cores)",
+    "points_to": "a specific value",
+    "condition": "CPU between thresholds decides whether spinning is enabled",
+    "why": "thresholds gate spinning"
+   }
+  ],
+  "impact_bound": "bounded by the commit wakeup latency (redo flush wait off-CPU per trx minus device fsync time) or by the CPU spent spinning (CPU profile latch/spin share); typical low",
+  "experiment": {
+   "change": "raise to stop spinning when CPU is already busy / lower to allow spinning with spare CPU",
+   "predict": "spinning less: lower CPU ms per trx, possibly higher commit latency; spinning more: lower commit latency, higher CPU",
+   "confirm_or_refute": "keep if TPS or CPU ms per trx improve at equal latency",
+   "cost_or_risk": "CPU waste or added latency"
+  },
+  "collected": "partly: CPU profile and eBPF redo collected; add log_on_flush_waits/_wait_loops/_no_waits and log_flush_avg_time (log module of innodb_metrics)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/optimizing-innodb-logging.html",
+   "https://github.com/mysql/mysql-server/blob/8.4/storage/innobase/srv/srv0mon.cc"
+  ]
+ },
+ {
+  "variable": "innodb_log_spin_cpu_pct_hwm",
+  "relevant_to": "MySQL/Percona 8.0.16+ (8.0.17+ hwm), only with durable commits (innodb_flush_log_at_trx_commit=1) on fast redo devices; cannot matter when commit waits are tiny or flush time exceeds the spin hwm",
+  "signals": [
+   {
+    "source": "innodb_metrics",
+    "metric": "log_on_flush_wait_loops / log_on_flush_waits (spin loops per wait), log_flush_avg_time",
+    "points_to": "a specific value",
+    "condition": "many spin loops per wait while CPU profile shows a material 'latch/spin' share and run-queue wait is high -> reduce spinning; or commit latency dominated by sleep/wakeup with idle CPU -> allow spinning",
+    "why": "user threads spin on the flushed LSN instead of sleeping; saves wakeup latency but burns CPU"
+   },
+   {
+    "source": "os",
+    "metric": "mysqld CPU utilisation vs abs_lwm (% of one core) and pct_hwm (% of all cores)",
+    "points_to": "a specific value",
+    "condition": "CPU between thresholds decides whether spinning is enabled",
+    "why": "thresholds gate spinning"
+   }
+  ],
+  "impact_bound": "bounded by the commit wakeup latency (redo flush wait off-CPU per trx minus device fsync time) or by the CPU spent spinning (CPU profile latch/spin share); typical low",
+  "experiment": {
+   "change": "lower to stop spinning under CPU pressure / raise to allow more spinning",
+   "predict": "spinning less: lower CPU ms per trx, possibly higher commit latency; spinning more: lower commit latency, higher CPU",
+   "confirm_or_refute": "keep if TPS or CPU ms per trx improve at equal latency",
+   "cost_or_risk": "CPU waste or added latency"
+  },
+  "collected": "partly: CPU profile and eBPF redo collected; add log_on_flush_waits/_wait_loops/_no_waits and log_flush_avg_time (log module of innodb_metrics)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/optimizing-innodb-logging.html",
+   "https://github.com/mysql/mysql-server/blob/8.4/storage/innobase/srv/srv0mon.cc"
+  ]
+ },
+ {
+  "variable": "innodb_log_wait_for_flush_spin_hwm",
+  "relevant_to": "MySQL/Percona 8.0.16+ (8.0.17+ hwm), only with durable commits (innodb_flush_log_at_trx_commit=1) on fast redo devices; cannot matter when commit waits are tiny or flush time exceeds the spin hwm",
+  "signals": [
+   {
+    "source": "innodb_metrics",
+    "metric": "log_on_flush_wait_loops / log_on_flush_waits (spin loops per wait), log_flush_avg_time",
+    "points_to": "a specific value",
+    "condition": "many spin loops per wait while CPU profile shows a material 'latch/spin' share and run-queue wait is high -> reduce spinning; or commit latency dominated by sleep/wakeup with idle CPU -> allow spinning",
+    "why": "user threads spin on the flushed LSN instead of sleeping; saves wakeup latency but burns CPU"
+   },
+   {
+    "source": "os",
+    "metric": "mysqld CPU utilisation vs abs_lwm (% of one core) and pct_hwm (% of all cores)",
+    "points_to": "a specific value",
+    "condition": "CPU between thresholds decides whether spinning is enabled",
+    "why": "thresholds gate spinning"
+   }
+  ],
+  "impact_bound": "bounded by the commit wakeup latency (redo flush wait off-CPU per trx minus device fsync time) or by the CPU spent spinning (CPU profile latch/spin share); typical low",
+  "experiment": {
+   "change": "raise to spin for slower devices, lower to sleep sooner",
+   "predict": "spinning less: lower CPU ms per trx, possibly higher commit latency; spinning more: lower commit latency, higher CPU",
+   "confirm_or_refute": "keep if TPS or CPU ms per trx improve at equal latency",
+   "cost_or_risk": "CPU waste or added latency"
+  },
+  "collected": "partly: CPU profile and eBPF redo collected; add log_on_flush_waits/_wait_loops/_no_waits and log_flush_avg_time (log module of innodb_metrics)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/optimizing-innodb-logging.html",
+   "https://github.com/mysql/mysql-server/blob/8.4/storage/innobase/srv/srv0mon.cc"
+  ]
+ },
+ {
+  "variable": "innodb_log_write_ahead_size",
+  "relevant_to": "MySQL/Percona all; MariaDB: physical block size is detected from the device in 10.8+, check if the variable exists in the release; only for write load on storage with block size > 512 or FS block > redo block",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name 'wait/io/file/innodb/innodb_log_file' COUNT_READ / disk reads on the redo device during the run",
+    "points_to": "raise",
+    "condition": "reads on the redo device while only writing redo (read-on-write)",
+    "why": "partial-block writes force the OS/device to read the block before modifying it"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "log_padded, log_partial_block_writes",
+    "points_to": "lower",
+    "condition": "padding bytes are a material share of Innodb_os_log_written on a device with small blocks",
+    "why": "oversized write-ahead adds padding writes"
+   }
+  ],
+  "impact_bound": "bounded by redo device read time caused by read-on-write and padding bytes share; typical low",
+  "experiment": {
+   "change": "set to the FS block size (4096) or device optimal I/O size",
+   "predict": "redo device reads -> 0, redo write latency down",
+   "confirm_or_refute": "refute if no reads existed",
+   "cost_or_risk": "more redo bytes written when too large"
+  },
+  "collected": "partly: file I/O by type collected; add log_padded and redo-file COUNT_READ",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/optimizing-innodb-logging.html"
+  ]
+ },
+ {
+  "variable": "innodb_log_writer_threads",
+  "relevant_to": "MySQL/Percona 8.0.22+; only for write load; dynamic",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "run-queue wait of connection threads and CPU saturation (user+sys near 100%) on few vCPUs",
+    "points_to": "disable",
+    "condition": "CPU-bound with few cores: dedicated log_writer/log_flusher/notifier threads compete for CPU and add context switches",
+    "why": "OFF lets user threads write/flush redo themselves"
+   },
+   {
+    "source": "ebpf",
+    "metric": "redo flush off-CPU share of connection threads + CPU profile share in log_writer/log_flusher threads",
+    "points_to": "enable",
+    "condition": "many concurrent writers on many cores with redo contention (latch on log buffer)",
+    "why": "dedicated threads batch redo writes for high concurrency"
+   }
+  ],
+  "impact_bound": "bounded by CPU share of redo threads plus scheduling delay of user threads (OFF), or redo latch/wait time (ON); measured +10% OFF on 2 vCPU, -2..-13% OFF at 12-16 vCPU",
+  "experiment": {
+   "change": "SET GLOBAL innodb_log_writer_threads=OFF on <=4 vCPU",
+   "predict": "CPU ms per trx down, run-queue wait down, TPS up",
+   "confirm_or_refute": "refute if redo waits per trx grow",
+   "cost_or_risk": "OFF hurts high-concurrency many-core systems"
+  },
+  "collected": "partly: CPU, run-queue, eBPF redo collected; add per-thread CPU of log_writer/log_flusher (performance_schema.threads THREAD_OS_ID + /proc)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/optimizing-innodb-logging.html"
+  ]
+ },
+ {
+  "variable": "innodb_lru_flush_size",
+  "relevant_to": "MariaDB 10.5.7+ (10.11/11.x); docs default 32 pages; only when free pages run out (I/O-bound, pool smaller than data)",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Innodb_buffer_pool_wait_free rate; Innodb_buffer_pool_pages_LRU_flushed vs Innodb_buffer_pool_pages_LRU_freed",
+    "points_to": "raise",
+    "condition": "material free-page waits while LRU flushing happens in small batches",
+    "why": "larger LRU batches produce free pages faster"
+   }
+  ],
+  "impact_bound": "at most foreground time spent waiting for free pages (wait_free x average wait; eBPF data page read/latch); typical low",
+  "experiment": {
+   "change": "raise 32 -> 128-256",
+   "predict": "Innodb_buffer_pool_wait_free down",
+   "confirm_or_refute": "refute if waits unchanged",
+   "cost_or_risk": "more write bursts"
+  },
+  "collected": "partly: wait_free collected; add Innodb_buffer_pool_pages_LRU_flushed / _LRU_freed",
+  "sources": [
+   "https://mariadb.com/kb/en/innodb-system-variables/",
+   "https://mariadb.com/kb/en/innodb-status-variables/"
+  ]
+ },
+ {
+  "variable": "innodb_lru_scan_depth",
+  "relevant_to": "all flavors (per buffer pool instance in MySQL); only when the free list runs empty under eviction",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Innodb_buffer_pool_wait_free rate; innodb_metrics buffer_LRU_get_free_waits, buffer_LRU_single_flush_num_scan, buffer_LRU_get_free_search",
+    "points_to": "raise",
+    "condition": "user threads search/flush for free pages themselves (non-zero single flushes / free waits) and the device has headroom",
+    "why": "page cleaner keeps too few free pages per instance"
+   },
+   {
+    "source": "derived",
+    "metric": "page cleaner CPU share and pages scanned per second (buffer_LRU_batch_scanned) with Innodb_buffer_pool_pages_free consistently large",
+    "points_to": "lower",
+    "condition": "free list always large and page cleaner burns CPU scanning",
+    "why": "scanning cost without benefit"
+   }
+  ],
+  "impact_bound": "at most foreground time on free-page waits/single page flushes (eBPF data page read + latch during get_free); typical medium for I/O-bound read-write, none when data fits",
+  "experiment": {
+   "change": "raise 1024 -> 2048-4096 (dynamic)",
+   "predict": "wait_free and single-flush counters down; free pages up",
+   "confirm_or_refute": "confirm with fewer free waits and lower read latency",
+   "cost_or_risk": "page cleaner CPU and more LRU writes; MySQL docs warn about high values with many instances"
+  },
+  "collected": "partly: wait_free and free pages collected; add buffer_LRU_get_free_waits, buffer_LRU_single_flush_*, buffer_LRU_batch_scanned",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-buffer-pool-flushing.html",
+   "https://github.com/mysql/mysql-server/blob/8.4/storage/innobase/srv/srv0mon.cc"
+  ]
+ },
+ {
+  "variable": "innodb_lru_threads",
+  "relevant_to": "Percona Server 8.4/9.x (multi-threaded LRU flusher); only when free-page waits exist",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Innodb_buffer_pool_wait_free and buffer_LRU_get_free_waits with page cleaners busy on flush list",
+    "points_to": "enable",
+    "condition": "free-page waits material while page cleaner threads are near 100% CPU",
+    "why": "dedicated LRU manager per instance decouples LRU flushing from flush-list flushing"
+   }
+  ],
+  "impact_bound": "at most foreground free-page wait time; typical low",
+  "experiment": {
+   "change": "restart with innodb_lru_threads=ON",
+   "predict": "free-page waits down, free pages up",
+   "confirm_or_refute": "refute if no waits before",
+   "cost_or_risk": "restart; extra threads"
+  },
+  "collected": "partly: wait_free collected; add per-thread CPU of page cleaners",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.4/xtradb-performance-improvements.html"
+  ]
+ },
+ {
+  "variable": "innodb_max_dirty_pages_pct",
+  "relevant_to": "all flavors (default 90); only for write load",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "Innodb_buffer_pool_pages_dirty / Innodb_buffer_pool_pages_total",
+    "points_to": "raise",
+    "condition": "dirty share pinned at the limit and buffer_flush_n_to_flush_by_dirty_page drives flushing while checkpoint age is low (hot pages re-dirtied)",
+    "why": "the dirty limit forces flushing before redo would"
+   },
+   {
+    "source": "status",
+    "metric": "Innodb_buffer_pool_wait_free with dirty share high",
+    "points_to": "lower",
+    "condition": "free-page waits because most pages are dirty",
+    "why": "too many dirty pages leave no clean pages to evict"
+   }
+  ],
+  "impact_bound": "bounded by flush work per trx attributable to dirty-pct flushing (buffer_flush_pct_for_dirty / n_to_flush_by_dirty_page share); typical low (redo usually binds first)",
+  "experiment": {
+   "change": "raise 90 -> 95 or lower to 75",
+   "predict": "flushed pages per trx (raise -> down) / wait_free (lower -> down)",
+   "confirm_or_refute": "confirm by per-trx writes and wait_free",
+   "cost_or_risk": "more dirty pages = longer shutdown/recovery"
+  },
+  "collected": "partly: dirty pages collected; add buffer_flush_pct_for_dirty, buffer_flush_n_to_flush_by_dirty_page",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-buffer-pool-flushing.html"
+  ]
+ },
+ {
+  "variable": "innodb_max_dirty_pages_pct_lwm",
+  "relevant_to": "all flavors (MySQL 8.0+ default 10, MariaDB default 0 = off); only for write load",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "dirty share above lwm and pages flushed per trx vs pages modified (re-dirty rate)",
+    "points_to": "raise",
+    "condition": "pre-flushing writes hot pages repeatedly: high flushed pages per trx while checkpoint age is low and update locality is high",
+    "why": "pages flushed early get re-dirtied, causing write amplification"
+   },
+   {
+    "source": "derived",
+    "metric": "checkpoint age = Innodb_redo_log_current_lsn - Innodb_redo_log_checkpoint_lsn (MySQL 8.0.30+), innodb_metrics log_lsn_checkpoint_age, Innodb_checkpoint_age (Percona/MariaDB)",
+    "points_to": "lower",
+    "condition": "checkpoint age near async with high dirty share and bursty writes",
+    "why": "earlier pre-flushing keeps headroom"
+   }
+  ],
+  "impact_bound": "bounded by flush pages per trx that could be avoided (difference between dirty-driven and age-driven flushing); typical medium for update-hot workloads, low for uniform random",
+  "experiment": {
+   "change": "raise 10 -> 30-70 (or 0 to disable)",
+   "predict": "Innodb_buffer_pool_pages_flushed per trx down, disk write IOPS down",
+   "confirm_or_refute": "confirm if TPS holds and checkpoint age stays below async",
+   "cost_or_risk": "higher dirty share, longer recovery/shutdown"
+  },
+  "collected": "partly: dirty, flushed collected; add per-trx flushed pages ratio and buffer_flush_pct_for_dirty",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-buffer-pool-flushing.html"
+  ]
+ },
+ {
+  "variable": "innodb_page_cleaners",
+  "relevant_to": "MySQL/Percona 8.0+ (MariaDB 10.5+ uses one cleaner, variable deprecated/ignored); only for flush-bound write load; not dynamic",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "per-thread CPU of page_cleaner threads near 100% of a core",
+    "points_to": "raise",
+    "condition": "cleaner threads saturated while device has headroom and flushing lags (checkpoint age or wait_free rising)",
+    "why": "more cleaners flush instances in parallel"
+   },
+   {
+    "source": "engine_status",
+    "metric": "error log note 'page_cleaner: 1000ms intended loop took N ms'",
+    "points_to": "raise",
+    "condition": "frequent messages",
+    "why": "the cleaner cannot complete its pass within a second"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "buffer_flush_adaptive_avg_time_thread, buffer_flush_avg_time",
+    "points_to": "raise",
+    "condition": "per-pass time near 1000 ms",
+    "why": "flush loop is too slow"
+   }
+  ],
+  "impact_bound": "bounded by sync-flush and free-page wait time; only possible when cleaners are CPU- not device-bound; typical low (default = buffer pool instances)",
+  "experiment": {
+   "change": "restart with cleaners = buffer_pool_instances (up to 4-8)",
+   "predict": "higher pages flushed/s at the same disk util, fewer sync flushes",
+   "confirm_or_refute": "refute if the device was already saturated",
+   "cost_or_risk": "restart; more threads"
+  },
+  "collected": "no: add per-thread CPU of page cleaners and buffer_flush_avg_time; scan error log",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-buffer-pool-flushing.html"
+  ]
+ },
+ {
+  "variable": "innodb_parallel_doublewrite_path",
+  "relevant_to": "Percona Server 8.0.20-8.0.22 only (own parallel doublewrite, later reverted; variable deprecated and ignored afterwards); use innodb_doublewrite_dir on later releases",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "doublewrite file write/sync time share (wait/io/file/innodb/innodb_dblwr_file, or Percona parallel dblwr file instance)",
+    "points_to": "a specific value",
+    "condition": "as innodb_doublewrite_dir: dblwr I/O on a saturated data device with another device available",
+    "why": "place doublewrite on another device"
+   }
+  ],
+  "impact_bound": "as innodb_doublewrite_dir; none on releases where the variable is ignored",
+  "experiment": {
+   "change": "as innodb_doublewrite_dir",
+   "predict": "as innodb_doublewrite_dir",
+   "confirm_or_refute": "check first that the release still honours the variable",
+   "cost_or_risk": "restart"
+  },
+  "collected": "partly: as innodb_doublewrite_dir",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.0/encrypting-doublewrite-buffers.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-doublewrite-buffer.html"
+  ]
+ },
+ {
+  "variable": "innodb_purge_threads",
+  "relevant_to": "all flavors (MySQL: restart; MariaDB 10.5+: dynamic); only for UPDATE/DELETE load that creates undo",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "history list length (Innodb_history_list_length on Percona/MariaDB; innodb_metrics trx_rseg_history_len on MySQL) growing over the run",
+    "points_to": "raise",
+    "condition": "HLL grows steadily while purge threads are busy (CPU) and there is spare CPU; no long-running transaction holds a read view",
+    "why": "purge cannot keep up; long history slows reads (undo version chains) and grows undo"
+   },
+   {
+    "source": "os",
+    "metric": "CPU share of purge threads with HLL flat near 0",
+    "points_to": "lower",
+    "condition": "purge threads cause latch/CPU contention on few cores",
+    "why": "fewer threads reduce contention"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "rows examined per row returned up in point-read digests as HLL grows",
+    "points_to": "raise",
+    "condition": "growing undo chains cost read time",
+    "why": "MVCC version walks"
+   }
+  ],
+  "impact_bound": "bounded by read-time inflation from long version chains (CPU profile undo/MVCC share) and undo I/O; typical medium for update-heavy runs, none for insert/read-only",
+  "experiment": {
+   "change": "raise 4 -> 8 (or lower on <=4 vCPU)",
+   "predict": "HLL slope flat or negative, CPU ms per trx of reads down",
+   "confirm_or_refute": "refute if HLL growth is caused by a long transaction (check information_schema.innodb_trx oldest trx_started)",
+   "cost_or_risk": "more CPU and dict/index latch contention"
+  },
+  "collected": "partly: HLL collected; add purge thread CPU and innodb_metrics purge_* (purge module disabled by default)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-purge-configuration.html",
+   "https://mariadb.com/kb/en/innodb-system-variables/"
+  ]
+ },
+ {
+  "variable": "innodb_random_read_ahead",
+  "relevant_to": "all flavors (default OFF); only when pages are read from disk",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Innodb_buffer_pool_read_ahead_rnd vs Innodb_buffer_pool_read_ahead_evicted",
+    "points_to": "disable",
+    "condition": "ON and a material share of read-ahead pages are evicted unused",
+    "why": "random read-ahead reads whole extents of which few pages are used"
+   },
+   {
+    "source": "ebpf",
+    "metric": "data page read off-CPU share for range scans over partly cached extents",
+    "points_to": "enable",
+    "condition": "OFF and scans read many pages of the same extent one by one",
+    "why": "prefetch whole extent in one I/O"
+   }
+  ],
+  "impact_bound": "at most the data-page-read wait share of scan-heavy statements; typical low (usually leave OFF)",
+  "experiment": {
+   "change": "toggle ON",
+   "predict": "Innodb_buffer_pool_read_ahead_rnd up; Innodb_buffer_pool_reads per trx and page-read wait down; evicted share low",
+   "confirm_or_refute": "refute if read_ahead_evicted grows and hit ratio falls",
+   "cost_or_risk": "wasted I/O and pool pollution"
+  },
+  "collected": "partly: read-ahead and evicted collected; add Innodb_buffer_pool_read_ahead_rnd",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-performance-read_ahead.html"
+  ]
+ },
+ {
+  "variable": "innodb_read_ahead_threshold",
+  "relevant_to": "all flavors (default 56); only when sequential scans read from disk",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Innodb_buffer_pool_read_ahead_evicted / Innodb_buffer_pool_read_ahead",
+    "points_to": "raise",
+    "condition": "a material share of read-ahead pages evicted unused",
+    "why": "read-ahead too eager, wasting I/O and pool space"
+   },
+   {
+    "source": "ebpf",
+    "metric": "data page read off-CPU share of scan statements (rows examined high) with low Innodb_buffer_pool_read_ahead",
+    "points_to": "lower",
+    "condition": "scans wait on single-page reads and read-ahead seldom triggers",
+    "why": "earlier linear read-ahead overlaps I/O with scan"
+   }
+  ],
+  "impact_bound": "at most the page-read wait share of scan statements (lower), or wasted read I/O share = read_ahead_evicted x page size / device read bandwidth (raise); typical medium for analytics, none for point lookups",
+  "experiment": {
+   "change": "lower 56 -> 16-32 for scans; raise to 64 if evictions",
+   "predict": "lower: read_ahead up, synchronous reads per scanned row down, scan latency down",
+   "confirm_or_refute": "refute if read_ahead_evicted rises faster than saved waits",
+   "cost_or_risk": "more I/O, pool pollution"
+  },
+  "collected": "yes (read-ahead, evicted, eBPF page reads collected); per-digest attribution partly",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-performance-read_ahead.html"
+  ]
+ },
+ {
+  "variable": "innodb_read_io_threads",
+  "relevant_to": "all flavors (MySQL 8.4 default = logical CPUs/2, min 4); background (async) reads only: read-ahead and prefetch; foreground page reads are synchronous; not dynamic",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Innodb_data_pending_reads / innodb_metrics os_pending_reads",
+    "points_to": "raise",
+    "condition": "pending async reads persistently high with read-ahead active and device queue depth below its capacity",
+    "why": "too few threads service the AIO completion queue"
+   },
+   {
+    "source": "os",
+    "metric": "device util low while read-ahead is lagging",
+    "points_to": "raise",
+    "condition": "as above",
+    "why": ""
+   }
+  ],
+  "impact_bound": "bounded by read-ahead latency share of scan statements; typical low with native AIO",
+  "experiment": {
+   "change": "restart with 2x threads",
+   "predict": "pending reads down, read_ahead throughput up",
+   "confirm_or_refute": "refute if pending reads already ~0",
+   "cost_or_risk": "restart"
+  },
+  "collected": "partly: add Innodb_data_pending_reads / os_pending_reads",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-performance-multiple_io_threads.html"
+  ]
+ },
+ {
+  "variable": "innodb_redo_log_capacity",
+  "relevant_to": "MySQL/Percona 8.0.30+ (dynamic); only for write load",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "(Innodb_redo_log_current_lsn - Innodb_redo_log_checkpoint_lsn) / innodb_redo_log_capacity, or innodb_metrics log_lsn_checkpoint_age vs log_max_modified_age_async",
+    "points_to": "raise",
+    "condition": "checkpoint age reaches a material share of the async point (~7/8 of capacity) during the run",
+    "why": "redo-age-driven flushing forces pages out early (more page writes) and sync flushing stalls writers"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "buffer_flush_n_to_flush_by_age vs buffer_flush_n_to_flush_by_dirty_page; buffer_flush_sync_total_pages; log_on_file_space_waits",
+    "points_to": "raise",
+    "condition": "age-driven or sync flushing dominates",
+    "why": "the checkpoint, not dirty-pct, is driving flushing"
+   },
+   {
+    "source": "derived",
+    "metric": "checkpoint age peak < ~25% of capacity across runs",
+    "points_to": "no change needed",
+    "condition": "redo is already large enough; only recovery time grows",
+    "why": "capacity unused"
+   }
+  ],
+  "impact_bound": "bounded by page-flush writes per trx due to redo-age pressure (age-driven flushed pages x page size per trx) plus redo-space stall time; measured +2-10%; high for update-heavy with hot pages, none when age stays low",
+  "experiment": {
+   "change": "double capacity (SET GLOBAL)",
+   "predict": "peak age share down, pages flushed per trx down, no sync flushing, write IOPS down",
+   "confirm_or_refute": "confirm with per-trx disk writes and TPS; refute if age was low",
+   "cost_or_risk": "longer crash recovery, disk space"
+  },
+  "collected": "partly: checkpoint age collected; add log_max_modified_age_async/_sync, buffer_flush_n_to_flush_by_age, buffer_flush_sync_total_pages, log_on_file_space_waits",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-redo-log.html",
+   "https://github.com/mysql/mysql-server/blob/8.4/storage/innobase/srv/srv0mon.cc"
+  ]
+ },
+ {
+  "variable": "innodb_use_atomic_writes",
+  "relevant_to": "MariaDB 10.11/11.x on devices with atomic write support (e.g. some NVMe/FusionIO/Shannon); ON by default, effective only if the device supports it; not dynamic",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Innodb_dblwr_writes / Innodb_dblwr_pages_written",
+    "points_to": "a specific value",
+    "condition": "ON but doublewrite pages still written -> device lacks atomic-write support (no effect); doublewrite share of write bytes material on a capable device -> keep ON",
+    "why": "atomic writes replace the doublewrite buffer, halving page-flush writes"
+   }
+  ],
+  "impact_bound": "at most the doublewrite share of write bytes/IOPS (Innodb_dblwr_pages_written / Innodb_buffer_pool_pages_flushed) when flush-bound; typical none on common cloud disks (unsupported), medium on capable devices",
+  "experiment": {
+   "change": "verify ON on capable device",
+   "predict": "Innodb_dblwr_writes -> 0, device write bytes per trx down ~half of flush bytes",
+   "confirm_or_refute": "refute if dblwr writes continue",
+   "cost_or_risk": "none on unsupported devices"
+  },
+  "collected": "partly: dblwr writes collected; add Innodb_dblwr_pages_written and device atomic-write capability",
+  "sources": [
+   "https://mariadb.com/kb/en/innodb-system-variables/",
+   "https://mariadb.com/kb/en/atomic-write-support/"
+  ]
+ },
+ {
+  "variable": "innodb_use_fdatasync",
+  "relevant_to": "MySQL/Percona 8.0.26+ (default ON in 8.4); only when InnoDB issues fsync (flush_method fsync/O_DIRECT; not O_DIRECT_NO_FSYNC for data)",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name SUM_TIMER_MISC / COUNT_MISC for innodb_data_file and innodb_log_file (sync time)",
+    "points_to": "enable",
+    "condition": "OFF and fsync time per call is material (metadata journal flush on ext4/XFS)",
+    "why": "fdatasync() skips metadata-only updates such as mtime"
+   }
+  ],
+  "impact_bound": "bounded by data/log fsync time saved (metadata flushes); typical low",
+  "experiment": {
+   "change": "SET GLOBAL innodb_use_fdatasync=ON",
+   "predict": "fsync latency per call down",
+   "confirm_or_refute": "refute if no change",
+   "cost_or_risk": "none (safe per docs)"
+  },
+  "collected": "partly: fsync counts collected; add fsync latency per file type",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html"
+  ]
+ },
+ {
+  "variable": "innodb_use_native_aio",
+  "relevant_to": "all flavors on Linux (libaio, or io_uring in MariaDB 10.6+ builds); not dynamic",
+  "signals": [
+   {
+    "source": "engine_status",
+    "metric": "FILE I/O section / startup log: native AIO unavailable warning; Innodb_data_pending_reads/writes",
+    "points_to": "enable",
+    "condition": "OFF (or fallback to simulated AIO) on local storage with I/O-bound load",
+    "why": "simulated AIO serialises I/O through io threads"
+   },
+   {
+    "source": "os",
+    "metric": "errors 'io_setup() failed with EAGAIN' (aio-max-nr exhausted, /proc/sys/fs/aio-nr)",
+    "points_to": "a specific value",
+    "condition": "AIO setup failing",
+    "why": "raise fs.aio-max-nr"
+   }
+  ],
+  "impact_bound": "bounded by I/O wait share of foreground+background time under I/O-bound load; typical none when ON (default), medium if disabled on fast storage",
+  "experiment": {
+   "change": "verify ON; restart only if OFF",
+   "predict": "pending I/O down, flush throughput up",
+   "confirm_or_refute": "refute if not I/O-bound",
+   "cost_or_risk": "only disable on filesystems where AIO is broken"
+  },
+  "collected": "partly: add pending I/O counters and AIO availability check",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-linux-native-aio.html"
+  ]
+ },
+ {
+  "variable": "innodb_write_io_threads",
+  "relevant_to": "all flavors (default 4); background writes (page cleaner / LRU / dblwr async); not dynamic",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Innodb_data_pending_writes / innodb_metrics os_pending_writes",
+    "points_to": "raise",
+    "condition": "pending writes persistently high while device queue depth has headroom and flushing lags",
+    "why": "more threads drain AIO completions faster"
+   }
+  ],
+  "impact_bound": "bounded by flush-lag consequences (sync flush stalls, free waits); typical low with native AIO",
+  "experiment": {
+   "change": "restart with 8-16",
+   "predict": "pending writes down, pages flushed/s up at same util",
+   "confirm_or_refute": "refute if pending writes ~0",
+   "cost_or_risk": "restart"
+  },
+  "collected": "partly: add Innodb_data_pending_writes / os_pending_writes",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-performance-multiple_io_threads.html"
+  ]
+ },
+ {
+  "variable": "rocksdb_max_background_jobs",
+  "relevant_to": "MyRocks only (Percona Server 8.0/8.4 with ROCKSDB engine, MariaDB MyRocks plugin); cannot matter for InnoDB tables",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Rocksdb_stall_micros, Rocksdb_stall_total_slowdowns, Rocksdb_stall_total_stops, Rocksdb_stall_l0_file_count_limit_slowdowns, Rocksdb_stall_pending_compaction_limit_stops",
+    "points_to": "raise",
+    "condition": "write stalls non-zero and CPU/disk have headroom",
+    "why": "compaction/flush falls behind, RocksDB throttles writes"
+   },
+   {
+    "source": "os",
+    "metric": "CPU or device saturated by compaction with no stalls",
+    "points_to": "lower",
+    "condition": "background jobs steal CPU/IO from foreground reads",
+    "why": "fewer concurrent compactions"
+   },
+   {
+    "source": "information_schema",
+    "metric": "ROCKSDB_CFSTATS / SHOW ENGINE ROCKSDB STATUS compaction pending bytes, L0 file count",
+    "points_to": "raise",
+    "condition": "pending compaction bytes growing",
+    "why": "compaction debt"
+   }
+  ],
+  "impact_bound": "at most the write stall time (Rocksdb_stall_micros / wall time); typical medium-high for write-heavy MyRocks, none otherwise",
+  "experiment": {
+   "change": "raise 2 -> number of cores/2 (dynamic)",
+   "predict": "Rocksdb_stall_* -> 0, pending compaction bytes flat",
+   "confirm_or_refute": "refute if stalls caused by memtable limits (raise write buffers instead)",
+   "cost_or_risk": "more background CPU/IO"
+  },
+  "collected": "no: add Rocksdb_stall_* status and compaction stats when MyRocks is in use",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.0/myrocks/variables.html",
+   "https://docs.percona.com/percona-server/8.0/myrocks/status-variables.html",
+   "https://github.com/facebook/rocksdb/wiki/Write-Stalls"
+  ]
+ }
+]

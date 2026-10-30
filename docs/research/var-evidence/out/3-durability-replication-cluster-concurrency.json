@@ -1,0 +1,1407 @@
+[
+ {
+  "variable": "binlog_commit_wait_count",
+  "relevant_to": "MariaDB 10.11/11.4/11.8 with log_bin ON; no effect with the binary log off or with low commit concurrency (groups cannot grow)",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Binlog_commits / Binlog_group_commits (avg group size)",
+    "points_to": "raise",
+    "condition": "group size near 1 while many threads commit concurrently and commit is fsync-bound",
+    "why": "bigger groups share one binlog fsync and one redo fsync"
+   },
+   {
+    "source": "status",
+    "metric": "Binlog_group_commit_trigger_count vs Binlog_group_commit_trigger_timeout vs Binlog_group_commit_trigger_lock_wait",
+    "points_to": "lower",
+    "condition": "when set: most groups close by timeout (trigger_timeout dominant) so commits wait binlog_commit_wait_usec for nothing",
+    "why": "count is above what concurrency can supply"
+   },
+   {
+    "source": "ebpf",
+    "metric": "off-CPU redo flush share of connection-thread time + Innodb_os_log_fsyncs per commit",
+    "points_to": "raise",
+    "condition": "redo/binlog flush waits are a material share of foreground time",
+    "why": "commit is fsync-bound, the case grouping helps"
+   }
+  ],
+  "impact_bound": "at most the foreground time spent in binlog+redo fsync, times (1 - current_group_size/new_group_size); medium on high-latency fsync storage with many committers, none on fast NVMe/low concurrency",
+  "experiment": {
+   "change": "set to ~min(concurrent committers/2, 16) with binlog_commit_wait_usec 1000-10000",
+   "predict": "Binlog_commits/Binlog_group_commits rises, fsyncs per trx (Innodb_os_log_fsyncs + binlog COUNT_MISC) fall, TPS rises",
+   "confirm_or_refute": "refuted if group size rises but TPS/latency get worse (wait added > fsync saved) or trigger_timeout dominates",
+   "cost_or_risk": "adds up to binlog_commit_wait_usec latency per commit; hurts low-concurrency load"
+  },
+  "collected": "yes (status deltas incl. Binlog_* and fsync counters; binlog-file fsync time only partly: file I/O is collected by InnoDB file type, add wait/io/file/sql/binlog)",
+  "sources": [
+   "https://mariadb.com/kb/en/group-commit-for-the-binary-log/",
+   "https://mariadb.com/kb/en/replication-and-binary-log-status-variables/",
+   "https://mariadb.com/kb/en/replication-and-binary-log-system-variables/"
+  ]
+ },
+ {
+  "variable": "binlog_commit_wait_usec",
+  "relevant_to": "MariaDB with log_bin ON; inert while binlog_commit_wait_count = 0",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Binlog_group_commit_trigger_timeout / Binlog_group_commits",
+    "points_to": "lower",
+    "condition": "a material share of groups close by timeout and commit latency rose",
+    "why": "threads sit idle waiting for members that do not arrive"
+   },
+   {
+    "source": "status",
+    "metric": "Binlog_group_commit_trigger_count / Binlog_group_commits",
+    "points_to": "raise",
+    "condition": "nearly all groups hit the count quickly and fsyncs per commit still high",
+    "why": "timeout is not the limit; raising count (not usec) matters"
+   }
+  ],
+  "impact_bound": "bounded by the same fsync share as binlog_commit_wait_count; this knob mostly limits the latency cost (each commit can wait up to usec); low on its own",
+  "experiment": {
+   "change": "halve or double together with a fixed count",
+   "predict": "p95 commit latency moves with usec; group size changes little if trigger_count dominates",
+   "confirm_or_refute": "refuted if neither group size nor TPS change",
+   "cost_or_risk": "longer waits increase commit latency"
+  },
+  "collected": "yes (status deltas)",
+  "sources": [
+   "https://mariadb.com/kb/en/group-commit-for-the-binary-log/",
+   "https://mariadb.com/kb/en/replication-and-binary-log-status-variables/"
+  ]
+ },
+ {
+  "variable": "binlog_format",
+  "relevant_to": "all flavors with the binary log on; MariaDB default MIXED, MySQL/Percona ROW; no performance effect with log_bin off",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name 'wait/io/file/sql/binlog' SUM_NUMBER_OF_BYTES_WRITE per trx (MariaDB: status Binlog_bytes_written)",
+    "points_to": "a specific value",
+    "condition": "binlog bytes per trx far exceed redo bytes per trx (multi-row UPDATE/DELETE written row by row)",
+    "why": "ROW logs every changed row image; STATEMENT logs the statement once"
+   },
+   {
+    "source": "status",
+    "metric": "Binlog_cache_disk_use / Binlog_cache_use",
+    "points_to": "a specific value",
+    "condition": "a material share of transactions spill the binlog cache to disk because of large row events",
+    "why": "row images inflate the transaction cache"
+   },
+   {
+    "source": "derived",
+    "metric": "rows changed per statement from statement digests (SUM_ROWS_AFFECTED/COUNT_STAR)",
+    "points_to": "no change needed",
+    "condition": "statements change few rows",
+    "why": "ROW and STATEMENT produce similar volume for single-row DML"
+   }
+  ],
+  "impact_bound": "at most the binlog write+fsync time and binlog CPU (perf: binlog/log_event functions) share; low in OLTP with single-row DML, medium for bulk multi-row DML",
+  "experiment": {
+   "change": "switch to MIXED (or ROW on MariaDB) for the session/global",
+   "predict": "binlog bytes per trx and binlog write time move; TPS change within noise unless binlog I/O was material",
+   "confirm_or_refute": "refuted if bytes drop but no time/throughput change",
+   "cost_or_risk": "replication semantics: STATEMENT/MIXED can be unsafe for nondeterministic statements; replicas must handle the format"
+  },
+  "collected": "partly (Binlog_cache_* yes; add binlog file I/O bytes/time from file_summary_by_event_name wait/io/file/sql/binlog)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/binary-log-setting.html",
+   "https://mariadb.com/kb/en/binary-log-formats/"
+  ]
+ },
+ {
+  "variable": "binlog_group_commit_sync_delay",
+  "relevant_to": "MySQL/Percona/PXC with log_bin ON and sync_binlog=1; inert with sync_binlog=0 effect small, irrelevant with binlog off",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name WHERE EVENT_NAME='wait/io/file/sql/binlog': COUNT_MISC, SUM_TIMER_MISC (fsync is a MISC op) per commit",
+    "points_to": "raise",
+    "condition": "binlog fsync time is a material share of foreground (commit) time and fsyncs/commit is near 1",
+    "why": "each binlog group costs one fsync; larger groups amortise it"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "events_waits_summary_global_by_event_name 'wait/synch/cond/sql/MYSQL_BIN_LOG::COND_done' and 'wait/synch/mutex/sql/MYSQL_BIN_LOG::LOCK_sync'",
+    "points_to": "raise",
+    "condition": "material wait time on LOCK_sync/COND_done while binlog fsync count per commit is high",
+    "why": "followers queue behind each sync; a short delay batches them"
+   },
+   {
+    "source": "derived",
+    "metric": "binlog fsyncs per transaction (COUNT_MISC on binlog / Com_commit+autocommit DML)",
+    "points_to": "raise",
+    "condition": "close to 1 with dozens of concurrent committers",
+    "why": "groups are not forming"
+   }
+  ],
+  "impact_bound": "at most the foreground share of time in binlog (+redo) fsync, times the fsyncs saved; medium on slow-fsync disks (cloud volumes) at high concurrency, low/negative on NVMe or few clients (adds latency)",
+  "experiment": {
+   "change": "set 100-1000 us (start ~ half the measured binlog fsync latency) with binlog_group_commit_sync_no_delay_count ~ concurrent committers",
+   "predict": "binlog fsyncs/trx fall, LOCK_sync wait falls, TPS up",
+   "confirm_or_refute": "refuted if fsyncs/trx fall but TPS falls or p99 rises",
+   "cost_or_risk": "adds up to delay us to every commit; low-concurrency latency worse"
+  },
+  "collected": "partly (wait summaries are collected if these events make the top list; add wait/io/file/sql/binlog fsync count/time)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/performance-schema-file-summary-tables.html"
+  ]
+ },
+ {
+  "variable": "binlog_group_commit_sync_no_delay_count",
+  "relevant_to": "MySQL/Percona/PXC; inert when binlog_group_commit_sync_delay = 0",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "binlog fsyncs/trx vs concurrent committers (Threads_running) with delay > 0",
+    "points_to": "a specific value",
+    "condition": "commit latency ~ delay even though groups would be full sooner",
+    "why": "without a cap every group waits the full delay"
+   }
+  ],
+  "impact_bound": "only trims the latency cost of the delay; low",
+  "experiment": {
+   "change": "set to ~ typical number of concurrent committers",
+   "predict": "p95 commit latency falls, fsyncs/trx roughly unchanged",
+   "confirm_or_refute": "refuted if fsyncs/trx rise sharply (groups closed too early)",
+   "cost_or_risk": "none beyond smaller groups"
+  },
+  "collected": "partly (as binlog_group_commit_sync_delay)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html"
+  ]
+ },
+ {
+  "variable": "binlog_max_flush_queue_time",
+  "relevant_to": "none: deprecated and has no effect in MySQL 8.0/8.4/9.x",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "none",
+    "points_to": "no change needed",
+    "condition": "never",
+    "why": "the variable no longer has any effect"
+   }
+  ],
+  "impact_bound": "none (documented as having no effect)",
+  "experiment": {
+   "change": "do not test",
+   "predict": "-",
+   "confirm_or_refute": "-",
+   "cost_or_risk": "-"
+  },
+  "collected": "yes (nothing to collect)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html"
+  ]
+ },
+ {
+  "variable": "binlog_order_commits",
+  "relevant_to": "MySQL/Percona/PXC with log_bin ON; matters only when the engine commit stage of the group-commit pipeline serialises many threads",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "wait/synch/mutex/sql/MYSQL_BIN_LOG::LOCK_commit and wait/synch/cond/sql/MYSQL_BIN_LOG::COND_done wait time",
+    "points_to": "disable",
+    "condition": "LOCK_commit/COND_done waits are a material share of foreground time at high concurrency",
+    "why": "with ON the commit stage commits the whole group in order on one thread"
+   },
+   {
+    "source": "os",
+    "metric": "CPU profile: commit stage (ha_commit_low / trx_commit) on one thread while others idle",
+    "points_to": "disable",
+    "condition": "one thread's commit work limits throughput",
+    "why": "OFF lets each thread commit its own transaction"
+   }
+  ],
+  "impact_bound": "at most the time spent waiting in the commit stage (COND_done / LOCK_commit); low in most measurements, possibly medium at very high commit rates",
+  "experiment": {
+   "change": "SET GLOBAL binlog_order_commits=OFF",
+   "predict": "LOCK_commit/COND_done wait falls, TPS up",
+   "confirm_or_refute": "refuted if waits unchanged",
+   "cost_or_risk": "InnoDB commit order may differ from binlog order (visible to readers/backups); replicas need replica_preserve_commit_order"
+  },
+  "collected": "partly (wait summaries collected if in the top list; sql binlog mutexes may need explicit capture)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html"
+  ]
+ },
+ {
+  "variable": "binlog_row_image",
+  "relevant_to": "all flavors with log_bin ON and binlog_format ROW/MIXED; inert for narrow tables or INSERT-only workloads (MariaDB 11.4+ adds FULL_NODUP)",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "binlog bytes per updated row: SUM_NUMBER_OF_BYTES_WRITE of 'wait/io/file/sql/binlog' / Handler_update+Handler_delete (MariaDB: Binlog_bytes_written)",
+    "points_to": "lower",
+    "condition": "binlog bytes per changed row much larger than the changed columns (wide rows, small updates)",
+    "why": "FULL logs before and after images of all columns"
+   },
+   {
+    "source": "status",
+    "metric": "Binlog_cache_disk_use / Binlog_cache_use",
+    "points_to": "lower",
+    "condition": "row images make transactions spill the binlog cache",
+    "why": "less data per row keeps the cache in memory"
+   }
+  ],
+  "impact_bound": "at most binlog write+fsync time and binlog-event CPU share; low in practice unless rows are wide (BLOB/TEXT) and updates touch few columns",
+  "experiment": {
+   "change": "SET GLOBAL binlog_row_image=MINIMAL (or NOBLOB)",
+   "predict": "binlog bytes/trx fall, binlog write time falls",
+   "confirm_or_refute": "refuted if bytes fall without time/TPS change",
+   "cost_or_risk": "replicas/CDC tools needing full images break; point-in-time recovery tooling assumptions"
+  },
+  "collected": "partly (add binlog file bytes from wait/io/file/sql/binlog)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html",
+   "https://mariadb.com/kb/en/replication-and-binary-log-system-variables/"
+  ]
+ },
+ {
+  "variable": "binlog_transaction_compression",
+  "relevant_to": "MySQL/Percona/PXC 8.0.20+ with log_bin ON; useless when binlog I/O is not a cost or data is incompressible",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name 'wait/io/file/sql/binlog' write bytes and time per trx; disk MB/s and util on the binlog device",
+    "points_to": "enable",
+    "condition": "binlog write bandwidth is a material share of device bandwidth or binlog write time is material",
+    "why": "zstd shrinks payload written, sent to replicas and fsynced"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "binary_log_transaction_compression_stats.COMPRESSION_PERCENTAGE (only when ON)",
+    "points_to": "disable",
+    "condition": "low compression percentage while mysqld CPU per trx rose",
+    "why": "CPU spent for little I/O saving"
+   },
+   {
+    "source": "os",
+    "metric": "mysqld CPU utilisation / CPU ms per trx",
+    "points_to": "disable",
+    "condition": "CPU-bound",
+    "why": "compression costs CPU on the commit path"
+   }
+  ],
+  "impact_bound": "at most the binlog write/fsync time share times (1 - compressed/original size); low on local disks, medium for bandwidth-limited storage or network to replicas",
+  "experiment": {
+   "change": "SET GLOBAL binlog_transaction_compression=ON",
+   "predict": "binlog bytes/trx fall by COMPRESSION_PERCENTAGE; CPU ms/trx rise slightly; TPS up only if binlog I/O was limiting",
+   "confirm_or_refute": "refuted if bytes fall but TPS flat/down",
+   "cost_or_risk": "CPU per transaction; transactions are buffered fully before compression"
+  },
+  "collected": "partly (add wait/io/file/sql/binlog bytes/time and binary_log_transaction_compression_stats)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/performance-schema-binary-log-transaction-compression-stats-table.html"
+  ]
+ },
+ {
+  "variable": "disable_log_bin",
+  "relevant_to": "MySQL/Percona 8.0+ option (alias of skip-log-bin); only when no replicas, CDC or binlog-based PITR depend on it; restart",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "per-trx: binlog fsyncs + binlog bytes (wait/io/file/sql/binlog), CPU profile share in binlog code (MYSQL_BIN_LOG::*, Log_event::*, binlog cache)",
+    "points_to": "disable",
+    "condition": "binlog fsync time + binlog CPU are a material share of foreground time",
+    "why": "binlog adds a second durable log and two-phase commit (prepare fsync on redo + binlog fsync)"
+   },
+   {
+    "source": "status",
+    "metric": "Innodb_os_log_fsyncs per commit",
+    "points_to": "disable",
+    "condition": "~2 redo fsyncs per commit with sync_binlog=1 and trx_commit=1 (prepare + commit)",
+    "why": "2PC with binlog doubles redo syncs"
+   }
+  ],
+  "impact_bound": "at most binlog fsync time + binlog CPU + extra redo prepare-fsync time per trx; high on write workloads (measured +18% here), none for read-only",
+  "experiment": {
+   "change": "restart with disable_log_bin (benchmark only)",
+   "predict": "fsyncs/trx fall, CPU ms/trx fall, TPS up",
+   "confirm_or_refute": "refuted if TPS flat (workload not commit/CPU bound)",
+   "cost_or_risk": "no replication, CDC or PITR: not acceptable for most production"
+  },
+  "collected": "partly (CPU profile and fsync counters yes; add binlog file I/O)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html#option_mysqld_log-bin",
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html"
+  ]
+ },
+ {
+  "variable": "innodb_adaptive_hash_index",
+  "relevant_to": "all flavors; default ON only in MySQL/Percona 8.0; matters for point/range lookups on a cached hot set; irrelevant when I/O bound",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "MariaDB: Innodb_adaptive_hash_hash_searches / (that + Innodb_adaptive_hash_non_hash_searches); MySQL: innodb_metrics adaptive_hash_searches, adaptive_hash_searches_btree (or engine_status 'hash searches/s, non-hash searches/s')",
+    "points_to": "disable",
+    "condition": "when ON: hash-hit share is low (most searches still go through the B-tree) while AHI maintenance/latch costs appear",
+    "why": "an AHI that rarely hits only costs upkeep"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "wait/synch/sxlock/innodb/btr_search_latch wait time (MySQL/Percona)",
+    "points_to": "disable",
+    "condition": "material wait time on the AHI latch",
+    "why": "AHI latch contention on writes/drops"
+   },
+   {
+    "source": "os",
+    "metric": "CPU profile: B-tree descent share (btr_cur_search_to_nth_level / page_cur_search) when OFF; btr_search_* share when ON",
+    "points_to": "enable",
+    "condition": "when OFF: B-tree search CPU is a material share and workload is point lookups on cached data",
+    "why": "AHI turns repeated descents into hash lookups"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "DROP/TRUNCATE or buffer-pool eviction stalls (statement latency spikes) with btr_search_drop_page_hash_* in CPU profile",
+    "points_to": "disable",
+    "condition": "material",
+    "why": "dropping AHI entries is costly for large tables"
+   }
+  ],
+  "impact_bound": "enable: at most the B-tree descent CPU share times the hash-hit rate; disable: at most AHI latch wait + btr_search CPU share; medium (can be large both ways: JOB 88% slower with ON)",
+  "experiment": {
+   "change": "SET GLOBAL innodb_adaptive_hash_index=ON/OFF (dynamic)",
+   "predict": "ON: B-tree CPU share falls, hash searches high, TPS up; OFF: btr_search_latch waits vanish",
+   "confirm_or_refute": "refuted if hash hit share low or TPS within noise",
+   "cost_or_risk": "ON needs warm-up (AHI is built adaptively); latch contention under writes"
+  },
+  "collected": "partly (CPU profile and wait summaries yes; add innodb_metrics adaptive_hash_* (module_adaptive_hash) for MySQL, MariaDB status already collected)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-adaptive-hash.html",
+   "https://mariadb.com/kb/en/innodb-status-variables/"
+  ]
+ },
+ {
+  "variable": "innodb_adaptive_hash_index_cells",
+  "relevant_to": "MariaDB 11.8 (where present); inert with innodb_adaptive_hash_index OFF",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "CPU profile share in ha_search/hash chain walking (btr_search_guess_on_hash) when AHI is ON",
+    "points_to": "raise",
+    "condition": "material hash lookup CPU with large hot set",
+    "why": "too few cells make long chains"
+   }
+  ],
+  "impact_bound": "low; bounded by AHI lookup CPU share",
+  "experiment": {
+   "change": "double cells",
+   "predict": "AHI lookup CPU falls",
+   "confirm_or_refute": "refuted if no change",
+   "cost_or_risk": "memory"
+  },
+  "collected": "yes (CPU profile)",
+  "sources": [
+   "https://mariadb.com/kb/en/innodb-system-variables/"
+  ]
+ },
+ {
+  "variable": "innodb_adaptive_hash_index_parts",
+  "relevant_to": "MySQL/Percona/PXC (restart); MariaDB 10.11+ has no separate parts setting in the same form; inert with AHI OFF",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "wait/synch/sxlock/innodb/btr_search_latch SUM_TIMER_WAIT share of foreground time",
+    "points_to": "raise",
+    "condition": "material AHI latch wait with few hot indexes per partition",
+    "why": "each index maps to one partition latch; more parts spread contention across indexes"
+   },
+   {
+    "source": "os",
+    "metric": "CPU profile latch/spin share attributed to btr_search",
+    "points_to": "raise",
+    "condition": "material",
+    "why": "spinning on AHI latch"
+   }
+  ],
+  "impact_bound": "at most btr_search_latch wait time; note one hot index still maps to one partition, so gain is often zero; low-medium",
+  "experiment": {
+   "change": "raise 8 -> 32/64 (restart)",
+   "predict": "btr_search_latch waits fall",
+   "confirm_or_refute": "refuted if waits unchanged (single hot index)",
+   "cost_or_risk": "restart; minor memory"
+  },
+  "collected": "partly (wait summaries if in top list)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-adaptive-hash.html"
+  ]
+ },
+ {
+  "variable": "innodb_autoinc_lock_mode",
+  "relevant_to": "all flavors (restart); matters only with concurrent INSERTs into AUTO_INCREMENT tables, especially INSERT...SELECT/LOAD DATA; MariaDB default 1, MySQL 8.0+ 2",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "data_lock_waits / data_locks with LOCK_TYPE='TABLE' and LOCK_MODE='AUTO_INC' (MySQL); information_schema.INNODB_LOCK_WAITS (MariaDB)",
+    "points_to": "a specific value",
+    "condition": "material AUTO-INC table-lock waits during bulk inserts at mode 0/1",
+    "why": "modes 0/1 hold the table-level AUTO-INC lock for the whole bulk statement"
+   },
+   {
+    "source": "ebpf",
+    "metric": "off-CPU row/table lock wait share of connection threads during INSERT",
+    "points_to": "raise",
+    "condition": "material lock wait on insert-heavy load with mode < 2",
+    "why": "interleaved mode uses a lightweight mutex instead"
+   }
+  ],
+  "impact_bound": "at most the AUTO-INC lock wait time of inserting threads; medium for concurrent bulk inserts, none for single-row inserts at mode 1/2",
+  "experiment": {
+   "change": "restart with mode 2",
+   "predict": "AUTO_INC lock waits vanish, insert throughput up",
+   "confirm_or_refute": "refuted if no AUTO_INC waits existed",
+   "cost_or_risk": "mode 2 unsafe with statement-based binlog; IDs not consecutive within a bulk statement"
+  },
+  "collected": "partly (lock waits only via generic row-lock counters; add sampling of performance_schema.data_lock_waits)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-auto-increment-handling.html"
+  ]
+ },
+ {
+  "variable": "innodb_commit_concurrency",
+  "relevant_to": "MySQL/Percona/PXC; cannot change from 0 to nonzero at runtime; rarely beneficial on modern versions",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "no measurable signal specific to commit admission; commit-path latch/spin share in CPU profile is a weak hint",
+    "points_to": "no change needed",
+    "condition": "only if commit-stage latch spinning dominates CPU at extreme concurrency",
+    "why": "limiting committers can reduce spinning but serialises commits"
+   }
+  ],
+  "impact_bound": "low; typically negative; no measurement isolates it - only an experiment",
+  "experiment": {
+   "change": "restart with e.g. 2x cores",
+   "predict": "latch/spin CPU share falls and TPS up",
+   "confirm_or_refute": "refuted if TPS drops (typical)",
+   "cost_or_risk": "restart; throughput cap"
+  },
+  "collected": "yes (CPU profile)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html"
+  ]
+ },
+ {
+  "variable": "innodb_concurrency_tickets",
+  "relevant_to": "MySQL/Percona/PXC; inert when innodb_thread_concurrency = 0 (default)",
+  "signals": [
+   {
+    "source": "engine_status",
+    "metric": "ROW OPERATIONS: 'N queries inside InnoDB, M queries in queue'",
+    "points_to": "raise",
+    "condition": "with thread_concurrency > 0: many queued threads and long statements re-entering often",
+    "why": "each re-entry costs queueing"
+   },
+   {
+    "source": "derived",
+    "metric": "short-query latency vs long-query share",
+    "points_to": "lower",
+    "condition": "short queries starve behind long ones",
+    "why": "fewer tickets give fairness"
+   }
+  ],
+  "impact_bound": "low; only within the thread_concurrency regime",
+  "experiment": {
+   "change": "x2 / /2 with thread_concurrency set",
+   "predict": "queue length and p95 change",
+   "confirm_or_refute": "refuted if no change",
+   "cost_or_risk": "none"
+  },
+  "collected": "no (add SHOW ENGINE INNODB STATUS ROW OPERATIONS queue line)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-performance-thread_concurrency.html"
+  ]
+ },
+ {
+  "variable": "innodb_deadlock_detect",
+  "relevant_to": "all flavors (dynamic); matters only with many threads waiting on the same rows; MySQL 8.0.18+ runs detection in a background thread, reducing the cost",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "CPU profile share in deadlock detection (DeadlockChecker / lock_wait_* graph search; MariaDB Deadlock::find_cycle) and lock_sys latch",
+    "points_to": "disable",
+    "condition": "material CPU or latch time in detection with long wait queues on hot rows",
+    "why": "wait-for graph search grows with waiters"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "lock_deadlock_rounds rate vs lock_deadlocks (MariaDB: status Innodb_deadlocks)",
+    "points_to": "disable",
+    "condition": "many detection rounds, few real deadlocks",
+    "why": "detection work finds nothing"
+   },
+   {
+    "source": "status",
+    "metric": "Innodb_deadlocks (MariaDB) / innodb_metrics lock_deadlocks",
+    "points_to": "no change needed",
+    "condition": "real deadlocks occur regularly",
+    "why": "disabling turns deadlocks into innodb_lock_wait_timeout waits"
+   }
+  ],
+  "impact_bound": "at most the CPU/latch share of deadlock detection; medium only for extreme hot-row contention (e.g. thousands of threads on one row), none otherwise",
+  "experiment": {
+   "change": "SET GLOBAL innodb_deadlock_detect=OFF with a low innodb_lock_wait_timeout",
+   "predict": "detection CPU vanishes, TPS up",
+   "confirm_or_refute": "refuted if errors/timeouts rise or no CPU change",
+   "cost_or_risk": "real deadlocks wait for lock_wait_timeout (semantics/latency)"
+  },
+  "collected": "partly (CPU profile yes; add innodb_metrics lock_deadlock_rounds, lock_deadlocks for MySQL)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-deadlock-detection.html"
+  ]
+ },
+ {
+  "variable": "innodb_doublewrite",
+  "relevant_to": "all flavors with write load; inert for read-only; MySQL 8.0.30+ values ON/OFF/DETECT_ONLY/DETECT_AND_RECOVER (dynamic, but enabling after OFF needs restart); MariaDB adds 'fast'; unnecessary on atomic-write storage (ZFS, some FS/devices)",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Innodb_dblwr_pages_written, Innodb_dblwr_writes per trx vs Innodb_pages_written",
+    "points_to": "disable",
+    "condition": "doublewrite bytes are a material share of device write bandwidth",
+    "why": "every flushed page is written twice"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name 'wait/io/file/innodb/innodb_dblwr_file' write+sync time (8.0.20+)",
+    "points_to": "disable",
+    "condition": "dblwr writes/syncs are a material share of page-cleaner/LRU flush time while foreground waits on free pages (Innodb_buffer_pool_wait_free) or checkpoint age",
+    "why": "flush throughput limited by dblwr"
+   },
+   {
+    "source": "os",
+    "metric": "disk util/await near saturation with writes",
+    "points_to": "disable",
+    "condition": "write-bandwidth bound",
+    "why": "halving page write volume frees bandwidth"
+   }
+  ],
+  "impact_bound": "at most the flush-related foreground wait (free-page waits, checkpoint stalls) times the share of write bandwidth used by dblwr (~half of page writes); high on flush-bound writes (measured +12% to +69%), none when not flush-bound",
+  "experiment": {
+   "change": "OFF or DETECT_ONLY (MariaDB: fast) - benchmark/atomic storage only",
+   "predict": "dblwr writes 0, page write bytes halve, wait_free and flush waits fall, TPS up",
+   "confirm_or_refute": "refuted if TPS flat (not flush-bound)",
+   "cost_or_risk": "torn-page protection lost: data loss risk after crash unless storage is atomic"
+  },
+  "collected": "yes (dblwr counters and file I/O by InnoDB file type)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-doublewrite-buffer.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://mariadb.com/kb/en/innodb-doublewrite-buffer/"
+  ]
+ },
+ {
+  "variable": "innodb_flush_log_at_timeout",
+  "relevant_to": "all flavors; inert when innodb_flush_log_at_trx_commit = 1",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "no measurable throughput signal; background redo fsync rate is ~1/timeout",
+    "points_to": "no change needed",
+    "condition": "-",
+    "why": "only controls how many seconds of commits are at risk"
+   }
+  ],
+  "impact_bound": "none to low; it trades durability window, not foreground time",
+  "experiment": {
+   "change": "not worth testing for throughput",
+   "predict": "-",
+   "confirm_or_refute": "-",
+   "cost_or_risk": "larger values lose more commits on crash"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html"
+  ]
+ },
+ {
+  "variable": "innodb_flush_log_at_trx_commit",
+  "relevant_to": "all flavors with writes; PXC default 2; MariaDB also supports 3; inert for read-only",
+  "signals": [
+   {
+    "source": "ebpf",
+    "metric": "off-CPU redo flush share of connection-thread time",
+    "points_to": "a specific value",
+    "condition": "redo flush wait is a material share of foreground time (=1)",
+    "why": "each commit (group) waits for a redo fsync"
+   },
+   {
+    "source": "status",
+    "metric": "Innodb_os_log_fsyncs / commits; performance_schema 'wait/io/file/innodb/innodb_log_file' SUM_TIMER_MISC",
+    "points_to": "a specific value",
+    "condition": "~1 fsync per commit group and fsync latency high",
+    "why": "fsync latency is on the commit path"
+   },
+   {
+    "source": "status",
+    "metric": "Innodb_log_waits",
+    "points_to": "no change needed",
+    "condition": "nonzero means log buffer too small, a different knob",
+    "why": "-"
+   }
+  ],
+  "impact_bound": "at most the foreground share of redo-flush waits (=2 removes the fsync, keeps the write); high on commit-bound load (measured +26-34%), none for read-heavy",
+  "experiment": {
+   "change": "SET GLOBAL innodb_flush_log_at_trx_commit=2",
+   "predict": "redo fsyncs/trx fall ~to 1/s, redo-flush off-CPU share falls, TPS up",
+   "confirm_or_refute": "refuted if TPS flat (not commit-bound)",
+   "cost_or_risk": "up to ~1 s of commits lost on OS crash/power loss"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-performance-optimization.html"
+  ]
+ },
+ {
+  "variable": "innodb_parallel_read_threads",
+  "relevant_to": "MySQL/Percona/PXC 8.0.14+ (session); only for COUNT(*) without WHERE and CHECK TABLE on clustered index; inert for OLTP",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "statement digests of SELECT COUNT(*) / CHECK TABLE: SUM_TIMER_WAIT share",
+    "points_to": "raise",
+    "condition": "such statements are a material share of time and CPU cores are idle",
+    "why": "clustered index scan is partitioned across threads"
+   }
+  ],
+  "impact_bound": "at most the time share of those statements times (1 - 1/speedup); low for typical benchmarks",
+  "experiment": {
+   "change": "SET innodb_parallel_read_threads = cores",
+   "predict": "those digests' latency falls",
+   "confirm_or_refute": "refuted if no such statements",
+   "cost_or_risk": "CPU bursts"
+  },
+  "collected": "yes (statement digests)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html"
+  ]
+ },
+ {
+  "variable": "innodb_rollback_segments",
+  "relevant_to": "MySQL/Percona/PXC (dynamic); matters only at very high write concurrency; default 128 already max",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "wait/synch/mutex/innodb/trx_undo_mutex and rseg mutex wait time",
+    "points_to": "raise",
+    "condition": "material undo/rseg mutex waits (only if lowered below 128)",
+    "why": "fewer segments concentrate undo slot allocation"
+   },
+   {
+    "source": "status",
+    "metric": "errors 'Too many active concurrent transactions'",
+    "points_to": "raise",
+    "condition": "appears",
+    "why": "undo slots exhausted"
+   }
+  ],
+  "impact_bound": "none at the default (128 is the maximum); low",
+  "experiment": {
+   "change": "keep 128; test only if lowered",
+   "predict": "-",
+   "confirm_or_refute": "-",
+   "cost_or_risk": "-"
+  },
+  "collected": "partly (wait summaries)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-undo-logs.html"
+  ]
+ },
+ {
+  "variable": "innodb_spin_wait_delay",
+  "relevant_to": "all flavors (dynamic); matters only when InnoDB latch spinning is visible in the CPU profile; MariaDB 10.6+ largely replaced spin rounds by futex-based locks",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "CPU profile latch/spin share (ut_delay, PolicyMutex/TTASEventMutex spin, rw_lock spin)",
+    "points_to": "a specific value",
+    "condition": "ut_delay is a material share of CPU",
+    "why": "spinning burns CPU that other threads could use; too short causes cache-line pingpong"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "innodb_rwlock_s_spin_rounds, innodb_rwlock_x_spin_rounds, innodb_rwlock_s_os_waits, innodb_rwlock_x_os_waits (MySQL)",
+    "points_to": "raise",
+    "condition": "many os_waits after spinning (spin too short) or many rounds with few os waits and high CPU (lower)",
+    "why": "balance between spin and sleep"
+   }
+  ],
+  "impact_bound": "at most the ut_delay CPU share; low (typically few %)",
+  "experiment": {
+   "change": "x2 and /2",
+   "predict": "ut_delay CPU share and futex/sleep waits trade; TPS change",
+   "confirm_or_refute": "refuted if within noise",
+   "cost_or_risk": "none (dynamic)"
+  },
+  "collected": "partly (CPU profile yes; add innodb_metrics rwlock spin/os-wait counters)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-performance-spin_lock_polling.html"
+  ]
+ },
+ {
+  "variable": "innodb_spin_wait_pause_multiplier",
+  "relevant_to": "MySQL/Percona/PXC 8.0.16+; matters on CPUs whose PAUSE latency differs (e.g. Skylake-SP+ ~140 cycles vs older ~10)",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "CPU profile share in ut_delay (PAUSE loop)",
+    "points_to": "lower",
+    "condition": "material ut_delay share on CPUs with long PAUSE latency",
+    "why": "each spin iteration takes longer than intended"
+   }
+  ],
+  "impact_bound": "at most ut_delay CPU share; low",
+  "experiment": {
+   "change": "halve multiplier",
+   "predict": "ut_delay share falls, TPS up or flat",
+   "confirm_or_refute": "refuted if os waits rise and TPS falls",
+   "cost_or_risk": "none"
+  },
+  "collected": "yes (CPU profile)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-performance-spin_lock_polling.html"
+  ]
+ },
+ {
+  "variable": "innodb_sync_array_size",
+  "relevant_to": "MySQL/Percona/PXC (restart); matters with many threads blocking on InnoDB latches",
+  "signals": [
+   {
+    "source": "engine_status",
+    "metric": "SEMAPHORES: 'OS WAIT ARRAY INFO: reservation count N, signal count M' rate",
+    "points_to": "raise",
+    "condition": "high reservation rate with many waiting threads and sync-array mutex in CPU/futex profile",
+    "why": "the wait array is protected by a mutex; partitions reduce its contention"
+   },
+   {
+    "source": "ebpf",
+    "metric": "off-CPU latch/futex share",
+    "points_to": "raise",
+    "condition": "material",
+    "why": "threads blocked on latches go through the sync array"
+   }
+  ],
+  "impact_bound": "at most the share of time in sync-array bookkeeping, usually tiny; low",
+  "experiment": {
+   "change": "restart with 16+",
+   "predict": "reservation contention falls",
+   "confirm_or_refute": "refuted if no change",
+   "cost_or_risk": "restart"
+  },
+  "collected": "partly (add SEMAPHORES section of SHOW ENGINE INNODB STATUS)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html"
+  ]
+ },
+ {
+  "variable": "innodb_sync_spin_loops",
+  "relevant_to": "all flavors (dynamic); matters when latch spinning or futex sleeps are visible",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "CPU profile latch/spin share (ut_delay) vs ebpf off-CPU latch/futex share",
+    "points_to": "lower",
+    "condition": "spin CPU material and CPU saturated with run-queue wait",
+    "why": "spinning steals CPU from runnable threads"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "innodb_rwlock_*_spin_rounds vs innodb_rwlock_*_os_waits",
+    "points_to": "raise",
+    "condition": "many OS waits (sleep/wake cost) with idle CPU",
+    "why": "a little more spinning avoids context switches"
+   }
+  ],
+  "impact_bound": "at most spin CPU share (lower) or futex wake latency share (raise); low",
+  "experiment": {
+   "change": "x2 / /2",
+   "predict": "trade between ut_delay CPU and futex waits/context switches",
+   "confirm_or_refute": "refuted if TPS within noise",
+   "cost_or_risk": "none"
+  },
+  "collected": "partly (add innodb_metrics rwlock counters)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-performance-spin_lock_polling.html"
+  ]
+ },
+ {
+  "variable": "innodb_thread_concurrency",
+  "relevant_to": "MySQL/Percona/PXC (dynamic); only with far more active threads than cores; measured losses so far",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "per-thread run-queue wait (schedstat) and Threads_running >> cores with latch/spin CPU share high",
+    "points_to": "a specific value",
+    "condition": "run-queue wait and latch spin are a material share while throughput falls with more clients",
+    "why": "admission control limits threads competing inside InnoDB"
+   },
+   {
+    "source": "engine_status",
+    "metric": "ROW OPERATIONS 'queries in queue' when set",
+    "points_to": "raise",
+    "condition": "many queued while CPU idle",
+    "why": "limit too low"
+   }
+  ],
+  "impact_bound": "at most run-queue + spin time share; low (usually negative because admission adds its own waits)",
+  "experiment": {
+   "change": "set to ~2x cores",
+   "predict": "run-queue wait and spin share fall, TPS up",
+   "confirm_or_refute": "refuted if TPS falls or queue grows",
+   "cost_or_risk": "throughput cap, extra latency"
+  },
+  "collected": "partly (OS and CPU yes; add engine_status ROW OPERATIONS queue)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-performance-thread_concurrency.html"
+  ]
+ },
+ {
+  "variable": "metadata_locks_hash_instances",
+  "relevant_to": "MariaDB: documented as unused/no effect (MDL uses a lock-free hash); removed in MySQL 8.0",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "none",
+    "points_to": "no change needed",
+    "condition": "never",
+    "why": "variable has no effect"
+   }
+  ],
+  "impact_bound": "none",
+  "experiment": {
+   "change": "do not test",
+   "predict": "-",
+   "confirm_or_refute": "-",
+   "cost_or_risk": "-"
+  },
+  "collected": "yes (nothing to collect)",
+  "sources": [
+   "https://mariadb.com/kb/en/server-system-variables/#metadata_locks_hash_instances",
+   "https://dev.mysql.com/worklog/task/?id=12212"
+  ]
+ },
+ {
+  "variable": "pxc_strict_mode",
+  "relevant_to": "PXC only; validation, not performance",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "none",
+    "points_to": "no change needed",
+    "condition": "never for performance",
+    "why": "only blocks/warns on unsupported features"
+   }
+  ],
+  "impact_bound": "none",
+  "experiment": {
+   "change": "do not test",
+   "predict": "-",
+   "confirm_or_refute": "-",
+   "cost_or_risk": "PERMISSIVE/DISABLED allow unsafe features"
+  },
+  "collected": "yes (nothing to collect)",
+  "sources": [
+   "https://docs.percona.com/percona-xtradb-cluster/8.4/strict-mode.html"
+  ]
+ },
+ {
+  "variable": "replica_parallel_workers",
+  "relevant_to": "MySQL/Percona/PXC replicas (async replication); on a primary it does nothing; default 4 since 8.0.27",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "lag = now - replication_applier_status_by_worker.APPLYING_TRANSACTION_ORIGINAL_COMMIT_TIMESTAMP (or LAST_APPLIED_TRANSACTION_END_APPLY_TIMESTAMP - ORIGINAL_COMMIT_TIMESTAMP) growing",
+    "points_to": "raise",
+    "condition": "lag grows while workers are mostly busy and replica CPU/IO has headroom",
+    "why": "more workers apply independent transactions concurrently"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "worker idle vs busy: threads in stage 'Waiting for dependent transaction to commit' / coordinator waiting for free worker ('Waiting for replica workers to process their queues')",
+    "points_to": "raise",
+    "condition": "coordinator waits for free workers",
+    "why": "workers are the bottleneck"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "workers waiting in 'Waiting for preceding transaction to commit' or dependency waits most of the time",
+    "points_to": "no change needed",
+    "condition": "workers idle waiting on dependencies",
+    "why": "source-side parallelism (writeset/group size) is the limit, not worker count"
+   }
+  ],
+  "impact_bound": "at most (applier capacity needed / current) limited by source dependency parallelism (writeset); high for lagging replicas, none for the primary benchmark",
+  "experiment": {
+   "change": "double workers on the replica",
+   "predict": "apply rate up, lag shrinks",
+   "confirm_or_refute": "refuted if workers wait on dependencies",
+   "cost_or_risk": "more memory/threads; little risk"
+  },
+  "collected": "no (tuner benchmarks a single server; add replica-side replication_applier_status_by_worker and stage events)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-replica.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/performance-schema-replication-applier-status-by-worker-table.html"
+  ]
+ },
+ {
+  "variable": "replica_preserve_commit_order",
+  "relevant_to": "MySQL/Percona/PXC multithreaded replicas; mandatory ON in some setups (e.g. GR)",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "share of worker time in stage 'Waiting for preceding transaction to commit'",
+    "points_to": "disable",
+    "condition": "material share of worker time with lag",
+    "why": "workers block until earlier transactions commit"
+   }
+  ],
+  "impact_bound": "at most the commit-order wait share of workers; low-medium",
+  "experiment": {
+   "change": "OFF on replica",
+   "predict": "apply rate up",
+   "confirm_or_refute": "refuted if no order waits",
+   "cost_or_risk": "replica can expose states never present on the source (gaps)"
+  },
+  "collected": "no (replica-side stage events)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-replica.html"
+  ]
+ },
+ {
+  "variable": "skip_log_bin",
+  "relevant_to": "same as disable_log_bin (option alias); restart",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "binlog fsync + binlog CPU share per trx (see disable_log_bin)",
+    "points_to": "disable",
+    "condition": "material",
+    "why": "removes binlog and 2PC"
+   }
+  ],
+  "impact_bound": "same as disable_log_bin; high on write load",
+  "experiment": {
+   "change": "restart with skip-log-bin",
+   "predict": "fsyncs/trx and CPU ms/trx fall",
+   "confirm_or_refute": "refuted if TPS flat",
+   "cost_or_risk": "no replication/PITR"
+  },
+  "collected": "partly (add binlog file I/O)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html#option_mysqld_log-bin"
+  ]
+ },
+ {
+  "variable": "slave_parallel_mode",
+  "relevant_to": "MariaDB replicas with slave_parallel_threads > 0",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Slave_retried_transactions rate (MariaDB)",
+    "points_to": "a specific value",
+    "condition": "many retries in optimistic/aggressive mode",
+    "why": "speculative parallel apply conflicts and rolls back"
+   },
+   {
+    "source": "information_schema",
+    "metric": "PROCESSLIST state 'Waiting for prior transaction to commit' share among workers",
+    "points_to": "a specific value",
+    "condition": "workers mostly waiting in conservative/minimal mode with lag",
+    "why": "mode limits parallelism"
+   }
+  ],
+  "impact_bound": "bounded by lag reduction potential; medium on lagging replicas",
+  "experiment": {
+   "change": "optimistic <-> aggressive/conservative",
+   "predict": "apply rate up; retries acceptable",
+   "confirm_or_refute": "refuted if retries rise and apply rate falls",
+   "cost_or_risk": "conflict retries cost work"
+  },
+  "collected": "no (replica-side)",
+  "sources": [
+   "https://mariadb.com/kb/en/parallel-replication/",
+   "https://mariadb.com/kb/en/replication-and-binary-log-status-variables/"
+  ]
+ },
+ {
+  "variable": "slave_parallel_threads",
+  "relevant_to": "MariaDB replicas; default 0 (serial apply)",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "Seconds_Behind_Master growing / SHOW SLAVE STATUS; replica CPU/IO headroom",
+    "points_to": "raise",
+    "condition": "lag grows with spare resources",
+    "why": "serial applier is single-threaded"
+   },
+   {
+    "source": "status",
+    "metric": "Slave_retried_transactions",
+    "points_to": "lower",
+    "condition": "very high with many threads",
+    "why": "conflicts"
+   }
+  ],
+  "impact_bound": "high for lagging replicas, none for the primary",
+  "experiment": {
+   "change": "set 4-16 on replica",
+   "predict": "lag shrinks",
+   "confirm_or_refute": "refuted if workers wait on prior commits",
+   "cost_or_risk": "memory, retries"
+  },
+  "collected": "no (replica-side)",
+  "sources": [
+   "https://mariadb.com/kb/en/parallel-replication/"
+  ]
+ },
+ {
+  "variable": "sync_binlog",
+  "relevant_to": "all flavors with log_bin ON; MariaDB default 0, MySQL 1",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name WHERE EVENT_NAME='wait/io/file/sql/binlog': COUNT_MISC, SUM_TIMER_MISC (fsync is a MISC op) per commit",
+    "points_to": "raise",
+    "condition": "binlog fsync time is a material share of foreground (commit) time and fsyncs/commit is near 1",
+    "why": "each binlog group costs one fsync; larger groups amortise it"
+   },
+   {
+    "source": "ebpf",
+    "metric": "off-CPU file-sync wait in commit path beyond redo",
+    "points_to": "raise",
+    "condition": "binlog fsync is material",
+    "why": "sync per group on commit path"
+   }
+  ],
+  "impact_bound": "at most binlog fsync time share of foreground; high on slow fsync storage",
+  "experiment": {
+   "change": "set 0 or 100 (benchmark)",
+   "predict": "binlog fsyncs vanish, TPS up",
+   "confirm_or_refute": "refuted if flat",
+   "cost_or_risk": "binlog may lose commits on OS crash; replicas diverge"
+  },
+  "collected": "partly (add wait/io/file/sql/binlog fsync time)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html",
+   "https://mariadb.com/kb/en/replication-and-binary-log-system-variables/#sync_binlog"
+  ]
+ },
+ {
+  "variable": "sync_relay_log",
+  "relevant_to": "replicas only; MySQL default 10000",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "'wait/io/file/sql/relaylog' COUNT_MISC/SUM_TIMER_MISC on replica",
+    "points_to": "raise",
+    "condition": "relay-log fsync time material with value 1",
+    "why": "per-event fsync on receiver"
+   }
+  ],
+  "impact_bound": "low unless set to 1",
+  "experiment": {
+   "change": "raise to 10000 or 0",
+   "predict": "relay fsyncs fall",
+   "confirm_or_refute": "refuted if flat",
+   "cost_or_risk": "relay log may lose events on crash (re-fetched with GTID auto-position)"
+  },
+  "collected": "no (replica-side)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-replica.html"
+  ]
+ },
+ {
+  "variable": "sync_relay_log_info",
+  "relevant_to": "replicas; MySQL 8.0+ uses crash-safe table repositories so mostly inert (deprecated in 8.0.34)",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "none measurable",
+    "points_to": "no change needed",
+    "condition": "-",
+    "why": "table-based repository updated transactionally"
+   }
+  ],
+  "impact_bound": "none in current MySQL",
+  "experiment": {
+   "change": "do not test",
+   "predict": "-",
+   "confirm_or_refute": "-",
+   "cost_or_risk": "-"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-replica.html"
+  ]
+ },
+ {
+  "variable": "thread_handling",
+  "relevant_to": "Percona Server / MariaDB (pool-of-threads); restart; MySQL Community lacks the thread pool",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "per-thread run-queue wait (schedstat) and context switches with Threads_running >> cores",
+    "points_to": "enable",
+    "condition": "material run-queue wait and latch/futex spin share with many active connections",
+    "why": "pool limits active threads per CPU"
+   },
+   {
+    "source": "status",
+    "metric": "Threads_running vs CPU cores",
+    "points_to": "no change needed",
+    "condition": "Threads_running <= cores",
+    "why": "pool adds queueing overhead (measured -9% at low concurrency)"
+   }
+  ],
+  "impact_bound": "at most run-queue + latch contention share; medium at high oversubscription",
+  "experiment": {
+   "change": "restart with pool-of-threads",
+   "predict": "run-queue wait falls, TPS up at high concurrency",
+   "confirm_or_refute": "refuted if TPS drops",
+   "cost_or_risk": "overhead at low concurrency; stalls if long queries block groups"
+  },
+  "collected": "yes (OS run-queue, CPU profile, Threads_running)",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.4/threadpool.html",
+   "https://mariadb.com/kb/en/thread-pool-in-mariadb/"
+  ]
+ },
+ {
+  "variable": "thread_pool_size",
+  "relevant_to": "Percona/MariaDB with thread_handling=pool-of-threads (dynamic); default = CPU count",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Threadpool_threads, Threadpool_idle_threads (Percona/MariaDB); MariaDB information_schema.THREAD_POOL_GROUPS/QUEUES/STATS",
+    "points_to": "raise",
+    "condition": "CPU idle while requests queue and few idle threads",
+    "why": "too few groups limit concurrency"
+   },
+   {
+    "source": "os",
+    "metric": "run-queue wait",
+    "points_to": "lower",
+    "condition": "run-queue wait material",
+    "why": "too many active threads"
+   }
+  ],
+  "impact_bound": "low-medium; default usually near-optimal",
+  "experiment": {
+   "change": "cores +/-25%",
+   "predict": "CPU busy and queue length trade",
+   "confirm_or_refute": "refuted if flat",
+   "cost_or_risk": "none"
+  },
+  "collected": "partly (status yes; add MariaDB THREAD_POOL_* tables)",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.4/threadpool.html",
+   "https://mariadb.com/kb/en/thread-pool-system-status-variables/"
+  ]
+ },
+ {
+  "variable": "wsrep_applier_threads",
+  "relevant_to": "PXC 8.4 (name since 8.0.26); only in a Galera cluster",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "wsrep_flow_control_paused (fraction of time paused) and wsrep_flow_control_sent on this node",
+    "points_to": "raise",
+    "condition": "material pause share and this node sends flow control",
+    "why": "applier cannot keep up; cluster stalls"
+   },
+   {
+    "source": "status",
+    "metric": "wsrep_local_recv_queue_avg",
+    "points_to": "raise",
+    "condition": "consistently > 0 and growing",
+    "why": "writesets queue on applier"
+   },
+   {
+    "source": "status",
+    "metric": "wsrep_cert_deps_distance",
+    "points_to": "a specific value",
+    "condition": "threads > cert_deps_distance",
+    "why": "no more parallelism available"
+   }
+  ],
+  "impact_bound": "at most flow-control paused time share; high when paused",
+  "experiment": {
+   "change": "raise to min(cores, cert_deps_distance)",
+   "predict": "flow_control_paused and recv queue fall",
+   "confirm_or_refute": "refuted if no change",
+   "cost_or_risk": "more threads; conflicts"
+  },
+  "collected": "yes (status deltas, cluster only)",
+  "sources": [
+   "https://docs.percona.com/percona-xtradb-cluster/8.4/wsrep-status-index.html",
+   "https://mariadb.com/kb/en/galera-cluster-status-variables/"
+  ]
+ },
+ {
+  "variable": "wsrep_slave_threads",
+  "relevant_to": "MariaDB Galera (all), PXC old alias; only in a Galera cluster",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "wsrep_flow_control_paused (fraction of time paused) and wsrep_flow_control_sent on this node",
+    "points_to": "raise",
+    "condition": "material pause share and this node sends flow control",
+    "why": "applier cannot keep up; cluster stalls"
+   },
+   {
+    "source": "status",
+    "metric": "wsrep_local_recv_queue_avg",
+    "points_to": "raise",
+    "condition": "consistently > 0 and growing",
+    "why": "writesets queue on applier"
+   },
+   {
+    "source": "status",
+    "metric": "wsrep_cert_deps_distance",
+    "points_to": "a specific value",
+    "condition": "threads > cert_deps_distance",
+    "why": "no more parallelism available"
+   }
+  ],
+  "impact_bound": "at most flow-control paused time share; high when paused",
+  "experiment": {
+   "change": "raise to min(cores, cert_deps_distance)",
+   "predict": "flow_control_paused and recv queue fall",
+   "confirm_or_refute": "refuted if no change",
+   "cost_or_risk": "more threads; conflicts"
+  },
+  "collected": "yes (status deltas, cluster only)",
+  "sources": [
+   "https://docs.percona.com/percona-xtradb-cluster/8.4/wsrep-status-index.html",
+   "https://mariadb.com/kb/en/galera-cluster-status-variables/"
+  ]
+ },
+ {
+  "variable": "wsrep_provider_options",
+  "relevant_to": "Galera clusters (PXC, MariaDB Galera)",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "wsrep_flow_control_paused, wsrep_flow_control_sent/recv, wsrep_local_recv_queue_avg",
+    "points_to": "raise",
+    "condition": "gcs.fc_limit too low: frequent short FC pauses with small queues",
+    "why": "threshold triggers FC"
+   },
+   {
+    "source": "status",
+    "metric": "wsrep_local_send_queue_avg",
+    "points_to": "raise",
+    "condition": "send queue builds (network/evs.send_window)",
+    "why": "send window too small"
+   }
+  ],
+  "impact_bound": "at most paused share; high for flow-control-bound clusters",
+  "experiment": {
+   "change": "raise gcs.fc_limit / gcs.fc_factor",
+   "predict": "paused fraction falls",
+   "confirm_or_refute": "refuted if recv queue grows unbounded",
+   "cost_or_risk": "more lag on slow node; larger gcache memory"
+  },
+  "collected": "yes (status deltas)",
+  "sources": [
+   "https://docs.percona.com/percona-xtradb-cluster/8.4/wsrep-provider-index.html",
+   "https://docs.percona.com/percona-xtradb-cluster/8.4/wsrep-status-index.html"
+  ]
+ },
+ {
+  "variable": "wsrep_retry_autocommit",
+  "relevant_to": "Galera; semantics",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "wsrep_local_cert_failures, wsrep_local_bf_aborts",
+    "points_to": "raise",
+    "condition": "autocommit statements failing with deadlock errors",
+    "why": "retry hides certification conflicts"
+   }
+  ],
+  "impact_bound": "low; error rate not throughput",
+  "experiment": {
+   "change": "raise retries",
+   "predict": "client errors fall",
+   "confirm_or_refute": "refuted if no conflicts",
+   "cost_or_risk": "duplicate work"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://mariadb.com/kb/en/galera-cluster-system-variables/#wsrep_retry_autocommit",
+   "https://docs.percona.com/percona-xtradb-cluster/8.4/wsrep-status-index.html"
+  ]
+ },
+ {
+  "variable": "wsrep_sync_wait",
+  "relevant_to": "Galera; semantics (causal reads)",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "wsrep_causal_reads count and read latency",
+    "points_to": "lower",
+    "condition": "causal waits add read latency",
+    "why": "each check waits for apply"
+   }
+  ],
+  "impact_bound": "at most read wait share; medium",
+  "experiment": {
+   "change": "0 if app allows stale reads",
+   "predict": "read latency falls",
+   "confirm_or_refute": "refuted if no causal waits",
+   "cost_or_risk": "stale reads"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://mariadb.com/kb/en/galera-cluster-system-variables/#wsrep_sync_wait"
+  ]
+ },
+ {
+  "variable": "wsrep_trx_fragment_size",
+  "relevant_to": "Galera 4 (PXC 8, MariaDB 10.4+) with large transactions",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "wsrep_flow_control_paused during large transactions and replicated bytes",
+    "points_to": "enable",
+    "condition": "large writesets stall cluster",
+    "why": "streaming fragments"
+   },
+   {
+    "source": "derived",
+    "metric": "mysql.wsrep_streaming_log activity",
+    "points_to": "disable",
+    "condition": "small trx overhead",
+    "why": "fragment logging costs"
+   }
+  ],
+  "impact_bound": "low-medium; only for very large transactions",
+  "experiment": {
+   "change": "set e.g. 10000 rows",
+   "predict": "stalls reduce",
+   "confirm_or_refute": "refuted if throughput falls",
+   "cost_or_risk": "extra writes to streaming log"
+  },
+  "collected": "partly",
+  "sources": [
+   "https://mariadb.com/kb/en/galera-cluster-system-variables/#wsrep_trx_fragment_size"
+  ]
+ }
+]

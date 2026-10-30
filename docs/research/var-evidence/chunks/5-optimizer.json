@@ -1,0 +1,680 @@
+{
+ "eq_range_index_dive_limit": {
+  "category": "optimizer",
+  "description": "Equality ranges above which statistics replace index dives.",
+  "impact": "low",
+  "when": "IN lists longer than the limit (index dives vs statistics)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "200"
+ },
+ "histogram_size": {
+  "category": "optimizer",
+  "description": "Histogram size for engine-independent statistics (MariaDB).",
+  "impact": "low",
+  "when": "MariaDB statistics on skewed columns",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "254"
+ },
+ "innodb_stats_on_metadata": {
+  "category": "optimizer",
+  "description": "Update statistics on metadata queries.",
+  "impact": "low",
+  "when": "information_schema / SHOW queries on many tables",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "OFF"
+ },
+ "innodb_stats_persistent": {
+  "category": "optimizer",
+  "description": "Persistent optimizer statistics.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "ON"
+ },
+ "innodb_stats_persistent_sample_pages": {
+  "category": "optimizer",
+  "description": "Pages sampled for persistent index statistics.",
+  "impact": "low",
+  "when": "plans changing with statistics (skewed data)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "20"
+ },
+ "join_cache_level": {
+  "category": "optimizer",
+  "description": "Join buffer algorithms allowed (MariaDB).",
+  "impact": "medium",
+  "when": "MariaDB joins without usable indexes (hash join / BKA levels)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "2"
+ },
+ "max_length_for_sort_data": {
+  "category": "optimizer",
+  "description": "Row size limit for single-pass sorts.",
+  "impact": "low",
+  "when": "filesorts of wide rows (deprecated in 8.0.20)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": {
+   "mariadb 10.11": "1024",
+   "mariadb 11.4": "1024",
+   "mariadb 11.8": "1024",
+   "mysql 8.0": "4096",
+   "mysql 8.4": "4096",
+   "mysql 9.7": "4096",
+   "percona 8.0": "4096",
+   "percona 8.4": "4096",
+   "percona 9.7": "4096",
+   "pxc 8.4": "4096"
+  }
+ },
+ "optimizer_prune_level": {
+  "category": "optimizer",
+  "description": "Heuristic pruning of join orders.",
+  "impact": "low",
+  "when": "joins of many tables",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": {
+   "mariadb 10.11": "2",
+   "mariadb 11.4": "2",
+   "mariadb 11.8": "2",
+   "mysql 8.0": "1",
+   "mysql 8.4": "1",
+   "mysql 9.7": "1",
+   "percona 8.0": "1",
+   "percona 8.4": "1",
+   "percona 9.7": "1",
+   "pxc 8.4": "1"
+  }
+ },
+ "optimizer_search_depth": {
+  "category": "optimizer",
+  "description": "Depth of the join order search (0 = automatic).",
+  "impact": "medium",
+  "when": "joins of many tables (plan search time grows exponentially)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "62"
+ },
+ "optimizer_switch": {
+  "category": "optimizer",
+  "description": "Optimizer flags (on / off each); the tuner changes them one flag at a time.",
+  "impact": "container",
+  "when": "a list of independent optimizer flags: see the optimizer_switch:<flag> entries",
+  "precondition": null,
+  "mechanism_tags": [
+   "cpu-btree",
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": {
+   "mariadb 10.11": "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,index_merge_sort_intersection=off,engine_condition_pushdown=off,index_condition_pushdown=on,derived_merge=on,derived_with_keys=on,firstmatch=on,loosescan=on,materialization=on,in_to_exists=on,semijoin=on,partial_match_rowid_merge=on,partial_match_table_scan=on,subquery_cache=on,mrr=off,mrr_cost_based=off,mrr_sort_keys=off,outer_join_with_cache=on,semijoin_with_cache=on,join_cache_incremental=on,join_cache_hashed=on,join_cache_bka=on,optimize_join_buffer_size=on,table_elimination=on,extended_keys=on,exists_to_in=on,orderby_uses_equalities=on,condition_pushdown_for_derived=on,split_materialized=on,condition_pushdown_for_subquery=on,rowid_filter=on,condition_pushdown_from_having=on,not_null_range_scan=off,hash_join_cardinality=off,cset_narrowing=off",
+   "mariadb 11.4": "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,index_merge_sort_intersection=off,index_condition_pushdown=on,derived_merge=on,derived_with_keys=on,firstmatch=on,loosescan=on,materialization=on,in_to_exists=on,semijoin=on,partial_match_rowid_merge=on,partial_match_table_scan=on,subquery_cache=on,mrr=off,mrr_cost_based=off,mrr_sort_keys=off,outer_join_with_cache=on,semijoin_with_cache=on,join_cache_incremental=on,join_cache_hashed=on,join_cache_bka=on,optimize_join_buffer_size=on,table_elimination=on,extended_keys=on,exists_to_in=on,orderby_uses_equalities=on,condition_pushdown_for_derived=on,split_materialized=on,condition_pushdown_for_subquery=on,rowid_filter=on,condition_pushdown_from_having=on,not_null_range_scan=off,hash_join_cardinality=on,cset_narrowing=off,sargable_casefold=on",
+   "mariadb 11.8": "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,index_merge_sort_intersection=off,index_condition_pushdown=on,derived_merge=on,derived_with_keys=on,firstmatch=on,loosescan=on,materialization=on,in_to_exists=on,semijoin=on,partial_match_rowid_merge=on,partial_match_table_scan=on,subquery_cache=on,mrr=off,mrr_cost_based=off,mrr_sort_keys=off,outer_join_with_cache=on,semijoin_with_cache=on,join_cache_incremental=on,join_cache_hashed=on,join_cache_bka=on,optimize_join_buffer_size=on,table_elimination=on,extended_keys=on,exists_to_in=on,orderby_uses_equalities=on,condition_pushdown_for_derived=on,split_materialized=on,condition_pushdown_for_subquery=on,rowid_filter=on,condition_pushdown_from_having=on,not_null_range_scan=off,hash_join_cardinality=on,cset_narrowing=on,sargable_casefold=on",
+   "mysql 8.0": "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,duplicateweedout=on,subquery_materialization_cost_based=on,use_index_extensions=on,condition_fanout_filter=on,derived_merge=on,use_invisible_indexes=off,skip_scan=on,hash_join=on,subquery_to_derived=off,prefer_ordering_index=on,hypergraph_optimizer=off,derived_condition_pushdown=on",
+   "mysql 8.4": "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,duplicateweedout=on,subquery_materialization_cost_based=on,use_index_extensions=on,condition_fanout_filter=on,derived_merge=on,use_invisible_indexes=off,skip_scan=on,hash_join=on,subquery_to_derived=off,prefer_ordering_index=on,hypergraph_optimizer=off,derived_condition_pushdown=on,hash_set_operations=on",
+   "mysql 9.7": "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,duplicateweedout=on,subquery_materialization_cost_based=on,use_index_extensions=on,condition_fanout_filter=on,derived_merge=on,use_invisible_indexes=off,skip_scan=on,hash_join=on,subquery_to_derived=off,prefer_ordering_index=on,hypergraph_optimizer=off,derived_condition_pushdown=on,hash_set_operations=on",
+   "percona 8.0": "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,duplicateweedout=on,subquery_materialization_cost_based=on,use_index_extensions=on,condition_fanout_filter=on,derived_merge=on,use_invisible_indexes=off,skip_scan=on,hash_join=on,subquery_to_derived=off,prefer_ordering_index=on,hypergraph_optimizer=off,derived_condition_pushdown=on,favor_range_scan=off",
+   "percona 8.4": "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,duplicateweedout=on,subquery_materialization_cost_based=on,use_index_extensions=on,condition_fanout_filter=on,derived_merge=on,use_invisible_indexes=off,skip_scan=on,hash_join=on,subquery_to_derived=off,prefer_ordering_index=on,hypergraph_optimizer=off,derived_condition_pushdown=on,hash_set_operations=on,favor_range_scan=off",
+   "percona 9.7": "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,duplicateweedout=on,subquery_materialization_cost_based=on,use_index_extensions=on,condition_fanout_filter=on,derived_merge=on,use_invisible_indexes=off,skip_scan=on,hash_join=on,subquery_to_derived=off,prefer_ordering_index=on,hypergraph_optimizer=off,derived_condition_pushdown=on,hash_set_operations=on,favor_range_scan=off",
+   "pxc 8.4": "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,duplicateweedout=on,subquery_materialization_cost_based=on,use_index_extensions=on,condition_fanout_filter=on,derived_merge=on,use_invisible_indexes=off,skip_scan=on,hash_join=on,subquery_to_derived=off,prefer_ordering_index=on,hypergraph_optimizer=off,derived_condition_pushdown=on,hash_set_operations=on,favor_range_scan=off"
+  }
+ },
+ "optimizer_switch:batched_key_access": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag batched_key_access (server default off).",
+  "impact": "medium",
+  "when": "joins doing many random index lookups into data larger than memory (needs mrr=on and a join buffer)",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:block_nested_loop": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag block_nested_loop (server default on).",
+  "impact": "low",
+  "when": "joins without usable indexes (8.0.20+: controls hash join use)",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:condition_fanout_filter": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag condition_fanout_filter (server default on).",
+  "impact": "medium",
+  "when": "join order estimates on filtered columns (JOB-like multi-joins)",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:derived_condition_pushdown": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag derived_condition_pushdown (server default on).",
+  "impact": "medium",
+  "when": "conditions pushed into derived tables",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:derived_merge": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag derived_merge (server default on).",
+  "impact": "medium",
+  "when": "derived tables / views merged into the outer query",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:duplicateweedout": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag duplicateweedout (server default on).",
+  "impact": "low",
+  "when": "semijoin strategy choice",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:engine_condition_pushdown": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag engine_condition_pushdown (server default on).",
+  "impact": "low",
+  "when": "NDB only",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:favor_range_scan": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag favor_range_scan (server default off).",
+  "impact": "low",
+  "when": "range scans vs ref access choice (9.x)",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:firstmatch": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag firstmatch (server default on).",
+  "impact": "low",
+  "when": "semijoin strategy choice",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:hash_join": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag hash_join (server default on).",
+  "impact": "low",
+  "when": "equi-joins without usable indexes (no-op on 8.0.20+, see block_nested_loop)",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:hash_set_operations": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag hash_set_operations (server default on).",
+  "impact": "low",
+  "when": "UNION / INTERSECT / EXCEPT with large inputs",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:hypergraph_optimizer": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag hypergraph_optimizer (server default off).",
+  "impact": "high",
+  "when": "complex multi-way joins (experimental optimizer in 8.0-9.x builds that include it)",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:index_condition_pushdown": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag index_condition_pushdown (server default on).",
+  "impact": "medium",
+  "when": "range scans with extra conditions on index columns (fewer row reads)",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:index_merge": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag index_merge (server default on).",
+  "impact": "low",
+  "when": "OR / AND conditions over several indexed columns",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:index_merge_intersection": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag index_merge_intersection (server default on).",
+  "impact": "medium",
+  "when": "AND over several indexes; known to pick slow intersections on correlated columns",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:index_merge_sort_union": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag index_merge_sort_union (server default on).",
+  "impact": "low",
+  "when": "OR over ranges on several indexes",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:index_merge_union": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag index_merge_union (server default on).",
+  "impact": "low",
+  "when": "OR over several indexed columns",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:loosescan": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag loosescan (server default on).",
+  "impact": "low",
+  "when": "semijoin strategy choice",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:materialization": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag materialization (server default on).",
+  "impact": "medium",
+  "when": "IN-subqueries (semijoin materialization)",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:mrr": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag mrr (server default on).",
+  "impact": "medium",
+  "when": "range / ref reads of secondary indexes on disk-bound data (reads in primary-key order)",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:mrr_cost_based": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag mrr_cost_based (server default on).",
+  "impact": "low",
+  "when": "forcing MRR / BKA on regardless of cost",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:prefer_ordering_index": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag prefer_ordering_index (server default on).",
+  "impact": "low",
+  "when": "ORDER BY ... LIMIT choosing an ordering index over a better filter",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:semijoin": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag semijoin (server default on).",
+  "impact": "medium",
+  "when": "IN / EXISTS subqueries",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:skip_scan": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag skip_scan (server default on).",
+  "impact": "low",
+  "when": "range on the second column of a composite index",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:subquery_materialization_cost_based": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag subquery_materialization_cost_based (server default on).",
+  "impact": "low",
+  "when": "choice between materialization and EXISTS rewrite",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:subquery_to_derived": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag subquery_to_derived (server default off).",
+  "impact": "high",
+  "when": "analytics with correlated scalar subqueries in SELECT / WHERE (TPC-H +70%)",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:use_index_extensions": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag use_index_extensions (server default on).",
+  "impact": "low",
+  "when": "secondary indexes used with their implicit primary-key columns",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_switch:use_invisible_indexes": {
+  "category": "optimizer",
+  "description": "optimizer_switch flag use_invisible_indexes (server default off).",
+  "impact": "low",
+  "when": "testing invisible indexes",
+  "precondition": "statements whose plans use this strategy",
+  "mechanism_tags": [
+   "cpu-exec",
+   "io-read"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "optimizer_use_condition_selectivity": {
+  "category": "optimizer",
+  "description": "Which statistics MariaDB uses for selectivity.",
+  "impact": "medium",
+  "when": "MariaDB multi-joins with skewed data",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "4"
+ },
+ "range_optimizer_max_mem_size": {
+  "category": "optimizer",
+  "description": "Memory cap of the range optimizer.",
+  "impact": "low",
+  "when": "very long IN lists falling back to full scans",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "8388608"
+ },
+ "use_stat_tables": {
+  "category": "optimizer",
+  "description": "Use of engine-independent statistics (MariaDB).",
+  "impact": "low",
+  "when": "MariaDB plans using engine-independent statistics",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "PREFERABLY_FOR_QUERIES"
+ }
+}

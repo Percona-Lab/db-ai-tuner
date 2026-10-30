@@ -1,0 +1,668 @@
+[
+ {
+  "variable": "binlog_transaction_dependency_history_size",
+  "relevant_to": "MySQL/Percona 8.0+ with log_bin=ON and row-based binlog (WRITESET dependency tracking; the only mode in 8.4+). Cannot matter with binlog off, without replicas, or on MariaDB (not present).",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "binlog last_committed/sequence_number spread (mysqlbinlog on a sample of the run's binlog): mean (sequence_number - last_committed)",
+    "points_to": "raise",
+    "condition": "the window collapses periodically (last_committed jumps to the latest sequence_number) at a rate matching rows written / history_size",
+    "why": "when the row-hash map fills it is cleared, so later transactions lose dependency info and replicas can apply fewer of them in parallel"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "replica: replication_applier_status_by_worker (APPLYING_TRANSACTION timing), replica lag",
+    "points_to": "raise",
+    "condition": "replica with replica_parallel_workers>1 lags and workers are mostly idle while the coordinator waits",
+    "why": "narrow dependency windows serialize the replica applier"
+   },
+   {
+    "source": "os",
+    "metric": "mysqld CPU profile: share in writeset hashing (Writeset/Commit_order trackers, rpl_write_set_handler)",
+    "points_to": "lower",
+    "condition": "a measurable CPU share at commit on the primary",
+    "why": "hashing and map maintenance are paid by every committing transaction"
+   }
+  ],
+  "impact_bound": "On the primary: at most the CPU share of writeset hashing at commit (normally <1-2%). The real effect is replica apply parallelism, which a single-server benchmark does not measure. Typical: none for primary throughput, low-medium for replica lag.",
+  "experiment": {
+   "change": "raise 25000 -> 1000000 (or lower if CPU share is visible)",
+   "predict": "mean dependency window in the binlog grows; primary NOPM/CPU per trx unchanged within noise",
+   "confirm_or_refute": "window grows with no primary cost -> keep; no window change -> history was not the limit",
+   "cost_or_risk": "small extra memory (row hashes) and hashing CPU on the primary"
+  },
+  "collected": "no - needs binlog dependency-window sampling (mysqlbinlog last_committed/sequence_number) and a replica to show the effect",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html#sysvar_binlog_transaction_dependency_history_size",
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-replica.html#sysvar_replica_parallel_type"
+  ]
+ },
+ {
+  "variable": "innodb_checksum_algorithm",
+  "relevant_to": "all flavors. MySQL/Percona: crc32 (hardware-accelerated) vs legacy innodb/none; MariaDB: full_crc32 (default) vs crc32, and full_crc32 applies only to newly created files. Cannot matter for throughput when crc32/full_crc32 is already set on a CPU with CRC32 instructions.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "perf CPU profile: share in page checksum functions (buf_calc_page_crc32 / ut_crc32* / buf_page_is_corrupted)",
+    "points_to": "a specific value",
+    "condition": "a material CPU share in checksum code while a non-crc32 algorithm is set",
+    "why": "each page read verifies and each page write computes a checksum; crc32 is hardware accelerated, legacy innodb is byte-wise"
+   },
+   {
+    "source": "derived",
+    "metric": "(Innodb_buffer_pool_reads + Innodb_buffer_pool_pages_flushed) per transaction",
+    "points_to": "no change needed",
+    "condition": "with crc32 even high page I/O rates rarely make checksums visible in the profile",
+    "why": "checksum cost scales with pages read and written, not with logical reads"
+   }
+  ],
+  "impact_bound": "At most the CPU share of checksum functions in the profile (typically <1% with crc32). Setting 'none' removes corruption detection - never worth it. Typical: none.",
+  "experiment": {
+   "change": "only if not crc32/full_crc32: set crc32 (MySQL) / full_crc32 (MariaDB new files)",
+   "predict": "checksum share in CPU profile drops; CPU ms per trx drops by about that share",
+   "confirm_or_refute": "no profile change -> no gain",
+   "cost_or_risk": "durability: none/strict_* values and mixing algorithms affect corruption detection and downgrade compatibility"
+  },
+  "collected": "yes (CPU profile); checksum symbols may need their own category",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_checksum_algorithm",
+   "https://mariadb.com/kb/en/innodb-system-variables/#innodb_checksum_algorithm"
+  ]
+ },
+ {
+  "variable": "innodb_ddl_buffer_size",
+  "relevant_to": "MySQL/Percona 8.0.27+ only; matters only during online index builds / table rebuilds (ALTER TABLE, CREATE INDEX). Cannot matter for a DML-only benchmark.",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "events_stages_*: stage/innodb/alter table (read PK and internal sort), (merge sort), (insert) - time share",
+    "points_to": "raise",
+    "condition": "DDL is part of the measured workload and merge-sort stage time is a material share",
+    "why": "the buffer (split across innodb_ddl_threads) bounds the in-memory sort run; smaller buffers mean more merge passes over temp files"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name for wait/io/file/innodb/innodb_temp_file during the DDL",
+    "points_to": "raise",
+    "condition": "large temp-file I/O during the index build",
+    "why": "external merge sort writes and rereads runs from temp files"
+   }
+  ],
+  "impact_bound": "At most the merge-sort stage time of DDL in the run; zero if no DDL runs. Typical: none for OLTP benchmarks, low-medium for ALTER-heavy maintenance windows.",
+  "experiment": {
+   "change": "raise 1M -> 64M-256M for the DDL session",
+   "predict": "merge sort stage time and temp file I/O drop; total ALTER time drops",
+   "confirm_or_refute": "ALTER time unchanged -> scan/insert bound, not sort",
+   "cost_or_risk": "memory per DDL (session variable)"
+  },
+  "collected": "no - needs events_stages and temp-file I/O during DDL (only relevant if the workload runs DDL)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/online-ddl-parallel-thread-configuration.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_ddl_buffer_size"
+  ]
+ },
+ {
+  "variable": "innodb_ddl_threads",
+  "relevant_to": "MySQL/Percona 8.0.27+; only sort/load phases of online secondary-index builds (not full-text, spatial or virtual-column indexes). Cannot matter without DDL in the workload.",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "events_stages_*: stage/innodb/alter table (merge sort) and (insert) duration; per-thread CPU during the ALTER",
+    "points_to": "raise",
+    "condition": "DDL is measured, sort/insert stages dominate and CPUs are idle",
+    "why": "sort and load run on innodb_ddl_threads threads; extra idle CPUs can be used"
+   },
+   {
+    "source": "os",
+    "metric": "CPU utilization and disk util during the ALTER",
+    "points_to": "lower",
+    "condition": "DDL competes with foreground traffic (foreground latency rises during ALTER)",
+    "why": "more DDL threads take CPU and I/O from user queries"
+   }
+  ],
+  "impact_bound": "At most the sort+load stage time times (1 - 1/speedup), bounded by idle CPUs and disk headroom; zero without DDL. Typical: none for OLTP benchmarks.",
+  "experiment": {
+   "change": "raise 4 -> number of idle cores (with innodb_ddl_buffer_size raised proportionally)",
+   "predict": "ALTER wall time drops; foreground p99 during ALTER may rise",
+   "confirm_or_refute": "no ALTER speedup -> scan or I/O bound",
+   "cost_or_risk": "CPU/I/O contention with foreground; per-thread buffer shrinks unless the buffer is raised"
+  },
+  "collected": "no - DDL stage timings not collected",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/online-ddl-parallel-thread-configuration.html"
+  ]
+ },
+ {
+  "variable": "innodb_fill_factor",
+  "relevant_to": "all flavors; only pages written by sorted (bulk) index builds - ALTER/OPTIMIZE/CREATE INDEX. Value 100 still leaves 1/16 free in clustered-index leaf pages. Cannot matter if no rebuild precedes the workload.",
+  "signals": [
+   {
+    "source": "innodb_metrics",
+    "metric": "index_page_splits (and index_page_reorg_attempts) rate right after a rebuild; disabled by default (SET GLOBAL innodb_monitor_enable)",
+    "points_to": "lower",
+    "condition": "a burst of page splits right after an index rebuild that decays over time",
+    "why": "fully packed pages split on the first random inserts/updates that grow rows"
+   },
+   {
+    "source": "derived",
+    "metric": "Innodb_pages_written / rows changed in the first minutes after rebuild vs steady state",
+    "points_to": "lower",
+    "condition": "writes per change much higher just after rebuild",
+    "why": "each split dirties and writes extra pages"
+   }
+  ],
+  "impact_bound": "At most the extra page writes/latching caused by splits in the post-rebuild period; transient. Lower fill factor also costs space and cache hit rate for read-only data. Typical: low.",
+  "experiment": {
+   "change": "set 90 (or 80) before the rebuild of tables that are later updated randomly",
+   "predict": "index_page_splits and pages written per trx drop in the post-rebuild phase",
+   "confirm_or_refute": "no split reduction -> inserts are append-only and 100 is right",
+   "cost_or_risk": "larger table, lower buffer pool coverage for read-mostly data"
+  },
+  "collected": "no - enable innodb_metrics index_page_splits",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_fill_factor",
+   "https://dev.mysql.com/doc/refman/8.4/en/sorted-index-builds.html"
+  ]
+ },
+ {
+  "variable": "innodb_lock_wait_timeout",
+  "relevant_to": "all flavors; changes when a waiting transaction errors out (ER_LOCK_WAIT_TIMEOUT), not how fast work is done. Cannot matter when lock waits are far shorter than the timeout.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Innodb_row_lock_time_max (ms) vs innodb_lock_wait_timeout*1000; Innodb_row_lock_current_waits",
+    "points_to": "no change needed",
+    "condition": "waits approach the timeout only during pile-ups",
+    "why": "the timeout only caps wait duration"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "events_errors_summary_global_by_error WHERE ERROR_NAME='ER_LOCK_WAIT_TIMEOUT' (MySQL/Percona 8.0+; MariaDB: count errors client-side)",
+    "points_to": "a specific value",
+    "condition": "timeouts occur and cause retries that redo work",
+    "why": "timed-out transactions are rolled back and retried, wasting work while still holding prior locks until rollback"
+   }
+  ],
+  "impact_bound": "no measurable throughput signal; it trades errors for wait time. Bound = work wasted by timed-out-and-retried transactions. Typical: none.",
+  "experiment": {
+   "change": "not a tuning knob; leave as set by the application",
+   "predict": "-",
+   "confirm_or_refute": "-",
+   "cost_or_risk": "semantics: shorter timeouts turn waits into application errors"
+  },
+  "collected": "partly - row lock time collected; error counts by name not collected",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_lock_wait_timeout",
+   "https://dev.mysql.com/doc/refman/8.4/en/performance-schema-error-summary-tables.html"
+  ]
+ },
+ {
+  "variable": "innodb_max_purge_lag",
+  "relevant_to": "all flavors with write workloads; only acts when history list length exceeds the value (0 = never throttles).",
+  "signals": [
+   {
+    "source": "innodb_metrics",
+    "metric": "trx_rseg_history_len (MySQL/Percona, enabled by default); MariaDB: status Innodb_history_list_length",
+    "points_to": "enable",
+    "condition": "history list grows steadily through the run instead of plateauing",
+    "why": "purge cannot keep up; old row versions accumulate"
+   },
+   {
+    "source": "derived",
+    "metric": "Innodb_buffer_pool_read_requests per row read (or per statement digest) rising as history grows, with unchanged plans",
+    "points_to": "enable",
+    "condition": "logical reads per row rise with history length",
+    "why": "consistent reads walk longer undo version chains and secondary-index lookups hit delete-marked records"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "purge_dml_delay_usec (disabled by default)",
+    "points_to": "lower",
+    "condition": "non-zero and throughput dropped while history was within acceptable bounds",
+    "why": "the delay is applied to every INSERT/UPDATE/DELETE: (purge_lag/innodb_max_purge_lag - 0.9995)*10000 us"
+   }
+  ],
+  "impact_bound": "Gain is at most the extra read work attributable to version chains (growth in read_requests per row over the run); it is paid for by writer delay up to innodb_max_purge_lag_delay per DML. Typical: low (stability of long runs, not peak throughput).",
+  "experiment": {
+   "change": "set to ~the history length reached in a healthy steady state (e.g. 1M) with innodb_max_purge_lag_delay ~ 300000",
+   "predict": "history list plateaus; read_requests per row stay flat over time; write rate drops slightly",
+   "confirm_or_refute": "flat reads and unchanged total throughput -> no benefit; throughput lower -> throttling costs more than it saves",
+   "cost_or_risk": "throttles DML, can lower peak throughput"
+  },
+  "collected": "yes for history length; partly - enable purge_dml_delay_usec and track read_requests per row over time",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-purge-configuration.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_max_purge_lag",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-information-schema-metrics-table.html"
+  ]
+ },
+ {
+  "variable": "innodb_max_purge_lag_delay",
+  "relevant_to": "all flavors; only when innodb_max_purge_lag > 0 and exceeded. Cannot matter otherwise.",
+  "signals": [
+   {
+    "source": "innodb_metrics",
+    "metric": "purge_dml_delay_usec (disabled by default)",
+    "points_to": "lower",
+    "condition": "delay sits at the cap while history keeps growing",
+    "why": "the cap is binding but not stopping growth: the delay only costs throughput"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "trx_rseg_history_len / Innodb_history_list_length",
+    "points_to": "raise",
+    "condition": "history still grows unbounded with the cap applied",
+    "why": "a higher cap lets the throttle actually slow writers to purge speed"
+   }
+  ],
+  "impact_bound": "Bounded by purge_dml_delay_usec x DML statements per second as a share of foreground time. Typical: none unless max_purge_lag is used.",
+  "experiment": {
+   "change": "set a cap (e.g. 100000-300000 us) together with innodb_max_purge_lag",
+   "predict": "history list stabilizes; DML latency rises by at most the observed delay",
+   "confirm_or_refute": "see innodb_max_purge_lag",
+   "cost_or_risk": "writer latency spikes"
+  },
+  "collected": "partly - purge_dml_delay_usec not collected",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-purge-configuration.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_max_purge_lag_delay"
+  ]
+ },
+ {
+  "variable": "innodb_page_size",
+  "relevant_to": "all flavors (4K-64K); set only at instance initialization - testing needs re-init and data reload.",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "bytes read per useful row: (Innodb_data_read / Innodb_data_reads) vs average row size of point-lookup tables; Innodb_buffer_pool_reads per row read",
+    "points_to": "lower",
+    "condition": "I/O-bound point lookups where the hot rows are scattered (one useful row per 16K page)",
+    "why": "smaller pages cache only the hot rows' neighborhoods, so the same memory holds more hot rows and each miss transfers less"
+   },
+   {
+    "source": "ebpf",
+    "metric": "off-CPU share waiting on data page reads of connection threads",
+    "points_to": "lower",
+    "condition": "a material share AND random point access pattern",
+    "why": "page size sets read amplification for random lookups"
+   },
+   {
+    "source": "derived",
+    "metric": "range/scan heavy digests (rows examined per statement high), compression in use",
+    "points_to": "raise",
+    "condition": "scan-bound or compressed workload",
+    "why": "larger pages mean fewer page reads and better compression ratio per I/O"
+   }
+  ],
+  "impact_bound": "At most the data-page-read wait share times the fraction of those misses a denser cache (hot-row density x 16K/new size) would avoid; disk throughput gains if bandwidth-bound. Typical: medium for I/O-bound random point lookups on fast NVMe, none when in-memory.",
+  "experiment": {
+   "change": "re-initialize with 8K (or 4K) and reload the same data",
+   "predict": "Innodb_buffer_pool_reads per trx and data-page-read wait share drop; disk KiB per trx drops",
+   "confirm_or_refute": "no drop -> access is not scattered or data fits in memory",
+   "cost_or_risk": "full reinit + reload; larger B-tree height, more page latches/splits, max row size shrinks"
+  },
+  "collected": "partly - row-size / hot-set density per table not collected (information_schema.TABLES AVG_ROW_LENGTH, rows read vs pages read per table from performance_schema/innodb buffer pool stats)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_page_size",
+   "https://mariadb.com/kb/en/innodb-system-variables/#innodb_page_size"
+  ]
+ },
+ {
+  "variable": "innodb_purge_batch_size",
+  "relevant_to": "all flavors with UPDATE/DELETE load (inserts create little purge work).",
+  "signals": [
+   {
+    "source": "innodb_metrics",
+    "metric": "trx_rseg_history_len (MySQL) / Innodb_history_list_length (MariaDB) slope",
+    "points_to": "raise",
+    "condition": "history grows steadily while purge threads are not CPU-saturated and no long transaction holds an old read view",
+    "why": "larger batches let purge coordinator/workers process more undo per round"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "purge_undo_log_pages, purge_invoked rate (disabled by default)",
+    "points_to": "raise",
+    "condition": "many invocations with small work each while history grows",
+    "why": "per-batch overhead dominates"
+   },
+   {
+    "source": "os",
+    "metric": "CPU / latch share of purge threads and buffer pool reads by purge",
+    "points_to": "lower",
+    "condition": "purge bursts compete with foreground (latch/off-CPU share rising at purge peaks)",
+    "why": "large batches touch many pages at once and contend with user threads"
+   }
+  ],
+  "impact_bound": "Indirect: at most the read amplification caused by accumulated history (see innodb_max_purge_lag) or the foreground time lost to purge bursts. Typical: low.",
+  "experiment": {
+   "change": "raise (e.g. 300 -> 1000) when history grows; lower if purge bursts show",
+   "predict": "history slope flattens (raise) or latch/off-CPU spikes shrink (lower) without throughput loss",
+   "confirm_or_refute": "history keeps growing -> blocked by a read view or purge threads, not batch size",
+   "cost_or_risk": "more purge CPU and buffer pool churn"
+  },
+  "collected": "partly - history length collected; purge_* innodb_metrics and per-thread purge CPU not",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-purge-configuration.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_purge_batch_size",
+   "https://mariadb.com/kb/en/innodb-purge/"
+  ]
+ },
+ {
+  "variable": "innodb_snapshot_isolation",
+  "relevant_to": "mariadb only (10.6.18+/10.11.8+/11.4.2+; default ON from 11.6). Changes semantics of REPEATABLE READ; not a performance knob.",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "rate of ER_CHECKREAD ('Record has changed since last read') errors seen by the client",
+    "points_to": "no change needed",
+    "condition": "non-zero after enabling: transactions abort instead of silently updating newer versions",
+    "why": "with ON, a locking read/write of a row changed after the snapshot fails instead of proceeding"
+   }
+  ],
+  "impact_bound": "no measurable performance signal; any throughput change is from aborted/retried transactions. Typical: none.",
+  "experiment": {
+   "change": "do not change for tuning; keep the application's expectation",
+   "predict": "-",
+   "confirm_or_refute": "-",
+   "cost_or_risk": "semantics: application errors"
+  },
+  "collected": "no - client error counts by code",
+  "sources": [
+   "https://mariadb.com/kb/en/innodb-system-variables/#innodb_snapshot_isolation"
+  ]
+ },
+ {
+  "variable": "innodb_sort_buffer_size",
+  "relevant_to": "all flavors, only for index builds and online ALTER (also sizes increments of the online ALTER row log); MySQL 8.0.27+ parallel index builds are governed by innodb_ddl_buffer_size. Static (restart). Cannot matter without DDL.",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "events_stages: stage/innodb/alter table (merge sort) time and innodb_temp_file I/O during DDL",
+    "points_to": "raise",
+    "condition": "DDL is part of the workload and merge sort/temp I/O is a material share",
+    "why": "a bigger sort buffer means fewer merge passes"
+   }
+  ],
+  "impact_bound": "At most the merge-sort time of DDL in the run; zero without DDL. Typical: none for OLTP.",
+  "experiment": {
+   "change": "raise 1M -> 64M (restart)",
+   "predict": "ALTER time and temp file I/O drop",
+   "confirm_or_refute": "no change -> scan/insert bound",
+   "cost_or_risk": "memory per sort during DDL; restart required"
+  },
+  "collected": "no - DDL stage timings",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_sort_buffer_size",
+   "https://mariadb.com/kb/en/innodb-system-variables/#innodb_sort_buffer_size"
+  ]
+ },
+ {
+  "variable": "innodb_undo_log_truncate",
+  "relevant_to": "all flavors; MySQL needs >=2 undo tablespaces (default), MariaDB needs innodb_undo_tablespaces>=2. Matters only when undo grows beyond innodb_max_undo_log_size (long transactions / heavy updates).",
+  "signals": [
+   {
+    "source": "information_schema",
+    "metric": "INNODB_TABLESPACES / FILES size of undo tablespaces (MySQL), undo file sizes (MariaDB) over the run",
+    "points_to": "enable",
+    "condition": "undo files grow beyond innodb_max_undo_log_size and stay large",
+    "why": "space reclaim only happens when truncation is on"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "undo_truncate_count, undo_truncate_usec (disabled by default); MariaDB status Innodb_undo_truncations",
+    "points_to": "disable",
+    "condition": "truncations coincide with throughput dips / stalls",
+    "why": "truncation marks the tablespace inactive, waits for purge and rebuilds the file; older releases scanned the buffer pool"
+   }
+  ],
+  "impact_bound": "Disk space mostly; performance cost bounded by throughput lost in windows around undo_truncate events (undo_truncate_usec x frequency). Typical: low.",
+  "experiment": {
+   "change": "toggle and run long enough for undo to exceed innodb_max_undo_log_size",
+   "predict": "with ON: undo file size bounded; throughput dips only at truncation events",
+   "confirm_or_refute": "no dips -> keep ON; dips aligned with truncations -> raise innodb_max_undo_log_size or disable",
+   "cost_or_risk": "undo disk growth when OFF"
+  },
+  "collected": "no - undo tablespace sizes and undo_truncate_* metrics",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-undo-tablespaces.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-information-schema-metrics-table.html",
+   "https://mariadb.com/kb/en/innodb-undo-log/"
+  ]
+ },
+ {
+  "variable": "os:transparent_hugepage",
+  "relevant_to": "os (Linux); /sys/kernel/mm/transparent_hugepage/enabled and defrag. Cannot matter with explicit large pages (large_pages=ON) for the buffer pool.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/proc/vmstat compact_stall, compact_fail rates; PSI /proc/pressure/memory some",
+    "points_to": "disable",
+    "condition": "compaction stalls occur during the run (THP=always or defrag=always)",
+    "why": "direct compaction to build huge pages stalls the faulting thread"
+   },
+   {
+    "source": "os",
+    "metric": "perf kernel share in compaction / clear_huge_page / khugepaged; mysqld RSS vs configured memory",
+    "points_to": "disable",
+    "condition": "material kernel CPU in THP paths or RSS bloat beyond buffer pool + buffers",
+    "why": "huge-page faults zero 2M at a time and allocator holes keep memory resident"
+   },
+   {
+    "source": "os",
+    "metric": "perf dTLB-load-misses / page-walk cycles share (perf stat)",
+    "points_to": "enable",
+    "condition": "high TLB miss cost with a large buffer pool and THP=never",
+    "why": "huge pages reduce TLB misses on random buffer pool access"
+   },
+   {
+    "source": "os",
+    "metric": "/proc/vmstat thp_fault_alloc, thp_fault_fallback, thp_collapse_alloc, thp_split_page",
+    "points_to": "no change needed",
+    "condition": "near zero activity -> the setting is not exercised",
+    "why": "shows whether THP is actually used"
+   }
+  ],
+  "impact_bound": "Disable: at most the stall time from compaction + kernel CPU in THP paths. Enable/madvise: at most the page-walk cycle share of CPU. Typical: low; high only on memory-fragmented hosts.",
+  "experiment": {
+   "change": "switch enabled always <-> madvise/never (and defrag to defer+madvise)",
+   "predict": "compact_stall and kernel THP CPU go to ~0 (disable) or dTLB miss cycles drop (enable); CPU ms per trx moves accordingly",
+   "confirm_or_refute": "no counter movement -> not exercised",
+   "cost_or_risk": "RSS changes; benefit of huge pages lost when disabled"
+  },
+  "collected": "partly - add /proc/vmstat thp_* and compact_* deltas and perf dTLB counters",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/mm/transhuge.html",
+   "https://docs.kernel.org/accounting/psi.html"
+  ]
+ },
+ {
+  "variable": "ps:profile",
+  "relevant_to": "all flavors with performance_schema=ON (pseudo-variable controlling consumers/instruments).",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "perf CPU profile category performance_schema (pfs_* functions) share of mysqld CPU",
+    "points_to": "enable",
+    "condition": "a material share (several %) of CPU in PFS code under CPU-bound load",
+    "why": "each instrumented event costs timer reads and table updates; disabling history/memory instruments removes that work"
+   },
+   {
+    "source": "os",
+    "metric": "CPU iowait/idle; run-queue wait",
+    "points_to": "no change needed",
+    "condition": "the server is not CPU-bound",
+    "why": "PFS overhead costs CPU, which matters only when CPU limits throughput"
+   }
+  ],
+  "impact_bound": "At most the PFS share of the CPU profile under CPU-bound load (minus what lite still keeps). Typical: low-medium (1-10%, higher with history/stage/wait instruments on).",
+  "experiment": {
+   "change": "switch full -> lite",
+   "predict": "PFS profile share and CPU ms per trx drop; NOPM rises if CPU-bound",
+   "confirm_or_refute": "no change in PFS share -> overhead was in kept instruments",
+   "cost_or_risk": "loses statement history and memory accounting"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/performance-schema-startup-configuration.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/performance-schema-consumer-filtering.html"
+  ]
+ },
+ {
+  "variable": "query_cache_size",
+  "relevant_to": "mariadb only (removed in MySQL/Percona 8.0); only when query_cache_type is ON/DEMAND.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Qcache_lowmem_prunes rate; Qcache_free_memory",
+    "points_to": "raise",
+    "condition": "prunes per second material while hits are high",
+    "why": "results are evicted for lack of memory and recomputed"
+   },
+   {
+    "source": "status",
+    "metric": "Qcache_free_blocks vs Qcache_total_blocks",
+    "points_to": "lower",
+    "condition": "fragmentation high / memory unused",
+    "why": "a larger cache costs more invalidation and pruning work under the single cache mutex"
+   }
+  ],
+  "impact_bound": "At most the time of statements whose cached results were pruned (Qcache_lowmem_prunes x their latency). Typical: low; size beyond tens of MB usually adds lock time.",
+  "experiment": {
+   "change": "raise 1M -> 64M with query_cache_type=ON",
+   "predict": "Qcache_lowmem_prunes drops, Qcache_hits rises, statement latency drops",
+   "confirm_or_refute": "hits flat -> invalidation not memory limits the cache",
+   "cost_or_risk": "memory; longer invalidation scans under the global mutex"
+  },
+  "collected": "yes (all status counters)",
+  "sources": [
+   "https://mariadb.com/kb/en/query-cache/",
+   "https://mariadb.com/kb/en/server-system-variables/#query_cache_size"
+  ]
+ },
+ {
+  "variable": "query_cache_type",
+  "relevant_to": "mariadb only; useful only for read-mostly workloads repeating identical SELECTs on rarely written tables.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Qcache_hits / (Qcache_hits + Com_select) (hits do not increment Com_select)",
+    "points_to": "enable",
+    "condition": "(when testing ON) a large hit share and SELECT latency share is material",
+    "why": "cached results skip parse, optimize and execution"
+   },
+   {
+    "source": "status",
+    "metric": "Qcache_inserts vs Qcache_hits; Qcache_not_cached",
+    "points_to": "disable",
+    "condition": "inserts comparable to hits (results invalidated before reuse)",
+    "why": "every write to a table invalidates its cached results, so caching is pure overhead"
+   },
+   {
+    "source": "os",
+    "metric": "perf/latch share in Query_cache lock code; threads in state 'Waiting for query cache lock'",
+    "points_to": "disable",
+    "condition": "visible latch/off-CPU time on the query cache mutex",
+    "why": "all lookups, inserts and invalidations serialize on one mutex"
+   },
+   {
+    "source": "derived",
+    "metric": "digest repetition: share of SELECT executions from a few identical digests with identical literals; table write rate",
+    "points_to": "enable",
+    "condition": "a few identical SELECTs dominate on tables rarely written",
+    "why": "only byte-identical queries hit"
+   }
+  ],
+  "impact_bound": "Enable: at most the share of time spent executing repeated identical SELECTs on unchanged tables. Disable: at most the query-cache latch/CPU share. Typical: none-negative for OLTP with writes; medium-high for read-only repeated queries.",
+  "experiment": {
+   "change": "ON with query_cache_size 64M on read-mostly workloads",
+   "predict": "Qcache_hits/(hits+Com_select) high, CPU ms per trx and latency drop",
+   "confirm_or_refute": "low hit share or rising latch time -> OFF",
+   "cost_or_risk": "global mutex contention at high concurrency; stale-read semantics unaffected"
+  },
+  "collected": "partly - status counters yes; query cache lock waits not separated in eBPF/perf categories",
+  "sources": [
+   "https://mariadb.com/kb/en/query-cache/",
+   "https://mariadb.com/kb/en/server-system-variables/#query_cache_type"
+  ]
+ },
+ {
+  "variable": "rg:innodb_bg_cpus",
+  "relevant_to": "MySQL/Percona 8.0+ on Linux (resource groups; not available with the thread pool plugin, not on MariaDB). CPU affinity works without CAP_SYS_NICE; priorities need it.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "per-thread run-queue wait (schedstat) of connection threads, correlated in time with page cleaner/purge/log writer CPU bursts",
+    "points_to": "enable",
+    "condition": "connection threads wait for CPU while background threads burn CPU on the same cores",
+    "why": "separating background threads stops flush bursts from stealing query CPUs"
+   },
+   {
+    "source": "os",
+    "metric": "CPU per InnoDB background thread (performance_schema.threads THREAD_OS_ID -> /proc/<tid>/stat)",
+    "points_to": "a specific value",
+    "condition": "background threads use a material, bursty share of CPU",
+    "why": "sizes how many CPUs the background group needs"
+   },
+   {
+    "source": "status",
+    "metric": "Innodb_buffer_pool_wait_free, checkpoint age, Innodb_log_waits after pinning",
+    "points_to": "disable",
+    "condition": "they rise after confining background threads",
+    "why": "too few CPUs for background threads slows flushing and redo writing"
+   }
+  ],
+  "impact_bound": "At most the run-queue wait share of connection threads that coincides with background-thread CPU bursts; costs the CPUs taken away from foreground. Typical: low unless CPU-saturated with heavy flushing.",
+  "experiment": {
+   "change": "CREATE RESOURCE GROUP bg TYPE=SYSTEM VCPU=<n CPUs>; SET RESOURCE GROUP bg FOR <page_cleaner/purge/log thread ids>",
+   "predict": "connection-thread run-queue wait and p99 latency drop; wait_free/checkpoint age unchanged",
+   "confirm_or_refute": "flushing metrics worsen -> background starved; no change in run-queue wait -> not the cause",
+   "cost_or_risk": "fewer CPUs for queries; lost after restart unless re-applied"
+  },
+  "collected": "partly - per-thread run-queue wait collected; per-background-thread CPU mapping not",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/resource-groups.html",
+   "https://docs.kernel.org/scheduler/sched-stats.html"
+  ]
+ },
+ {
+  "variable": "transaction_isolation",
+  "relevant_to": "all flavors (MariaDB <11.1 name: tx_isolation). Changes semantics; only try when the application allows READ COMMITTED. With log_bin on, READ COMMITTED needs binlog_format=ROW.",
+  "signals": [
+   {
+    "source": "ebpf",
+    "metric": "off-CPU share of connection threads in row lock waits; status Innodb_row_lock_time / Innodb_row_lock_waits",
+    "points_to": "a specific value",
+    "condition": "a material share of foreground time is row lock waits",
+    "why": "under REPEATABLE READ locking reads and DML take next-key/gap locks; READ COMMITTED takes record locks only"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "data_locks LOCK_MODE containing 'GAP' (MySQL 8.0+) sampled during the run; deadlocks: innodb_metrics lock_deadlocks / MariaDB Innodb_deadlocks",
+    "points_to": "a specific value",
+    "condition": "gap/next-key locks are a large share of granted/waiting locks or deadlocks occur",
+    "why": "gap locks block inserts into ranges and create deadlock cycles"
+   },
+   {
+    "source": "innodb_metrics",
+    "metric": "trx_rseg_history_len growth with long multi-statement transactions",
+    "points_to": "a specific value",
+    "condition": "history grows due to long REPEATABLE READ snapshots",
+    "why": "READ COMMITTED creates a fresh read view per statement, letting purge advance"
+   }
+  ],
+  "impact_bound": "At most the row-lock-wait share of foreground time attributable to gap/next-key locks (plus deadlock retries). Typical: none for workloads with few conflicts; medium-high for insert-heavy range-locking workloads.",
+  "experiment": {
+   "change": "READ-COMMITTED (only if semantics allowed)",
+   "predict": "row lock wait time and deadlocks drop; NOPM up",
+   "confirm_or_refute": "no lock-time change -> conflicts are on the same records",
+   "cost_or_risk": "semantics: non-repeatable reads; replication requires ROW binlog"
+  },
+  "collected": "partly - row lock time/waits collected; data_locks gap-lock share and deadlock count not",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-locking.html",
+   "https://mariadb.com/kb/en/server-system-variables/#transaction_isolation"
+  ]
+ }
+]

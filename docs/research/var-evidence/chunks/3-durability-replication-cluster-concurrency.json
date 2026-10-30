@@ -1,0 +1,871 @@
+{
+ "binlog_commit_wait_count": {
+  "category": "durability",
+  "description": "Commits to wait for to form a group (MariaDB).",
+  "impact": "medium",
+  "when": "MariaDB binary log on, commit-bound at high concurrency",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "0"
+ },
+ "binlog_commit_wait_usec": {
+  "category": "durability",
+  "description": "Longest wait for a commit group (MariaDB).",
+  "impact": "medium",
+  "when": "as binlog_commit_wait_count",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "100000"
+ },
+ "binlog_format": {
+  "category": "replication",
+  "description": "Binary log format.",
+  "impact": "low",
+  "when": "statements touching many rows (ROW writes more)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "replication",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": {
+   "mariadb 10.11": "MIXED",
+   "mariadb 11.4": "MIXED",
+   "mariadb 11.8": "MIXED",
+   "mysql 8.0": "ROW",
+   "mysql 8.4": "ROW",
+   "mysql 9.7": "ROW",
+   "percona 8.0": "ROW",
+   "percona 8.4": "ROW",
+   "percona 9.7": "ROW",
+   "pxc 8.4": "ROW"
+  }
+ },
+ "binlog_group_commit_sync_delay": {
+  "category": "durability",
+  "description": "Microseconds to wait to grow binlog commit groups.",
+  "impact": "medium",
+  "when": "binary log on, commit-bound at high concurrency",
+  "precondition": "the workload writes (redo / flushing active)",
+  "mechanism_tags": [
+   "commit"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "0"
+ },
+ "binlog_group_commit_sync_no_delay_count": {
+  "category": "durability",
+  "description": "Stop waiting once this many transactions are queued.",
+  "impact": "low",
+  "when": "with binlog_group_commit_sync_delay",
+  "precondition": null,
+  "mechanism_tags": [
+   "commit"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "0"
+ },
+ "binlog_max_flush_queue_time": {
+  "category": "durability",
+  "description": "Deprecated.",
+  "impact": "low",
+  "when": "deprecated, no effect in current versions",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "0"
+ },
+ "binlog_order_commits": {
+  "category": "durability",
+  "description": "Commit in binlog order.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "ON"
+ },
+ "binlog_row_image": {
+  "category": "replication",
+  "description": "FULL logs all columns; MINIMAL only changed + PK.",
+  "impact": "low",
+  "when": "updates of wide rows with binary log on",
+  "precondition": "the workload writes (redo / flushing active)",
+  "mechanism_tags": [
+   "io"
+  ],
+  "safety": "replication",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "FULL"
+ },
+ "binlog_transaction_compression": {
+  "category": "replication",
+  "description": "Compress transaction payloads in the binary log.",
+  "impact": "low",
+  "when": "binary log I/O-bound (8.0.20+); costs CPU",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "OFF"
+ },
+ "disable_log_bin": {
+  "category": "replication",
+  "description": "Start without the binary log (option-file switch).",
+  "impact": "high",
+  "when": "binary log on and commit or CPU bound; measured +18%",
+  "precondition": null,
+  "mechanism_tags": [
+   "commit",
+   "cpu",
+   "io"
+  ],
+  "safety": "replication",
+  "restart": true,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "innodb_adaptive_hash_index": {
+  "category": "concurrency",
+  "description": "Hash index built over hot B-tree pages; helps point lookups, can contend.",
+  "impact": "medium",
+  "when": "point lookups on a hot set (helps) vs latch contention or analytics (JOB 88% slower with it ON)",
+  "precondition": null,
+  "mechanism_tags": [
+   "concurrency",
+   "cpu-btree",
+   "cpu-pressure",
+   "cpu-spin"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": {
+   "mariadb 10.11": "OFF",
+   "mariadb 11.4": "OFF",
+   "mariadb 11.8": "OFF",
+   "mysql 8.0": "ON",
+   "mysql 8.4": "OFF",
+   "mysql 9.7": "OFF",
+   "percona 8.0": "ON",
+   "percona 8.4": "OFF",
+   "percona 9.7": "OFF",
+   "pxc 8.4": "OFF"
+  }
+ },
+ "innodb_adaptive_hash_index_cells": {
+  "category": "concurrency",
+  "description": "Size of the adaptive hash index hash table (MariaDB).",
+  "impact": "low",
+  "when": "adaptive hash index on (MariaDB 11.x)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 11.8"
+  ],
+  "default": "34679"
+ },
+ "innodb_adaptive_hash_index_parts": {
+  "category": "concurrency",
+  "description": "AHI partitions.",
+  "impact": "medium",
+  "when": "adaptive hash index on with latch contention on its partitions",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": true,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "8"
+ },
+ "innodb_autoinc_lock_mode": {
+  "category": "concurrency",
+  "description": "AUTO_INCREMENT locking mode (0 traditional, 1 consecutive, 2 interleaved).",
+  "impact": "medium",
+  "when": "concurrent inserts into tables with AUTO_INCREMENT (bulk inserts)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "replication",
+  "restart": true,
+  "scope": "mysql",
+  "releases": "all",
+  "default": {
+   "mariadb 10.11": "1",
+   "mariadb 11.4": "1",
+   "mariadb 11.8": "1",
+   "mysql 8.0": "2",
+   "mysql 8.4": "2",
+   "mysql 9.7": "2",
+   "percona 8.0": "2",
+   "percona 8.4": "2",
+   "percona 9.7": "2",
+   "pxc 8.4": "2"
+  }
+ },
+ "innodb_commit_concurrency": {
+  "category": "concurrency",
+  "description": "Threads allowed to commit at once.",
+  "impact": "low",
+  "when": "commit-bound at high concurrency (0 = unlimited, startup only)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "0"
+ },
+ "innodb_concurrency_tickets": {
+  "category": "concurrency",
+  "description": "Rows a thread may handle before re-entering the concurrency queue.",
+  "impact": "low",
+  "when": "with innodb_thread_concurrency > 0",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "5000"
+ },
+ "innodb_deadlock_detect": {
+  "category": "concurrency",
+  "description": "Deadlock detection.",
+  "impact": "medium",
+  "when": "very high concurrency on the same rows (deadlock detection itself becomes the bottleneck)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "semantics",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "ON"
+ },
+ "innodb_doublewrite": {
+  "category": "durability",
+  "description": "Doublewrite buffer protects against torn pages.",
+  "impact": "high",
+  "when": "write / flush-bound load; measured +12% (YCSB-A) to +35-69% (ingest)",
+  "precondition": "the workload writes (redo / flushing active)",
+  "mechanism_tags": [
+   "commit",
+   "io",
+   "io-flush"
+  ],
+  "safety": "durability",
+  "restart": true,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "ON"
+ },
+ "innodb_flush_log_at_timeout": {
+  "category": "durability",
+  "description": "Interval of the redo flush when not flushing at every commit.",
+  "impact": "low",
+  "when": "with innodb_flush_log_at_trx_commit = 0 or 2: seconds of commits at risk",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "durability",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "1"
+ },
+ "innodb_flush_log_at_trx_commit": {
+  "category": "durability",
+  "description": "1 = fsync redo at every commit (durable); 2 = write at commit, fsync ~1/s.",
+  "impact": "high",
+  "when": "commit-bound load (redo fsync per transaction); measured +26-34%",
+  "precondition": "the workload writes (redo / flushing active)",
+  "mechanism_tags": [
+   "commit",
+   "io"
+  ],
+  "safety": "durability",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": {
+   "mariadb 10.11": "1",
+   "mariadb 11.4": "1",
+   "mariadb 11.8": "1",
+   "mysql 8.0": "1",
+   "mysql 8.4": "1",
+   "mysql 9.7": "1",
+   "percona 8.0": "1",
+   "percona 8.4": "1",
+   "percona 9.7": "1",
+   "pxc 8.4": "2"
+  }
+ },
+ "innodb_parallel_read_threads": {
+  "category": "concurrency",
+  "description": "Threads for parallel clustered index reads (COUNT(*), CHECK TABLE).",
+  "impact": "low",
+  "when": "CHECK TABLE / COUNT(*) on the clustered index",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": null
+ },
+ "innodb_rollback_segments": {
+  "category": "concurrency",
+  "description": "Rollback segments per undo tablespace.",
+  "impact": "low",
+  "when": "very high write concurrency (undo slot contention)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "128"
+ },
+ "innodb_spin_wait_delay": {
+  "category": "concurrency",
+  "description": "Max delay between spin polls.",
+  "impact": "low",
+  "when": "latch spinning in the CPU profile",
+  "precondition": null,
+  "mechanism_tags": [
+   "concurrency",
+   "cpu-spin"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": {
+   "mariadb 10.11": "4",
+   "mariadb 11.4": "4",
+   "mariadb 11.8": "4",
+   "mysql 8.0": "6",
+   "mysql 8.4": "6",
+   "mysql 9.7": "6",
+   "percona 8.0": "6",
+   "percona 8.4": "6",
+   "percona 9.7": "6",
+   "pxc 8.4": "6"
+  }
+ },
+ "innodb_spin_wait_pause_multiplier": {
+  "category": "concurrency",
+  "description": "Multiplier of PAUSE instructions in spin-wait loops (8.0.16+).",
+  "impact": "low",
+  "when": "latch spinning in the CPU profile (PAUSE latency differs by CPU)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "50"
+ },
+ "innodb_sync_array_size": {
+  "category": "concurrency",
+  "description": "Partitions of the InnoDB wait array.",
+  "impact": "low",
+  "when": "many threads waiting on InnoDB latches",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": true,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "1"
+ },
+ "innodb_sync_spin_loops": {
+  "category": "concurrency",
+  "description": "Spin iterations before a thread sleeps on a mutex/rw-lock.",
+  "impact": "low",
+  "when": "latch spinning in the CPU profile",
+  "precondition": null,
+  "mechanism_tags": [
+   "concurrency",
+   "cpu-pressure",
+   "cpu-spin",
+   "sched-delay"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "30"
+ },
+ "innodb_thread_concurrency": {
+  "category": "concurrency",
+  "description": "Max threads inside InnoDB at once (0 = unlimited).",
+  "impact": "low",
+  "when": "extreme oversubscription; lost in every measured case so far",
+  "precondition": null,
+  "mechanism_tags": [
+   "concurrency",
+   "cpu-pressure"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "0"
+ },
+ "metadata_locks_hash_instances": {
+  "category": "concurrency",
+  "description": "MDL hash partitions (MariaDB).",
+  "impact": "low",
+  "when": "MariaDB metadata lock contention",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": true,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "8"
+ },
+ "pxc_strict_mode": {
+  "category": "cluster",
+  "description": "PXC validation mode.",
+  "impact": "none",
+  "when": "PXC: blocks unsupported features",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "semantics",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "pxc 8.4"
+  ],
+  "default": "ENFORCING"
+ },
+ "replica_parallel_workers": {
+  "category": "replication",
+  "description": "Parallel applier threads on a replica.",
+  "impact": "high",
+  "when": "replicas lagging behind a write-heavy source",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "4"
+ },
+ "replica_preserve_commit_order": {
+  "category": "replication",
+  "description": "Commit order on the replica.",
+  "impact": "low",
+  "when": "parallel replication: commit order as on the source",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "replication",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "ON"
+ },
+ "skip_log_bin": {
+  "category": "replication",
+  "description": "Start without the binary log (option-file switch).",
+  "impact": "high",
+  "when": "as disable_log_bin",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "replication",
+  "restart": true,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "slave_parallel_mode": {
+  "category": "replication",
+  "description": "Parallel replication mode (MariaDB).",
+  "impact": "medium",
+  "when": "MariaDB parallel replication",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "optimistic"
+ },
+ "slave_parallel_threads": {
+  "category": "replication",
+  "description": "Parallel applier threads (MariaDB).",
+  "impact": "high",
+  "when": "MariaDB replicas lagging behind a write-heavy source",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "0"
+ },
+ "sync_binlog": {
+  "category": "durability",
+  "description": "fsync binary log every N commit groups (1 = durable).",
+  "impact": "high",
+  "when": "binary log on and commit-bound (binlog fsync per group)",
+  "precondition": "the workload writes (redo / flushing active)",
+  "mechanism_tags": [
+   "commit",
+   "io"
+  ],
+  "safety": "durability",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": {
+   "mariadb 10.11": "0",
+   "mariadb 11.4": "0",
+   "mariadb 11.8": "0",
+   "mysql 8.0": "1",
+   "mysql 8.4": "1",
+   "mysql 9.7": "1",
+   "percona 8.0": "1",
+   "percona 8.4": "1",
+   "percona 9.7": "1",
+   "pxc 8.4": "1"
+  }
+ },
+ "sync_relay_log": {
+  "category": "durability",
+  "description": "Relay log sync frequency.",
+  "impact": "low",
+  "when": "replicas: fsync per relay log event",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "durability",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "10000"
+ },
+ "sync_relay_log_info": {
+  "category": "durability",
+  "description": "Applier position sync frequency.",
+  "impact": "low",
+  "when": "replicas",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "10000"
+ },
+ "thread_handling": {
+  "category": "concurrency",
+  "description": "one-thread-per-connection or pool-of-threads (Percona/MariaDB thread pool).",
+  "impact": "medium",
+  "when": "connections far above CPU cores with run-queue waits; hurt at low concurrency (-9%)",
+  "precondition": null,
+  "mechanism_tags": [
+   "concurrency",
+   "cpu-futex",
+   "cpu-pressure",
+   "cpu-spin",
+   "sched-delay"
+  ],
+  "safety": "safe",
+  "restart": true,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "one-thread-per-connection"
+ },
+ "thread_pool_size": {
+  "category": "concurrency",
+  "description": "Thread pool groups.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": null
+ },
+ "wsrep_applier_threads": {
+  "category": "replication",
+  "description": "Galera: threads applying replicated write sets (wsrep_slave_threads before 8.0.26).",
+  "impact": "high",
+  "when": "PXC nodes falling behind (flow control paused)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "pxc 8.4"
+  ],
+  "default": "2"
+ },
+ "wsrep_provider_options": {
+  "category": "cluster",
+  "description": "Galera provider options string.",
+  "impact": "high",
+  "when": "Galera: gcache size, flow control limits (gcs.fc_limit), send window",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8",
+   "pxc 8.4"
+  ],
+  "default": null
+ },
+ "wsrep_retry_autocommit": {
+  "category": "cluster",
+  "description": "Retries of autocommit statements after conflicts.",
+  "impact": "low",
+  "when": "certification conflicts on autocommit statements",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "semantics",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8",
+   "pxc 8.4"
+  ],
+  "default": "1"
+ },
+ "wsrep_slave_threads": {
+  "category": "replication",
+  "description": "Galera: threads applying replicated write sets (older name of wsrep_applier_threads).",
+  "impact": "high",
+  "when": "Galera nodes falling behind (flow control paused)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8",
+   "pxc 8.4"
+  ],
+  "default": {
+   "mariadb 10.11": "1",
+   "mariadb 11.4": "1",
+   "mariadb 11.8": "1",
+   "pxc 8.4": "2"
+  }
+ },
+ "wsrep_sync_wait": {
+  "category": "cluster",
+  "description": "Causality checks before statements.",
+  "impact": "medium",
+  "when": "reads that must see the latest cluster writes (causality checks per read)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "semantics",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8",
+   "pxc 8.4"
+  ],
+  "default": "0"
+ },
+ "wsrep_trx_fragment_size": {
+  "category": "cluster",
+  "description": "Fragment size for streaming replication.",
+  "impact": "medium",
+  "when": "large transactions in Galera (streaming replication)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8",
+   "pxc 8.4"
+  ],
+  "default": "0"
+ }
+}

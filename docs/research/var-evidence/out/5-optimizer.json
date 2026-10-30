@@ -1,0 +1,1157 @@
+[
+ {
+  "variable": "eq_range_index_dive_limit",
+  "relevant_to": "MySQL/Percona all releases and MariaDB (default 200 in both); cannot matter unless statements have IN()/OR equality lists with >= limit values on an indexed column",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "optimizer trace range_analysis \"index_dives_for_eq_ranges\" and EXPLAIN ANALYZE estimated vs actual rows for digests with IN lists >= the limit",
+    "points_to": "raise",
+    "condition": "trace shows index_dives_for_eq_ranges=false and estimated rows differ from actual by >10x with a worse index chosen (skewed data)",
+    "why": "above the limit the optimizer uses index cardinality averages instead of dives, which on skewed data can pick the wrong index"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "performance_schema.events_stages_summary_global_by_event_name (stage/sql/statistics, stage/sql/optimizing; needs stage instruments + events_stages_* consumers enabled) share of statement latency for digests with IN lists below the limit",
+    "points_to": "lower",
+    "condition": "statistics stage is a material share (e.g. >20%) of a cheap statement's latency with hundreds of IN values",
+    "why": "each equality range costs one or two B-tree dives at plan time; for short-running statements this planning work can exceed execution"
+   }
+  ],
+  "impact_bound": "bounded by planning time of long-IN digests (statistics-stage time share) when lowering; when raising, by the execution-time difference between the dive-based and statistics-based plan of those digests; typically low (only workloads with long IN lists).",
+  "experiment": {
+   "change": "lower to e.g. 10-50 (or raise above the longest IN list) for the session/global",
+   "predict": "lowering: statistics-stage time and digest AVG_TIMER_WAIT of long-IN digests fall, plan and SUM_ROWS_EXAMINED unchanged; raising: SUM_ROWS_EXAMINED per call falls because a better index is chosen",
+   "confirm_or_refute": "confirm if digest latency moves beyond noise in the predicted direction with the predicted plan; refute if plans are identical and latency unchanged",
+   "cost_or_risk": "lowering can cause wrong index choice on skewed data; raising adds planning CPU"
+  },
+  "collected": "partly: digests yes; missing stage summaries for stage/sql/statistics and optimizer trace index_dives_for_eq_ranges for long-IN digests",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/range-optimization.html#equality-range-optimization",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_eq_range_index_dive_limit",
+   "https://mariadb.com/kb/en/server-system-variables/#eq_range_index_dive_limit"
+  ]
+ },
+ {
+  "variable": "histogram_size",
+  "relevant_to": "mariadb only (10.11/11.4/11.8, default 254 buckets); only matters if engine-independent statistics with histograms are collected (ANALYZE TABLE ... PERSISTENT FOR ... or with use_stat_tables/analyze defaults) and optimizer_use_condition_selectivity >= 4 makes the optimizer use them; 0 disables histograms",
+  "signals": [
+   {
+    "source": "information_schema",
+    "metric": "mysql.column_stats (hist_size, hist_type, histogram) for columns in WHERE clauses of top digests",
+    "points_to": "raise",
+    "condition": "histograms absent or 0 for filtered, skewed columns of the expensive digests",
+    "why": "without a histogram selectivity of non-indexed conditions is guessed, misordering joins"
+   },
+   {
+    "source": "derived",
+    "metric": "ANALYZE FORMAT=JSON: r_filtered vs filtered per table of top digests",
+    "points_to": "raise",
+    "condition": "estimated filtered differs from actual r_filtered by a large factor (e.g. >10x) on a column that has a histogram (bucket resolution too coarse)",
+    "why": "more buckets give finer selectivity estimates for skewed values"
+   }
+  ],
+  "impact_bound": "at most the time of the digests whose plan is wrong because of the selectivity estimate (requires a better plan to exist); typical low - 254 buckets (JSON_HB in 11.x) is usually enough; gains come from collecting histograms at all rather than size.",
+  "experiment": {
+   "change": "raise histogram_size (e.g. to 1024 with JSON_HB in 11.x) and re-run ANALYZE TABLE ... PERSISTENT FOR COLUMNS(...) INDEXES() on the affected tables",
+   "predict": "estimated filtered moves closer to r_filtered, join order changes, digest SUM_ROWS_EXAMINED and latency fall",
+   "confirm_or_refute": "refute if estimates or plans do not change; benefit is per-statement and must exceed noise",
+   "cost_or_risk": "ANALYZE with histograms does a full table scan (I/O, minutes on large tables); larger stats tables"
+  },
+  "collected": "no: mysql.column_stats contents and ANALYZE FORMAT=JSON r_filtered vs filtered of top digests (MariaDB performance_schema is also off by default, so digests may be missing)",
+  "sources": [
+   "https://mariadb.com/kb/en/histogram-based-statistics/",
+   "https://mariadb.com/kb/en/server-system-variables/#histogram_size",
+   "https://mariadb.com/kb/en/engine-independent-table-statistics/"
+  ]
+ },
+ {
+  "variable": "innodb_stats_on_metadata",
+  "relevant_to": "all flavors (default OFF); only applies when statistics are non-persistent (innodb_stats_persistent=OFF or STATS_PERSISTENT=0 tables); in MySQL 8.0+ INFORMATION_SCHEMA table stats are also cached (information_schema_stats_expiry)",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "performance_schema.events_statements_summary_by_digest SUM_TIMER_WAIT of digests on INFORMATION_SCHEMA.TABLES/STATISTICS and SHOW TABLE STATUS/SHOW INDEX; status Com_show_table_status, Com_show_keys rates",
+    "points_to": "disable",
+    "condition": "value is ON and these metadata digests hold a material share of time or cause data page reads (off-CPU data page read waits during them)",
+    "why": "with ON each metadata query re-samples index pages of every table it touches"
+   },
+   {
+    "source": "status",
+    "metric": "Innodb_buffer_pool_reads during metadata queries / monitoring polls",
+    "points_to": "disable",
+    "condition": "read bursts aligned with monitoring queries",
+    "why": "the re-sampling reads random leaf pages and can evict hot pages"
+   }
+  ],
+  "impact_bound": "at most the time of metadata digests plus the buffer pool churn they cause; typically none (default OFF) to low; high only on servers with many tables and frequent metadata polling while ON.",
+  "experiment": {
+   "change": "set OFF (keep OFF)",
+   "predict": "metadata digest AVG_TIMER_WAIT and their rows/pages read fall; foreground latency unchanged or better",
+   "confirm_or_refute": "confirm by metadata-digest latency drop; refute if no metadata digests exist in the workload",
+   "cost_or_risk": "statistics of transient-stats tables refresh less often (only on open / 1/16 change)"
+  },
+  "collected": "partly: digests and Com_show_* yes; missing a flag whether stats are persistent per table (information_schema.TABLES CREATE_OPTIONS)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_stats_on_metadata",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-statistics-estimation.html"
+  ]
+ },
+ {
+  "variable": "innodb_stats_persistent",
+  "relevant_to": "all flavors (default ON); OFF makes statistics transient (recomputed at table open, after 1/16 of rows change, and on metadata queries if innodb_stats_on_metadata=ON)",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "digest plan instability: same digest showing widely varying AVG_TIMER_WAIT / SUM_ROWS_EXAMINED per call across runs or restarts",
+    "points_to": "enable",
+    "condition": "value is OFF and per-call rows examined of top digests varies between runs beyond noise",
+    "why": "transient statistics are re-sampled with few pages (innodb_stats_transient_sample_pages=8) and can flip plans"
+   },
+   {
+    "source": "status",
+    "metric": "Opened_tables rate with innodb_stats_persistent=OFF",
+    "points_to": "enable",
+    "condition": "a high table open rate (small table_open_cache) while OFF",
+    "why": "each table open recalculates transient statistics, costing random page reads and CPU"
+   }
+  ],
+  "impact_bound": "no measurable steady-state gain while ON (the default); OFF only adds cost and instability. Impact none/low; only a correctness-of-plans concern.",
+  "experiment": {
+   "change": "keep/set ON (then ANALYZE TABLE)",
+   "predict": "plan stability: run-to-run variance of digest rows examined per call falls",
+   "confirm_or_refute": "refute if variance is unchanged",
+   "cost_or_risk": "none material; stats persist so they can become stale without auto recalc"
+  },
+  "collected": "partly: digests and Opened_tables yes; missing run-to-run per-digest plan comparison",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-persistent-stats.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_stats_persistent"
+  ]
+ },
+ {
+  "variable": "innodb_stats_persistent_sample_pages",
+  "relevant_to": "all flavors (default 20); only matters where index cardinality estimates drive a plan choice; costs time during ANALYZE TABLE and automatic recalc (innodb_stats_auto_recalc after ~10% rows changed)",
+  "signals": [
+   {
+    "source": "information_schema",
+    "metric": "mysql.innodb_index_stats stat_value for n_diff_pfxNN vs SELECT COUNT(DISTINCT ...) on the prefix; or SHOW INDEX Cardinality",
+    "points_to": "raise",
+    "condition": "estimated distinct values off by a large factor (e.g. >2-10x) on an index involved in a top digest's access choice, and EXPLAIN ANALYZE shows estimated vs actual rows mismatched with a worse index/join order",
+    "why": "more sampled leaf pages give better n_diff estimates on large or skewed indexes"
+   },
+   {
+    "source": "derived",
+    "metric": "time of ANALYZE TABLE / background stats recalc (dict_stats thread CPU in profile)",
+    "points_to": "lower",
+    "condition": "stats recalculation CPU/IO is a visible share during write-heavy runs",
+    "why": "each recalc reads sample_pages per index"
+   }
+  ],
+  "impact_bound": "at most the excess time of digests with a misestimated-index plan; typical low (most OLTP point/range plans are insensitive), medium on skewed multi-index tables.",
+  "experiment": {
+   "change": "raise to 100-256 and run ANALYZE TABLE on the tables of mis-planned digests",
+   "predict": "n_diff estimates approach real values; plan of the affected digest changes; its SUM_ROWS_EXAMINED/latency falls",
+   "confirm_or_refute": "refute if estimates improve but plans and latency stay the same",
+   "cost_or_risk": "ANALYZE takes longer (more page reads); auto recalc costs a bit more I/O"
+  },
+  "collected": "no: mysql.innodb_index_stats vs actual distinct counts and EXPLAIN ANALYZE estimated vs actual rows for top digests",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-persistent-stats.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-analyze-table-complexity.html"
+  ]
+ },
+ {
+  "variable": "join_cache_level",
+  "relevant_to": "mariadb only (default 2: flat+incremental BNL; 3-4 hashed BNL(H), 5-8 BKA/BKAH which also need mrr flags); cannot matter if no plan uses a join buffer ('Using join buffer' absent)",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Select_full_join, Select_full_range_join, Handler_read_rnd_next per transaction",
+    "points_to": "raise",
+    "condition": "a material share of time in digests whose plans show 'Using join buffer (flat, BNL join)' on large inner tables",
+    "why": "level 3-4 enables hash join on equality conditions, replacing repeated full scans of the inner table with hash lookups"
+   },
+   {
+    "source": "status",
+    "metric": "Handler_mrr_init, Handler_mrr_key_refills, Handler_mrr_rowid_refills",
+    "points_to": "raise",
+    "condition": "joins via eq_ref/ref into disk-bound inner tables with high data page read waits (levels 5-8 with mrr=on)",
+    "why": "BKA batches keys and reads inner rows in rowid order, turning random reads into sequential ones"
+   }
+  ],
+  "impact_bound": "at most the share of total statement time (digest SUM_TIMER_WAIT) of the digests whose plans use (or could use) this strategy, times the fraction of their rows examined / CPU the alternative plan avoids; for BNL->hash the bound is the inner-table scan work (Handler_read_rnd_next attributed to those digests). Typical medium for analytic joins without indexes, none for indexed OLTP.",
+  "experiment": {
+   "change": "set join_cache_level=4 (hashed), then 6 or 8 with optimizer_switch mrr=on,mrr_sort_keys=on",
+   "predict": "Handler_read_rnd_next and CPU per transaction fall for join-buffer digests; EXPLAIN shows 'BNLH'/'BKA'; digest latency falls",
+   "confirm_or_refute": "refute if plans do not change or latency rises (hash build costs on small tables)",
+   "cost_or_risk": "larger join_buffer memory per join; hashed joins can be slower for small inputs"
+  },
+  "collected": "partly: status counters yes (Handler_mrr_* only if the full SHOW GLOBAL STATUS is kept); missing per-digest plans and MariaDB performance_schema (off by default)",
+  "sources": [
+   "https://mariadb.com/kb/en/server-system-variables/#join_cache_level",
+   "https://mariadb.com/kb/en/block-based-join-algorithms/"
+  ]
+ },
+ {
+  "variable": "max_length_for_sort_data",
+  "relevant_to": "MariaDB (default 1024) and MySQL < 8.0.20; deprecated and without effect in MySQL/Percona 8.0.20+, 8.4, 9.x (filesort always uses packed addon fields when possible)",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "optimizer trace filesort_summary.sort_mode = <sort_key, rowid> for frequent filesort digests; status Sort_rows, Handler_read_rnd per transaction",
+    "points_to": "raise",
+    "condition": "MariaDB: filesort digests sort by rowid and then do Handler_read_rnd row fetches that cause data page reads or a material CPU share",
+    "why": "rowid sorts re-read every row after sorting (random access); addon-field sorts carry the columns in the sort buffer"
+   },
+   {
+    "source": "status",
+    "metric": "Sort_merge_passes",
+    "points_to": "lower",
+    "condition": "raising made rows wide enough that sort_buffer holds fewer rows and merge passes appear",
+    "why": "addon-field sorts use more buffer per row"
+   }
+  ],
+  "impact_bound": "at most the Handler_read_rnd time of filesort digests (data page reads plus row lookups); typical low.",
+  "experiment": {
+   "change": "MariaDB: raise to 4096-8192; MySQL 8.0.20+: no experiment (no effect)",
+   "predict": "Handler_read_rnd per sorting statement falls, sort_mode changes to packed/addon fields, latency of those digests falls",
+   "confirm_or_refute": "refute if Handler_read_rnd unchanged or Sort_merge_passes rises enough to offset",
+   "cost_or_risk": "more sort buffer per row; can trigger merge passes"
+  },
+  "collected": "partly: Sort_*/Handler_read_rnd yes; missing optimizer trace sort_mode for top filesort digests",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_max_length_for_sort_data",
+   "https://mariadb.com/kb/en/server-system-variables/#max_length_for_sort_data",
+   "https://dev.mysql.com/doc/refman/8.4/en/order-by-optimization.html"
+  ]
+ },
+ {
+  "variable": "optimizer_prune_level",
+  "relevant_to": "all flavors (MySQL default 1; MariaDB default 2 since 10.10 adds extra pruning); only matters for joins of many tables (roughly 7+)",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "performance_schema.events_stages_summary_global_by_event_name (stage/sql/statistics, stage/sql/optimizing; needs stage instruments + events_stages_* consumers enabled) time per call for many-table join digests",
+    "points_to": "a specific value",
+    "condition": "statistics/optimizing stage time is a material share of latency for many-table joins -> keep/raise pruning (1 or 2); a slow plan found with pruning (EXPLAIN ANALYZE shows a much cheaper order possible via STRAIGHT_JOIN/JOIN_ORDER hint) -> try 0",
+    "why": "pruning cuts the exhaustive join-order search but may skip the best order"
+   }
+  ],
+  "impact_bound": "lower pruning: bounded by the execution-time gap between the chosen and best join order (measure with a JOIN_ORDER hint); higher pruning: bounded by plan-search time share. Typical low (TPC-C/sysbench have no large joins).",
+  "experiment": {
+   "change": "SET optimizer_prune_level=0 for the session/digest via SET_VAR hint",
+   "predict": "if hypothesis holds: plan changes and execution time falls more than statistics-stage time rises",
+   "confirm_or_refute": "refute if same plan with more planning time",
+   "cost_or_risk": "exponential planning time for many-table joins"
+  },
+  "collected": "no: stage summaries (stage/sql/statistics) and per-digest plans",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/controlling-query-plan-evaluation.html",
+   "https://mariadb.com/kb/en/server-system-variables/#optimizer_prune_level"
+  ]
+ },
+ {
+  "variable": "optimizer_search_depth",
+  "relevant_to": "all flavors (default 62 = exhaustive bounded by pruning; 0 = automatic min(tables,7)); only matters for joins of more than ~7 tables",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "performance_schema.events_stages_summary_global_by_event_name (stage/sql/statistics, stage/sql/optimizing; needs stage instruments + events_stages_* consumers enabled) and digest latency of joins with many tables",
+    "points_to": "lower",
+    "condition": "time in statistics stage is a material share (or seconds) of the statement latency",
+    "why": "join-order search cost grows exponentially with the number of tables up to the search depth"
+   },
+   {
+    "source": "derived",
+    "metric": "EXPLAIN ANALYZE of many-table join with depth lowered vs default",
+    "points_to": "raise",
+    "condition": "a lower depth (or 0) produces a materially worse plan",
+    "why": "greedy search with small depth can miss good orders"
+   }
+  ],
+  "impact_bound": "at most the statistics-stage share of those digests' time when lowering; typical none for OLTP benchmarks, medium/high for star or JOB-like queries with 10+ tables.",
+  "experiment": {
+   "change": "SET optimizer_search_depth=0 (auto) or 7",
+   "predict": "statistics-stage time per call falls; total latency falls if plan quality holds",
+   "confirm_or_refute": "refute if stage time was negligible or plans worsen",
+   "cost_or_risk": "worse join orders for complex joins"
+  },
+  "collected": "no: stage summaries for stage/sql/statistics per digest (events_stages_history_long joined to statements by NESTING_EVENT_ID) or per-thread",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/controlling-query-plan-evaluation.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_optimizer_search_depth",
+   "https://mariadb.com/kb/en/server-system-variables/#optimizer_search_depth"
+  ]
+ },
+ {
+  "variable": "optimizer_switch",
+  "relevant_to": "all flavors; container of independent flags (names differ: MySQL block_nested_loop/hash_join/skip_scan..., MariaDB join_cache_*/rowid_filter/subquery_cache...); see per-flag entries",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "performance_schema.events_statements_summary_by_digest top digests by SUM_TIMER_WAIT with SUM_ROWS_EXAMINED/SUM_ROWS_SENT, SUM_SELECT_FULL_JOIN, SUM_SELECT_SCAN, SUM_CREATED_TMP_DISK_TABLES, SUM_NO_INDEX_USED",
+    "points_to": "a specific value",
+    "condition": "a few statements with high rows examined per row sent dominate time - then inspect their plans for the strategy a flag controls",
+    "why": "flags only matter for statements whose plan uses (or would use) the strategy"
+   }
+  ],
+  "impact_bound": "at most the time share of the digests whose plan the flag changes; for typical OLTP benchmarks none/low, for analytic workloads medium/high.",
+  "experiment": {
+   "change": "one flag at a time, preferably per digest (SET_VAR hint) before globally",
+   "predict": "the targeted digest's plan changes and rows examined / latency fall; others unchanged",
+   "confirm_or_refute": "refute if no plan changes (flag irrelevant) or other digests regress",
+   "cost_or_risk": "global flags change every query; regressions possible"
+  },
+  "collected": "partly: digests yes; missing per-digest plans",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://mariadb.com/kb/en/optimizer-switch/"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:batched_key_access",
+  "relevant_to": "MySQL/Percona 8.0-9.x (default off; needs mrr=on and usually mrr_cost_based=off, join_buffer_size); MariaDB uses join_cache_level 5-8 instead; cannot matter without joins doing ref/eq_ref lookups into an inner table",
+  "signals": [
+   {
+    "source": "ebpf",
+    "metric": "off-CPU data page read share of connection threads during join digests; status Innodb_buffer_pool_reads per transaction",
+    "points_to": "enable",
+    "condition": "a material share of time is data page read waits from random primary-key lookups in nested-loop joins (inner table larger than the buffer pool)",
+    "why": "BKA collects join keys in the join buffer and fetches inner rows via MRR in key order, making reads more sequential and enabling read-ahead"
+   },
+   {
+    "source": "status",
+    "metric": "Handler_mrr_init",
+    "points_to": "no change needed",
+    "condition": "counter stays 0 after enabling -> BKA not chosen",
+    "why": "Handler_mrr_init counts engine MRR use"
+   }
+  ],
+  "impact_bound": "at most the data-page-read wait share of join digests times the fraction of random reads that become sequential/merged; none when data fits in memory (CPU may even rise). Typical medium for disk-bound joins, none for in-memory OLTP.",
+  "experiment": {
+   "change": "SET optimizer_switch='mrr=on,mrr_cost_based=off,batched_key_access=on' (session/SET_VAR for the target digest first)",
+   "predict": "EXPLAIN shows 'Using join buffer (Batched Key Access)'; Handler_mrr_init > 0; data page reads/ read wait time per transaction fall",
+   "confirm_or_refute": "refute if Handler_mrr_init stays 0, or reads per trx unchanged and CPU per trx rises",
+   "cost_or_risk": "extra sort/buffer CPU; worse for in-memory data"
+  },
+  "collected": "partly: Handler_mrr_init, buffer pool reads, eBPF read waits yes; missing per-digest plans",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/bnl-bka-optimization.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:block_nested_loop",
+  "relevant_to": "MySQL/Percona 8.0.20+ (default on): controls hash join (BNL itself was removed); MariaDB equivalent is join_cache_level; cannot matter when all joins use indexes",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Select_full_join, Select_full_range_join (and digest SUM_SELECT_FULL_JOIN)",
+    "points_to": "no change needed",
+    "condition": "nonzero values mean joins without indexes use hash join; turning it off would only force slower nested loops",
+    "why": "hash join is the 8.0.20+ default for non-indexed equi-joins"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name EVENT_NAME='wait/io/file/sql/hash_join' SUM_TIMER_WAIT",
+    "points_to": "disable",
+    "condition": "hash join spills to disk with a material time share and an indexed nested-loop alternative exists (better fixed by join_buffer_size or an index)",
+    "why": "hash join chunks to disk when the build side exceeds join_buffer_size"
+   }
+  ],
+  "impact_bound": "turning it off almost never helps; bound = hash-join digest time minus index-lookup alternative. Typical none/low.",
+  "experiment": {
+   "change": "only test off per digest via NO_BNL hint if a hash join is chosen over a selective index",
+   "predict": "digest latency falls with an index nested-loop plan",
+   "confirm_or_refute": "refute otherwise (expected)",
+   "cost_or_risk": "turning off globally can make non-indexed joins orders of magnitude slower"
+  },
+  "collected": "partly: Select_full_join yes; missing hash_join file I/O and per-digest plans",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/hash-joins.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:condition_fanout_filter",
+  "relevant_to": "MySQL/Percona 8.0-9.x (default on); MariaDB analog is optimizer_use_condition_selectivity; matters only for joins where non-indexed filter conditions affect join order",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE (MySQL 8.0.18+) or ANALYZE FORMAT=JSON (MariaDB) of the top digests by SUM_TIMER_WAIT: estimated rows/filtered vs actual rows per join step",
+    "points_to": "disable",
+    "condition": "join digests whose estimated filtered percentage is far off actual (e.g. >10x) and the resulting order reads many more rows than necessary",
+    "why": "the fan-out filter scales row estimates by guessed condition selectivity, which misorders joins when the guess is wrong (no histogram)"
+   }
+  ],
+  "impact_bound": "at most the join digests' time times the rows-examined reduction of the better order (measure with a JOIN_ORDER hint); typical none for OLTP, medium for multi-join analytics.",
+  "experiment": {
+   "change": "SET_VAR(optimizer_switch='condition_fanout_filter=off') on the suspect digest, or create histograms (ANALYZE TABLE ... UPDATE HISTOGRAM) instead",
+   "predict": "join order changes; SUM_ROWS_EXAMINED per call and latency fall",
+   "confirm_or_refute": "refute if plan unchanged or rows examined increase",
+   "cost_or_risk": "global off can worsen other joins"
+  },
+  "collected": "no: per-digest plans (EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE of top digests, or optimizer trace) to see which strategy is used",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/condition-filtering.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:derived_condition_pushdown",
+  "relevant_to": "MySQL/Percona 8.0.22+ (default on); MariaDB analog condition_pushdown_for_derived; only for derived tables/views that are materialized (not merged)",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "performance_schema.events_statements_summary_by_digest SUM_CREATED_TMP_TABLES/SUM_CREATED_TMP_DISK_TABLES and rows examined of digests with derived tables",
+    "points_to": "no change needed",
+    "condition": "on is almost always right; consider off only if a digest regressed after upgrade",
+    "why": "pushdown filters rows before materialization, reducing tmp table size"
+   }
+  ],
+  "impact_bound": "turning it off has no expected gain; bound = time of digests materializing derived tables. Typical none (keep on).",
+  "experiment": {
+   "change": "only per-digest test with NO_DERIVED_CONDITION_PUSHDOWN hint if a regression is suspected",
+   "predict": "tmp table rows/latency of that digest would fall",
+   "confirm_or_refute": "refute otherwise (expected)",
+   "cost_or_risk": "off increases materialized rows"
+  },
+  "collected": "partly: digest tmp table columns yes; missing plans",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/derived-condition-pushdown-optimization.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:derived_merge",
+  "relevant_to": "all flavors (default on); only for queries with derived tables or views that are mergeable",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Created_tmp_tables, Created_tmp_disk_tables per transaction; digest SUM_CREATED_TMP_TABLES",
+    "points_to": "enable",
+    "condition": "value off and digests with derived tables create a tmp table per call",
+    "why": "merging avoids materializing the derived table so outer conditions can use base-table indexes"
+   },
+   {
+    "source": "derived",
+    "metric": "EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE (MySQL 8.0.18+) or ANALYZE FORMAT=JSON (MariaDB) of the top digests by SUM_TIMER_WAIT",
+    "points_to": "disable",
+    "condition": "merged form re-evaluates an expensive expression or subquery per outer row where materialization would compute it once",
+    "why": "rare case where materialization is cheaper"
+   }
+  ],
+  "impact_bound": "at most the tmp-table materialization time of affected digests; typical none with default on.",
+  "experiment": {
+   "change": "keep on; per-digest NO_MERGE hint only for a measured exception",
+   "predict": "Created_tmp_tables per trx falls (on) and digest latency falls",
+   "confirm_or_refute": "refute if tmp tables unchanged",
+   "cost_or_risk": "low"
+  },
+  "collected": "partly: tmp table counters yes; missing plans",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/derived-table-optimization.html",
+   "https://mariadb.com/kb/en/derived-table-merge-optimization/"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:duplicateweedout",
+  "relevant_to": "MySQL/Percona 8.0-9.x and MariaDB (default on); only for IN/EXISTS subqueries converted to semijoins",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE (MySQL 8.0.18+) or ANALYZE FORMAT=JSON (MariaDB) of the top digests by SUM_TIMER_WAIT shows 'Start temporary'/'End temporary'; status Created_tmp_tables per call",
+    "points_to": "disable",
+    "condition": "a weedout plan holds a material share of time with large tmp tables while another strategy (FirstMatch/LooseScan/Materialization) is cheaper per hint test",
+    "why": "DuplicateWeedout writes every candidate row id to a temp table to remove duplicates"
+   }
+  ],
+  "impact_bound": "at most the share of total statement time (digest SUM_TIMER_WAIT) of the digests whose plans use (or could use) this strategy, times the fraction of their rows examined / CPU the alternative plan avoids; typical low.",
+  "experiment": {
+   "change": "per digest: SEMIJOIN(FIRSTMATCH, LOOSESCAN, MATERIALIZATION) hint (excluding DUPSWEEDOUT) or global flag off",
+   "predict": "tmp table writes (Handler_write / Created_tmp_tables) and latency of the digest fall",
+   "confirm_or_refute": "refute if another strategy is not chosen or is slower",
+   "cost_or_risk": "low; other strategies may be slower"
+  },
+  "collected": "no: per-digest plans (EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE of top digests, or optimizer trace) to see which strategy is used",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/semijoins.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:engine_condition_pushdown",
+  "relevant_to": "NDB Cluster only; no effect for InnoDB (MySQL/Percona); MariaDB 10.11 has it deprecated/off, removed in 11.x",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "none for InnoDB",
+    "points_to": "no change needed",
+    "condition": "never for InnoDB workloads",
+    "why": "the flag pushes conditions to the NDB storage engine only"
+   }
+  ],
+  "impact_bound": "none for InnoDB.",
+  "experiment": {
+   "change": "do not test",
+   "predict": "n/a",
+   "confirm_or_refute": "n/a",
+   "cost_or_risk": "none"
+  },
+  "collected": "yes (nothing to collect)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/engine-condition-pushdown-optimization.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:favor_range_scan",
+  "relevant_to": "Percona Server only (8.0/8.4/9.x, default off); for very large tables with compound primary keys where the optimizer picks a full scan over a range scan",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "performance_schema.events_statements_summary_by_digest SUM_SELECT_SCAN / SUM_NO_INDEX_USED with high SUM_ROWS_EXAMINED per row sent, where EXPLAIN shows ALL or index scan despite a usable range on the PK",
+    "points_to": "enable",
+    "condition": "such digests hold a material share of time and FORCE INDEX/range plan is measurably faster",
+    "why": "the switch divides range-scan cost by 10 so the optimizer prefers the range"
+   }
+  ],
+  "impact_bound": "at most the time of the full-scanning digests times (1 - rows of range / rows scanned); typical low (edge case), but can be large per query.",
+  "experiment": {
+   "change": "SET optimizer_switch='favor_range_scan=on' for the session/SET_VAR on the digest",
+   "predict": "Select_scan falls, Select_range rises; rows examined per call and latency of the digest fall",
+   "confirm_or_refute": "refute if plan unchanged or other digests switch to slower ranges",
+   "cost_or_risk": "Percona warns it can cause improper index selection for other queries"
+  },
+  "collected": "partly: Select_scan/digest no-index flags yes; missing plans",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.0/query-limit-records.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:firstmatch",
+  "relevant_to": "MySQL/Percona 8.0-9.x and MariaDB (default on); only for IN/EXISTS subqueries converted to semijoins",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE (MySQL 8.0.18+) or ANALYZE FORMAT=JSON (MariaDB) of the top digests by SUM_TIMER_WAIT shows 'FirstMatch(...)'; digest SUM_ROWS_EXAMINED vs SUM_ROWS_SENT",
+    "points_to": "disable",
+    "condition": "a FirstMatch semijoin scans many outer x inner rows (rows examined per row sent very high) while a materialization hint is faster",
+    "why": "FirstMatch probes the inner table per outer row and stops at the first match - poor when the inner lookup is unindexed or the outer side is large"
+   }
+  ],
+  "impact_bound": "at most the share of total statement time (digest SUM_TIMER_WAIT) of the digests whose plans use (or could use) this strategy, times the fraction of their rows examined / CPU the alternative plan avoids; typical low.",
+  "experiment": {
+   "change": "per digest SEMIJOIN(...) hint without FIRSTMATCH, then global flag off if broad",
+   "predict": "rows examined per call and latency of the digest fall",
+   "confirm_or_refute": "refute if no change or regression",
+   "cost_or_risk": "low"
+  },
+  "collected": "no: per-digest plans (EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE of top digests, or optimizer trace) to see which strategy is used",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/semijoins.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:hash_join",
+  "relevant_to": "MySQL 8.0.18 only; no effect in 8.0.19+/8.4/9.x (use block_nested_loop / BNL hints); MariaDB uses join_cache_level instead",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "none",
+    "points_to": "no change needed",
+    "condition": "never on supported releases",
+    "why": "the flag is ignored"
+   }
+  ],
+  "impact_bound": "none.",
+  "experiment": {
+   "change": "do not test",
+   "predict": "n/a",
+   "confirm_or_refute": "n/a",
+   "cost_or_risk": "none"
+  },
+  "collected": "yes (nothing to collect)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/hash-joins.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:hash_set_operations",
+  "relevant_to": "MySQL/Percona 8.4 and 9.x (default on, absent in 8.0 list here); only for INTERSECT/EXCEPT (and set-operation de-duplication) statements",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Created_tmp_disk_tables per call and digest SUM_CREATED_TMP_DISK_TABLES of set-operation digests",
+    "points_to": "a specific value",
+    "condition": "on: if set-operation digests spill, raise set_operations_buffer_size rather than turn the flag off",
+    "why": "the hash table de-duplicates in memory up to set_operations_buffer_size; otherwise a temp table is used"
+   }
+  ],
+  "impact_bound": "at most the set-operation digests' time; typical none (benchmarks rarely use INTERSECT/EXCEPT).",
+  "experiment": {
+   "change": "keep on; raise set_operations_buffer_size if those digests spill",
+   "predict": "tmp disk tables and latency of set-operation digests fall",
+   "confirm_or_refute": "refute if no set-operation digests",
+   "cost_or_risk": "memory per statement"
+  },
+  "collected": "partly: tmp table counters yes; missing plans",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_set_operations_buffer_size"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:hypergraph_optimizer",
+  "relevant_to": "MySQL/Percona 9.7 (available in Community Edition per Oracle, default off); in 8.0/8.4 community non-debug builds it cannot be enabled; matters for multi-way joins, aggregates and analytic queries; irrelevant for point-lookup OLTP",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "top digests by SUM_TIMER_WAIT that are multi-table joins or analytics with high rows examined per row sent; EXPLAIN ANALYZE estimated vs actual rows",
+    "points_to": "enable",
+    "condition": "a material share of time is in complex joins with join-order or join-method problems (bad estimates, BNL/hash vs index choice)",
+    "why": "the hypergraph optimizer searches bushy join trees and more join methods with a different cost model"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "performance_schema.events_stages_summary_global_by_event_name (stage/sql/statistics, stage/sql/optimizing; needs stage instruments + events_stages_* consumers enabled)",
+    "points_to": "disable",
+    "condition": "planning (optimizing/statistics stage) time rises materially for short queries after enabling",
+    "why": "the hypergraph enumeration costs more planning CPU"
+   }
+  ],
+  "impact_bound": "at most the time share of complex join digests (possible large per-query wins, and also regressions when estimates are wrong); typical none for OLTP, high but unpredictable for analytics.",
+  "experiment": {
+   "change": "SET_VAR(optimizer_switch='hypergraph_optimizer=on') per top analytic digest, then session/global",
+   "predict": "per-digest latency and rows examined fall; planning time may rise",
+   "confirm_or_refute": "confirm only digest-by-digest; refute if plans regress or planning dominates",
+   "cost_or_risk": "still evolving per Oracle; plan regressions; some features unsupported (errors) in older builds"
+  },
+  "collected": "partly: digests yes; missing plans and planning-stage time",
+  "sources": [
+   "https://blogs.oracle.com/mysql/the-hypergraph-optimizer-is-now-available-in-mysql-9-7-community-edition",
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:index_condition_pushdown",
+  "relevant_to": "all flavors (default on); only for range/ref scans of secondary indexes with extra conditions on index columns",
+  "signals": [
+   {
+    "source": "innodb_metrics",
+    "metric": "icp_attempts, icp_match, icp_no_match, icp_out_of_range (module_icp, disabled by default); MariaDB status Handler_icp_attempts, Handler_icp_match",
+    "points_to": "no change needed",
+    "condition": "icp_no_match / icp_attempts high means ICP is saving full-row lookups; turning it off would add them",
+    "why": "ICP evaluates index-column conditions in the engine before fetching the full row"
+   },
+   {
+    "source": "derived",
+    "metric": "EXPLAIN 'Using index condition' on digests with very low icp_no_match share",
+    "points_to": "disable",
+    "condition": "almost all pushed conditions match (icp_match ~ attempts) and CPU per row is a material share",
+    "why": "ICP then adds per-row evaluation with no saved lookups (gain small)"
+   }
+  ],
+  "impact_bound": "turning off is bounded by ICP evaluation CPU when matches ~ attempts (small); typical none - keep on.",
+  "experiment": {
+   "change": "per digest NO_ICP hint only when icp_match/icp_attempts ~ 1",
+   "predict": "CPU per row of the digest falls slightly",
+   "confirm_or_refute": "refute if latency unchanged within noise (expected)",
+   "cost_or_risk": "off causes extra row fetches (data page reads) when conditions filter"
+  },
+  "collected": "no: innodb_metrics module_icp (enable via innodb_monitor_enable) / MariaDB Handler_icp_*",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/index-condition-pushdown-optimization.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-information-schema-metrics-table.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:index_merge",
+  "relevant_to": "all flavors (default on); only statements whose plans use index_merge (EXPLAIN type=index_merge)",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE (MySQL 8.0.18+) or ANALYZE FORMAT=JSON (MariaDB) of the top digests by SUM_TIMER_WAIT type=index_merge 'Using union/sort_union/intersect'; digest rows examined per row sent",
+    "points_to": "disable",
+    "condition": "index_merge digests hold a material share of time and a single-index or full-scan plan is faster (test with NO_INDEX_MERGE hint)",
+    "why": "index merge reads several indexes and merges row ids, which costs more than one good index when conditions are not selective"
+   }
+  ],
+  "impact_bound": "at most the share of total statement time (digest SUM_TIMER_WAIT) of the digests whose plans use (or could use) this strategy, times the fraction of their rows examined / CPU the alternative plan avoids; typical low.",
+  "experiment": {
+   "change": "NO_INDEX_MERGE hint on the digest, then the global flag",
+   "predict": "digest rows examined and latency fall",
+   "confirm_or_refute": "refute if slower or unchanged",
+   "cost_or_risk": "OR-queries may fall back to full scans"
+  },
+  "collected": "no: per-digest plans (EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE of top digests, or optimizer trace) to see which strategy is used",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/index-merge-optimization.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:index_merge_intersection",
+  "relevant_to": "all flavors (default on); only statements whose plans use index_merge (EXPLAIN type=index_merge) with 'Using intersect'",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE (MySQL 8.0.18+) or ANALYZE FORMAT=JSON (MariaDB) of the top digests by SUM_TIMER_WAIT 'Using intersect(...)' on top digests; status Handler_read_next per transaction",
+    "points_to": "disable",
+    "condition": "intersection digests read many index entries (Handler_read_next high per call) on correlated columns where one index alone (or a composite index) is much cheaper",
+    "why": "intersection scans every listed index fully over the matching ranges and intersects row ids; cost model assumes independence of columns"
+   }
+  ],
+  "impact_bound": "at most the share of total statement time (digest SUM_TIMER_WAIT) of the digests whose plans use (or could use) this strategy, times the fraction of their rows examined / CPU the alternative plan avoids; practice reports multi-x speedups for affected queries; typical medium where it appears, none otherwise.",
+  "experiment": {
+   "change": "SET_VAR(optimizer_switch='index_merge_intersection=off') on the digest, then global",
+   "predict": "Handler_read_next per call and latency fall; EXPLAIN shows a single ref/range",
+   "confirm_or_refute": "refute if latency rises (intersection was helping)",
+   "cost_or_risk": "low"
+  },
+  "collected": "no: per-digest plans (EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE of top digests, or optimizer trace) to see which strategy is used",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/index-merge-optimization.html",
+   "https://www.percona.com/blog/optimizing-mysql-index-merge-intersection/"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:index_merge_sort_union",
+  "relevant_to": "all flavors (default on); only statements whose plans use index_merge (EXPLAIN type=index_merge) with 'Using sort_union'",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE (MySQL 8.0.18+) or ANALYZE FORMAT=JSON (MariaDB) of the top digests by SUM_TIMER_WAIT 'Using sort_union(...)'; status Sort_rows not involved (internal rowid sort)",
+    "points_to": "disable",
+    "condition": "sort_union digests are a material time share and a full/single index scan is faster per hint test",
+    "why": "sort_union reads ranges from several indexes, sorts row ids and fetches rows"
+   }
+  ],
+  "impact_bound": "at most the share of total statement time (digest SUM_TIMER_WAIT) of the digests whose plans use (or could use) this strategy, times the fraction of their rows examined / CPU the alternative plan avoids; typical low.",
+  "experiment": {
+   "change": "NO_INDEX_MERGE / flag off for the digest",
+   "predict": "digest latency falls",
+   "confirm_or_refute": "refute otherwise",
+   "cost_or_risk": "low"
+  },
+  "collected": "no: per-digest plans (EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE of top digests, or optimizer trace) to see which strategy is used",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:index_merge_union",
+  "relevant_to": "all flavors (default on); only statements whose plans use index_merge (EXPLAIN type=index_merge) with 'Using union'",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE (MySQL 8.0.18+) or ANALYZE FORMAT=JSON (MariaDB) of the top digests by SUM_TIMER_WAIT 'Using union(...)'",
+    "points_to": "disable",
+    "condition": "union digests are a material time share and another plan is faster per hint test",
+    "why": "union merges row ids from several equality index scans"
+   }
+  ],
+  "impact_bound": "at most the share of total statement time (digest SUM_TIMER_WAIT) of the digests whose plans use (or could use) this strategy, times the fraction of their rows examined / CPU the alternative plan avoids; typical low.",
+  "experiment": {
+   "change": "NO_INDEX_MERGE / flag off for the digest",
+   "predict": "digest latency falls",
+   "confirm_or_refute": "refute otherwise",
+   "cost_or_risk": "OR conditions may fall back to full scans"
+  },
+  "collected": "no: per-digest plans (EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE of top digests, or optimizer trace) to see which strategy is used",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:loosescan",
+  "relevant_to": "MySQL/Percona 8.0-9.x and MariaDB (default on); only for IN/EXISTS subqueries converted to semijoins",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE (MySQL 8.0.18+) or ANALYZE FORMAT=JSON (MariaDB) of the top digests by SUM_TIMER_WAIT 'LooseScan(...)'",
+    "points_to": "disable",
+    "condition": "a LooseScan semijoin is a material time share and another strategy is faster per hint test",
+    "why": "LooseScan scans an index of the subquery table taking the first row of each value group"
+   }
+  ],
+  "impact_bound": "at most the share of total statement time (digest SUM_TIMER_WAIT) of the digests whose plans use (or could use) this strategy, times the fraction of their rows examined / CPU the alternative plan avoids; typical low.",
+  "experiment": {
+   "change": "SEMIJOIN hint excluding LOOSESCAN, then flag off",
+   "predict": "digest latency falls",
+   "confirm_or_refute": "refute otherwise",
+   "cost_or_risk": "low"
+  },
+  "collected": "no: per-digest plans (EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE of top digests, or optimizer trace) to see which strategy is used",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/semijoins.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:materialization",
+  "relevant_to": "all flavors (default on); IN-subqueries: semijoin materialization and non-semijoin subquery materialization",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Created_tmp_tables / Created_tmp_disk_tables per call of subquery digests; EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE (MySQL 8.0.18+) or ANALYZE FORMAT=JSON (MariaDB) of the top digests by SUM_TIMER_WAIT 'MATERIALIZED' / '<subquery2>'",
+    "points_to": "disable",
+    "condition": "materialized subquery is large (disk tmp tables) while an index-driven EXISTS/FirstMatch would touch few rows",
+    "why": "materialization builds a deduplicated tmp table of the whole subquery result"
+   },
+   {
+    "source": "derived",
+    "metric": "digest rows examined per row sent of DEPENDENT SUBQUERY plans",
+    "points_to": "enable",
+    "condition": "value off and dependent subqueries re-executed per outer row dominate time",
+    "why": "materialization runs the subquery once instead of per outer row"
+   }
+  ],
+  "impact_bound": "at most the share of total statement time (digest SUM_TIMER_WAIT) of the digests whose plans use (or could use) this strategy, times the fraction of their rows examined / CPU the alternative plan avoids; typical none/low for OLTP, medium for analytic IN-subqueries.",
+  "experiment": {
+   "change": "per digest SUBQUERY(MATERIALIZATION|INTOEXISTS) hint, then flag",
+   "predict": "tmp tables or re-executions per call fall; latency falls",
+   "confirm_or_refute": "refute otherwise",
+   "cost_or_risk": "low"
+  },
+  "collected": "partly: tmp table counters yes; missing plans",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/subquery-materialization.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:mrr",
+  "relevant_to": "all flavors (MySQL default on; MariaDB default off and used with join_cache_level>=5); matters for range/ref reads via secondary indexes that then fetch rows from disk",
+  "signals": [
+   {
+    "source": "ebpf",
+    "metric": "off-CPU data page read share during range digests; status Innodb_buffer_pool_reads per transaction; Handler_mrr_init",
+    "points_to": "enable",
+    "condition": "range scans on secondary indexes cause a material share of time in random data page reads (pages not cached)",
+    "why": "MRR sorts the row ids from the secondary index and fetches base rows in primary-key order, reducing random I/O"
+   },
+   {
+    "source": "derived",
+    "metric": "CPU profile share of MRR row-id sorting (perf) with Handler_mrr_init > 0 and Innodb_buffer_pool_reads ~0",
+    "points_to": "disable",
+    "condition": "Handler_mrr_init > 0 and buffer pool reads ~0: sorting adds CPU without I/O savings",
+    "why": "in-memory data gains nothing from ordered fetches"
+   }
+  ],
+  "impact_bound": "at most the data-page-read wait share of secondary-index range digests times the fraction of random reads made sequential; none when the working set is cached. Typical medium for disk-bound range queries, none in memory.",
+  "experiment": {
+   "change": "MySQL: mrr=on,mrr_cost_based=off for the digest; MariaDB: mrr=on,mrr_sort_keys=on (+ join_cache_level>=5 for joins)",
+   "predict": "Handler_mrr_init rises; buffer pool reads or read wait time per trx fall; EXPLAIN 'Using MRR'",
+   "confirm_or_refute": "refute if reads per trx unchanged and CPU per trx up",
+   "cost_or_risk": "read_rnd_buffer_size memory; extra CPU in memory-bound cases"
+  },
+  "collected": "partly: Handler_mrr_init and read waits yes; missing per-digest plans",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/mrr-optimization.html",
+   "https://mariadb.com/kb/en/multi-range-read-optimization/"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:mrr_cost_based",
+  "relevant_to": "MySQL/Percona (default on); MariaDB has mrr_cost_based too (default off); only matters when mrr=on and the cost model rejects MRR",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Handler_mrr_init == 0 while range digests show material data page read wait share",
+    "points_to": "disable",
+    "condition": "the optimizer never chooses MRR although random secondary-index lookups dominate I/O",
+    "why": "off forces MRR whenever possible regardless of cost estimate"
+   }
+  ],
+  "impact_bound": "same bound as mrr; typical low/medium for disk-bound range queries.",
+  "experiment": {
+   "change": "mrr_cost_based=off (with mrr=on), per digest first",
+   "predict": "Handler_mrr_init > 0 and read waits per trx fall",
+   "confirm_or_refute": "refute if CPU rises without I/O reduction",
+   "cost_or_risk": "MRR used also where it hurts (in-memory, small ranges)"
+  },
+  "collected": "partly: same as mrr",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/mrr-optimization.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:prefer_ordering_index",
+  "relevant_to": "MySQL/Percona 8.0.21+ (default on); only ORDER BY/GROUP BY ... LIMIT statements where an ordering index competes with a more selective one",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "performance_schema.events_statements_summary_by_digest SUM_ROWS_EXAMINED / SUM_ROWS_SENT for ORDER BY ... LIMIT digests",
+    "points_to": "disable",
+    "condition": "rows examined per row sent is very high (index scan in order until LIMIT rows match a rare filter) and these digests hold a material share of time",
+    "why": "the ordering index avoids a filesort but may scan most of the table to find LIMIT matching rows"
+   }
+  ],
+  "impact_bound": "at most these digests' time times (1 - rows examined with the filtering index / current rows examined); typical low, but individual queries can improve by orders of magnitude.",
+  "experiment": {
+   "change": "SET_VAR(optimizer_switch='prefer_ordering_index=off') on the digest",
+   "predict": "rows examined per call drop sharply; a filesort appears (Sort_rows rises); latency falls",
+   "confirm_or_refute": "refute if latency rises (filesort of many rows costs more)",
+   "cost_or_risk": "filesorts for LIMIT queries that were cheap"
+  },
+  "collected": "partly: digest rows examined/sent yes; missing plans",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/limit-optimization.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:semijoin",
+  "relevant_to": "all flavors (default on); IN/EXISTS subqueries in WHERE",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE (MySQL 8.0.18+) or ANALYZE FORMAT=JSON (MariaDB) of the top digests by SUM_TIMER_WAIT DEPENDENT SUBQUERY vs semijoin strategies; digest rows examined per row sent",
+    "points_to": "enable",
+    "condition": "value off and subquery digests run dependent subqueries per outer row with a material time share",
+    "why": "semijoin lets the optimizer reorder the subquery as a join and pick FirstMatch/LooseScan/Materialization/Weedout"
+   },
+   {
+    "source": "derived",
+    "metric": "semijoin plan of a digest much slower than NO_SEMIJOIN hint plan",
+    "points_to": "disable",
+    "condition": "per-digest hint test shows the EXISTS strategy is faster",
+    "why": "estimates can choose a poor semijoin order"
+   }
+  ],
+  "impact_bound": "at most the share of total statement time (digest SUM_TIMER_WAIT) of the digests whose plans use (or could use) this strategy, times the fraction of their rows examined / CPU the alternative plan avoids; typical low for OLTP, medium for analytics (TPC-H Q4/Q20/Q21 style).",
+  "experiment": {
+   "change": "NO_SEMIJOIN / SEMIJOIN hint on the digest",
+   "predict": "rows examined per call and latency fall",
+   "confirm_or_refute": "refute otherwise",
+   "cost_or_risk": "global off often regresses subqueries"
+  },
+  "collected": "no: per-digest plans (EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE of top digests, or optimizer trace) to see which strategy is used",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/semijoins.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:skip_scan",
+  "relevant_to": "MySQL/Percona 8.0.13+ (default on); MariaDB has no skip scan; only queries with a range on a non-leading column of a composite index and no condition on the leading column",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE (MySQL 8.0.18+) or ANALYZE FORMAT=JSON (MariaDB) of the top digests by SUM_TIMER_WAIT 'Using index for skip scan'; digest rows examined",
+    "points_to": "disable",
+    "condition": "skip-scan digests are slow because the leading column has many distinct values (skip scan does many range dives)",
+    "why": "skip scan does one range scan per distinct prefix value, which is efficient only for few distinct prefixes"
+   }
+  ],
+  "impact_bound": "at most the share of total statement time (digest SUM_TIMER_WAIT) of the digests whose plans use (or could use) this strategy, times the fraction of their rows examined / CPU the alternative plan avoids; typical low.",
+  "experiment": {
+   "change": "NO_SKIP_SCAN hint on the digest",
+   "predict": "latency falls with a different plan",
+   "confirm_or_refute": "refute otherwise",
+   "cost_or_risk": "low"
+  },
+  "collected": "no: per-digest plans (EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE of top digests, or optimizer trace) to see which strategy is used",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/range-optimization.html#range-access-skip-scan"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:subquery_materialization_cost_based",
+  "relevant_to": "MySQL/Percona (default on); only non-semijoin IN subqueries where both materialization and IN-to-EXISTS are possible",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE (MySQL 8.0.18+) or ANALYZE FORMAT=JSON (MariaDB) of the top digests by SUM_TIMER_WAIT: subquery strategy chosen vs SUBQUERY(MATERIALIZATION|INTOEXISTS) hint timings",
+    "points_to": "disable",
+    "condition": "the cost-based choice picks the slower strategy for a digest holding a material time share",
+    "why": "off forces materialization whenever materialization=on"
+   }
+  ],
+  "impact_bound": "at most the share of total statement time (digest SUM_TIMER_WAIT) of the digests whose plans use (or could use) this strategy, times the fraction of their rows examined / CPU the alternative plan avoids; typical low.",
+  "experiment": {
+   "change": "SUBQUERY hint per digest",
+   "predict": "digest latency falls",
+   "confirm_or_refute": "refute otherwise",
+   "cost_or_risk": "off forces materialization everywhere"
+  },
+  "collected": "no: per-digest plans (EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE of top digests, or optimizer trace) to see which strategy is used",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/subquery-materialization.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:subquery_to_derived",
+  "relevant_to": "MySQL/Percona 8.0.21+ (default off; Oracle: mainly for testing, often no improvement or slower); scalar/correlated subqueries in SELECT list or WHERE; MariaDB n/a",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE (MySQL 8.0.18+) or ANALYZE FORMAT=JSON (MariaDB) of the top digests by SUM_TIMER_WAIT DEPENDENT SUBQUERY executed per outer row; digest SUM_ROWS_EXAMINED per row sent and status Handler_read_key per call",
+    "points_to": "enable",
+    "condition": "correlated scalar subqueries are re-executed per outer row and dominate time of analytic digests",
+    "why": "the transform turns them into a derived table joined once (group by) instead of per-row execution"
+   }
+  ],
+  "impact_bound": "at most the time spent re-executing correlated subqueries (per-digest); claims of large gains apply only to specific analytic queries; Oracle documents frequent regressions. Typical none for OLTP, high for specific analytics.",
+  "experiment": {
+   "change": "SET_VAR(optimizer_switch='subquery_to_derived=on') per analytic digest only",
+   "predict": "Handler_read_key / rows examined per call fall; latency falls",
+   "confirm_or_refute": "refute if latency rises (common per docs)",
+   "cost_or_risk": "regressions on many queries if set globally"
+  },
+  "collected": "no: per-digest plans (EXPLAIN FORMAT=TREE / EXPLAIN ANALYZE of top digests, or optimizer trace) to see which strategy is used",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:use_index_extensions",
+  "relevant_to": "MySQL/Percona (default on); MariaDB analog extended_keys; only queries filtering on secondary index columns plus primary-key columns",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "none practical",
+    "points_to": "no change needed",
+    "condition": "keep on; off only removes access paths",
+    "why": "extensions let the optimizer use the PK columns appended to every InnoDB secondary index"
+   }
+  ],
+  "impact_bound": "none expected from turning off.",
+  "experiment": {
+   "change": "do not test except to diagnose a plan",
+   "predict": "n/a",
+   "confirm_or_refute": "n/a",
+   "cost_or_risk": "off can slow queries"
+  },
+  "collected": "yes (nothing to collect)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/index-extensions.html"
+  ]
+ },
+ {
+  "variable": "optimizer_switch:use_invisible_indexes",
+  "relevant_to": "MySQL/Percona 8.0+ (default off); only if invisible indexes exist (information_schema.STATISTICS IS_VISIBLE='NO')",
+  "signals": [
+   {
+    "source": "information_schema",
+    "metric": "information_schema.STATISTICS where IS_VISIBLE='NO'",
+    "points_to": "no change needed",
+    "condition": "if invisible indexes exist, test per digest whether they help, then make the index visible rather than flipping the flag",
+    "why": "the flag only changes whether invisible indexes are considered"
+   }
+  ],
+  "impact_bound": "at most the gain of the invisible indexes on the digests that could use them; typical none.",
+  "experiment": {
+   "change": "SET_VAR(optimizer_switch='use_invisible_indexes=on') on candidate digests",
+   "predict": "plan uses the index; latency falls",
+   "confirm_or_refute": "refute otherwise",
+   "cost_or_risk": "none at session level"
+  },
+  "collected": "no: list of invisible indexes",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/switchable-optimizations.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/invisible-indexes.html"
+  ]
+ },
+ {
+  "variable": "optimizer_use_condition_selectivity",
+  "relevant_to": "mariadb only (default 4 since 10.4: uses index, range and histogram selectivity; 1 = old behavior; 5 adds selectivity for full/index scans); matters for joins with filter conditions on non-indexed columns",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "ANALYZE FORMAT=JSON: r_filtered vs filtered and r_rows vs rows per table of top join digests",
+    "points_to": "a specific value",
+    "condition": "estimates far off actual (e.g. >10x) and EXPLAIN shows a join order reading many more rows than needed; try 5 when scans dominate, or 1 when histogram-based estimates misfire",
+    "why": "the level decides which statistics feed the selectivity estimate used for join ordering"
+   },
+   {
+    "source": "information_schema",
+    "metric": "mysql.column_stats populated?",
+    "points_to": "no change needed",
+    "condition": "without engine-independent statistics, levels 3-5 behave close to lower levels",
+    "why": "higher levels use EITS min/max/histograms"
+   }
+  ],
+  "impact_bound": "at most the excess time of mis-ordered join digests; typical none for single-table OLTP, medium for multi-join analytics.",
+  "experiment": {
+   "change": "set 5 (or 1) per session for the suspect digests",
+   "predict": "estimated vs actual rows converge; rows examined per call and latency fall",
+   "confirm_or_refute": "refute if plans unchanged",
+   "cost_or_risk": "planning CPU slightly higher at 5; plan changes for other queries"
+  },
+  "collected": "no: ANALYZE FORMAT=JSON of top digests and column_stats presence; MariaDB performance_schema off by default",
+  "sources": [
+   "https://mariadb.com/kb/en/server-system-variables/#optimizer_use_condition_selectivity",
+   "https://mariadb.com/kb/en/engine-independent-table-statistics/"
+  ]
+ },
+ {
+  "variable": "range_optimizer_max_mem_size",
+  "relevant_to": "MySQL/Percona 8.0/8.4/9.x (default 8 MB; 0 = no limit); only statements with very large IN lists or many OR range conditions",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "performance_schema.events_errors_summary_global_by_error WHERE ERROR_NAME='ER_CAPACITY_EXCEEDED' (3170) SUM_ERROR_RAISED; or digest SUM_WARNINGS with full scans",
+    "points_to": "raise",
+    "condition": "warning 3170 'Memory capacity ... for range_optimizer_max_mem_size exceeded. Range optimization was not done' appears for digests that then full-scan (Select_scan/SUM_NO_INDEX_USED rises)",
+    "why": "when the range optimizer runs out of memory it abandons range access and falls back to a full table or index scan"
+   }
+  ],
+  "impact_bound": "at most the time of those digests times (1 - rows of the range plan / rows scanned) - often nearly all of it; typical none (requires huge IN lists), high for the affected statements.",
+  "experiment": {
+   "change": "raise to 32-64 MB (or 0) for the session/global",
+   "predict": "warning 3170 count falls to 0; digest SUM_SELECT_SCAN and rows examined per call fall; latency falls",
+   "confirm_or_refute": "refute if no 3170 warnings were present",
+   "cost_or_risk": "more memory per statement during planning"
+  },
+  "collected": "no: events_errors_summary_global_by_error for ER_CAPACITY_EXCEEDED (or digest SUM_WARNINGS)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/range-optimization.html#range-optimization-memory-use",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_range_optimizer_max_mem_size"
+  ]
+ },
+ {
+  "variable": "use_stat_tables",
+  "relevant_to": "mariadb only (default PREFERABLY_FOR_QUERIES: use engine-independent stats if present, collected only by explicit ANALYZE ... PERSISTENT FOR); matters only with optimizer_use_condition_selectivity >= 3 and joins/filters on non-indexed or skewed columns",
+  "signals": [
+   {
+    "source": "information_schema",
+    "metric": "mysql.table_stats / mysql.column_stats / mysql.index_stats rows for tables of top digests",
+    "points_to": "a specific value",
+    "condition": "stats tables empty for tables with misestimated plans (r_filtered vs filtered far apart): collect them (ANALYZE ... PERSISTENT FOR ALL) or set PREFERABLY so ANALYZE TABLE collects them",
+    "why": "engine-independent statistics give per-column selectivity and histograms that InnoDB does not provide"
+   },
+   {
+    "source": "derived",
+    "metric": "duration of ANALYZE TABLE",
+    "points_to": "a specific value",
+    "condition": "COMPLEMENTARY/PREFERABLY makes routine ANALYZE TABLE do full scans that cost material I/O",
+    "why": "collecting EITS scans the whole table"
+   }
+  ],
+  "impact_bound": "same bound as histogram_size / optimizer_use_condition_selectivity (mis-planned join digests); typical low.",
+  "experiment": {
+   "change": "set PREFERABLY and run ANALYZE TABLE ... PERSISTENT FOR ALL on tables of mis-planned digests",
+   "predict": "estimates converge with actuals; plans and latency of those digests improve",
+   "confirm_or_refute": "refute if no plan changes",
+   "cost_or_risk": "ANALYZE becomes a full scan (I/O, time)"
+  },
+  "collected": "no: mysql.*_stats contents and ANALYZE FORMAT=JSON of top digests",
+  "sources": [
+   "https://mariadb.com/kb/en/server-system-variables/#use_stat_tables",
+   "https://mariadb.com/kb/en/engine-independent-table-statistics/"
+  ]
+ }
+]

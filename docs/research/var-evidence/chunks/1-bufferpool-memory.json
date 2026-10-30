@@ -1,0 +1,701 @@
+{
+ "aria_pagecache_buffer_size": {
+  "category": "memory",
+  "description": "Aria page cache.",
+  "impact": "medium",
+  "when": "MariaDB analytics with on-disk temporary tables (Aria)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": true,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "134217728"
+ },
+ "aria_used_for_temp_tables": {
+  "category": "memory",
+  "description": "Aria (vs MyISAM) for on-disk temporary tables.",
+  "impact": "low",
+  "when": "MariaDB on-disk temporary tables",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": true,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "ON"
+ },
+ "binlog_cache_size": {
+  "category": "memory",
+  "description": "Per-session binlog cache.",
+  "impact": "low",
+  "when": "large transactions with binary log on (spill to a temporary file)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "32768"
+ },
+ "bulk_insert_buffer_size": {
+  "category": "memory",
+  "description": "MyISAM bulk insert tree cache.",
+  "impact": "low",
+  "when": "bulk inserts into MyISAM",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "8388608"
+ },
+ "connection_memory_limit": {
+  "category": "memory",
+  "description": "Per-connection memory limit.",
+  "impact": "none",
+  "when": "a safety cap (8.0.28+): queries over it fail",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "semantics",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "18446744073709551615"
+ },
+ "global_connection_memory_limit": {
+  "category": "memory",
+  "description": "Memory limit across all connections.",
+  "impact": "none",
+  "when": "a safety cap (8.0.28+)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "semantics",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "18446744073709551615"
+ },
+ "innodb_buffer_pool_chunk_size": {
+  "category": "memory",
+  "description": "Unit of buffer pool resizing.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": true,
+  "scope": "mysql",
+  "releases": "all",
+  "default": null
+ },
+ "innodb_buffer_pool_dump_at_shutdown": {
+  "category": "buffer pool",
+  "description": "Save the page list at shutdown.",
+  "impact": "low",
+  "when": "restarts: warm-up time after a restart",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "ON"
+ },
+ "innodb_buffer_pool_dump_pct": {
+  "category": "buffer pool",
+  "description": "Share of the most recently used pages saved.",
+  "impact": "low",
+  "when": "restarts with a large buffer pool",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "25"
+ },
+ "innodb_buffer_pool_instances": {
+  "category": "memory",
+  "description": "Number of buffer pool partitions; reduces mutex contention.",
+  "impact": "medium",
+  "when": "many cores with buffer pool mutex contention",
+  "precondition": null,
+  "mechanism_tags": [
+   "concurrency",
+   "cpu",
+   "cpu-bufpool",
+   "cpu-pressure",
+   "cpu-spin"
+  ],
+  "safety": "safe",
+  "restart": true,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": null
+ },
+ "innodb_buffer_pool_load_at_startup": {
+  "category": "buffer pool",
+  "description": "Load the saved page list at startup.",
+  "impact": "low",
+  "when": "restarts: warm-up time after a restart",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": true,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "ON"
+ },
+ "innodb_buffer_pool_size": {
+  "category": "memory",
+  "description": "Main InnoDB cache for data and index pages.",
+  "impact": "high",
+  "when": "the working set misses memory (data page reads); too large causes swapping / OOM",
+  "precondition": null,
+  "mechanism_tags": [
+   "io",
+   "io-read",
+   "memory",
+   "memory-pressure",
+   "oom",
+   "swap"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": null
+ },
+ "innodb_change_buffer_max_size": {
+  "category": "buffer pool",
+  "description": "Maximum share of the buffer pool used by the change buffer.",
+  "impact": "medium",
+  "when": "insert / update-heavy with secondary indexes and data larger than memory",
+  "precondition": "the workload writes (redo / flushing active)",
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": {
+   "mariadb 10.11": "25",
+   "mysql 8.0": "25",
+   "mysql 8.4": "25",
+   "mysql 9.7": "5",
+   "percona 8.0": "25",
+   "percona 8.4": "25",
+   "percona 9.7": "5",
+   "pxc 8.4": "25"
+  }
+ },
+ "innodb_numa_interleave": {
+  "category": "memory",
+  "description": "Interleave buffer pool allocation across NUMA nodes.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "io-read",
+   "memory",
+   "numa"
+  ],
+  "safety": "safe",
+  "restart": true,
+  "scope": "mysql",
+  "releases": [
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": null
+ },
+ "innodb_old_blocks_pct": {
+  "category": "buffer pool",
+  "description": "Share of the buffer pool LRU used for the old sublist.",
+  "impact": "low",
+  "when": "scans mixed with point lookups",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "37"
+ },
+ "innodb_old_blocks_time": {
+  "category": "buffer pool",
+  "description": "Milliseconds a page stays in the old sublist before it can be made young.",
+  "impact": "medium",
+  "when": "scans mixed with point lookups (scans evicting the hot set)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "1000"
+ },
+ "innodb_open_files": {
+  "category": "table cache",
+  "description": "InnoDB's limit of open tablespace files.",
+  "impact": "low",
+  "when": "many tablespaces (file-per-table) opened during the run",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": true,
+  "scope": "mysql",
+  "releases": "all",
+  "default": null
+ },
+ "internal_tmp_mem_storage_engine": {
+  "category": "memory",
+  "description": "Engine for in-memory internal temporary tables.",
+  "impact": "medium",
+  "when": "analytics with in-memory temporary tables (TempTable vs MEMORY)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "TempTable"
+ },
+ "join_buffer_size": {
+  "category": "memory",
+  "description": "Per-join buffer for joins without usable indexes.",
+  "impact": "medium",
+  "when": "joins without usable indexes / hash joins spilling (analytics)",
+  "precondition": null,
+  "mechanism_tags": [
+   "cpu",
+   "io"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "262144"
+ },
+ "join_buffer_space_limit": {
+  "category": "memory",
+  "description": "Total join buffer per query (MariaDB).",
+  "impact": "low",
+  "when": "MariaDB joins with several join buffers",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "2097152"
+ },
+ "key_buffer_size": {
+  "category": "memory",
+  "description": "MyISAM key cache.",
+  "impact": "low",
+  "when": "MyISAM tables only (MariaDB also: MyISAM temporary tables)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": {
+   "mariadb 10.11": "134217728",
+   "mariadb 11.4": "134217728",
+   "mariadb 11.8": "134217728",
+   "mysql 8.0": "8388608",
+   "mysql 8.4": "8388608",
+   "mysql 9.7": "8388608",
+   "percona 8.0": "8388608",
+   "percona 8.4": "8388608",
+   "percona 9.7": "8388608",
+   "pxc 8.4": "8388608"
+  }
+ },
+ "large_pages": {
+  "category": "memory",
+  "description": "Allocate the buffer pool from huge pages (needs vm.nr_hugepages and memlock).",
+  "impact": "medium",
+  "when": "memory-bound work with a large buffer pool (TLB misses); needs measured headroom",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": true,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "OFF"
+ },
+ "max_heap_table_size": {
+  "category": "memory",
+  "description": "Max size of MEMORY tables; caps in-memory temp tables too.",
+  "impact": "medium",
+  "when": "as tmp_table_size",
+  "precondition": "on-disk temporary tables during the run (Created_tmp_disk_tables > 0)",
+  "mechanism_tags": [
+   "cpu",
+   "io"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "16777216"
+ },
+ "max_session_mem_used": {
+  "category": "memory",
+  "description": "Per-session memory limit (MariaDB).",
+  "impact": "none",
+  "when": "a safety cap (MariaDB)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "semantics",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "9223372036854775807"
+ },
+ "mrr_buffer_size": {
+  "category": "memory",
+  "description": "MRR buffer (MariaDB).",
+  "impact": "low",
+  "when": "MariaDB multi-range reads",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "262144"
+ },
+ "read_buffer_size": {
+  "category": "memory",
+  "description": "Per-scan buffer.",
+  "impact": "low",
+  "when": "sequential scans of MyISAM / temporary tables",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "131072"
+ },
+ "read_rnd_buffer_size": {
+  "category": "memory",
+  "description": "Buffer for multi-range reads / sorted row reads.",
+  "impact": "low",
+  "when": "sorted reads (MRR / filesort results)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "262144"
+ },
+ "rocksdb_block_cache_size": {
+  "category": "memory",
+  "description": "MyRocks block cache: uncompressed data / index blocks in memory (the RocksDB counterpart of the buffer pool).",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [
+   "io-read",
+   "memory",
+   "rocksdb-cache"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "rocksdb_db_write_buffer_size": {
+  "category": "memory",
+  "description": "MyRocks: memory for all memtables (writes buffered before flushing to SST files); 0 = unlimited.",
+  "impact": "unknown",
+  "when": "",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": true,
+  "scope": "mysql",
+  "releases": null,
+  "default": null
+ },
+ "schema_definition_cache": {
+  "category": "table cache",
+  "description": "Cached schema definitions.",
+  "impact": "low",
+  "when": "many schemas",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "256"
+ },
+ "sort_buffer_size": {
+  "category": "memory",
+  "description": "Per-session sort buffer.",
+  "impact": "low",
+  "when": "sort merge passes during the run",
+  "precondition": "sort merge passes during the run (Sort_merge_passes > 0)",
+  "mechanism_tags": [
+   "cpu",
+   "io"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": {
+   "mariadb 10.11": "2097152",
+   "mariadb 11.4": "2097152",
+   "mariadb 11.8": "2097152",
+   "mysql 8.0": "262144",
+   "mysql 8.4": "262144",
+   "mysql 9.7": "262144",
+   "percona 8.0": "262144",
+   "percona 8.4": "262144",
+   "percona 9.7": "262144",
+   "pxc 8.4": "262144"
+  }
+ },
+ "stored_program_cache": {
+  "category": "table cache",
+  "description": "Cached routines per connection.",
+  "impact": "low",
+  "when": "many stored routines per connection",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "256"
+ },
+ "table_open_cache_triggers": {
+  "category": "table cache",
+  "description": "Cached table instances with triggers.",
+  "impact": "low",
+  "when": "tables with many triggers (9.x)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "524288"
+ },
+ "tablespace_definition_cache": {
+  "category": "table cache",
+  "description": "Cached tablespace definitions.",
+  "impact": "low",
+  "when": "many tablespaces",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "256"
+ },
+ "temptable_max_mmap": {
+  "category": "memory",
+  "description": "Cap on TempTable memory-mapped files.",
+  "impact": "low",
+  "when": "TempTable overflow to memory-mapped files (8.0.23+)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": {
+   "mysql 8.0": "1073741824",
+   "mysql 8.4": "0",
+   "mysql 9.7": "0",
+   "percona 8.0": "1073741824",
+   "percona 8.4": "0",
+   "percona 9.7": "0",
+   "pxc 8.4": "0"
+  }
+ },
+ "temptable_max_ram": {
+  "category": "memory",
+  "description": "RAM the TempTable engine may use before spilling to mmap/disk.",
+  "impact": "medium",
+  "when": "analytics with large in-memory temporary tables (TempTable engine)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "mysql 9.7",
+   "percona 8.0",
+   "percona 8.4",
+   "percona 9.7",
+   "pxc 8.4"
+  ],
+  "default": "1073741824"
+ },
+ "temptable_use_mmap": {
+  "category": "memory",
+  "description": "TempTable overflow to memory-mapped files.",
+  "impact": "low",
+  "when": "TempTable overflow (deprecated in 8.0.26)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mysql 8.0",
+   "mysql 8.4",
+   "percona 8.0",
+   "percona 8.4",
+   "pxc 8.4"
+  ],
+  "default": {
+   "mysql 8.0": "ON",
+   "mysql 8.4": "OFF",
+   "percona 8.0": "ON",
+   "percona 8.4": "OFF",
+   "pxc 8.4": "OFF"
+  }
+ },
+ "tmp_memory_table_size": {
+  "category": "memory",
+  "description": "Largest in-memory temporary table (MariaDB).",
+  "impact": "medium",
+  "when": "as tmp_table_size (MariaDB name)",
+  "precondition": null,
+  "mechanism_tags": [],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": [
+   "mariadb 10.11",
+   "mariadb 11.4",
+   "mariadb 11.8"
+  ],
+  "default": "16777216"
+ },
+ "tmp_table_size": {
+  "category": "memory",
+  "description": "Max size of in-memory internal temporary tables.",
+  "impact": "medium",
+  "when": "analytics spilling temporary tables to disk",
+  "precondition": "on-disk temporary tables during the run (Created_tmp_disk_tables > 0)",
+  "mechanism_tags": [
+   "cpu",
+   "io"
+  ],
+  "safety": "safe",
+  "restart": false,
+  "scope": "mysql",
+  "releases": "all",
+  "default": "16777216"
+ }
+}

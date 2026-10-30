@@ -1,0 +1,1495 @@
+[
+ {
+  "variable": "os:cpu_affinity",
+  "relevant_to": "os; all flavors. Useful only when mysqld shares CPUs with NIC softirq, the benchmark client or other busy processes; no effect when the host is not CPU-saturated.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "per-thread run-queue wait of mysqld threads (schedstat / eBPF runq latency)",
+    "points_to": "a specific value",
+    "condition": "a material share of connection-thread wall time is spent runnable-but-not-running while softirq/client/other processes use the same CPUs",
+    "why": "Confining mysqld away from the CPUs busy with interrupts/clients removes preemption and run-queue delay."
+   },
+   {
+    "source": "os",
+    "metric": "/proc/softirqs NET_RX/NET_TX per CPU and %soft per CPU (mpstat -P ALL)",
+    "points_to": "a specific value",
+    "condition": "softirq time is concentrated on a few CPUs that mysqld threads also run on",
+    "why": "Network softirq preempts mysqld threads on those CPUs and inflates query latency."
+   },
+   {
+    "source": "ebpf",
+    "metric": "off-CPU category 'scheduler/run-queue' of connection threads",
+    "points_to": "a specific value",
+    "condition": "material share of foreground time",
+    "why": "Measures the time affinity could recover."
+   },
+   {
+    "source": "os",
+    "metric": "PSI cpu some avg10 (/proc/pressure/cpu or cgroup cpu.pressure)",
+    "points_to": "lower",
+    "condition": "high CPU pressure that coincides with low idle on a CPU subset",
+    "why": "Shows tasks waiting for CPU; affinity only helps if pressure is localized, it hurts if mysqld then has fewer CPUs than runnable threads."
+   }
+  ],
+  "impact_bound": "At most the run-queue wait share of connection-thread time attributable to co-located softirq/clients; restricting CPUs also removes capacity, so the net gain is bounded by (run-queue wait recovered) - (CPU capacity lost). Typical: low to medium on small hosts with client on the same box or single-queue NICs; none on idle-CPU hosts.",
+  "experiment": {
+   "change": "pin mysqld to CPUs excluding those handling NIC IRQs (and the benchmark client), keep at least the CPUs mysqld actually uses at peak",
+   "predict": "mysqld run-queue wait per trx falls; %soft on mysqld CPUs falls; mysqld CPU ms per trx flat or lower; throughput/latency improve",
+   "confirm_or_refute": "Gain with lower run-queue wait confirms; if run-queue wait rises (fewer CPUs) or CPU on the pinned set hits 100%, refute and revert to all.",
+   "cost_or_risk": "Loss of CPU capacity; NUMA side-effects if the set spans nodes inconsistently."
+  },
+  "collected": "partly - run-queue wait and PSI collected; add per-CPU softirq time (/proc/softirqs, mpstat %soft per CPU) and which CPUs run mysqld threads",
+  "sources": [
+   "https://docs.kernel.org/networking/scaling.html",
+   "https://docs.kernel.org/accounting/psi.html",
+   "https://blog.cloudflare.com/how-to-receive-a-million-packets/"
+  ]
+ },
+ {
+  "variable": "os:cpu_governor",
+  "relevant_to": "os; bare metal or VMs that expose cpufreq (most clouds do not: /sys/devices/system/cpu/cpu0/cpufreq absent means no effect). Irrelevant when the CPU is mostly idle waiting for I/O.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor and scaling_cur_freq vs cpuinfo_max_freq during the run",
+    "points_to": "a specific value",
+    "condition": "governor is powersave/ondemand/schedutil and effective frequency during the run is materially below max",
+    "why": "Lower clock makes every CPU-bound microsecond longer."
+   },
+   {
+    "source": "os",
+    "metric": "perf stat cycles / task-clock (effective GHz) of mysqld, or turbostat Avg_MHz/Bzy_MHz",
+    "points_to": "a specific value",
+    "condition": "Bzy_MHz well below nominal/turbo while busy, or large variance between runs",
+    "why": "Direct measure of the frequency actually delivered to mysqld."
+   },
+   {
+    "source": "os",
+    "metric": "C-state residency (turbostat C6%) with short bursty load",
+    "points_to": "a specific value",
+    "condition": "latency-bound workload with frequent deep idle exits",
+    "why": "Wake-up from deep C-states and frequency ramp-up add latency to every request in light/bursty load."
+   }
+  ],
+  "impact_bound": "Bounded by the CPU-on share of response time times (1 - cur_freq/max_freq); for latency-bound low-concurrency runs also the wake-up latency per request. Typical: medium (10-30%) on bare metal with powersave/ondemand; none on cloud VMs without cpufreq.",
+  "experiment": {
+   "change": "set governor to performance (intel_pstate: also energy_performance_preference=performance)",
+   "predict": "effective MHz of mysqld rises; mysqld CPU ms per trx falls; latency falls in CPU-bound runs",
+   "confirm_or_refute": "If MHz rises and CPU ms/trx falls proportionally, confirm; if MHz did not change (already max, or hypervisor controls clock) refute.",
+   "cost_or_risk": "Higher power use/heat; can reduce turbo headroom on all-core loads slightly."
+  },
+  "collected": "no - add scaling_governor, scaling_cur_freq per CPU and perf cycles/task-clock (or turbostat) for mysqld",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/pm/cpufreq.html",
+   "https://www.percona.com/blog/linux-os-tuning-for-mysql-database-performance/"
+  ]
+ },
+ {
+  "variable": "os:datadir_fs",
+  "relevant_to": "os; all flavors; only when a filesystem can be (re)created on the experiment device. Matters for I/O/commit-bound runs; none when data is fully cached and commits are cheap.",
+  "signals": [
+   {
+    "source": "ebpf",
+    "metric": "off-CPU redo flush (fsync) time and data page read/write wait of connection threads",
+    "points_to": "a specific value",
+    "condition": "a material share of foreground time is spent in fsync/fdatasync or file writes",
+    "why": "Filesystems differ in fsync cost (journal commit), allocation and O_DIRECT concurrency (ext4 vs xfs inode lock behavior)."
+   },
+   {
+    "source": "os",
+    "metric": "fsync latency distribution (eBPF biolatency/fsync latency per file type) and jbd2/xfs log kernel thread CPU",
+    "points_to": "a specific value",
+    "condition": "fsync latency well above raw device write latency",
+    "why": "Excess over device latency is filesystem journaling overhead."
+   },
+   {
+    "source": "derived",
+    "metric": "fsyncs per trx * mean fsync latency / trx latency",
+    "points_to": "a specific value",
+    "condition": "material share",
+    "why": "Upper bound of commit time a cheaper filesystem could save."
+   }
+  ],
+  "impact_bound": "At most the share of foreground time in fsync and file I/O beyond raw device latency. Typical: low to medium (ext4 vs xfs usually within ~5-15% on NVMe; larger with high-concurrency O_DIRECT writes on ext4 or with many fsyncs).",
+  "experiment": {
+   "change": "recreate the datadir on xfs vs ext4 (same mount options, same device), reload data",
+   "predict": "fsync latency and off-CPU redo flush time per trx fall; throughput rises",
+   "confirm_or_refute": "Compare fsync latency and commit-wait time per trx; a throughput change without fsync/write-wait change is noise.",
+   "cost_or_risk": "Requires reload/restart; durability semantics differ only with unsafe mount options."
+  },
+  "collected": "partly - off-CPU redo flush and fsyncs collected; add fsync/fdatasync latency histogram by file and journal thread CPU",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/ext4.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_flush_method",
+   "https://www.percona.com/blog/linux-os-tuning-for-mysql-database-performance/"
+  ]
+ },
+ {
+  "variable": "os:disk_write_cache",
+  "relevant_to": "os; all flavors; only when the drive has a volatile cache that is currently disabled. Drives with power-loss protection (most enterprise NVMe/SSD) report no volatile cache or ignore flush - no effect; cloud block devices usually no effect.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/sys/block/<dev>/queue/write_cache ('write back' vs 'write through'), hdparm -W, nvme get-feature -f 6",
+    "points_to": "enable",
+    "condition": "cache reported 'write through' on a drive that supports a volatile cache",
+    "why": "With cache off every write and flush waits for media; commits pay full media latency."
+   },
+   {
+    "source": "os",
+    "metric": "disk write await (w_await) per write I/O",
+    "points_to": "enable",
+    "condition": "write latency in the ms range on SSD/NVMe, or ~rotational latency on HDD",
+    "why": "Indicates writes going to media synchronously."
+   },
+   {
+    "source": "ebpf",
+    "metric": "off-CPU redo flush time of connection threads",
+    "points_to": "enable",
+    "condition": "material share of foreground time",
+    "why": "This is the time a write cache could shrink."
+   }
+  ],
+  "impact_bound": "At most the redo-flush + doublewrite/data-write wait share of foreground time, times (1 - cached_latency/uncached_latency). Typical: high (several-fold commit throughput) on consumer SSD/HDD with cache off; none with PLP drives. DURABILITY risk without power-loss protection.",
+  "experiment": {
+   "change": "enable volatile write cache (only acceptable when durability trade-off is accepted or PLP present)",
+   "predict": "w_await falls sharply; redo fsync latency falls; commit-bound throughput rises",
+   "confirm_or_refute": "Large fall in w_await confirms; no change means cache absent or already effective.",
+   "cost_or_risk": "Data loss/corruption on power failure without PLP (kernel still issues flushes, but drive may lie)."
+  },
+  "collected": "partly - disk await and off-CPU redo flush collected; add write_cache state (sysfs) and per-device flush latency",
+  "sources": [
+   "https://docs.kernel.org/block/writeback_cache_control.html",
+   "https://docs.kernel.org/block/queue-sysfs.html"
+  ]
+ },
+ {
+  "variable": "os:fs.aio-max-nr",
+  "relevant_to": "os; InnoDB with innodb_use_native_aio=ON (MySQL/PS use libaio; MariaDB 10.6+ may use io_uring, which is not limited by aio-max-nr). Cannot matter if io_setup succeeds at startup.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/proc/sys/fs/aio-nr vs /proc/sys/fs/aio-max-nr",
+    "points_to": "raise",
+    "condition": "aio-nr close to aio-max-nr (several mysqld instances or many io threads)",
+    "why": "io_setup() fails with EAGAIN when the system-wide limit is reached."
+   },
+   {
+    "source": "engine_status",
+    "metric": "mysqld error log: 'io_setup() failed with EAGAIN' / native AIO disabled; SHOW GLOBAL VARIABLES innodb_use_native_aio",
+    "points_to": "raise",
+    "condition": "message present or native AIO turned off at startup",
+    "why": "InnoDB falls back to simulated AIO (or fails to start), reducing I/O concurrency."
+   }
+  ],
+  "impact_bound": "Binary: none if io_setup succeeded; if native AIO was lost, up to the share of time in data page read/flush waits that parallel I/O would overlap. Typical: none for single-instance hosts (default 65536 suffices).",
+  "experiment": {
+   "change": "raise fs.aio-max-nr (e.g. 1048576) and restart mysqld",
+   "predict": "error log message disappears; innodb_use_native_aio effective; read/flush wait falls",
+   "confirm_or_refute": "If no EAGAIN message existed, the change cannot matter - skip.",
+   "cost_or_risk": "None (kernel memory only when used)."
+  },
+  "collected": "no - add /proc/sys/fs/aio-nr and an error-log grep for io_setup",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/fs.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-linux-native-aio.html"
+  ]
+ },
+ {
+  "variable": "os:hugepages",
+  "relevant_to": "os; MySQL/PS/MariaDB with large_pages=ON (pairs with that variable); no effect when large_pages=OFF; MySQL 8.4+ falls back to normal pages if reservation is insufficient.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/proc/meminfo HugePages_Total/HugePages_Free/HugePages_Rsvd after startup",
+    "points_to": "raise",
+    "condition": "large_pages=ON but HugePages_Free ~= Total (buffer pool not using them) or error log 'Warning: Failed to allocate ... huge pages'",
+    "why": "Reservation too small: the buffer pool silently uses 4K pages."
+   },
+   {
+    "source": "os",
+    "metric": "perf: dTLB-load-misses / dTLB-loads and page-walk cycles (dtlb_load_misses.walk_active) of mysqld",
+    "points_to": "raise",
+    "condition": "a material share of mysqld cycles spent in page walks on a large buffer pool",
+    "why": "Huge pages cut TLB misses for buffer-pool access."
+   },
+   {
+    "source": "os",
+    "metric": "/proc/meminfo MemAvailable after reservation",
+    "points_to": "lower",
+    "condition": "reserved but unused huge pages, or memory pressure caused by the reservation",
+    "why": "Reserved huge pages are unavailable for anything else."
+   }
+  ],
+  "impact_bound": "At most the share of mysqld CPU cycles spent in page walks (typically 2-10% on CPU-bound large-pool workloads). Typical: low to medium; none on I/O-bound runs.",
+  "experiment": {
+   "change": "reserve ceil(buffer_pool_size*1.05/2MiB) pages and set large_pages=ON",
+   "predict": "page-walk cycles and dTLB misses fall; mysqld CPU ms per trx falls",
+   "confirm_or_refute": "Confirm via walk cycles drop plus CPU/trx drop; refute if CPU/trx unchanged.",
+   "cost_or_risk": "Memory locked away; pool cannot grow beyond reservation; restart required."
+  },
+  "collected": "partly - CPU profile collected; add /proc/meminfo HugePages_* and perf dTLB/page-walk counters",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/mm/hugetlbpage.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/large-page-support.html"
+  ]
+ },
+ {
+  "variable": "os:kernel.numa_balancing",
+  "relevant_to": "os; multi-socket or multi-NUMA-node hosts only (numactl -H shows >1 node); no effect on single-node VMs.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/proc/vmstat numa_hint_faults, numa_pages_migrated, numa_pte_updates rates",
+    "points_to": "disable",
+    "condition": "high hint-fault/migration rates during steady state",
+    "why": "Balancing unmaps pages to sample access, adding minor faults and migrations; for a shared buffer pool accessed from all nodes migrations do not help."
+   },
+   {
+    "source": "os",
+    "metric": "perf: share of mysqld CPU in task_numa_work/do_numa_page/migrate_pages",
+    "points_to": "disable",
+    "condition": "a material share of CPU",
+    "why": "Direct CPU cost of the balancing mechanism."
+   },
+   {
+    "source": "os",
+    "metric": "/proc/vmstat numa_hit/numa_miss/numa_foreign, perf remote-DRAM loads",
+    "points_to": "enable",
+    "condition": "high remote access share with stable thread placement",
+    "why": "Balancing could co-locate memory with threads."
+   }
+  ],
+  "impact_bound": "At most the CPU share in NUMA hinting faults/migration plus minor-fault stalls. Typical: low (0-5%) for mysqld; none on single-node hosts.",
+  "experiment": {
+   "change": "set kernel.numa_balancing=0",
+   "predict": "numa_hint_faults and numa_pages_migrated go to ~0; mysqld sys CPU and minor faults fall",
+   "confirm_or_refute": "Gain with fallen sys CPU confirms; if remote memory access rises and CPU/trx rises, refute.",
+   "cost_or_risk": "Loss of locality for workloads with node-local thread groups."
+  },
+  "collected": "no - add /proc/vmstat numa_* and node count",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/kernel.html",
+   "https://docs.percona.com/percona-server/8.0/innodb-numa-support.html"
+  ]
+ },
+ {
+  "variable": "os:kernel.sched_autogroup_enabled",
+  "relevant_to": "os; only when other process groups (sessions) compete for CPU on the host, e.g. the benchmark client or backups in another session; no effect for services under systemd (each is already in its own cgroup) unless CPU is saturated.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "per-thread run-queue wait of mysqld threads and PSI cpu some",
+    "points_to": "disable",
+    "condition": "material run-queue wait while another session-group runs CPU-heavy work",
+    "why": "Autogroup gives each session group equal share, so mysqld's many threads may get the same CPU as a single client process."
+   },
+   {
+    "source": "os",
+    "metric": "/proc/<pid>/autogroup of mysqld and of competing processes",
+    "points_to": "disable",
+    "condition": "mysqld and competitors in different autogroups with CPU saturated",
+    "why": "Confirms the fairness mechanism is active."
+   }
+  ],
+  "impact_bound": "Bounded by mysqld run-queue wait share under CPU saturation. Typical: none to low.",
+  "experiment": {
+   "change": "set kernel.sched_autogroup_enabled=0",
+   "predict": "mysqld run-queue wait falls when CPU is saturated",
+   "confirm_or_refute": "No saturation means no possible effect; refute if run-queue wait unchanged.",
+   "cost_or_risk": "Competing interactive processes may get less CPU."
+  },
+  "collected": "partly - run-queue wait and PSI collected; add autogroup membership",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/kernel.html",
+   "https://docs.kernel.org/accounting/psi.html"
+  ]
+ },
+ {
+  "variable": "os:malloc",
+  "relevant_to": "os; all flavors; matters with many concurrent threads, frequent per-query allocations (sorts, joins, tmp tables) or memory growth/fragmentation. Percona Server and MariaDB packages often ship jemalloc; MySQL uses glibc by default.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "perf CPU profile share in malloc/free/arena locks (_int_malloc, malloc_consolidate, __lll_lock_wait in arena, je_*/tc_* functions)",
+    "points_to": "a specific value",
+    "condition": "a material share of mysqld CPU in allocator functions",
+    "why": "A scalable allocator (jemalloc/tcmalloc) reduces lock contention and per-call cost."
+   },
+   {
+    "source": "ebpf",
+    "metric": "off-CPU futex waits with allocator frames in the stack",
+    "points_to": "a specific value",
+    "condition": "material share",
+    "why": "Arena lock contention in glibc."
+   },
+   {
+    "source": "os",
+    "metric": "mysqld RSS vs sum of configured buffers and performance_schema.memory_summary_global_by_event_name total; RSS growth over time",
+    "points_to": "a specific value",
+    "condition": "RSS materially above tracked memory, or growing steadily",
+    "why": "Fragmentation / unreturned memory in glibc arenas (MALLOC_ARENA_MAX or jemalloc fixes)."
+   }
+  ],
+  "impact_bound": "At most the allocator CPU + allocator-lock off-CPU share of foreground time; memory saving bounded by RSS - tracked memory. Typical: medium (5-20%) at high concurrency with glibc; low otherwise.",
+  "experiment": {
+   "change": "LD_PRELOAD jemalloc (or tcmalloc) or set glibc MALLOC_ARENA_MAX, restart",
+   "predict": "allocator CPU share falls; mysqld CPU ms per trx falls; RSS lower/stable",
+   "confirm_or_refute": "Confirm with profile shift; if allocator share was <2% any throughput change is noise.",
+   "cost_or_risk": "Restart; allocator-specific memory overhead; rare bugs with some versions."
+  },
+  "collected": "partly - CPU profile collected (ensure an 'allocator' category); add RSS vs performance_schema memory_summary totals",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.4/jemalloc-profiling.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/performance-schema-memory-summary-tables.html"
+  ]
+ },
+ {
+  "variable": "os:mount_barrier",
+  "relevant_to": "os; ext4 (and remounts) on drives with a volatile write cache; no effect on drives with PLP or write_cache='write through' (kernel skips flushes) and on xfs (option removed).",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/sys/block/<dev>/queue/write_cache and flush latency (eBPF block rq for REQ_PREFLUSH/FUA)",
+    "points_to": "disable",
+    "condition": "volatile cache present and cache flushes take a material share of fsync time",
+    "why": "Barriers issue cache flushes on every journal commit/fsync."
+   },
+   {
+    "source": "ebpf",
+    "metric": "off-CPU redo flush time of connection threads",
+    "points_to": "disable",
+    "condition": "material share of foreground time",
+    "why": "Upper bound of what removing flushes can save."
+   }
+  ],
+  "impact_bound": "At most the cache-flush portion of fsync time times fsyncs on the critical path. Typical: medium-high on consumer SSD/HDD; none with PLP. DURABILITY risk.",
+  "experiment": {
+   "change": "mount -o remount,nobarrier (only with accepted durability trade-off)",
+   "predict": "fsync latency falls; commit-bound throughput rises",
+   "confirm_or_refute": "No fall in fsync latency means flushes were not the cost (PLP) - revert.",
+   "cost_or_risk": "Filesystem/database corruption on power loss."
+  },
+  "collected": "partly - fsyncs and off-CPU redo flush collected; add device flush-request latency",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/ext4.html",
+   "https://docs.kernel.org/block/writeback_cache_control.html"
+  ]
+ },
+ {
+  "variable": "os:mount_noatime",
+  "relevant_to": "os; filesystems mounted with atime/strictatime; with the common default relatime, access-time updates happen at most once a day per file, so practically no effect for InnoDB (few long-open files).",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "mount options of datadir (/proc/mounts)",
+    "points_to": "enable",
+    "condition": "'strictatime' or 'atime' present",
+    "why": "Every read updates inode atime, generating metadata writes."
+   },
+   {
+    "source": "os",
+    "metric": "journal/metadata writes (jbd2 commits) during read-only runs",
+    "points_to": "enable",
+    "condition": "write I/O during a read-only workload not explained by MySQL",
+    "why": "atime updates show up as metadata writes."
+   }
+  ],
+  "impact_bound": "At most the metadata write I/O share; with relatime ~none. Typical: none to low.",
+  "experiment": {
+   "change": "remount with noatime",
+   "predict": "metadata write IOPS during read-only load fall",
+   "confirm_or_refute": "No write change: refute.",
+   "cost_or_risk": "Tools relying on atime break (rare)."
+  },
+  "collected": "no - add datadir mount options",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/ext4.html",
+   "https://www.percona.com/blog/linux-os-tuning-for-mysql-database-performance/"
+  ]
+ },
+ {
+  "variable": "os:mysqld_numa_policy",
+  "relevant_to": "os; multi-NUMA-node hosts only. Related DB vars: innodb_numa_interleave (MySQL/PS 8.0+). No effect on single-node hosts.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "numastat -p mysqld (per-node memory of mysqld)",
+    "points_to": "a specific value",
+    "condition": "buffer pool memory heavily skewed to one node while threads run on all nodes, or one node exhausted while others free",
+    "why": "Imbalanced allocation causes remote access and local-node reclaim/swap of mysqld memory."
+   },
+   {
+    "source": "os",
+    "metric": "/proc/vmstat numa_miss, numa_foreign, plus pswpout/pgscan on one node (/sys/devices/system/node/node*/vmstat)",
+    "points_to": "a specific value",
+    "condition": "swapping or reclaim on one node while other nodes have free memory",
+    "why": "Classic 'swap insanity': interleave spreads the pool."
+   },
+   {
+    "source": "os",
+    "metric": "perf remote vs local DRAM loads (mem_load_l3_miss_retired.remote_dram)",
+    "points_to": "a specific value",
+    "condition": "remote share high",
+    "why": "Bind to one node can help if mysqld fits on one node."
+   }
+  ],
+  "impact_bound": "Bounded by the reclaim/swap stall time on the full node plus the remote-access latency share of memory stalls. Typical: low for steady performance, high for avoiding swap on multi-socket hosts with large buffer pools.",
+  "experiment": {
+   "change": "set NUMAPolicy=interleave (or bind to one node if mysqld fits), restart",
+   "predict": "numastat per-node balance changes as intended; per-node swap/reclaim stops; CPU/trx flat or lower",
+   "confirm_or_refute": "Confirm by stalls/swap disappearing; if only throughput noise moves, keep default.",
+   "cost_or_risk": "Restart; bind can starve mysqld of memory/CPUs of other nodes."
+  },
+  "collected": "no - add numastat per node and node vmstat",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.0/innodb-numa-support.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_numa_interleave",
+   "https://blog.jcole.us/2010/09/28/mysql-swap-insanity-and-the-numa-architecture/"
+  ]
+ },
+ {
+  "variable": "os:net.core.default_qdisc",
+  "relevant_to": "os; only affects egress queues of NICs created after change (or reattached); matters for networks with loss/queuing and bulk replies (large result sets, replication over WAN). Matters only when clients connect over TCP from another host (or loopback at very high rates); no effect on Unix-socket clients.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "tc -s qdisc show: drops, overlimits, backlog",
+    "points_to": "a specific value",
+    "condition": "drops or standing backlog on the egress qdisc",
+    "why": "Queueing discipline determines egress queueing delay and drops."
+   },
+   {
+    "source": "os",
+    "metric": "nstat TcpRetransSegs, TcpExtTCPLostRetransmit; ss -ti rtt/cwnd",
+    "points_to": "a specific value",
+    "condition": "retransmissions or RTT inflation under load",
+    "why": "fq (with pacing) reduces bursts and bufferbloat, and is required for older BBR."
+   }
+  ],
+  "impact_bound": "At most the share of client time spent waiting on network transfer beyond base RTT. Typical: none on a LAN with small result sets; low-medium for bulk transfer over WAN.",
+  "experiment": {
+   "change": "set default_qdisc=fq (re-apply qdisc on the NIC)",
+   "predict": "egress drops/backlog and retransmissions fall; response time for large results falls",
+   "confirm_or_refute": "If qdisc stats show no drops/backlog before, refute up front.",
+   "cost_or_risk": "Minimal; slightly higher CPU on very high packet rates."
+  },
+  "collected": "no - add tc qdisc stats and TCP retransmit counters (nstat)",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/net.html",
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "os:net.core.netdev_budget",
+  "relevant_to": "os; high packet rates (many small queries per second over TCP) where NET_RX softirq runs out of budget. Matters only when clients connect over TCP from another host (or loopback at very high rates); no effect on Unix-socket clients.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/proc/net/softnet_stat column 3 (time_squeeze) per CPU",
+    "points_to": "raise",
+    "condition": "time_squeeze increasing during the run",
+    "why": "Softirq stopped with packets still pending because budget or time ran out."
+   },
+   {
+    "source": "os",
+    "metric": "%soft per CPU and ksoftirqd CPU",
+    "points_to": "lower",
+    "condition": "softirq time starving mysqld threads on the same CPU",
+    "why": "A larger budget lets softirq run longer, delaying user threads."
+   }
+  ],
+  "impact_bound": "Bounded by the latency of packets deferred to ksoftirqd; typical: none to low (default 300 is enough below ~1M pps).",
+  "experiment": {
+   "change": "raise netdev_budget (e.g. 600)",
+   "predict": "time_squeeze rate falls; network latency/throughput under high pps improves",
+   "confirm_or_refute": "No time_squeeze before means no possible effect.",
+   "cost_or_risk": "Longer softirq bursts can increase latency for co-located threads."
+  },
+  "collected": "no - add /proc/net/softnet_stat (processed, dropped, time_squeeze) per CPU",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/net.html",
+   "https://blog.cloudflare.com/how-to-receive-a-million-packets/"
+  ]
+ },
+ {
+  "variable": "os:net.core.netdev_budget_usecs",
+  "relevant_to": "os; same as netdev_budget (the time limit of a softirq round, default 2000 us). Matters only when clients connect over TCP from another host (or loopback at very high rates); no effect on Unix-socket clients.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/proc/net/softnet_stat time_squeeze",
+    "points_to": "raise",
+    "condition": "time_squeeze increasing while packet count per round is below netdev_budget",
+    "why": "The time budget, not the packet budget, ended the round."
+   }
+  ],
+  "impact_bound": "As netdev_budget; typical none to low.",
+  "experiment": {
+   "change": "raise netdev_budget_usecs (e.g. 4000-8000)",
+   "predict": "time_squeeze falls",
+   "confirm_or_refute": "No time_squeeze: no effect possible.",
+   "cost_or_risk": "Longer softirq occupancy of a CPU."
+  },
+  "collected": "no - add softnet_stat",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/net.html"
+  ]
+ },
+ {
+  "variable": "os:net.core.netdev_max_backlog",
+  "relevant_to": "os; packet bursts on one CPU (RPS or non-NAPI paths) exceeding the per-CPU backlog. Matters only when clients connect over TCP from another host (or loopback at very high rates); no effect on Unix-socket clients.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/proc/net/softnet_stat column 2 (dropped) per CPU",
+    "points_to": "raise",
+    "condition": "dropped increasing during the run",
+    "why": "Packets dropped when the per-CPU input backlog is full cause TCP retransmits."
+   },
+   {
+    "source": "os",
+    "metric": "nstat TcpRetransSegs",
+    "points_to": "raise",
+    "condition": "retransmissions coinciding with softnet drops",
+    "why": "Drops turn into retransmission timeouts (200 ms+) for clients."
+   }
+  ],
+  "impact_bound": "At most the retransmission delay share of client time; zero when softnet drops are zero. Typical: none; high in rare cases (RTO stalls).",
+  "experiment": {
+   "change": "raise netdev_max_backlog (e.g. 1000 -> 10000)",
+   "predict": "softnet dropped -> 0, retransmits fall, tail latency falls",
+   "confirm_or_refute": "No drops before: skip.",
+   "cost_or_risk": "Slightly more memory, potentially more queueing latency."
+  },
+  "collected": "no - add softnet_stat dropped and TCP retransmits",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/net.html",
+   "https://blog.cloudflare.com/how-to-receive-a-million-packets/"
+  ]
+ },
+ {
+  "variable": "os:net.core.rmem_max",
+  "relevant_to": "os; caps SO_RCVBUF set explicitly by applications (MySQL does not set it; autotuning uses tcp_rmem[2] instead). Effect only for applications calling setsockopt; for mysqld practically none. Matters only when clients connect over TCP from another host (or loopback at very high rates); no effect on Unix-socket clients.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "ss -tmi: rcv_space / rb (skmem) of mysqld sockets vs bandwidth-delay product",
+    "points_to": "raise",
+    "condition": "an application sets SO_RCVBUF and receive window limits throughput on high-BDP links",
+    "why": "Explicit buffer sizes are clamped to rmem_max."
+   }
+  ],
+  "impact_bound": "No measurable signal for mysqld under default settings; bounded by transfer time of large inserts/replication over high-BDP links. Typical: none.",
+  "experiment": {
+   "change": "raise rmem_max (e.g. 16 MiB)",
+   "predict": "only matters if bulk-receive throughput was window-limited (ss shows rcv_wnd full)",
+   "confirm_or_refute": "Unchanged ss rcv window: no effect.",
+   "cost_or_risk": "Memory per socket if applications request large buffers."
+  },
+  "collected": "no - add ss -tmi socket memory/window sampling",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/net.html",
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "os:net.core.rps_sock_flow_entries",
+  "relevant_to": "os; only with RFS enabled (rps_flow_cnt>0 on RX queues and RPS on); otherwise no effect. Matters only when clients connect over TCP from another host (or loopback at very high rates); no effect on Unix-socket clients.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "per-CPU %soft vs CPU where the consuming mysqld thread runs (cache misses in tcp_v4_rcv)",
+    "points_to": "raise",
+    "condition": "RPS on, many flows, softirq processing on CPUs different from the consuming thread",
+    "why": "RFS steers packets to the CPU running the consuming thread for cache locality; table too small causes collisions."
+   }
+  ],
+  "impact_bound": "No direct counter; bounded by softirq + network-stack CPU share. Kernel doc suggests 32768-65536 for moderately loaded servers. Typical: none to low.",
+  "experiment": {
+   "change": "set rps_sock_flow_entries=32768 and rps_flow_cnt per queue = entries/queues",
+   "predict": "network-stack CPU per trx falls; latency falls slightly",
+   "confirm_or_refute": "Compare network-category CPU per trx in profile.",
+   "cost_or_risk": "Little memory."
+  },
+  "collected": "partly - network CPU category collected; add RPS/RFS config state",
+  "sources": [
+   "https://docs.kernel.org/networking/scaling.html"
+  ]
+ },
+ {
+  "variable": "os:net.core.somaxconn",
+  "relevant_to": "os; caps MySQL back_log (listen backlog). Matters only with connection storms (many new connections per second, e.g. no pooling); MySQL default back_log = max_connections-based, capped by somaxconn (default 4096 on kernels >=5.4).",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "nstat TcpExtListenOverflows and TcpExtListenDrops (/proc/net/netstat)",
+    "points_to": "raise",
+    "condition": "increasing during the run",
+    "why": "Accept queue full: SYNs/ACKs dropped, clients retry after 1s+ (SYN retransmit)."
+   },
+   {
+    "source": "os",
+    "metric": "ss -ltn Recv-Q vs Send-Q on port 3306",
+    "points_to": "raise",
+    "condition": "Recv-Q reaches Send-Q (backlog)",
+    "why": "Accept queue saturation."
+   },
+   {
+    "source": "status",
+    "metric": "Connections rate and Aborted_connects",
+    "points_to": "raise",
+    "condition": "high connect rate with client-side connect timeouts",
+    "why": "Corroborates connection storm."
+   }
+  ],
+  "impact_bound": "At most the connect-retry delay times the number of overflowed connects; zero without overflows. Typical: none with pooled connections; high for connection-storm workloads.",
+  "experiment": {
+   "change": "raise somaxconn and back_log (e.g. 4096+)",
+   "predict": "ListenOverflows -> 0; connect latency p99 falls",
+   "confirm_or_refute": "No overflows before: no effect possible.",
+   "cost_or_risk": "None significant."
+  },
+  "collected": "no - add TcpExtListenOverflows/ListenDrops",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/net.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_back_log"
+  ]
+ },
+ {
+  "variable": "os:net.core.wmem_max",
+  "relevant_to": "os; caps SO_SNDBUF set explicitly by applications; mysqld does not set it, autotuning uses tcp_wmem[2]. Practically no effect for mysqld. Matters only when clients connect over TCP from another host (or loopback at very high rates); no effect on Unix-socket clients.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "ss -tmi snd buffer (tb) and 'sndbuf_limited' time (ss -i shows sndbuf_limited)",
+    "points_to": "raise",
+    "condition": "a process sets SO_SNDBUF and sends are sndbuf-limited on high-BDP links",
+    "why": "Explicit send buffers are clamped to wmem_max."
+   }
+  ],
+  "impact_bound": "No measurable signal for mysqld defaults. Typical: none.",
+  "experiment": {
+   "change": "raise wmem_max",
+   "predict": "sndbuf_limited time falls (only if explicit SO_SNDBUF)",
+   "confirm_or_refute": "No sndbuf_limited: no effect.",
+   "cost_or_risk": "Memory per socket."
+  },
+  "collected": "no - add ss -ti sndbuf_limited/rwnd_limited",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/net.html"
+  ]
+ },
+ {
+  "variable": "os:net.ipv4.ip_local_port_range",
+  "relevant_to": "os; client side (benchmark client, proxies, replicas) making many short-lived outgoing connections; no effect on the server's listening side.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "ss -tan state time-wait count to the server port vs size of port range; client errors EADDRNOTAVAIL ('Cannot assign requested address')",
+    "points_to": "raise",
+    "condition": "TIME_WAIT/used ports approach range size",
+    "why": "Ephemeral port exhaustion blocks new outgoing connects."
+   }
+  ],
+  "impact_bound": "Binary: failures or connect delays only when ports are exhausted. Typical: none with pooling.",
+  "experiment": {
+   "change": "widen range to 1024-65535 (on the client host)",
+   "predict": "connect errors disappear",
+   "confirm_or_refute": "No exhaustion: no effect.",
+   "cost_or_risk": "Port conflicts with services on low ports."
+  },
+  "collected": "no - add TIME_WAIT socket count and client connect errors",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "os:net.ipv4.tcp_congestion_control",
+  "relevant_to": "os; matters with packet loss or high BDP (WAN, cloud cross-AZ replication, large result sets). On low-latency LAN with small responses: none. Matters only when clients connect over TCP from another host (or loopback at very high rates); no effect on Unix-socket clients.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "nstat TcpRetransSegs / TcpOutSegs, ss -ti cwnd/rtt/delivery_rate",
+    "points_to": "a specific value",
+    "condition": "loss/retransmissions or RTT growth during bulk transfers",
+    "why": "BBR keeps throughput under random loss where cubic backs off."
+   },
+   {
+    "source": "derived",
+    "metric": "time clients spend receiving results (eBPF off-CPU 'client/network' share of server threads)",
+    "points_to": "a specific value",
+    "condition": "material share",
+    "why": "Upper bound of what a different algorithm can recover."
+   }
+  ],
+  "impact_bound": "Bounded by network transfer time beyond RTT for responses larger than the initial window. Typical: none on LAN; medium for WAN replication/bulk.",
+  "experiment": {
+   "change": "set bbr (with fq qdisc)",
+   "predict": "retransmit-limited throughput rises; transfer time of large results falls",
+   "confirm_or_refute": "No retransmissions/cwnd limits before: skip.",
+   "cost_or_risk": "Fairness with cubic flows; more retransmits in some cases."
+  },
+  "collected": "no - add TCP retransmit counters and ss -ti samples",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html",
+   "https://research.google/pubs/bbr-congestion-based-congestion-control-2/"
+  ]
+ },
+ {
+  "variable": "os:net.ipv4.tcp_keepalive_intvl",
+  "relevant_to": "os; only detects dead peers for idle connections; no throughput effect. Matters for failover detection of idle connections / replication links.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "no measurable performance signal",
+    "points_to": "no change needed",
+    "condition": "only availability: half-open connections lingering (Threads_connected higher than live clients)",
+    "why": "Determines how fast dead idle peers are detected."
+   }
+  ],
+  "impact_bound": "None for throughput/latency. Typical: none.",
+  "experiment": {
+   "change": "none for performance; set for failover detection only",
+   "predict": "no performance metric should move",
+   "confirm_or_refute": "Any throughput change is noise.",
+   "cost_or_risk": "Aggressive values drop connections over flaky networks."
+  },
+  "collected": "yes (nothing to collect)",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "os:net.ipv4.tcp_keepalive_probes",
+  "relevant_to": "os; as tcp_keepalive_intvl - dead-peer detection only.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "no measurable performance signal",
+    "points_to": "no change needed",
+    "condition": "n/a",
+    "why": "Number of unanswered probes before reset."
+   }
+  ],
+  "impact_bound": "None. Typical: none.",
+  "experiment": {
+   "change": "none for performance",
+   "predict": "no metric",
+   "confirm_or_refute": "Noise only.",
+   "cost_or_risk": "Dropped connections if too low."
+  },
+  "collected": "yes (nothing to collect)",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "os:net.ipv4.tcp_keepalive_time",
+  "relevant_to": "os; as tcp_keepalive_intvl; also keeps idle connections alive through NAT/firewall/conntrack timeouts.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "no measurable performance signal; availability: client errors 'Lost connection' after idle through middleboxes",
+    "points_to": "lower",
+    "condition": "idle connections reset by NAT/firewall",
+    "why": "Keepalives refresh middlebox state."
+   }
+  ],
+  "impact_bound": "None for performance. Typical: none.",
+  "experiment": {
+   "change": "none for performance",
+   "predict": "no metric",
+   "confirm_or_refute": "Noise only.",
+   "cost_or_risk": "Extra packets negligible."
+  },
+  "collected": "yes (nothing to collect)",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "os:net.ipv4.tcp_max_syn_backlog",
+  "relevant_to": "os; connection storms; mostly irrelevant with syncookies enabled (default) and pooled connections.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "nstat TcpExtListenDrops minus ListenOverflows, TcpExtTCPReqQFullDrop, TcpExtTCPReqQFullDoCookies",
+    "points_to": "raise",
+    "condition": "SYN-queue drops or syncookies sent during the run",
+    "why": "SYN queue full: SYNs dropped (client retries after 1s) or syncookies (losing TCP options)."
+   },
+   {
+    "source": "os",
+    "metric": "kernel log 'Possible SYN flooding on port 3306'",
+    "points_to": "raise",
+    "condition": "present",
+    "why": "Explicit SYN queue overflow."
+   }
+  ],
+  "impact_bound": "At most connect retry delay times dropped SYNs; none otherwise. Typical: none.",
+  "experiment": {
+   "change": "raise tcp_max_syn_backlog (e.g. 8192) together with somaxconn/back_log",
+   "predict": "TCPReqQFullDrop/DoCookies -> 0",
+   "confirm_or_refute": "No drops: no effect.",
+   "cost_or_risk": "Memory for request socks."
+  },
+  "collected": "no - add TcpExt ReqQFull* counters",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "os:net.ipv4.tcp_rmem",
+  "relevant_to": "os; autotuning ceiling for receive buffers; matters for bulk inbound transfers (LOAD DATA, large inserts, replication receive) on high-BDP paths. Matters only when clients connect over TCP from another host (or loopback at very high rates); no effect on Unix-socket clients.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "ss -ti rcv_space vs BDP; TcpExtTCPRcvQDrop, TcpExtPruneCalled/RcvPruned",
+    "points_to": "raise",
+    "condition": "receive buffer pruning/collapse or window limited to max on high-BDP links",
+    "why": "Window capped by tcp_rmem[2] limits throughput to max/RTT."
+   }
+  ],
+  "impact_bound": "Bounded by bulk receive time on high-BDP paths; typical none on LAN.",
+  "experiment": {
+   "change": "raise tcp_rmem max (e.g. 16 MiB)",
+   "predict": "rcv window and bulk throughput rise; prune counters fall",
+   "confirm_or_refute": "No pruning/window limit: no effect.",
+   "cost_or_risk": "Memory per socket under many connections."
+  },
+  "collected": "no - add TcpExt prune/collapse counters and ss sampling",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "os:net.ipv4.tcp_slow_start_after_idle",
+  "relevant_to": "os; persistent connections that idle longer than RTO between large responses over high-RTT links; no effect on LAN or small responses.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "ss -ti cwnd at start of response after idle vs steady cwnd; TcpExt counters n/a",
+    "points_to": "disable",
+    "condition": "large responses after idle periods on high RTT paths taking several RTTs",
+    "why": "cwnd reset to initial window after idle forces slow start again."
+   }
+  ],
+  "impact_bound": "Bounded by (extra RTTs per large response) * RTT. Typical: none on LAN.",
+  "experiment": {
+   "change": "set tcp_slow_start_after_idle=0",
+   "predict": "latency of first large response after idle falls",
+   "confirm_or_refute": "No high-RTT paths: no effect.",
+   "cost_or_risk": "Bursts into congested networks."
+  },
+  "collected": "no - add RTT and response size distribution",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "os:net.ipv4.tcp_tw_reuse",
+  "relevant_to": "os; client side only (outgoing connections), with many short-lived connections; server side unaffected.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "TIME_WAIT count on client host vs ephemeral port range; client connect EADDRNOTAVAIL",
+    "points_to": "enable",
+    "condition": "port exhaustion from TIME_WAIT",
+    "why": "Allows reuse of TIME_WAIT for new outgoing connects (with timestamps). Default 2 = loopback only."
+   }
+  ],
+  "impact_bound": "Binary like ip_local_port_range. Typical: none.",
+  "experiment": {
+   "change": "set tcp_tw_reuse=1 on client host",
+   "predict": "connect errors vanish",
+   "confirm_or_refute": "No exhaustion: no effect.",
+   "cost_or_risk": "Minimal with timestamps."
+  },
+  "collected": "no - add TIME_WAIT count",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "os:net.ipv4.tcp_wmem",
+  "relevant_to": "os; autotuning ceiling for send buffers; matters for large result sets / binlog dump to replicas over high-BDP links. Matters only when clients connect over TCP from another host (or loopback at very high rates); no effect on Unix-socket clients.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "ss -ti sndbuf_limited time, notsent bytes",
+    "points_to": "raise",
+    "condition": "send path sndbuf-limited during large result transfers",
+    "why": "Send buffer below BDP caps throughput."
+   },
+   {
+    "source": "performance_schema",
+    "metric": "wait/io/socket/sql/client_connection write wait time (events_waits_summary_global_by_event_name)",
+    "points_to": "raise",
+    "condition": "material share of statement time in socket writes",
+    "why": "Server threads blocked sending results."
+   }
+  ],
+  "impact_bound": "Bounded by socket write wait share of foreground time. Typical: none on LAN.",
+  "experiment": {
+   "change": "raise tcp_wmem max",
+   "predict": "socket write wait and sndbuf_limited fall",
+   "confirm_or_refute": "No sndbuf limit: no effect.",
+   "cost_or_risk": "Memory per socket."
+  },
+  "collected": "partly - P_S socket waits/eBPF client waits collected; add ss sndbuf_limited",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "os:net.netfilter.nf_conntrack_max",
+  "relevant_to": "os; only when nf_conntrack module is loaded (firewall/NAT/docker); no effect otherwise.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/proc/sys/net/netfilter/nf_conntrack_count vs nf_conntrack_max; conntrack -S drop/insert_failed/early_drop",
+    "points_to": "raise",
+    "condition": "count near max or drops increasing; kernel log 'nf_conntrack: table full, dropping packet'",
+    "why": "Full table drops new connections' packets."
+   },
+   {
+    "source": "os",
+    "metric": "perf CPU in nf_conntrack_* functions",
+    "points_to": "a specific value",
+    "condition": "material share of softirq CPU",
+    "why": "Conntrack overhead itself (fix: NOTRACK for 3306)."
+   }
+  ],
+  "impact_bound": "Binary for drops (connect failures/retries); CPU share bound by nf_conntrack CPU. Typical: none unless table full.",
+  "experiment": {
+   "change": "raise nf_conntrack_max (and hashsize)",
+   "predict": "drop counters -> 0",
+   "confirm_or_refute": "No drops before: no effect.",
+   "cost_or_risk": "Kernel memory."
+  },
+  "collected": "no - add nf_conntrack_count and conntrack -S",
+  "sources": [
+   "https://docs.kernel.org/networking/nf_conntrack-sysctl.html"
+  ]
+ },
+ {
+  "variable": "os:net_irq_cpus",
+  "relevant_to": "os; NIC interrupts concentrated or colliding with mysqld threads; multi-queue NICs; irrelevant at low packet rates or Unix-socket clients.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/proc/interrupts per-CPU counts for NIC queues; per-CPU %soft and %irq",
+    "points_to": "a specific value",
+    "condition": "IRQ/softirq load concentrated on few CPUs that are saturated (100% busy incl. softirq)",
+    "why": "Packet processing capacity limited by the CPUs handling interrupts."
+   },
+   {
+    "source": "os",
+    "metric": "/proc/net/softnet_stat dropped/time_squeeze per CPU",
+    "points_to": "a specific value",
+    "condition": "nonzero on the IRQ CPUs",
+    "why": "Those CPUs are overloaded."
+   },
+   {
+    "source": "os",
+    "metric": "run-queue wait of mysqld threads on IRQ CPUs",
+    "points_to": "a specific value",
+    "condition": "material",
+    "why": "Softirq preempts mysqld there."
+   }
+  ],
+  "impact_bound": "At most softirq-induced run-queue wait plus network throughput limit; typical low, medium at very high QPS of tiny queries on small VMs.",
+  "experiment": {
+   "change": "spread IRQs over all CPUs (or dedicate a set and keep mysqld off it via cpu_affinity)",
+   "predict": "per-CPU softirq evens out; time_squeeze/drops fall; latency falls",
+   "confirm_or_refute": "If per-CPU softirq was already even and CPUs not saturated, refute.",
+   "cost_or_risk": "Stopping irqbalance; misconfiguration can concentrate interrupts."
+  },
+  "collected": "no - add /proc/interrupts and per-CPU %soft/%irq",
+  "sources": [
+   "https://docs.kernel.org/networking/scaling.html",
+   "https://blog.cloudflare.com/how-to-receive-a-million-packets/"
+  ]
+ },
+ {
+  "variable": "os:read_ahead_kb",
+  "relevant_to": "os; affects buffered reads only - InnoDB data with O_DIRECT (default innodb_flush_method on MySQL 8.4/MariaDB 11) is unaffected; matters for buffered binlog/relay/backup reads, MyISAM/Aria, or innodb_flush_method=fsync.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "disk read MB/s vs read IOPS (avg read size) and page cache hit (cachestat)",
+    "points_to": "lower",
+    "condition": "large average read size with random small reads requested (read amplification) on buffered files",
+    "why": "Read-ahead fetches data never used."
+   },
+   {
+    "source": "os",
+    "metric": "avg read size small with sequential scans (file I/O sequential) via buffered path",
+    "points_to": "raise",
+    "condition": "sequential buffered scans issuing small reads",
+    "why": "More read-ahead turns them into fewer larger I/Os."
+   },
+   {
+    "source": "status",
+    "metric": "innodb_flush_method value",
+    "points_to": "no change needed",
+    "condition": "O_DIRECT / O_DIRECT_NO_FSYNC",
+    "why": "Page cache bypassed for data files."
+   }
+  ],
+  "impact_bound": "At most disk read time share for buffered files. Typical: none with O_DIRECT; low otherwise.",
+  "experiment": {
+   "change": "change read_ahead_kb (e.g. 128 -> 16 for random, 1024 for scans)",
+   "predict": "disk read MB per trx falls (random) or read IOPS fall (sequential)",
+   "confirm_or_refute": "Unchanged disk read volume: no effect.",
+   "cost_or_risk": "Scan performance loss if lowered."
+  },
+  "collected": "partly - disk IOPS/MB/s collected; add avg read size per device and page cache hit ratio (cachestat)",
+  "sources": [
+   "https://docs.kernel.org/block/queue-sysfs.html",
+   "https://www.percona.com/blog/linux-os-tuning-for-mysql-database-performance/"
+  ]
+ },
+ {
+  "variable": "os:rps",
+  "relevant_to": "os; NICs with fewer RX queues than CPUs (single-queue virtio on small VMs) where one CPU's softirq saturates; no effect with enough hardware queues. Matters only when clients connect over TCP from another host (or loopback at very high rates); no effect on Unix-socket clients.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "per-CPU %soft: one or few CPUs at high softirq while others idle; ksoftirqd CPU",
+    "points_to": "enable",
+    "condition": "RX softirq concentrated on CPUs fewer than RX demand, those CPUs near 100%",
+    "why": "RPS spreads protocol processing to other CPUs."
+   },
+   {
+    "source": "os",
+    "metric": "/proc/net/softnet_stat time_squeeze/dropped on that CPU",
+    "points_to": "enable",
+    "condition": "increasing",
+    "why": "Saturated RX CPU."
+   }
+  ],
+  "impact_bound": "Bounded by network processing capacity limit - if a single CPU's softirq is the bottleneck, gain can be high; else none (adds IPI overhead). Typical: none to medium.",
+  "experiment": {
+   "change": "enable rps_cpus over all CPUs for each RX queue",
+   "predict": "softirq spreads across CPUs; time_squeeze falls; throughput rises",
+   "confirm_or_refute": "If softirq CPU was not saturated, expect a slight CPU cost increase: refute.",
+   "cost_or_risk": "Inter-processor interrupts, more cache misses."
+  },
+  "collected": "no - add per-CPU softirq and softnet_stat",
+  "sources": [
+   "https://docs.kernel.org/networking/scaling.html"
+  ]
+ },
+ {
+  "variable": "os:scheduler",
+  "relevant_to": "os; data device block scheduler; NVMe defaults to 'none'; matters for SATA SSD/HDD (mq-deadline/bfq) and for mixed read/write latency.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/sys/block/<dev>/queue/scheduler current value; disk await vs device service time",
+    "points_to": "a specific value",
+    "condition": "bfq/mq-deadline on NVMe with high IOPS and CPU in scheduler functions, or read await inflated under heavy writes on SATA",
+    "why": "Scheduler CPU overhead and queueing policy affect latency at high IOPS."
+   },
+   {
+    "source": "os",
+    "metric": "perf CPU in bfq_/dd_ functions; PSI io some",
+    "points_to": "a specific value",
+    "condition": "material share",
+    "why": "Direct scheduler overhead."
+   }
+  ],
+  "impact_bound": "At most the scheduler CPU + queueing latency share of I/O wait. Typical: low (0-5%) on SSD/NVMe.",
+  "experiment": {
+   "change": "set none on NVMe, mq-deadline on SATA SSD",
+   "predict": "I/O await at same IOPS falls; scheduler CPU falls",
+   "confirm_or_refute": "Await unchanged: no effect.",
+   "cost_or_risk": "Fairness loss for mixed workloads."
+  },
+  "collected": "partly - disk await/util and PSI io collected; add scheduler setting",
+  "sources": [
+   "https://docs.kernel.org/block/queue-sysfs.html"
+  ]
+ },
+ {
+  "variable": "os:swapfile",
+  "relevant_to": "os; only under memory pressure; a safety net to allow larger caches by paging out cold anonymous memory. No effect without pressure.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "PSI memory some/full; /proc/vmstat pgmajfault, allocstall, oom_kill",
+    "points_to": "enable",
+    "condition": "memory pressure or OOM near the limit while cold anonymous memory exists",
+    "why": "Swap lets the kernel evict cold pages instead of page cache or OOM."
+   },
+   {
+    "source": "os",
+    "metric": "/proc/vmstat pswpin rate",
+    "points_to": "disable",
+    "condition": "sustained swap-in during runs",
+    "why": "Hot memory being swapped back adds major-fault stalls."
+   },
+   {
+    "source": "ebpf",
+    "metric": "off-CPU major page fault time of mysqld threads",
+    "points_to": "disable",
+    "condition": "material share",
+    "why": "Swap-in stalls on foreground threads."
+   }
+  ],
+  "impact_bound": "Gain only indirect (enables bigger buffer pool); cost bounded by major-fault stall share. Typical: low.",
+  "experiment": {
+   "change": "add swap file of N GiB",
+   "predict": "pswpout of cold pages only, pswpin ~0; allows larger buffer pool with lower disk reads",
+   "confirm_or_refute": "Sustained pswpin with latency rise refutes.",
+   "cost_or_risk": "Swap-in stalls if hot pages swapped."
+  },
+  "collected": "partly - swap usage and PSI collected; add pswpin/pswpout rates and major fault off-CPU time",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html",
+   "https://docs.kernel.org/accounting/psi.html"
+  ]
+ },
+ {
+  "variable": "os:thp",
+  "relevant_to": "os; all flavors. THP affects anonymous memory (buffer pool not using large_pages, allocator heaps). Known issues: khugepaged/compaction stalls and RSS bloat with jemalloc/tcmalloc; many DB vendors recommend never/madvise.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/proc/vmstat thp_fault_alloc, thp_collapse_alloc, compact_stall, compact_fail; /sys/kernel/mm/transparent_hugepage/enabled",
+    "points_to": "disable",
+    "condition": "compact_stall increasing or allocation latency spikes with 'always'",
+    "why": "Synchronous compaction on page faults stalls threads."
+   },
+   {
+    "source": "os",
+    "metric": "perf CPU in khugepaged, compaction (compact_zone, isolate_migratepages), clear_huge_page",
+    "points_to": "disable",
+    "condition": "material share",
+    "why": "Direct cost of THP management."
+   },
+   {
+    "source": "os",
+    "metric": "mysqld RSS vs tracked memory with THP always",
+    "points_to": "disable",
+    "condition": "RSS bloat",
+    "why": "Huge page granularity inflates memory with fragmented allocators."
+   },
+   {
+    "source": "os",
+    "metric": "perf dTLB page-walk cycles share",
+    "points_to": "enable",
+    "condition": "material share and no compaction stalls",
+    "why": "THP reduces TLB misses like explicit huge pages."
+   }
+  ],
+  "impact_bound": "Gain bounded by page-walk cycles share (if enabling) or compaction/fault stall share (if disabling). Typical: low to medium; occasional high latency spikes with 'always'.",
+  "experiment": {
+   "change": "switch never <-> madvise/always (restart mysqld to reallocate)",
+   "predict": "compact_stall and THP CPU fall (disable) or page-walk cycles fall (enable); CPU/trx and p99 move accordingly",
+   "confirm_or_refute": "Confirm by mechanism counters moving with performance; otherwise noise.",
+   "cost_or_risk": "Memory bloat or stalls with always; restart needed for full effect."
+  },
+  "collected": "no - add /proc/vmstat thp_*/compact_* and dTLB walk counters",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/mm/transhuge.html",
+   "https://www.percona.com/blog/linux-os-tuning-for-mysql-database-performance/"
+  ]
+ },
+ {
+  "variable": "os:vm.dirty_background_bytes",
+  "relevant_to": "os; buffered writes only: binlog/relay log, InnoDB redo log files (MySQL opens redo without O_DIRECT; MariaDB 10.11+ controls it with innodb_log_file_buffering), general/slow logs, tmp files; InnoDB data files with O_DIRECT are unaffected.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/proc/meminfo Dirty and Writeback over time",
+    "points_to": "lower",
+    "condition": "Dirty grows large then drains in bursts coinciding with fsync latency spikes",
+    "why": "Background writeback starting late creates large flush bursts that make fsync slow."
+   },
+   {
+    "source": "ebpf",
+    "metric": "fsync latency of binlog/redo files (tail) and off-CPU redo flush",
+    "points_to": "lower",
+    "condition": "tail fsync latency much above device latency",
+    "why": "fsync must write out all accumulated dirty data of the file."
+   }
+  ],
+  "impact_bound": "At most the excess of fsync tail latency over device latency on buffered files. Typical: low (redo/binlog fsync every commit keeps dirty small).",
+  "experiment": {
+   "change": "set dirty_background_bytes to e.g. 64-256 MiB",
+   "predict": "Dirty stays low; fsync tail latency falls",
+   "confirm_or_refute": "If Dirty was already small, no effect.",
+   "cost_or_risk": "More frequent small writeback I/O."
+  },
+  "collected": "partly - memory collected; add Dirty/Writeback and fsync latency histogram",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html"
+  ]
+ },
+ {
+  "variable": "os:vm.dirty_background_ratio",
+  "relevant_to": "os; as dirty_background_bytes (ignored when dirty_background_bytes != 0).",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/proc/meminfo Dirty vs ratio*available memory",
+    "points_to": "lower",
+    "condition": "as dirty_background_bytes",
+    "why": "Same mechanism expressed as % of memory; on large-RAM hosts default 10% is GBs."
+   }
+  ],
+  "impact_bound": "As dirty_background_bytes; typical low.",
+  "experiment": {
+   "change": "lower to 1-5 (or use the bytes variant)",
+   "predict": "Dirty peaks and fsync tail fall",
+   "confirm_or_refute": "As dirty_background_bytes.",
+   "cost_or_risk": "More writeback I/O."
+  },
+  "collected": "partly - add Dirty/Writeback",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html"
+  ]
+ },
+ {
+  "variable": "os:vm.dirty_bytes",
+  "relevant_to": "os; buffered writes; writers are throttled (balance_dirty_pages) when Dirty exceeds it.",
+  "signals": [
+   {
+    "source": "ebpf",
+    "metric": "tracepoint writeback:balance_dirty_pages pause time of mysqld threads",
+    "points_to": "raise",
+    "condition": "material throttle (pause) time for writer threads",
+    "why": "Writers sleep in balance_dirty_pages when dirty limit reached."
+   },
+   {
+    "source": "os",
+    "metric": "/proc/meminfo Dirty near the limit; fsync tail latency",
+    "points_to": "lower",
+    "condition": "huge Dirty and very slow fsyncs",
+    "why": "Too high a limit lets large backlogs build up that fsync must flush."
+   }
+  ],
+  "impact_bound": "At most the throttling pause share (raise) or fsync excess latency (lower). Typical: low.",
+  "experiment": {
+   "change": "adjust dirty_bytes (e.g. 256 MiB-1 GiB)",
+   "predict": "balance_dirty_pages pauses fall (raise) or fsync tail falls (lower)",
+   "confirm_or_refute": "Mechanism counters must move.",
+   "cost_or_risk": "Bigger flush bursts / memory held dirty."
+  },
+  "collected": "no - add balance_dirty_pages tracepoint and Dirty",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html"
+  ]
+ },
+ {
+  "variable": "os:vm.dirty_expire_centisecs",
+  "relevant_to": "os; buffered writes; age at which dirty data is eligible for writeback (default 3000 = 30 s).",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "Dirty/Writeback periodic bursts every ~30 s with fsync latency spikes",
+    "points_to": "lower",
+    "condition": "periodic write bursts aligned to latency spikes",
+    "why": "Older data written in bursts."
+   },
+   {
+    "source": "os",
+    "metric": "no measurable signal otherwise",
+    "points_to": "no change needed",
+    "condition": "fsync on commit already writes data",
+    "why": "With per-commit fsync most dirty data never ages."
+   }
+  ],
+  "impact_bound": "Typical: none to low.",
+  "experiment": {
+   "change": "lower to 500-1000",
+   "predict": "periodic I/O bursts flatten",
+   "confirm_or_refute": "Unchanged spikes: refute.",
+   "cost_or_risk": "More writeback I/O."
+  },
+  "collected": "partly - add Dirty/Writeback time series",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html"
+  ]
+ },
+ {
+  "variable": "os:vm.dirty_ratio",
+  "relevant_to": "os; as dirty_bytes (used when dirty_bytes = 0); default 20% of available memory.",
+  "signals": [
+   {
+    "source": "ebpf",
+    "metric": "balance_dirty_pages pauses; Dirty vs ratio",
+    "points_to": "a specific value",
+    "condition": "as dirty_bytes",
+    "why": "Same mechanism in %."
+   }
+  ],
+  "impact_bound": "As dirty_bytes; typical low.",
+  "experiment": {
+   "change": "set ratio (or bytes variant)",
+   "predict": "as dirty_bytes",
+   "confirm_or_refute": "as dirty_bytes",
+   "cost_or_risk": "as dirty_bytes"
+  },
+  "collected": "no - add balance_dirty_pages and Dirty",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html"
+  ]
+ },
+ {
+  "variable": "os:vm.dirty_writeback_centisecs",
+  "relevant_to": "os; flusher thread wake interval (default 500 = 5 s); buffered writes.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "no measurable signal beyond Dirty burst periodicity",
+    "points_to": "no change needed",
+    "condition": "bursty Writeback aligned to the interval",
+    "why": "Only changes how often expired data is checked."
+   }
+  ],
+  "impact_bound": "None to low; only validate by experiment.",
+  "experiment": {
+   "change": "lower to 100",
+   "predict": "Writeback smoother",
+   "confirm_or_refute": "Noise otherwise.",
+   "cost_or_risk": "More wakeups."
+  },
+  "collected": "partly - add Dirty/Writeback",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html"
+  ]
+ },
+ {
+  "variable": "os:vm.min_free_kbytes",
+  "relevant_to": "os; atomic allocation failures (network drivers at high packet rates, jumbo frames) or direct reclaim stalls; too high wastes memory.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "kernel log 'page allocation failure: order:N, mode:GFP_ATOMIC'",
+    "points_to": "raise",
+    "condition": "present",
+    "why": "Atomic allocations cannot reclaim; reserve too small."
+   },
+   {
+    "source": "os",
+    "metric": "/proc/vmstat allocstall_* and PSI memory some",
+    "points_to": "raise",
+    "condition": "direct reclaim stalls while free memory oscillates around low watermark",
+    "why": "Higher watermarks wake kswapd earlier, reducing direct reclaim in foreground threads."
+   }
+  ],
+  "impact_bound": "Bounded by direct-reclaim stall share (PSI memory). Typical: none to low.",
+  "experiment": {
+   "change": "raise to ~1% RAM (bounded)",
+   "predict": "allocstall and PSI memory fall",
+   "confirm_or_refute": "No stalls: no effect.",
+   "cost_or_risk": "Memory reserved."
+  },
+  "collected": "partly - PSI collected; add allocstall and kernel log scan",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html",
+   "https://docs.kernel.org/accounting/psi.html"
+  ]
+ },
+ {
+  "variable": "os:vm.swappiness",
+  "relevant_to": "os; only with swap present and memory pressure; no effect without swap.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/proc/vmstat pswpout/pswpin rates and VmSwap of mysqld (/proc/<pid>/status)",
+    "points_to": "lower",
+    "condition": "mysqld anonymous memory (buffer pool) swapped out while page cache is retained",
+    "why": "Low swappiness prefers dropping page cache over swapping anon memory."
+   },
+   {
+    "source": "ebpf",
+    "metric": "off-CPU major page fault time of connection threads",
+    "points_to": "lower",
+    "condition": "material share",
+    "why": "Swap-in stalls on buffer pool pages."
+   },
+   {
+    "source": "os",
+    "metric": "PSI memory some/full",
+    "points_to": "lower",
+    "condition": "nonzero during runs",
+    "why": "Time stalled on memory."
+   }
+  ],
+  "impact_bound": "At most major-fault/swap-in stall share of foreground time. Typical: medium when mysqld is swapped; none otherwise.",
+  "experiment": {
+   "change": "set swappiness=1",
+   "predict": "pswpin and mysqld VmSwap fall; major-fault off-CPU time falls",
+   "confirm_or_refute": "No swap activity before: no effect.",
+   "cost_or_risk": "Higher OOM risk under real pressure; less page cache for others."
+  },
+  "collected": "partly - swap and PSI collected; add pswpin/pswpout rates and mysqld VmSwap",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html",
+   "https://www.percona.com/blog/linux-os-tuning-for-mysql-database-performance/",
+   "https://docs.kernel.org/accounting/psi.html"
+  ]
+ },
+ {
+  "variable": "os:vm.zone_reclaim_mode",
+  "relevant_to": "os; multi-NUMA hosts only; default 0 on modern kernels; nonzero causes local reclaim (dropping cache/swapping) before remote allocation.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/proc/sys/vm/zone_reclaim_mode value and /proc/vmstat zone_reclaim_failed, pgscan per node while other nodes have free memory",
+    "points_to": "a specific value",
+    "condition": "nonzero and reclaim/swap on one node with free memory elsewhere",
+    "why": "Local reclaim evicts cache and stalls allocations."
+   }
+  ],
+  "impact_bound": "Bounded by reclaim stall share (PSI memory) and extra disk reads from dropped cache. Typical: none at 0; medium if mistakenly enabled.",
+  "experiment": {
+   "change": "set 0",
+   "predict": "per-node reclaim and PSI memory fall",
+   "confirm_or_refute": "No reclaim with free memory elsewhere: no effect.",
+   "cost_or_risk": "Slightly more remote memory access."
+  },
+  "collected": "no - add per-node vmstat",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html",
+   "https://blog.jcole.us/2010/09/28/mysql-swap-insanity-and-the-numa-architecture/"
+  ]
+ },
+ {
+  "variable": "os:zswap",
+  "relevant_to": "os; only with swap use; reduces swap-in latency by compressed RAM cache; no effect without swapping.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/proc/vmstat pswpin rate and major-fault off-CPU time",
+    "points_to": "enable",
+    "condition": "sustained swap-in with latency impact",
+    "why": "Swap-ins served from compressed RAM cost microseconds, not disk I/O."
+   },
+   {
+    "source": "os",
+    "metric": "/sys/kernel/debug/zswap stats (stored_pages, pool_total_size, written_back_pages, reject_*) or /proc/vmstat zswpin/zswpout",
+    "points_to": "disable",
+    "condition": "high reject/writeback or pool memory starving caches",
+    "why": "Zswap consumes RAM; poor compressibility makes it costly."
+   }
+  ],
+  "impact_bound": "At most swap-in stall share times (1 - zswap latency/disk latency). Typical: low (should not swap in tuned runs).",
+  "experiment": {
+   "change": "enable zswap (lz4/zstd)",
+   "predict": "major-fault stall time and swap disk reads fall; zswpin rises",
+   "confirm_or_refute": "No swap-in: no effect.",
+   "cost_or_risk": "CPU for compression; RAM for pool."
+  },
+  "collected": "no - add zswpin/zswpout and pswpin",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/mm/zswap.html"
+  ]
+ }
+]

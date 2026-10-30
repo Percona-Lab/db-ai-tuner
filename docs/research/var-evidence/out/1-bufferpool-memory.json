@@ -1,0 +1,1183 @@
+[
+ {
+  "variable": "innodb_buffer_pool_size",
+  "relevant_to": "all flavors/releases; cannot matter when the whole data+index working set already fits (Innodb_buffer_pool_reads ~0 after warm-up and free pages remain)",
+  "signals": [
+   {
+    "source": "ebpf",
+    "metric": "off-CPU 'data page read' share of connection-thread time",
+    "points_to": "raise",
+    "condition": "a material share of foreground time is spent waiting on data page reads",
+    "why": "every miss in the pool is a synchronous read on the query's critical path"
+   },
+   {
+    "source": "status",
+    "metric": "Innodb_buffer_pool_reads per transaction (and Innodb_data_reads rate)",
+    "points_to": "raise",
+    "condition": "physical page reads per transaction stay > 0 at steady state (after warm-up)",
+    "why": "Innodb_buffer_pool_reads counts logical reads that could not be served from the pool"
+   },
+   {
+    "source": "status",
+    "metric": "Innodb_buffer_pool_wait_free",
+    "points_to": "raise",
+    "condition": "> 0 during the window",
+    "why": "a thread had to wait for a clean page to be freed; the pool is too small for the dirty/read churn (or flushing lags)"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name 'wait/io/file/innodb/innodb_data_file' SUM_TIMER_READ",
+    "points_to": "raise",
+    "condition": "data-file read time is a material share of total statement time",
+    "why": "measures time, not just counts, of page reads"
+   },
+   {
+    "source": "os",
+    "metric": "swap in/out (pswpin/pswpout), PSI memory some/full, MemAvailable, major faults of mysqld",
+    "points_to": "lower",
+    "condition": "any sustained swap-in or memory PSI stall during the run",
+    "why": "an oversized pool plus per-session buffers pushes mysqld or the page cache into swap/OOM, which is far slower than a pool miss"
+   }
+  ],
+  "impact_bound": "Gain <= share of foreground time in data-page-read waits x fraction of those reads the extra memory would cache (estimate from the miss curve: compare Innodb_buffer_pool_reads at two sizes, or use pages read vs pool pages). Typical: high on I/O-bound workloads (2-10x), none when the working set fits.",
+  "experiment": {
+   "change": "raise the pool (online resize) in steps toward available RAM minus per-session and OS headroom",
+   "predict": "Innodb_buffer_pool_reads/trx and data-page-read off-CPU share fall; disk read IOPS fall; throughput rises",
+   "confirm_or_refute": "confirmed if reads/trx drop and throughput rises above noise; refuted if reads/trx do not drop (working set much larger or reads are scans/read-ahead) or swap/PSI appear",
+   "cost_or_risk": "less memory for OS cache/sessions; swap or OOM if over-sized; longer warm-up"
+  },
+  "collected": "yes (swap/PSI/memory, pool reads, wait_free, eBPF page-read waits, file I/O by type)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-buffer-pool-resize.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-status-variables.html#statvar_Innodb_buffer_pool_reads",
+   "https://mariadb.com/kb/en/innodb-buffer-pool/"
+  ]
+ },
+ {
+  "variable": "innodb_buffer_pool_instances",
+  "relevant_to": "MySQL/Percona 8.0-9.x only (MariaDB 10.5+ has a single pool, variable removed); only matters with many concurrent threads hitting the pool, and only when pool >= 1 GiB (otherwise forced to 1)",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "CPU profile share 'buffer pool' + 'latches/spin' and eBPF off-CPU 'latch/futex' share",
+    "points_to": "raise",
+    "condition": "a material share of CPU or wait time is in buffer pool LRU/free-list/page-hash latching",
+    "why": "each instance has its own LRU, free list and flush list mutexes; more instances split contention"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "events_waits_summary_global_by_event_name for wait/synch/mutex/innodb/buf_pool_LRU_list_mutex, buf_pool_free_list_mutex, buf_pool_flush_state_mutex and wait/synch/sxlock/innodb/hash_table_locks",
+    "points_to": "raise",
+    "condition": "these instruments are among the top synch waits",
+    "why": "direct time spent waiting on per-instance buffer pool latches"
+   }
+  ],
+  "impact_bound": "At most the share of CPU/wait time in buffer pool latches (perf + P_S synch waits). Typical: low on 8.0+ (default already 8 for pools >= 1 GiB and latches split); medium only on high-core hosts with very high page-access rates.",
+  "experiment": {
+   "change": "double instances (e.g. 8 -> 16), keep pool size a multiple of chunk_size x instances",
+   "predict": "buffer-pool latch waits and spin CPU share fall; throughput per CPU-second rises",
+   "confirm_or_refute": "confirmed if latch waits fall and TPS rises above noise; refuted if latch share was negligible",
+   "cost_or_risk": "restart; slightly less even LRU behaviour; chunk rounding may change the effective pool size"
+  },
+  "collected": "partly - CPU profile and eBPF latch share yes; P_S wait/synch/% instruments are disabled by default and must be enabled for the per-mutex breakdown",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_buffer_pool_instances",
+   "https://dev.mysql.com/doc/refman/8.4/en/monitor-innodb-mutex-waits-performance-schema.html"
+  ]
+ },
+ {
+  "variable": "innodb_buffer_pool_chunk_size",
+  "relevant_to": "MySQL/Percona all; MariaDB <= 10.11.11/11.4.5 (deprecated and ignored from MariaDB 10.11.12 / 11.4.6 / 11.8.2, replaced by innodb_buffer_pool_size_max). Only affects resize granularity and rounding of the pool size",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Innodb_buffer_pool_resize_status; effective innodb_buffer_pool_size vs requested",
+    "points_to": "a specific value",
+    "condition": "the effective pool size was rounded far from the intended size (chunk_size x instances granularity)",
+    "why": "the pool is always a multiple of chunk_size x instances"
+   }
+  ],
+  "impact_bound": "No performance signal of its own; only affects how close the pool gets to the target and resize duration. Typical: none.",
+  "experiment": {
+   "change": "none unless rounding wastes memory; then set chunk_size so chunk_size x instances divides the target",
+   "predict": "effective innodb_buffer_pool_size equals the target",
+   "confirm_or_refute": "check SELECT @@innodb_buffer_pool_size after restart",
+   "cost_or_risk": "restart; tiny chunks mean many chunks (slower resize)"
+  },
+  "collected": "partly - effective variable values yes; resize status not needed",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-buffer-pool-resize.html",
+   "https://jira.mariadb.org/browse/MDEV-29445"
+  ]
+ },
+ {
+  "variable": "innodb_buffer_pool_dump_at_shutdown",
+  "relevant_to": "all; only affects warm-up after a restart, never steady-state throughput. The tuner builds its own cache each run (no dump/load), so no in-run effect",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "warm-up duration after restart (time until Innodb_buffer_pool_reads rate reaches steady state)",
+    "points_to": "enable",
+    "condition": "production restarts with long warm-up on a large pool",
+    "why": "the saved page list lets the next startup prefetch the hot set"
+   }
+  ],
+  "impact_bound": "No measurable signal in a steady-state window; benefit = warm-up time saved after restarts. Typical: none for benchmark throughput; medium for restart recovery in production.",
+  "experiment": {
+   "change": "keep ON (default); not a tuner experiment",
+   "predict": "shorter warm-up after restart",
+   "confirm_or_refute": "compare time-to-steady-state after a restart with/without",
+   "cost_or_risk": "small shutdown delay and file write"
+  },
+  "collected": "yes (not needed for tuning)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-preload-buffer-pool.html"
+  ]
+ },
+ {
+  "variable": "innodb_buffer_pool_dump_pct",
+  "relevant_to": "all; warm-up after restart only",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "after restart: Innodb_buffer_pool_reads rate once Innodb_buffer_pool_load_status reports completion",
+    "points_to": "raise",
+    "condition": "physical reads stay high after the load completes (hot set larger than the dumped share)",
+    "why": "only the most recently used pct of pages is saved"
+   }
+  ],
+  "impact_bound": "Warm-up time only; no steady-state effect. Typical: none for the tuner.",
+  "experiment": {
+   "change": "not a tuner experiment; raise in production when post-restart warm-up is long",
+   "predict": "lower reads right after restart",
+   "confirm_or_refute": "compare post-restart read rates",
+   "cost_or_risk": "longer dump/load I/O"
+  },
+  "collected": "yes (not needed)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-preload-buffer-pool.html"
+  ]
+ },
+ {
+  "variable": "innodb_buffer_pool_load_at_startup",
+  "relevant_to": "all; startup warm-up only; tuner runs intentionally do not load a dump",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Innodb_buffer_pool_load_status",
+    "points_to": "no change needed",
+    "condition": "n/a in tuner runs",
+    "why": "loading competes with foreground I/O at startup but shortens warm-up"
+   }
+  ],
+  "impact_bound": "No measurable steady-state signal. Typical: none.",
+  "experiment": {
+   "change": "none (keep default)",
+   "predict": "-",
+   "confirm_or_refute": "-",
+   "cost_or_risk": "startup read I/O"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-preload-buffer-pool.html"
+  ]
+ },
+ {
+  "variable": "innodb_change_buffer_max_size",
+  "relevant_to": "MySQL/Percona 8.0-9.x and MariaDB 10.11 (change buffer removed in MariaDB 11.0); matters only if innodb_change_buffering != none (default none in MySQL 8.4+ and MariaDB 10.5.15+/10.11), there are secondary-index writes, and those index pages are not in the pool",
+  "signals": [
+   {
+    "source": "engine_status",
+    "metric": "INSERT BUFFER section 'Ibuf: size N, free list len, seg size' and change-buffer size / pool pages; MariaDB Innodb_ibuf_size; MySQL INNODB_METRICS ibuf_size",
+    "points_to": "raise",
+    "condition": "change buffer is at its max share while secondary-index page reads during writes remain",
+    "why": "when full, new secondary-index changes must read the leaf page synchronously"
+   },
+   {
+    "source": "ebpf",
+    "metric": "off-CPU data page read share during INSERT/UPDATE/DELETE statements",
+    "points_to": "raise",
+    "condition": "write statements wait on page reads of non-unique secondary indexes",
+    "why": "this is exactly the read the change buffer defers"
+   },
+   {
+    "source": "derived",
+    "metric": "change buffer pages / pool pages vs Innodb_buffer_pool_reads for read queries",
+    "points_to": "lower",
+    "condition": "the change buffer holds a large share of the pool while read-path misses grow",
+    "why": "the change buffer takes pool pages away from the data cache, and merges add work to reads"
+   }
+  ],
+  "impact_bound": "Gain <= share of write-statement time waiting on secondary-index page reads. Typical: low-medium; zero when buffering is off (modern defaults) or data fits in memory.",
+  "experiment": {
+   "change": "with change buffering enabled, raise max_size (25 -> 50) or lower it if reads suffer",
+   "predict": "fewer page reads during writes; ibuf size grows; Innodb_buffer_pool_reads for reads may rise",
+   "confirm_or_refute": "net throughput and reads/trx decide; refuted if ibuf never reached its cap",
+   "cost_or_risk": "less pool for data; long merges after shutdown/crash; change buffer known for corruption bugs in old releases"
+  },
+  "collected": "partly - change-buffer size yes; add ibuf merge counters (MySQL INNODB_METRICS module_ibuf_system, MariaDB Innodb_ibuf_merges / Innodb_ibuf_merged_*)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-change-buffer.html",
+   "https://mariadb.com/kb/en/innodb-change-buffering/",
+   "https://mariadb.com/kb/en/innodb-status-variables/"
+  ]
+ },
+ {
+  "variable": "innodb_numa_interleave",
+  "relevant_to": "MySQL/Percona built with NUMA support on multi-socket (multi NUMA node) hosts only; cannot matter on single-node VMs (numactl --hardware shows 1 node)",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/sys/devices/system/node/node*/numastat numa_miss, numa_foreign, other_node; numastat -p mysqld per-node RSS",
+    "points_to": "enable",
+    "condition": "mysqld memory concentrated on one node, or swapping/reclaim on one node while another has free memory",
+    "why": "default local allocation fills one node with the pool, causing node-local reclaim/swap and remote-access imbalance"
+   },
+   {
+    "source": "os",
+    "metric": "swap in/out or kswapd activity with MemFree remaining on other nodes",
+    "points_to": "enable",
+    "condition": "any swap while total free memory exists",
+    "why": "classic NUMA 'swap insanity'"
+   }
+  ],
+  "impact_bound": "At most the swap/reclaim stall time plus remote-memory latency share (perf mem / node-load-misses). Typical: none on single-node, low-medium on 2-socket bare metal; high only when it causes swapping.",
+  "experiment": {
+   "change": "enable (restart)",
+   "predict": "per-node mysqld memory balanced; numa_miss imbalance and swap disappear; latency variance falls",
+   "confirm_or_refute": "confirmed if swap/reclaim vanish or TPS rises above noise; refuted if no imbalance existed",
+   "cost_or_risk": "restart; uniform remote access can slightly lower best-case locality"
+  },
+  "collected": "no - add NUMA node count, numastat counters and per-node mysqld RSS",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_numa_interleave",
+   "https://docs.kernel.org/admin-guide/numastat.html",
+   "https://blog.jcole.us/2010/09/28/mysql-swap-insanity-and-the-numa-architecture/"
+  ]
+ },
+ {
+  "variable": "innodb_old_blocks_pct",
+  "relevant_to": "all; only when the working set does not fit and scans compete with a hot set",
+  "signals": [
+   {
+    "source": "information_schema",
+    "metric": "INNODB_BUFFER_POOL_STATS PAGES_MADE_YOUNG / PAGES_NOT_MADE_YOUNG rates (MariaDB: Innodb_buffer_pool_pages_made_young / _made_not_young)",
+    "points_to": "a specific value",
+    "condition": "the hot set is evicted (high made-young churn) while pool misses persist",
+    "why": "the old sublist share decides how much of the pool scanned/new pages can occupy before eviction"
+   },
+   {
+    "source": "status",
+    "metric": "Innodb_buffer_pool_read_ahead_evicted / Innodb_buffer_pool_read_ahead",
+    "points_to": "lower",
+    "condition": "a large fraction of read-ahead pages evicted unused",
+    "why": "a smaller old sublist evicts speculative pages sooner"
+   }
+  ],
+  "impact_bound": "Gain <= the extra misses caused by scan pollution (Innodb_buffer_pool_reads of point-lookup statements during scans). Typical: low.",
+  "experiment": {
+   "change": "lower to ~20 for scan-polluted mixes, or raise if the hot set is mostly new pages",
+   "predict": "point-lookup misses fall; made-young rate stabilizes",
+   "confirm_or_refute": "reads/trx of the OLTP statements fall above noise",
+   "cost_or_risk": "can hurt workloads where new pages become hot quickly"
+  },
+  "collected": "partly - read-ahead/evicted yes; add INNODB_BUFFER_POOL_STATS made-young/not-young (MySQL) or the MariaDB status counters",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-performance-midpoint_insertion.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/information-schema-innodb-buffer-pool-stats-table.html"
+  ]
+ },
+ {
+  "variable": "innodb_old_blocks_time",
+  "relevant_to": "all; only for scans (full table/index scans, backups, analytics) mixed with point lookups and a working set larger than the pool",
+  "signals": [
+   {
+    "source": "information_schema",
+    "metric": "INNODB_BUFFER_POOL_STATS PAGES_MADE_YOUNG_RATE vs PAGES_MADE_NOT_YOUNG_RATE (MariaDB Innodb_buffer_pool_pages_made_young / _made_not_young)",
+    "points_to": "raise",
+    "condition": "many pages made young during scans and point-lookup misses rise when scans run",
+    "why": "pages touched twice within the window are promoted; a longer time keeps one-pass scans in the old sublist"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "events_statements_summary_by_digest: statements with high SUM_ROWS_EXAMINED/SUM_SELECT_SCAN alongside OLTP digests",
+    "points_to": "raise",
+    "condition": "scan digests coexist with point-lookup digests that miss the pool",
+    "why": "identifies the scan pollution case"
+   }
+  ],
+  "impact_bound": "Gain <= page-read wait time of point lookups attributable to scan eviction (compare their reads/exec with and without scans). Typical: low-medium; none for pure OLTP or when data fits.",
+  "experiment": {
+   "change": "raise (1000 -> 5000 ms) or set 0 to test the opposite",
+   "predict": "OLTP digests' page reads per execution fall; made-young rate during scans falls",
+   "confirm_or_refute": "confirmed if OLTP latency/reads fall above noise",
+   "cost_or_risk": "scan pages that are genuinely reused take longer to become young"
+  },
+  "collected": "partly - digests yes; add made-young / not-young counters",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-performance-midpoint_insertion.html",
+   "https://mariadb.com/kb/en/innodb-status-variables/"
+  ]
+ },
+ {
+  "variable": "innodb_open_files",
+  "relevant_to": "all; only when the number of tablespace files touched in the run exceeds the limit (many file-per-table tables/partitions)",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Innodb_num_open_files vs @@innodb_open_files",
+    "points_to": "raise",
+    "condition": "Innodb_num_open_files sits at the limit during the run",
+    "why": "InnoDB must close and reopen tablespace files, adding syscalls and fil_system mutex time"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name 'wait/io/file/innodb/innodb_data_file' COUNT_MISC / open-close counts",
+    "points_to": "raise",
+    "condition": "steady stream of open/close on data files",
+    "why": "direct evidence of file handle churn"
+   }
+  ],
+  "impact_bound": "At most the time in file open/close and the fil_system mutex (P_S file waits, CPU profile). Typical: low; none with few tables.",
+  "experiment": {
+   "change": "raise above the number of tablespaces (check open_files_limit)",
+   "predict": "Innodb_num_open_files below the limit; open/close counts drop",
+   "confirm_or_refute": "refuted if it never reached the limit",
+   "cost_or_risk": "restart (MySQL 8.0.28+ can set at runtime); more file descriptors"
+  },
+  "collected": "partly - status deltas include Innodb_num_open_files but it is a gauge, compare to the limit; add file open/close counts",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_open_files",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-status-variables.html#statvar_Innodb_num_open_files"
+  ]
+ },
+ {
+  "variable": "internal_tmp_mem_storage_engine",
+  "relevant_to": "MySQL/Percona 8.0+; only for statements creating internal temporary tables (GROUP BY, DISTINCT, UNION, derived tables, window functions)",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "events_statements_summary_by_digest SUM_CREATED_TMP_TABLES and their latency; memory_summary_global_by_event_name 'memory/temptable/%'",
+    "points_to": "a specific value",
+    "condition": "temp-table-heavy digests are a material share of time and TempTable shows contention/overflow",
+    "why": "TempTable and MEMORY differ in variable-length storage, overflow behaviour and allocation cost"
+   },
+   {
+    "source": "derived",
+    "metric": "CPU profile share in temptable:: allocation / mmap, or overflow to disk (memory/temptable/physical_disk)",
+    "points_to": "a specific value",
+    "condition": "TempTable overflow or allocator CPU is significant",
+    "why": "MEMORY uses fixed-length rows (wasteful for VARCHAR/blobs not allowed) but avoids TempTable global limits"
+   }
+  ],
+  "impact_bound": "At most the time of temp-table-creating statements. Typical: low; TempTable is usually better, MEMORY only helps specific cases (fixed-width rows, TempTable bugs).",
+  "experiment": {
+   "change": "switch TempTable <-> MEMORY (session or global)",
+   "predict": "latency of tmp-table digests changes; Created_tmp_disk_tables changes",
+   "confirm_or_refute": "compare digest latency and disk temp tables above noise",
+   "cost_or_risk": "MEMORY spills earlier (max_heap_table_size) and cannot hold BLOB/TEXT"
+  },
+  "collected": "partly - digests yes; add memory/temptable/% from memory_summary_global_by_event_name",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/internal-temporary-tables.html"
+  ]
+ },
+ {
+  "variable": "tmp_table_size",
+  "relevant_to": "all; only when internal temporary tables are created; in MySQL 8.0.28+ it is the per-table limit for TempTable and MEMORY in-memory temp tables; MariaDB uses the lower of it and max_heap_table_size (and tmp_memory_table_size alias)",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Created_tmp_disk_tables / Created_tmp_tables",
+    "points_to": "raise",
+    "condition": "on-disk temp tables during the run (in MySQL 8.0 TempTable overflow to disk was not always counted, bug #98741 - cross-check memory/temptable/physical_disk and digest SUM_CREATED_TMP_DISK_TABLES)",
+    "why": "temp tables over the limit convert to on-disk InnoDB/Aria tables"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "events_statements_summary_by_digest SUM_CREATED_TMP_DISK_TABLES and SUM_TIMER_WAIT of those digests",
+    "points_to": "raise",
+    "condition": "digests with disk temp tables account for a material share of time",
+    "why": "ties the spill to the statements that pay for it"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name 'wait/io/file/innodb/innodb_temp_file' (MariaDB: Aria tmp files) and memory/temptable/physical_disk",
+    "points_to": "raise",
+    "condition": "material temp-file I/O time",
+    "why": "direct cost of the spill"
+   }
+  ],
+  "impact_bound": "Gain <= time of digests that spill, minus their in-memory cost (often 2-10x faster for the spilling statements). Typical: medium for analytics, none for OLTP without temp tables.",
+  "experiment": {
+   "change": "raise (session-level test first) to cover the observed temp table sizes",
+   "predict": "Created_tmp_disk_tables and temp-file I/O fall; spilling digests' latency falls",
+   "confirm_or_refute": "refuted if disk temp tables persist (BLOB columns, temptable_max_ram reached) or latency unchanged",
+   "cost_or_risk": "per-query memory; many concurrent large temp tables can exhaust RAM"
+  },
+  "collected": "yes (status, digests, file I/O by type)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/internal-temporary-tables.html",
+   "https://mariadb.com/kb/en/server-system-variables/#tmp_table_size"
+  ]
+ },
+ {
+  "variable": "tmp_memory_table_size",
+  "relevant_to": "MariaDB only (alias of tmp_table_size); see tmp_table_size",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Created_tmp_disk_tables / Created_tmp_tables",
+    "points_to": "raise",
+    "condition": "on-disk (Aria) temp tables during the run",
+    "why": "in-memory temp tables over the lower of this and max_heap_table_size convert to Aria"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "events_statements_summary_by_digest SUM_CREATED_TMP_DISK_TABLES",
+    "points_to": "raise",
+    "condition": "spilling digests are a material share of time",
+    "why": "attributes the spill"
+   }
+  ],
+  "impact_bound": "As tmp_table_size. Typical: medium for analytics.",
+  "experiment": {
+   "change": "raise together with max_heap_table_size",
+   "predict": "Created_tmp_disk_tables falls; Aria_pagecache_* activity falls",
+   "confirm_or_refute": "as tmp_table_size",
+   "cost_or_risk": "per-query memory"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://mariadb.com/kb/en/server-system-variables/#tmp_memory_table_size"
+  ]
+ },
+ {
+  "variable": "max_heap_table_size",
+  "relevant_to": "all for user MEMORY tables; for internal temp tables only when they use the MEMORY engine (MariaDB always; MySQL only with internal_tmp_mem_storage_engine=MEMORY)",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Created_tmp_disk_tables / Created_tmp_tables",
+    "points_to": "raise",
+    "condition": "disk temp tables while tmp_table_size > max_heap_table_size (MariaDB, MySQL+MEMORY)",
+    "why": "the effective in-memory limit is the lower of the two"
+   },
+   {
+    "source": "derived",
+    "metric": "errors ER_RECORD_FILE_FULL (table is full) on user MEMORY tables",
+    "points_to": "raise",
+    "condition": "any",
+    "why": "user MEMORY tables cannot grow past this size"
+   }
+  ],
+  "impact_bound": "As tmp_table_size when it is the binding limit; none on MySQL with TempTable. Typical: medium on MariaDB analytics.",
+  "experiment": {
+   "change": "raise to match tmp_table_size",
+   "predict": "Created_tmp_disk_tables falls",
+   "confirm_or_refute": "refuted if not the binding limit",
+   "cost_or_risk": "memory per temp/MEMORY table"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_max_heap_table_size",
+   "https://mariadb.com/kb/en/server-system-variables/#max_heap_table_size"
+  ]
+ },
+ {
+  "variable": "temptable_max_ram",
+  "relevant_to": "MySQL/Percona 8.0+ with TempTable; only when concurrent temp tables together exceed it (global, not per table)",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "memory_summary_global_by_event_name 'memory/temptable/physical_ram' HIGH_NUMBER_OF_BYTES_USED vs @@temptable_max_ram, and 'memory/temptable/physical_disk'",
+    "points_to": "raise",
+    "condition": "physical_ram peaks at the cap and physical_disk > 0",
+    "why": "after the cap TempTable overflows to mmap files or InnoDB on-disk tables"
+   },
+   {
+    "source": "status",
+    "metric": "TempTable_count_hit_max_ram (MySQL 9.x / recent 8.x)",
+    "points_to": "raise",
+    "condition": "> 0 during the run",
+    "why": "counts temp tables that hit the global RAM cap"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "digest SUM_CREATED_TMP_DISK_TABLES / innodb_temp_file I/O",
+    "points_to": "raise",
+    "condition": "material share",
+    "why": "cost of the overflow"
+   }
+  ],
+  "impact_bound": "Gain <= time of overflowing temp-table statements. Typical: medium for concurrent analytics, none otherwise.",
+  "experiment": {
+   "change": "raise (dynamic) within memory headroom",
+   "predict": "physical_disk and hit_max_ram counts drop; spilling digest latency falls",
+   "confirm_or_refute": "refuted if physical_ram never reached the cap",
+   "cost_or_risk": "memory pressure/swap with many concurrent temp tables"
+  },
+  "collected": "no - add memory/temptable/% from memory_summary_global_by_event_name and TempTable_count_hit_max_ram where present",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/internal-temporary-tables.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_temptable_max_ram"
+  ]
+ },
+ {
+  "variable": "temptable_max_mmap",
+  "relevant_to": "MySQL/Percona 8.0.23+ with TempTable; only when temptable_max_ram is exceeded and mmap overflow is enabled (8.4 default 0 = mmap disabled, overflow goes to InnoDB)",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "memory/temptable/physical_disk (mmap-backed) bytes vs @@temptable_max_mmap",
+    "points_to": "raise",
+    "condition": "mmap usage hits the cap and tables then convert to InnoDB on-disk",
+    "why": "past the cap, overflow goes to InnoDB internal temp tables"
+   },
+   {
+    "source": "os",
+    "metric": "tmpdir disk usage and write MB/s",
+    "points_to": "lower",
+    "condition": "tmpdir fills or mmap writeback competes with data I/O",
+    "why": "mmap files live in tmpdir"
+   }
+  ],
+  "impact_bound": "Second-order: only the difference between mmap and InnoDB overflow for spilled temp tables. Typical: low.",
+  "experiment": {
+   "change": "toggle 0 vs a cap (mmap vs InnoDB overflow)",
+   "predict": "latency of spilling digests changes",
+   "confirm_or_refute": "compare digest latency above noise",
+   "cost_or_risk": "tmpdir space"
+  },
+  "collected": "no - add memory/temptable/% and tmpdir usage",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_temptable_max_mmap",
+   "https://dev.mysql.com/worklog/task/?id=14125"
+  ]
+ },
+ {
+  "variable": "temptable_use_mmap",
+  "relevant_to": "MySQL/Percona 8.0.16-8.4 (deprecated 8.0.26, removed in 9.x); only when temptable_max_ram is exceeded",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "memory/temptable/physical_disk and innodb_temp_file I/O",
+    "points_to": "a specific value",
+    "condition": "temp tables overflow temptable_max_ram",
+    "why": "selects mmap files vs InnoDB on-disk temp tables for overflow"
+   }
+  ],
+  "impact_bound": "Only the overflow path cost. Typical: low; fix temptable_max_ram/tmp_table_size first.",
+  "experiment": {
+   "change": "toggle ON/OFF",
+   "predict": "spilling digest latency changes",
+   "confirm_or_refute": "above-noise latency change",
+   "cost_or_risk": "deprecated; mmap uses tmpdir space"
+  },
+  "collected": "no - add memory/temptable/%",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_temptable_use_mmap"
+  ]
+ },
+ {
+  "variable": "aria_pagecache_buffer_size",
+  "relevant_to": "MariaDB only; matters for Aria user tables, Aria system tables and on-disk internal temp tables (aria_used_for_temp_tables=ON)",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Aria_pagecache_reads / Aria_pagecache_read_requests and Aria_pagecache_writes / Aria_pagecache_write_requests",
+    "points_to": "raise",
+    "condition": "material physical reads/writes per request while disk temp tables are created",
+    "why": "Aria pages not in the page cache are read/written through the OS"
+   },
+   {
+    "source": "status",
+    "metric": "Aria_pagecache_blocks_unused",
+    "points_to": "lower",
+    "condition": "most blocks stay unused through the run",
+    "why": "memory reserved but never used"
+   }
+  ],
+  "impact_bound": "Gain <= I/O time of on-disk temp tables/Aria tables (spilling digest latency). Typical: low-medium for MariaDB analytics; none for OLTP.",
+  "experiment": {
+   "change": "raise (restart)",
+   "predict": "Aria_pagecache_reads/writes fall; spilling digest latency falls",
+   "confirm_or_refute": "refuted if blocks stay unused",
+   "cost_or_risk": "restart; memory taken from the buffer pool"
+  },
+  "collected": "yes if the status delta covers Aria_* counters (all SHOW GLOBAL STATUS)",
+  "sources": [
+   "https://mariadb.com/kb/en/aria-system-variables/#aria_pagecache_buffer_size",
+   "https://mariadb.com/kb/en/aria-server-status-variables/"
+  ]
+ },
+ {
+  "variable": "aria_used_for_temp_tables",
+  "relevant_to": "MariaDB only; read-only (compile-time/startup); only for on-disk internal temp tables",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Created_tmp_disk_tables with Aria_pagecache_* activity",
+    "points_to": "no change needed",
+    "condition": "n/a",
+    "why": "Aria (with page cache) is normally faster than MyISAM for disk temp tables; fixing the spill is the better lever"
+   }
+  ],
+  "impact_bound": "No measurable signal; validate only by experiment. Typical: low.",
+  "experiment": {
+   "change": "none; prefer raising tmp_table_size/max_heap_table_size",
+   "predict": "-",
+   "confirm_or_refute": "-",
+   "cost_or_risk": "not changeable at runtime"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://mariadb.com/kb/en/aria-system-variables/#aria_used_for_temp_tables"
+  ]
+ },
+ {
+  "variable": "binlog_cache_size",
+  "relevant_to": "all with log_bin=ON; only for transactional changes larger than the cache",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Binlog_cache_disk_use / Binlog_cache_use",
+    "points_to": "raise",
+    "condition": "a material fraction of transactions spill to a temp file",
+    "why": "transactions larger than the cache are written to a temporary file before commit"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "file_summary_by_event_name 'wait/io/file/sql/binlog_cache'",
+    "points_to": "raise",
+    "condition": "material binlog_cache file I/O time",
+    "why": "direct cost of the spill"
+   }
+  ],
+  "impact_bound": "Gain <= binlog cache temp-file I/O time. Typical: low (temp file usually stays in page cache).",
+  "experiment": {
+   "change": "raise to cover typical transaction binlog size",
+   "predict": "Binlog_cache_disk_use rate falls",
+   "confirm_or_refute": "refuted if latency unchanged",
+   "cost_or_risk": "memory per session with binlogging"
+  },
+  "collected": "yes (status deltas; P_S file I/O by event)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html#sysvar_binlog_cache_size",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-status-variables.html#statvar_Binlog_cache_disk_use"
+  ]
+ },
+ {
+  "variable": "bulk_insert_buffer_size",
+  "relevant_to": "MyISAM (and MariaDB Aria) bulk inserts only; cannot matter for InnoDB",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "share of time in INSERT ... SELECT / LOAD DATA into MyISAM tables (digests)",
+    "points_to": "raise",
+    "condition": "material share of time in such statements",
+    "why": "the tree cache batches MyISAM bulk inserts"
+   }
+  ],
+  "impact_bound": "No direct counter; bounded by MyISAM bulk-insert time. Typical: none for InnoDB workloads.",
+  "experiment": {
+   "change": "raise for MyISAM bulk loads",
+   "predict": "bulk-insert digest latency falls",
+   "confirm_or_refute": "above-noise change",
+   "cost_or_risk": "per-thread memory"
+  },
+  "collected": "yes (digests); no specific counter exists",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_bulk_insert_buffer_size"
+  ]
+ },
+ {
+  "variable": "connection_memory_limit",
+  "relevant_to": "MySQL/Percona 8.0.28+; a safety cap, never a performance lever; does not apply to root/SYSTEM_USER",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "events_errors_summary_global_by_error for ER_DA_CONN_LIMIT",
+    "points_to": "raise",
+    "condition": "any occurrence",
+    "why": "queries that exceed the per-connection limit are killed"
+   }
+  ],
+  "impact_bound": "No performance gain possible; only correctness (failed queries). Typical: none.",
+  "experiment": {
+   "change": "none for performance",
+   "predict": "-",
+   "confirm_or_refute": "-",
+   "cost_or_risk": "too low kills queries"
+  },
+  "collected": "no - add events_errors_summary_global_by_error",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_connection_memory_limit"
+  ]
+ },
+ {
+  "variable": "global_connection_memory_limit",
+  "relevant_to": "MySQL/Percona 8.0.28+; safety cap; requires global_connection_memory_tracking=ON to be enforced",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Global_connection_memory (needs global_connection_memory_tracking=ON)",
+    "points_to": "no change needed",
+    "condition": "used to size the cap above the observed peak",
+    "why": "shows total memory used by user connections"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "events_errors_summary_global_by_error for ER_DA_GLOBAL_CONN_LIMIT",
+    "points_to": "raise",
+    "condition": "any occurrence",
+    "why": "queries are killed when the global cap is hit"
+   }
+  ],
+  "impact_bound": "None (safety cap); tracking itself has a small CPU cost. Typical: none.",
+  "experiment": {
+   "change": "none for performance",
+   "predict": "-",
+   "confirm_or_refute": "-",
+   "cost_or_risk": "failed queries if too low"
+  },
+  "collected": "partly - Global_connection_memory only when tracking is on; errors summary not collected",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_global_connection_memory_limit",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-status-variables.html#statvar_Global_connection_memory"
+  ]
+ },
+ {
+  "variable": "max_session_mem_used",
+  "relevant_to": "MariaDB only; safety cap",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Memory_used (session/global)",
+    "points_to": "no change needed",
+    "condition": "used only to size the cap above the observed peak",
+    "why": "shows per-session memory use"
+   }
+  ],
+  "impact_bound": "None (safety cap). Typical: none.",
+  "experiment": {
+   "change": "none for performance",
+   "predict": "-",
+   "confirm_or_refute": "-",
+   "cost_or_risk": "too low aborts statements"
+  },
+  "collected": "yes (Memory_used in status)",
+  "sources": [
+   "https://mariadb.com/kb/en/server-system-variables/#max_session_mem_used"
+  ]
+ },
+ {
+  "variable": "join_buffer_size",
+  "relevant_to": "all; only for joins without a usable index (block nested loop / MySQL hash join, MariaDB BNL/BNLH/BKA); a larger buffer per join, allocated in full in MySQL",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Select_full_join and Select_full_range_join rates",
+    "points_to": "raise",
+    "condition": "material rate of full joins in a material share of time",
+    "why": "these joins scan the inner table once per filled buffer"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "events_statements_summary_by_digest SUM_SELECT_FULL_JOIN, SUM_ROWS_EXAMINED and their latency",
+    "points_to": "raise",
+    "condition": "full-join digests account for a material share of time",
+    "why": "fewer buffer refills means fewer inner-table scans (BNL) or no hash-join spill to chunk files"
+   },
+   {
+    "source": "os",
+    "metric": "tmpdir file I/O during hash joins (MySQL 8.0.18+ hash join spills to tmpdir chunk files)",
+    "points_to": "raise",
+    "condition": "material tmpdir I/O during join digests",
+    "why": "the build side does not fit the join buffer"
+   }
+  ],
+  "impact_bound": "Gain <= time of full-join digests; an index usually gives far more. Typical: low for OLTP, medium for analytics (hash join spill).",
+  "experiment": {
+   "change": "raise per session for the join digests (e.g. 256K -> 4-32M)",
+   "predict": "full-join digest latency and rows examined per exec fall; tmpdir I/O falls",
+   "confirm_or_refute": "refuted if latency unchanged (join limited elsewhere)",
+   "cost_or_risk": "allocated per join per session; global raise multiplies memory"
+  },
+  "collected": "partly - status and digests yes; hash-join spill I/O (tmpdir files) not attributed",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/hash-joins.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_join_buffer_size",
+   "https://mariadb.com/kb/en/block-based-join-algorithms/"
+  ]
+ },
+ {
+  "variable": "join_buffer_space_limit",
+  "relevant_to": "MariaDB only; caps total join buffer space per query with join_cache_level > 0 and several buffered joins",
+  "signals": [
+   {
+    "source": "performance_schema",
+    "metric": "digest SUM_SELECT_FULL_JOIN / latency for multi-table joins",
+    "points_to": "raise",
+    "condition": "multi-join digests with join buffers dominate time and raising join_buffer_size has no effect",
+    "why": "the per-query limit shrinks each join buffer"
+   }
+  ],
+  "impact_bound": "No direct counter; validate by experiment. Typical: low.",
+  "experiment": {
+   "change": "raise alongside join_buffer_size",
+   "predict": "multi-join digest latency falls",
+   "confirm_or_refute": "above-noise latency change",
+   "cost_or_risk": "per-query memory"
+  },
+  "collected": "yes (digests); no specific counter exists",
+  "sources": [
+   "https://mariadb.com/kb/en/server-system-variables/#join_buffer_space_limit",
+   "https://mariadb.com/kb/en/block-based-join-algorithms/"
+  ]
+ },
+ {
+  "variable": "mrr_buffer_size",
+  "relevant_to": "MariaDB only; only when MRR / BKA is used (optimizer_switch mrr=on, join_cache_level >= 5)",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Handler_mrr_key_refills and Handler_mrr_rowid_refills vs Handler_mrr_init",
+    "points_to": "raise",
+    "condition": "many refills per MRR scan",
+    "why": "each refill restarts the sorted-key / rowid batch, reducing the sequential-read benefit"
+   }
+  ],
+  "impact_bound": "Gain <= page-read time of MRR statements. Typical: low.",
+  "experiment": {
+   "change": "raise (session)",
+   "predict": "refills per Handler_mrr_init fall; MRR digest latency falls",
+   "confirm_or_refute": "refuted if no refills",
+   "cost_or_risk": "per-session memory"
+  },
+  "collected": "yes (status deltas include Handler_mrr_*)",
+  "sources": [
+   "https://mariadb.com/kb/en/multi-range-read-optimization/",
+   "https://mariadb.com/kb/en/server-status-variables/#handler_mrr_key_refills"
+  ]
+ },
+ {
+  "variable": "read_buffer_size",
+  "relevant_to": "all; MyISAM sequential scans, MariaDB Aria/MyISAM temp tables, some ORDER BY/partition/bulk paths; not InnoDB scans",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Handler_read_rnd_next on MyISAM/Aria tables (digest SUM_SELECT_SCAN)",
+    "points_to": "raise",
+    "condition": "material scan time on MyISAM/Aria",
+    "why": "a larger buffer means fewer read syscalls per scan"
+   }
+  ],
+  "impact_bound": "No direct counter; validate by experiment. Typical: none for InnoDB, low otherwise.",
+  "experiment": {
+   "change": "raise per session (128K -> 1-2M)",
+   "predict": "scan digest latency/syscalls fall",
+   "confirm_or_refute": "above-noise change",
+   "cost_or_risk": "per-scan memory"
+  },
+  "collected": "yes (digests, handler counters)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_read_buffer_size"
+  ]
+ },
+ {
+  "variable": "read_rnd_buffer_size",
+  "relevant_to": "all; MyISAM sorted-row reads and MySQL MRR (buffer for sorting rowids); MariaDB uses mrr_buffer_size for MRR",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Handler_read_rnd (rows read by position) per sec, with MRR in EXPLAIN of top digests",
+    "points_to": "raise",
+    "condition": "material time in MRR/sorted-row reads",
+    "why": "a bigger buffer batches more rowids per sequential pass"
+   }
+  ],
+  "impact_bound": "No direct counter in MySQL; validate by experiment. Typical: low.",
+  "experiment": {
+   "change": "raise per session",
+   "predict": "MRR digest latency and page reads per exec fall",
+   "confirm_or_refute": "above-noise change",
+   "cost_or_risk": "per-session memory"
+  },
+  "collected": "yes (handler counters, digests)",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/mrr-optimization.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_read_rnd_buffer_size"
+  ]
+ },
+ {
+  "variable": "sort_buffer_size",
+  "relevant_to": "all; only for filesorts that do not fit (Sort_merge_passes > 0); MySQL 8.0.12+ allocates incrementally",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Sort_merge_passes per Sort_rows / per sort",
+    "points_to": "raise",
+    "condition": "Sort_merge_passes > 0 for digests that are a material share of time",
+    "why": "sorts larger than the buffer write sorted runs to temp files and merge them"
+   },
+   {
+    "source": "performance_schema",
+    "metric": "events_statements_summary_by_digest SUM_SORT_MERGE_PASSES and latency",
+    "points_to": "raise",
+    "condition": "merge-pass digests account for material time",
+    "why": "attributes merge cost to statements"
+   },
+   {
+    "source": "derived",
+    "metric": "digests with large sort_buffer and tiny sorts",
+    "points_to": "lower",
+    "condition": "MariaDB (allocated up front) with many small sorts and high allocation CPU",
+    "why": "large up-front allocation (mmap above thresholds) costs CPU"
+   }
+  ],
+  "impact_bound": "Gain <= temp-file merge time of sorting digests. Typical: low (sorts are rarely dominant), medium in analytics with big ORDER BY/GROUP BY.",
+  "experiment": {
+   "change": "raise per session for the sorting digests",
+   "predict": "Sort_merge_passes -> 0; digest latency falls",
+   "confirm_or_refute": "refuted if merge passes vanish but latency is unchanged",
+   "cost_or_risk": "per-sort memory times concurrency"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/order-by-optimization.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_sort_buffer_size"
+  ]
+ },
+ {
+  "variable": "key_buffer_size",
+  "relevant_to": "MyISAM index blocks (all flavors); MariaDB also for MyISAM tables in system schemas; no effect on InnoDB or Aria",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Key_reads / Key_read_requests and Key_writes / Key_write_requests rates",
+    "points_to": "raise",
+    "condition": "material physical key reads per second on a MyISAM workload",
+    "why": "key blocks not in the cache are read through the OS"
+   },
+   {
+    "source": "status",
+    "metric": "Key_blocks_unused",
+    "points_to": "lower",
+    "condition": "most blocks unused while no MyISAM is in use",
+    "why": "memory wasted that could go to the buffer pool"
+   }
+  ],
+  "impact_bound": "Gain <= MyISAM index read time. Typical: none for InnoDB workloads (lower to reclaim memory on MariaDB, default 128M).",
+  "experiment": {
+   "change": "lower to a few MB when no MyISAM; raise for MyISAM workloads",
+   "predict": "Key_reads unaffected (none) / fall",
+   "confirm_or_refute": "check Key_read_requests ~0",
+   "cost_or_risk": "memory"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/myisam-key-cache.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-status-variables.html#statvar_Key_reads"
+  ]
+ },
+ {
+  "variable": "large_pages",
+  "relevant_to": "all on Linux with vm.nr_hugepages reserved and memlock allowed; buffer pool (and MariaDB other caches) only; matters for memory-bound CPU-heavy work with a large pool",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "perf: dTLB-load-misses and page-walk cycles (e.g. dtlb_load_misses.walk_active / cycles) for mysqld",
+    "points_to": "enable",
+    "condition": "a material share of mysqld cycles in page walks",
+    "why": "2 MiB pages cut TLB misses for random buffer pool access"
+   },
+   {
+    "source": "os",
+    "metric": "/proc/meminfo HugePages_Total/HugePages_Free and AnonHugePages",
+    "points_to": "a specific value",
+    "condition": "HugePages_Free >= pool size required before enabling",
+    "why": "if not reserved, MySQL falls back to normal pages or fails allocation"
+   }
+  ],
+  "impact_bound": "At most the page-walk share of mysqld cycles (often a few %). Typical: low-medium (0-10%) on CPU-bound, memory-resident workloads; none when I/O-bound.",
+  "experiment": {
+   "change": "reserve hugepages for the pool + headroom, set large_pages=ON (restart)",
+   "predict": "dTLB misses and page-walk cycles fall; CPU ms/trx falls",
+   "confirm_or_refute": "confirmed if CPU/trx falls above noise; check error log for fallback",
+   "cost_or_risk": "restart; reserved memory unusable by others; online pool resize limited"
+  },
+  "collected": "no - add perf TLB/page-walk counters and HugePages_* from /proc/meminfo",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/large-page-support.html",
+   "https://docs.kernel.org/admin-guide/mm/hugetlbpage.html"
+  ]
+ },
+ {
+  "variable": "rocksdb_block_cache_size",
+  "relevant_to": "Percona Server / MariaDB with MyRocks tables only; the RocksDB counterpart of the buffer pool",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "rocksdb_block_cache_data_miss / (data_hit + data_miss), rocksdb_block_cache_index_miss, rocksdb_block_cache_filter_miss",
+    "points_to": "raise",
+    "condition": "material misses per transaction at steady state",
+    "why": "block cache misses read SST blocks from the OS cache or disk"
+   },
+   {
+    "source": "ebpf",
+    "metric": "off-CPU file read waits of connection threads on SST files",
+    "points_to": "raise",
+    "condition": "material share of foreground time",
+    "why": "time cost of misses"
+   },
+   {
+    "source": "os",
+    "metric": "swap/PSI memory",
+    "points_to": "lower",
+    "condition": "memory pressure",
+    "why": "block cache plus memtables plus OS cache exceed RAM"
+   }
+  ],
+  "impact_bound": "Gain <= SST read wait share x fraction a bigger cache would hit (compressed blocks in OS cache reduce the penalty). Typical: medium-high for read-heavy MyRocks.",
+  "experiment": {
+   "change": "raise (dynamic in recent Percona)",
+   "predict": "block cache misses/trx and SST reads fall",
+   "confirm_or_refute": "refuted if misses unchanged",
+   "cost_or_risk": "less OS page cache for compressed SST data"
+  },
+  "collected": "partly - status deltas include rocksdb_* when MyRocks is loaded; eBPF categories lack an SST-read bucket",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.0/status-variables.html",
+   "https://github.com/facebook/rocksdb/wiki/Block-Cache"
+  ]
+ },
+ {
+  "variable": "rocksdb_db_write_buffer_size",
+  "relevant_to": "MyRocks only; total memtable memory across column families (0 = unlimited, per-CF write_buffer_size limits apply)",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "rocksdb_stall_memtable_limit_slowdowns, rocksdb_stall_memtable_limit_stops, rocksdb_stall_micros",
+    "points_to": "raise",
+    "condition": "any memtable-limit stalls during the run",
+    "why": "writes are throttled/stopped when memtables are full and flushes lag"
+   },
+   {
+    "source": "status",
+    "metric": "rocksdb_memtable_total vs the limit; flush count rate",
+    "points_to": "raise",
+    "condition": "frequent small flushes at the limit",
+    "why": "small memtables mean more flushes and more L0 files/compaction"
+   }
+  ],
+  "impact_bound": "Gain <= time writes spend stalled (rocksdb_stall_micros share of wall time). Typical: low-medium for write-heavy MyRocks.",
+  "experiment": {
+   "change": "raise (restart)",
+   "predict": "memtable stalls and flush rate fall",
+   "confirm_or_refute": "refuted if stalls are from L0/pending compaction instead",
+   "cost_or_risk": "memory; longer recovery"
+  },
+  "collected": "partly - rocksdb_* status when MyRocks loaded",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.0/status-variables.html",
+   "https://github.com/facebook/rocksdb/wiki/Write-Stalls"
+  ]
+ },
+ {
+  "variable": "schema_definition_cache",
+  "relevant_to": "MySQL/Percona 8.0+; only with more schemas touched than the cache size",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "CPU profile share in data-dictionary cache misses (dd::cache::Dictionary_client / Shared_dictionary_cache loads) and reads of mysql.ibd",
+    "points_to": "raise",
+    "condition": "material CPU in DD object loads with many schemas",
+    "why": "evicted schema objects must be re-read from the data dictionary tables"
+   }
+  ],
+  "impact_bound": "No status counter exists; bound by DD-load CPU share. Typical: none unless many schemas (multi-tenant).",
+  "experiment": {
+   "change": "raise above the number of schemas",
+   "predict": "DD-load CPU share falls",
+   "confirm_or_refute": "refuted if no change",
+   "cost_or_risk": "small memory"
+  },
+  "collected": "partly - CPU profile exists but has no data-dictionary category; add one",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/data-dictionary-object-cache.html"
+  ]
+ },
+ {
+  "variable": "tablespace_definition_cache",
+  "relevant_to": "MySQL/Percona 8.0+; only with more tablespaces touched than the cache size",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "CPU profile share in data-dictionary tablespace object loads",
+    "points_to": "raise",
+    "condition": "material CPU in DD loads with many tablespaces",
+    "why": "evicted tablespace definitions are re-read from the dictionary"
+   }
+  ],
+  "impact_bound": "No status counter; bound by DD-load CPU share. Typical: none-low.",
+  "experiment": {
+   "change": "raise above the number of tablespaces",
+   "predict": "DD-load CPU share falls",
+   "confirm_or_refute": "refuted if no change",
+   "cost_or_risk": "small memory"
+  },
+  "collected": "partly - needs a data-dictionary CPU category",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/data-dictionary-object-cache.html"
+  ]
+ },
+ {
+  "variable": "stored_program_cache",
+  "relevant_to": "all; only for workloads calling more distinct stored routines per connection than the cache size",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "CPU profile share in routine parsing (sp_head / sp_cache / parser) during CALL statements (Com_call_procedure rate)",
+    "points_to": "raise",
+    "condition": "material parse CPU for routines with many distinct routines per connection",
+    "why": "routines evicted from the per-session cache are re-parsed on next call"
+   }
+  ],
+  "impact_bound": "No status counter; bound by parse CPU of CALL-heavy work. Typical: none unless many routines.",
+  "experiment": {
+   "change": "raise",
+   "predict": "parse CPU per CALL falls",
+   "confirm_or_refute": "refuted if unchanged",
+   "cost_or_risk": "per-session memory"
+  },
+  "collected": "partly - CPU profile 'statement dispatch' may hide parse cost; split out parsing",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/stored-program-caching.html"
+  ]
+ },
+ {
+  "variable": "table_open_cache_triggers",
+  "relevant_to": "Percona Server 8.0/8.4/9.x (and MySQL 9.x per chunk); only for tables with triggers and statements that do not fire them (otherwise every instance loads triggers)",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Table_open_cache_triggers_misses and Table_open_cache_triggers_overflows (vs Table_open_cache_triggers_hits)",
+    "points_to": "raise",
+    "condition": "misses/overflows a material fraction of hits",
+    "why": "a miss loads (parses) triggers for a table instance; overflows evict instances with loaded triggers"
+   }
+  ],
+  "impact_bound": "Gain <= trigger parse/load CPU on misses. Typical: low; default is already very large.",
+  "experiment": {
+   "change": "raise (or lower to save memory when triggers are huge)",
+   "predict": "misses/overflows fall; CPU in trigger loading falls",
+   "confirm_or_refute": "refuted if misses ~0",
+   "cost_or_risk": "memory per instance with loaded triggers"
+  },
+  "collected": "yes (status deltas)",
+  "sources": [
+   "https://docs.percona.com/percona-server/8.4/trigger-updates.html"
+  ]
+ }
+]

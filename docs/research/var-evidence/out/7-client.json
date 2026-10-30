@@ -1,0 +1,1177 @@
+[
+ {
+  "variable": "client:os:cpu_affinity",
+  "relevant_to": "Not applicable on a client host: the client role rejects it (no mysqld, no data directory); cannot matter. Pinning the benchmark process itself (e.g. away from NIC IRQ CPUs) would need a different, client-process pseudo-setting.",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "client role facts (role=client)",
+    "points_to": "no change needed",
+    "condition": "always on a client host",
+    "why": "The setting acts on mysqld or its data device, neither of which lives on the client host."
+   }
+  ],
+  "impact_bound": "none: no mechanism on the client host.",
+  "experiment": {
+   "change": "none (do not propose for client hosts)",
+   "predict": "n/a",
+   "confirm_or_refute": "n/a",
+   "cost_or_risk": "n/a"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/kernel-parameters.html",
+   "https://man7.org/linux/man-pages/man1/taskset.1.html"
+  ]
+ },
+ {
+  "variable": "client:os:cpu_governor",
+  "relevant_to": "os (client host); cannot matter when the client host is mostly idle or the hypervisor controls frequency (cloud VMs often expose no cpufreq driver).",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client cpu_mhz vs max frequency of the CPU model; client cpu_busy",
+    "points_to": "a specific value (performance)",
+    "condition": "client cpu_mhz well below the CPU's nominal/max while client_cpu_busy is high or the DB-side client-wait share is material",
+    "why": "A power-saving governor lowers clock speed and adds ramp-up latency, so each client request is generated/parsed more slowly."
+   },
+   {
+    "source": "ebpf",
+    "metric": "offcpu foreground 'Waiting: client (next statement)' share",
+    "points_to": "a specific value (performance)",
+    "condition": "a material share of DB thread time waits on the client while client_rtt_min_ms is small (the time is client-side, not wire)",
+    "why": "Slow client CPUs lengthen the gap between statements the server waits through."
+   }
+  ],
+  "impact_bound": "At most the share of database connection-thread time spent in 'Waiting: client (next statement)' (eBPF off-CPU) that is client-side processing rather than network RTT (approx. client wait per statement minus client_rtt_min_ms); in a closed-loop benchmark gains show as throughput only when that share is material. Typical: low on servers already at performance/hypervisor-managed; medium on bare metal with powersave/schedutil and a busy client.",
+  "experiment": {
+   "change": "set governor=performance on the client",
+   "predict": "client cpu_mhz up; DB-side client-wait share and per-statement latency down; throughput up only if client-bound",
+   "confirm_or_refute": "no cpu_mhz change => governor not effective (VM); cpu_mhz up but throughput flat => client was not the limit",
+   "cost_or_risk": "higher client power draw; none for the DB"
+  },
+  "collected": "partly: client cpu_mhz and cpu_busy are in the client window; add client cpu_mhz (and scaling_max_freq) to the run summary",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/pm/cpufreq.html",
+   "https://docs.kernel.org/admin-guide/pm/intel_pstate.html"
+  ]
+ },
+ {
+  "variable": "client:os:kernel.numa_balancing",
+  "relevant_to": "os (client host), multi-socket client only (numa_nodes > 1); cannot matter on single-node hosts.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client numa_hint_faults / numa_pages_migrated rates (/proc/vmstat) and client cpu_sys",
+    "points_to": "disable",
+    "condition": "a material share of client CPU in sys with high NUMA hint-fault/migration rates while the client is CPU-bound",
+    "why": "Balancing unmaps pages to sample access, adding page faults and migrations to the client's threads."
+   }
+  ],
+  "impact_bound": "At most the client CPU time spent in NUMA hint faults/migrations (perf on the client), and only if the client limits throughput; typical: none-low (benchmark clients have small working sets).",
+  "experiment": {
+   "change": "kernel.numa_balancing=0 on the client",
+   "predict": "client numa hint faults -> ~0, client cpu_sys down, DB-side client-wait share down",
+   "confirm_or_refute": "faults gone but no throughput change => client not the limit",
+   "cost_or_risk": "none material"
+  },
+  "collected": "partly: NUMA counters are snapshotted on multi-node hosts but not summarised for clients; add client numa_hint_faults/s and pages_migrated/s",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/kernel.html",
+   "https://docs.kernel.org/admin-guide/mm/numa_memory_policy.html"
+  ]
+ },
+ {
+  "variable": "client:os:kernel.sched_autogroup_enabled",
+  "relevant_to": "os (client host); matters only if competing processes from different sessions share the client CPUs; no effect for a single benchmark process.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client host_runq_wait_pct / host_sched_delay_us and client cpu_busy",
+    "points_to": "disable",
+    "condition": "client CPUs saturated and the benchmark's run-queue wait high while another session's processes run",
+    "why": "Autogroup gives each session an equal CPU share, so a single-session benchmark can be starved by a busy other session."
+   }
+  ],
+  "impact_bound": "At most the client run-queue wait share of the benchmark threads; typical: none (benchmark hosts run one workload).",
+  "experiment": {
+   "change": "kernel.sched_autogroup_enabled=0",
+   "predict": "client runq wait and DB-side client-wait share down",
+   "confirm_or_refute": "no change => no competing sessions; no measurable signal otherwise",
+   "cost_or_risk": "none"
+  },
+  "collected": "partly: client host_runq_wait_pct exists in the client window; not per-process for the benchmark",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/kernel.html",
+   "https://man7.org/linux/man-pages/man7/sched.7.html"
+  ]
+ },
+ {
+  "variable": "client:os:datadir_fs",
+  "relevant_to": "Not applicable on a client host: the client role rejects it (no mysqld, no data directory); cannot matter. ",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "client role facts (role=client)",
+    "points_to": "no change needed",
+    "condition": "always on a client host",
+    "why": "The setting acts on mysqld or its data device, neither of which lives on the client host."
+   }
+  ],
+  "impact_bound": "none: no mechanism on the client host.",
+  "experiment": {
+   "change": "none (do not propose for client hosts)",
+   "predict": "n/a",
+   "confirm_or_refute": "n/a",
+   "cost_or_risk": "n/a"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://docs.kernel.org/filesystems/ext4/index.html"
+  ]
+ },
+ {
+  "variable": "client:os:disk_write_cache",
+  "relevant_to": "Not applicable on a client host: the client role rejects it (no mysqld, no data directory); cannot matter. DURABILITY: never relevant on the client.",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "client role facts (role=client)",
+    "points_to": "no change needed",
+    "condition": "always on a client host",
+    "why": "The setting acts on mysqld or its data device, neither of which lives on the client host."
+   }
+  ],
+  "impact_bound": "none: no mechanism on the client host.",
+  "experiment": {
+   "change": "none (do not propose for client hosts)",
+   "predict": "n/a",
+   "confirm_or_refute": "n/a",
+   "cost_or_risk": "n/a"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://man7.org/linux/man-pages/man8/hdparm.8.html"
+  ]
+ },
+ {
+  "variable": "client:os:fs.aio-max-nr",
+  "relevant_to": "os (client host); a client does not use InnoDB native AIO; cannot matter unless a client-side process uses io_submit heavily.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "/proc/sys/fs/aio-nr vs aio-max-nr on the client",
+    "points_to": "no change needed",
+    "condition": "only if aio-nr approaches aio-max-nr (io_setup EAGAIN)",
+    "why": "The limit only caps in-flight AIO contexts; benchmark clients use none."
+   }
+  ],
+  "impact_bound": "none: no AIO users on a benchmark client.",
+  "experiment": {
+   "change": "none",
+   "predict": "n/a",
+   "confirm_or_refute": "no measurable signal",
+   "cost_or_risk": "none"
+  },
+  "collected": "no: client aio-nr not collected (not needed)",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/fs.html"
+  ]
+ },
+ {
+  "variable": "client:os:hugepages",
+  "relevant_to": "Not applicable on a client host: the client role rejects it (no mysqld, no data directory); cannot matter. Reserved huge pages would only take RAM away from the client.",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "client role facts (role=client)",
+    "points_to": "no change needed",
+    "condition": "always on a client host",
+    "why": "The setting acts on mysqld or its data device, neither of which lives on the client host."
+   }
+  ],
+  "impact_bound": "none: no mechanism on the client host.",
+  "experiment": {
+   "change": "none (do not propose for client hosts)",
+   "predict": "n/a",
+   "confirm_or_refute": "n/a",
+   "cost_or_risk": "n/a"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/mm/hugetlbpage.html"
+  ]
+ },
+ {
+  "variable": "client:os:malloc",
+  "relevant_to": "Not applicable on a client host: the client role rejects it (no mysqld, no data directory); cannot matter. The allocator pseudo-setting targets mysqld via LD_PRELOAD.",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "client role facts (role=client)",
+    "points_to": "no change needed",
+    "condition": "always on a client host",
+    "why": "The setting acts on mysqld or its data device, neither of which lives on the client host."
+   }
+  ],
+  "impact_bound": "none: no mechanism on the client host.",
+  "experiment": {
+   "change": "none (do not propose for client hosts)",
+   "predict": "n/a",
+   "confirm_or_refute": "n/a",
+   "cost_or_risk": "n/a"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://dev.mysql.com/doc/refman/8.4/en/mysqld-safe.html"
+  ]
+ },
+ {
+  "variable": "client:os:mount_barrier",
+  "relevant_to": "Not applicable on a client host: the client role rejects it (no mysqld, no data directory); cannot matter. DURABILITY: never relevant on the client.",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "client role facts (role=client)",
+    "points_to": "no change needed",
+    "condition": "always on a client host",
+    "why": "The setting acts on mysqld or its data device, neither of which lives on the client host."
+   }
+  ],
+  "impact_bound": "none: no mechanism on the client host.",
+  "experiment": {
+   "change": "none (do not propose for client hosts)",
+   "predict": "n/a",
+   "confirm_or_refute": "n/a",
+   "cost_or_risk": "n/a"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/ext4.html"
+  ]
+ },
+ {
+  "variable": "client:os:mount_noatime",
+  "relevant_to": "os (client host); matters only if the client reads many files (it does not in sysbench/HammerDB); relatime default already limits atime writes.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client disk_w_iops while the client reads files; client cpu_iowait",
+    "points_to": "enable",
+    "condition": "client disk writes during a read-only client phase",
+    "why": "atime updates turn reads into metadata writes."
+   }
+  ],
+  "impact_bound": "none-low: benchmark clients do almost no file I/O; bound = client iowait share.",
+  "experiment": {
+   "change": "mount client root with noatime",
+   "predict": "client disk_w_iops down",
+   "confirm_or_refute": "no measurable signal on typical clients",
+   "cost_or_risk": "remount risk on root fs"
+  },
+  "collected": "yes (client disk counters in window)",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/ext4.html",
+   "https://man7.org/linux/man-pages/man8/mount.8.html"
+  ]
+ },
+ {
+  "variable": "client:os:mysqld_numa_policy",
+  "relevant_to": "Not applicable on a client host: the client role rejects it (no mysqld, no data directory); cannot matter. No mysqld service on a client host.",
+  "signals": [
+   {
+    "source": "derived",
+    "metric": "client role facts (role=client)",
+    "points_to": "no change needed",
+    "condition": "always on a client host",
+    "why": "The setting acts on mysqld or its data device, neither of which lives on the client host."
+   }
+  ],
+  "impact_bound": "none: no mechanism on the client host.",
+  "experiment": {
+   "change": "none (do not propose for client hosts)",
+   "predict": "n/a",
+   "confirm_or_refute": "n/a",
+   "cost_or_risk": "n/a"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/mm/numa_memory_policy.html",
+   "https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html"
+  ]
+ },
+ {
+  "variable": "client:os:read_ahead_kb",
+  "relevant_to": "os (client host); cannot matter: the client does no sequential file reads in DB benchmarks.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client disk_r_mbs",
+    "points_to": "no change needed",
+    "condition": "only for file-loading clients (e.g. LOAD DATA from local files) with read-bound load",
+    "why": "Read-ahead sizes the sequential prefetch of buffered file reads."
+   }
+  ],
+  "impact_bound": "none for OLTP clients; low for bulk loaders reading local files (bound = client iowait share during load).",
+  "experiment": {
+   "change": "raise to 1024-4096 for a local-file loader",
+   "predict": "client disk_r_mbs up, load time down",
+   "confirm_or_refute": "no change => not read-bound",
+   "cost_or_risk": "none"
+  },
+  "collected": "yes (client disk counters in window)",
+  "sources": [
+   "https://docs.kernel.org/block/queue-sysfs.html"
+  ]
+ },
+ {
+  "variable": "client:os:scheduler",
+  "relevant_to": "os (client host); cannot matter: the client's disk is not on the measured path.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client disk_await_ms, cpu_iowait",
+    "points_to": "no change needed",
+    "condition": "only if the client is iowait-bound (e.g. writing large logs)",
+    "why": "The scheduler orders the client's own disk I/O."
+   }
+  ],
+  "impact_bound": "none for DB benchmarks.",
+  "experiment": {
+   "change": "none",
+   "predict": "n/a",
+   "confirm_or_refute": "no measurable signal",
+   "cost_or_risk": "none"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://docs.kernel.org/block/switching-sched.html"
+  ]
+ },
+ {
+  "variable": "client:os:vm.dirty_background_bytes",
+  "relevant_to": "os (client host); cannot matter unless the client writes a lot of buffered file data (verbose per-transaction logs, result dumps); the database's binlog/redo is on the server host.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client page_cache_dirty_mb, disk_w_mbs, psi_io_some",
+    "points_to": "no change needed",
+    "condition": "only if the client shows writer throttling (psi io some material while dirty pages sit near the limit)",
+    "why": "Dirty limits throttle processes that write buffered files; the benchmark's DB traffic is network I/O."
+   }
+  ],
+  "impact_bound": "none for normal benchmark clients; bound = client I/O-pressure stall share.",
+  "experiment": {
+   "change": "none (only test if client psi_io_some is material)",
+   "predict": "client psi_io down",
+   "confirm_or_refute": "no measurable signal on typical clients",
+   "cost_or_risk": "none"
+  },
+  "collected": "partly: client page_cache_dirty_mb and psi are in the window, not summarised",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html"
+  ]
+ },
+ {
+  "variable": "client:os:vm.dirty_background_ratio",
+  "relevant_to": "os (client host); cannot matter unless the client writes a lot of buffered file data (verbose per-transaction logs, result dumps); the database's binlog/redo is on the server host.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client page_cache_dirty_mb, disk_w_mbs, psi_io_some",
+    "points_to": "no change needed",
+    "condition": "only if the client shows writer throttling (psi io some material while dirty pages sit near the limit)",
+    "why": "Dirty limits throttle processes that write buffered files; the benchmark's DB traffic is network I/O."
+   }
+  ],
+  "impact_bound": "none for normal benchmark clients; bound = client I/O-pressure stall share.",
+  "experiment": {
+   "change": "none (only test if client psi_io_some is material)",
+   "predict": "client psi_io down",
+   "confirm_or_refute": "no measurable signal on typical clients",
+   "cost_or_risk": "none"
+  },
+  "collected": "partly: client page_cache_dirty_mb and psi are in the window, not summarised",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html"
+  ]
+ },
+ {
+  "variable": "client:os:vm.dirty_bytes",
+  "relevant_to": "os (client host); cannot matter unless the client writes a lot of buffered file data (verbose per-transaction logs, result dumps); the database's binlog/redo is on the server host.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client page_cache_dirty_mb, disk_w_mbs, psi_io_some",
+    "points_to": "no change needed",
+    "condition": "only if the client shows writer throttling (psi io some material while dirty pages sit near the limit)",
+    "why": "Dirty limits throttle processes that write buffered files; the benchmark's DB traffic is network I/O."
+   }
+  ],
+  "impact_bound": "none for normal benchmark clients; bound = client I/O-pressure stall share.",
+  "experiment": {
+   "change": "none (only test if client psi_io_some is material)",
+   "predict": "client psi_io down",
+   "confirm_or_refute": "no measurable signal on typical clients",
+   "cost_or_risk": "none"
+  },
+  "collected": "partly: client page_cache_dirty_mb and psi are in the window, not summarised",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html"
+  ]
+ },
+ {
+  "variable": "client:os:vm.dirty_expire_centisecs",
+  "relevant_to": "os (client host); cannot matter unless the client writes a lot of buffered file data (verbose per-transaction logs, result dumps); the database's binlog/redo is on the server host.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client page_cache_dirty_mb, disk_w_mbs, psi_io_some",
+    "points_to": "no change needed",
+    "condition": "only if the client shows writer throttling (psi io some material while dirty pages sit near the limit)",
+    "why": "Dirty limits throttle processes that write buffered files; the benchmark's DB traffic is network I/O."
+   }
+  ],
+  "impact_bound": "none for normal benchmark clients; bound = client I/O-pressure stall share.",
+  "experiment": {
+   "change": "none (only test if client psi_io_some is material)",
+   "predict": "client psi_io down",
+   "confirm_or_refute": "no measurable signal on typical clients",
+   "cost_or_risk": "none"
+  },
+  "collected": "partly: client page_cache_dirty_mb and psi are in the window, not summarised",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html"
+  ]
+ },
+ {
+  "variable": "client:os:vm.dirty_ratio",
+  "relevant_to": "os (client host); cannot matter unless the client writes a lot of buffered file data (verbose per-transaction logs, result dumps); the database's binlog/redo is on the server host.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client page_cache_dirty_mb, disk_w_mbs, psi_io_some",
+    "points_to": "no change needed",
+    "condition": "only if the client shows writer throttling (psi io some material while dirty pages sit near the limit)",
+    "why": "Dirty limits throttle processes that write buffered files; the benchmark's DB traffic is network I/O."
+   }
+  ],
+  "impact_bound": "none for normal benchmark clients; bound = client I/O-pressure stall share.",
+  "experiment": {
+   "change": "none (only test if client psi_io_some is material)",
+   "predict": "client psi_io down",
+   "confirm_or_refute": "no measurable signal on typical clients",
+   "cost_or_risk": "none"
+  },
+  "collected": "partly: client page_cache_dirty_mb and psi are in the window, not summarised",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html"
+  ]
+ },
+ {
+  "variable": "client:os:vm.dirty_writeback_centisecs",
+  "relevant_to": "os (client host); cannot matter unless the client writes a lot of buffered file data (verbose per-transaction logs, result dumps); the database's binlog/redo is on the server host.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client page_cache_dirty_mb, disk_w_mbs, psi_io_some",
+    "points_to": "no change needed",
+    "condition": "only if the client shows writer throttling (psi io some material while dirty pages sit near the limit)",
+    "why": "Dirty limits throttle processes that write buffered files; the benchmark's DB traffic is network I/O."
+   }
+  ],
+  "impact_bound": "none for normal benchmark clients; bound = client I/O-pressure stall share.",
+  "experiment": {
+   "change": "none (only test if client psi_io_some is material)",
+   "predict": "client psi_io down",
+   "confirm_or_refute": "no measurable signal on typical clients",
+   "cost_or_risk": "none"
+  },
+  "collected": "partly: client page_cache_dirty_mb and psi are in the window, not summarised",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html"
+  ]
+ },
+ {
+  "variable": "client:os:swapfile",
+  "relevant_to": "os (client host); cannot matter when the client has free memory (no swap-ins).",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client swap_in rate, major_faults, mem_available_mb",
+    "points_to": "no change needed",
+    "condition": "only if client memory is exhausted (mem_available near 0, OOM kills): then add RAM or reduce client threads, swap only buys headroom",
+    "why": "Swap-ins stall client threads; swap space itself never speeds the client."
+   }
+  ],
+  "impact_bound": "none-low; any gain is avoiding OOM. Bound = client time in swap-in (psi_memory_some).",
+  "experiment": {
+   "change": "add a swapfile only if client OOMs",
+   "predict": "client oom_kills -> 0",
+   "confirm_or_refute": "swap_in rate rising => client now slowed instead of killed",
+   "cost_or_risk": "disk space"
+  },
+  "collected": "partly: client swap/mem/psi in window; add client psi_memory_some and oom_kills to the summary",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html",
+   "https://docs.kernel.org/admin-guide/mm/concepts.html"
+  ]
+ },
+ {
+  "variable": "client:os:thp",
+  "relevant_to": "os (client host); benchmark client working sets are small; matters only for memory-heavy clients.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client cpu_sys share and khugepaged/compaction stall counters (compact_stall in /proc/vmstat)",
+    "points_to": "a specific value (madvise)",
+    "condition": "compaction stalls or a material sys share while the client is CPU-bound",
+    "why": "THP=always can add allocation latency (direct compaction) and khugepaged CPU."
+   }
+  ],
+  "impact_bound": "At most the client CPU in compaction/fault paths; typical none.",
+  "experiment": {
+   "change": "thp=madvise on the client",
+   "predict": "compact_stall and client sys down",
+   "confirm_or_refute": "no change => no effect",
+   "cost_or_risk": "none"
+  },
+  "collected": "no: compact_stall/thp_fault_alloc not collected on clients",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/mm/transhuge.html"
+  ]
+ },
+ {
+  "variable": "client:os:vm.min_free_kbytes",
+  "relevant_to": "os (client host); relevant at very high packet rates where atomic network allocations can fail under memory pressure.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "dmesg 'page allocation failure' in softirq; client net_softnet_drops with mem_available low",
+    "points_to": "raise",
+    "condition": "allocation failures in network receive while the client is short on free memory",
+    "why": "Too little reserve makes atomic skb allocations fail, dropping packets."
+   }
+  ],
+  "impact_bound": "none-low; bound = retransmission/drop time (client net_retrans_pct x RTT).",
+  "experiment": {
+   "change": "raise to ~1% of RAM (bounded)",
+   "predict": "allocation failures and drops -> 0",
+   "confirm_or_refute": "no failures before => no effect",
+   "cost_or_risk": "takes RAM from the page cache"
+  },
+  "collected": "no: kernel allocation-failure messages not collected",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html"
+  ]
+ },
+ {
+  "variable": "client:os:vm.swappiness",
+  "relevant_to": "os (client host); matters only when the client host is under memory pressure.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client swap_in / swap_out rates with page_cache_mb large",
+    "points_to": "lower",
+    "condition": "benchmark process pages swapped out while cache remains",
+    "why": "Swappiness biases reclaim toward anon pages vs page cache."
+   }
+  ],
+  "impact_bound": "none for typical clients; bound = client psi_memory_some.",
+  "experiment": {
+   "change": "vm.swappiness=1 on the client",
+   "predict": "client swap_in -> 0",
+   "confirm_or_refute": "no swapping before => no effect",
+   "cost_or_risk": "none"
+  },
+  "collected": "partly: in window, not summarised",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html"
+  ]
+ },
+ {
+  "variable": "client:os:vm.zone_reclaim_mode",
+  "relevant_to": "os (client host), multi-socket only; default 0 is right for nearly all workloads.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client numa local vs remote allocation; pgscan/pgsteal while free memory exists on other nodes",
+    "points_to": "a specific value (0)",
+    "condition": "non-zero and reclaim activity with free memory on remote nodes",
+    "why": "Zone reclaim drops cache/swaps locally instead of allocating remotely."
+   }
+  ],
+  "impact_bound": "none-low; bound = client reclaim stall time (psi_memory_some).",
+  "experiment": {
+   "change": "set 0",
+   "predict": "client reclaim stalls -> 0",
+   "confirm_or_refute": "no change => no effect",
+   "cost_or_risk": "none"
+  },
+  "collected": "partly: NUMA counters snapshotted on multi-node hosts",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/vm.html"
+  ]
+ },
+ {
+  "variable": "client:os:zswap",
+  "relevant_to": "os (client host); only matters if the client swaps.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client swap_in rate and psi_memory_some",
+    "points_to": "enable",
+    "condition": "material client swap-ins",
+    "why": "Compressed in-RAM swap cache makes swap-ins cheaper than disk."
+   }
+  ],
+  "impact_bound": "none unless client swaps; bound = client memory-pressure stall share.",
+  "experiment": {
+   "change": "zswap on",
+   "predict": "client psi_memory down, zswpin up",
+   "confirm_or_refute": "no swap => no effect",
+   "cost_or_risk": "CPU for compression"
+  },
+  "collected": "partly",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/mm/zswap.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.core.default_qdisc",
+  "relevant_to": "os (client host); matters with bbr (pacing) or on WAN/lossy paths; on low-RTT LANs, OLTP request sizes are too small for queueing to matter.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client_rtt_avg_ms vs client rtt_min_ms; client net_retrans_pct",
+    "points_to": "a specific value (fq, with bbr)",
+    "condition": "high RTT (>= ~10 ms) and large client transfers (client_net_tx_mbs material) or retransmits",
+    "why": "fq provides per-flow pacing that BBR relies on and avoids bufferbloat behind one bulk flow."
+   }
+  ],
+  "impact_bound": "At most the share of DB-side client-wait time that is network queueing (rtt_avg - rtt_min per round trip); typical none on LAN, low-medium on WAN bulk loads.",
+  "experiment": {
+   "change": "default_qdisc=fq together with bbr",
+   "predict": "client rtt_avg_ms closer to rtt_min, retrans down, bulk-load time down",
+   "confirm_or_refute": "no RTT change => queueing was not on the client egress",
+   "cost_or_risk": "none material"
+  },
+  "collected": "yes (client rtt_avg/p95/min, retrans, tx MB/s)",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/net.html",
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.core.netdev_budget",
+  "relevant_to": "os (client host); only at high packet rates (thousands of small statements per second on few CPUs).",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client net_softnet_squeeze (softnet_stat col 3) rate",
+    "points_to": "raise",
+    "condition": "sustained non-zero time_squeeze while client softirq_max_cpu_pct is high",
+    "why": "A round that ends on budget leaves packets for ksoftirqd, adding latency; squeeze counts these."
+   },
+   {
+    "source": "ebpf",
+    "metric": "offcpu foreground 'Waiting: client (next statement)' share",
+    "points_to": "raise",
+    "condition": "material client wait with client rtt_avg >> rtt_min on a LAN",
+    "why": "Delayed receive processing on the client shows as server waiting for the next statement."
+   }
+  ],
+  "impact_bound": "At most the client-side receive delay share of the DB client-wait time; typical low (RPS / more queues fix the cause better).",
+  "experiment": {
+   "change": "double the budget",
+   "predict": "client softnet_squeeze toward 0, rtt_avg down",
+   "confirm_or_refute": "squeeze gone but no latency change => not significant",
+   "cost_or_risk": "longer softirq bursts can delay user threads"
+  },
+  "collected": "partly: softnet_squeeze is in the client window but not summarised; add client_net_softnet_squeeze to the summary",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/net.html",
+   "https://docs.kernel.org/networking/scaling.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.core.netdev_budget_usecs",
+  "relevant_to": "os (client host); only at high packet rates (thousands of small statements per second on few CPUs).",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client net_softnet_squeeze (softnet_stat col 3) rate",
+    "points_to": "raise",
+    "condition": "sustained non-zero time_squeeze while client softirq_max_cpu_pct is high",
+    "why": "Same as netdev_budget: an exhausted time budget is counted as time_squeeze."
+   },
+   {
+    "source": "ebpf",
+    "metric": "offcpu foreground 'Waiting: client (next statement)' share",
+    "points_to": "raise",
+    "condition": "material client wait with client rtt_avg >> rtt_min on a LAN",
+    "why": "Delayed receive processing on the client shows as server waiting for the next statement."
+   }
+  ],
+  "impact_bound": "At most the client-side receive delay share of the DB client-wait time; typical low (RPS / more queues fix the cause better).",
+  "experiment": {
+   "change": "double the budget",
+   "predict": "client softnet_squeeze toward 0, rtt_avg down",
+   "confirm_or_refute": "squeeze gone but no latency change => not significant",
+   "cost_or_risk": "longer softirq bursts can delay user threads"
+  },
+  "collected": "partly: softnet_squeeze is in the client window but not summarised; add client_net_softnet_squeeze to the summary",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/net.html",
+   "https://docs.kernel.org/networking/scaling.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.core.netdev_max_backlog",
+  "relevant_to": "os (client host); relevant when RPS/RFS or bursty receive enqueues to per-CPU backlog.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client net_softnet_drops (softnet_stat col 2) rate",
+    "points_to": "raise",
+    "condition": "any sustained softnet drops",
+    "why": "Packets beyond the per-CPU backlog are dropped and must be retransmitted."
+   }
+  ],
+  "impact_bound": "At most the time lost to retransmissions (drops x RTO/RTT); typical none on clients, low when drops appear.",
+  "experiment": {
+   "change": "raise to 4096-16384",
+   "predict": "client softnet drops -> 0, retrans down",
+   "confirm_or_refute": "no drops before => no effect",
+   "cost_or_risk": "small memory"
+  },
+  "collected": "partly: softnet drops in client window, not summarised",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/net.html",
+   "https://docs.kernel.org/networking/scaling.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.core.rmem_max",
+  "relevant_to": "os (client host); caps only buffers set explicitly with SO_RCVBUF; autotuned TCP uses tcp_rmem instead. Matters only for bulk transfers over high bandwidth-delay paths.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client bandwidth-delay product (client_net_rx/tx_mbs x rtt_min) vs buffer size",
+    "points_to": "raise",
+    "condition": "large result sets/loads where throughput per connection stalls below link speed with RTT >= ~10 ms and the client sets its own buffer",
+    "why": "A window smaller than the BDP caps per-connection throughput."
+   }
+  ],
+  "impact_bound": "none for OLTP (small packets); bound for bulk = transfer time beyond link-speed time.",
+  "experiment": {
+   "change": "raise to 16-64 MiB",
+   "predict": "bulk transfer time down",
+   "confirm_or_refute": "no change => buffers not limiting (autotuning)",
+   "cost_or_risk": "memory per socket"
+  },
+  "collected": "partly: ss memory/wscale per socket not collected",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/net.html",
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.core.wmem_max",
+  "relevant_to": "os (client host); caps only buffers set explicitly with SO_SNDBUF; autotuned TCP uses tcp_wmem instead. Matters only for bulk transfers over high bandwidth-delay paths.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client bandwidth-delay product (client_net_rx/tx_mbs x rtt_min) vs buffer size",
+    "points_to": "raise",
+    "condition": "large result sets/loads where throughput per connection stalls below link speed with RTT >= ~10 ms and the client sets its own buffer",
+    "why": "A window smaller than the BDP caps per-connection throughput."
+   }
+  ],
+  "impact_bound": "none for OLTP (small packets); bound for bulk = transfer time beyond link-speed time.",
+  "experiment": {
+   "change": "raise to 16-64 MiB",
+   "predict": "bulk transfer time down",
+   "confirm_or_refute": "no change => buffers not limiting (autotuning)",
+   "cost_or_risk": "memory per socket"
+  },
+  "collected": "partly: ss memory/wscale per socket not collected",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/net.html",
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.core.rps_sock_flow_entries",
+  "relevant_to": "os (client host); only with RPS enabled (RFS needs both this and rps_flow_cnt per queue).",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client softirq on CPUs other than the consuming thread's; client cpu cache misses",
+    "points_to": "raise (e.g. 32768)",
+    "condition": "RPS enabled and many connections",
+    "why": "RFS steers packets to the CPU running the consumer, improving cache locality."
+   }
+  ],
+  "impact_bound": "low; bound = client softirq + cross-CPU wakeup cost; only if the client is CPU-bound.",
+  "experiment": {
+   "change": "set 32768 and rps_flow_cnt per queue",
+   "predict": "client CPU per transaction down",
+   "confirm_or_refute": "no change => locality not a cost",
+   "cost_or_risk": "none"
+  },
+  "collected": "no: per-transaction client CPU not computed",
+  "sources": [
+   "https://docs.kernel.org/networking/scaling.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.core.somaxconn",
+  "relevant_to": "os (client host); a client listens on nothing in DB benchmarks; cannot matter (the server's somaxconn caps MySQL back_log).",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client net_listen_overflows",
+    "points_to": "no change needed",
+    "condition": "only if a client-side listener (e.g. a proxy on the client) overflows",
+    "why": "Caps listen backlogs of local listeners."
+   }
+  ],
+  "impact_bound": "none.",
+  "experiment": {
+   "change": "none",
+   "predict": "n/a",
+   "confirm_or_refute": "no measurable signal",
+   "cost_or_risk": "none"
+  },
+  "collected": "yes (listen overflows in window)",
+  "sources": [
+   "https://docs.kernel.org/admin-guide/sysctl/net.html",
+   "https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_back_log"
+  ]
+ },
+ {
+  "variable": "client:os:net.ipv4.ip_local_port_range",
+  "relevant_to": "os (client host); matters only for clients that open and close connections rapidly (no pooling) to one server ip:port.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client_net_conn_per_s and client_net_time_wait vs port range size",
+    "points_to": "raise (wider range)",
+    "condition": "TIME_WAIT sockets approach the range size (default 32768-60999 = 28232) or connect() fails with EADDRNOTAVAIL (benchmark error output; the server-side client_errors do not see it)",
+    "why": "Each closed outgoing connection holds its ephemeral port for 60 s in TIME_WAIT."
+   }
+  ],
+  "impact_bound": "Functional limit rather than speed: with exhaustion, failed/retried connects; bound = share of client errors/connect latency. Typical none with pooled benchmarks, high (hard failures) for connect-per-transaction tests.",
+  "experiment": {
+   "change": "ip_local_port_range='1024 65535'",
+   "predict": "client connect errors -> 0, throughput stable over long runs",
+   "confirm_or_refute": "no errors before => no effect",
+   "cost_or_risk": "may collide with local listening ports in the range"
+  },
+  "collected": "yes (client_net_time_wait, client_net_conn_per_s); connect failures need the benchmark error log",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.ipv4.tcp_congestion_control",
+  "relevant_to": "os (client host); matters with RTT >= ~10 ms, loss, or bulk transfers; nil on low-RTT LAN OLTP (requests fit the initial window).",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client net_retrans_pct, rtt_avg_ms vs rtt_min_ms, client_net_tx_mbs",
+    "points_to": "a specific value (bbr)",
+    "condition": "WAN path with retransmits or bufferbloat and material client send volume",
+    "why": "BBR models bottleneck bandwidth/RTT instead of reacting to loss, keeping throughput on lossy paths and queues short."
+   }
+  ],
+  "impact_bound": "At most the share of statement time spent in network round trips beyond rtt_min (DB-side client wait), for flows larger than the initial window; typical none on LAN, medium for WAN bulk loads.",
+  "experiment": {
+   "change": "bbr + fq",
+   "predict": "bulk transfer time down; rtt_avg closer to rtt_min",
+   "confirm_or_refute": "no change => not congestion-limited",
+   "cost_or_risk": "bbr can be unfair to cubic flows sharing the path"
+  },
+  "collected": "yes (client rtt, retrans, tx MB/s)",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html",
+   "https://research.google/pubs/bbr-congestion-based-congestion-control-2/"
+  ]
+ },
+ {
+  "variable": "client:os:net.ipv4.tcp_keepalive_intvl",
+  "relevant_to": "os (client host); applies only to sockets with SO_KEEPALIVE (MySQL client libraries enable it); affects failure detection of idle connections, never throughput.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Aborted_clients / Aborted_connects on the server; client connection-reset errors after idle",
+    "points_to": "lower",
+    "condition": "idle pooled connections are dropped by a firewall/NAT idle timeout shorter than keepalive_time (interval between probes (default 75 s))",
+    "why": "Keepalive probes keep middlebox state alive and detect dead peers."
+   }
+  ],
+  "impact_bound": "none for performance (no measurable throughput signal); functional only.",
+  "experiment": {
+   "change": "lower keepalive_time below the middlebox idle timeout (e.g. 300 s)",
+   "predict": "client reset errors after idle -> 0",
+   "confirm_or_refute": "no idle drops => no effect",
+   "cost_or_risk": "few extra packets"
+  },
+  "collected": "partly: server Aborted_clients collected; client-side resets (net_resets_per_s) in window",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html",
+   "https://tldp.org/HOWTO/TCP-Keepalive-HOWTO/usingkeepalive.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.ipv4.tcp_keepalive_probes",
+  "relevant_to": "os (client host); applies only to sockets with SO_KEEPALIVE (MySQL client libraries enable it); affects failure detection of idle connections, never throughput.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Aborted_clients / Aborted_connects on the server; client connection-reset errors after idle",
+    "points_to": "lower",
+    "condition": "idle pooled connections are dropped by a firewall/NAT idle timeout shorter than keepalive_time (probes before drop (default 9))",
+    "why": "Keepalive probes keep middlebox state alive and detect dead peers."
+   }
+  ],
+  "impact_bound": "none for performance (no measurable throughput signal); functional only.",
+  "experiment": {
+   "change": "lower keepalive_time below the middlebox idle timeout (e.g. 300 s)",
+   "predict": "client reset errors after idle -> 0",
+   "confirm_or_refute": "no idle drops => no effect",
+   "cost_or_risk": "few extra packets"
+  },
+  "collected": "partly: server Aborted_clients collected; client-side resets (net_resets_per_s) in window",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html",
+   "https://tldp.org/HOWTO/TCP-Keepalive-HOWTO/usingkeepalive.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.ipv4.tcp_keepalive_time",
+  "relevant_to": "os (client host); applies only to sockets with SO_KEEPALIVE (MySQL client libraries enable it); affects failure detection of idle connections, never throughput.",
+  "signals": [
+   {
+    "source": "status",
+    "metric": "Aborted_clients / Aborted_connects on the server; client connection-reset errors after idle",
+    "points_to": "lower",
+    "condition": "idle pooled connections are dropped by a firewall/NAT idle timeout shorter than keepalive_time (idle time before probes (default 7200 s))",
+    "why": "Keepalive probes keep middlebox state alive and detect dead peers."
+   }
+  ],
+  "impact_bound": "none for performance (no measurable throughput signal); functional only.",
+  "experiment": {
+   "change": "lower keepalive_time below the middlebox idle timeout (e.g. 300 s)",
+   "predict": "client reset errors after idle -> 0",
+   "confirm_or_refute": "no idle drops => no effect",
+   "cost_or_risk": "few extra packets"
+  },
+  "collected": "partly: server Aborted_clients collected; client-side resets (net_resets_per_s) in window",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html",
+   "https://tldp.org/HOWTO/TCP-Keepalive-HOWTO/usingkeepalive.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.ipv4.tcp_max_syn_backlog",
+  "relevant_to": "os (client host); only for listeners; a benchmark client listens on nothing.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client net_listen_drops / net_tcp_req_q_full_drop",
+    "points_to": "no change needed",
+    "condition": "only with a client-side listener",
+    "why": "Queue for half-open inbound connections."
+   }
+  ],
+  "impact_bound": "none.",
+  "experiment": {
+   "change": "none",
+   "predict": "n/a",
+   "confirm_or_refute": "no measurable signal",
+   "cost_or_risk": "none"
+  },
+  "collected": "yes",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.ipv4.tcp_rmem",
+  "relevant_to": "os (client host); autotuning ceiling for receive windows; matters for large result sets over high bandwidth-delay paths.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client_net_rx_mbs per connection vs link speed with rtt_min; BDP = bandwidth x RTT vs tcp_rmem max",
+    "points_to": "raise (max)",
+    "condition": "large reads (big SELECTs, dumps) limited below link speed and BDP > tcp_rmem max (default 6 MiB)",
+    "why": "The receive window cannot exceed the buffer, capping throughput at window/RTT."
+   }
+  ],
+  "impact_bound": "At most (transfer time - bytes/link speed) of bulk reads; none for OLTP on LAN; medium for WAN dumps.",
+  "experiment": {
+   "change": "raise max to 32-64 MiB",
+   "predict": "per-connection rx MB/s up for bulk reads",
+   "confirm_or_refute": "no change => not window-limited",
+   "cost_or_risk": "memory per socket"
+  },
+  "collected": "partly: per-socket rcv_space/wscale (ss -tmi) not collected",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.ipv4.tcp_slow_start_after_idle",
+  "relevant_to": "os (client host); matters with pooled connections idle > RTO between bursts larger than the initial window over RTT >= ~10 ms; nil on LAN OLTP.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client_rtt_avg_ms (>= 10 ms) and statements/results larger than ~10 segments",
+    "points_to": "disable",
+    "condition": "high RTT and bursty multi-segment requests on reused connections",
+    "why": "After idle the congestion window collapses to the initial window, adding round trips per burst."
+   }
+  ],
+  "impact_bound": "At most extra round trips per burst x RTT, as a share of statement latency; typical none on LAN, low-medium on WAN.",
+  "experiment": {
+   "change": "tcp_slow_start_after_idle=0",
+   "predict": "statement latency for large statements down by ~RTT multiples",
+   "confirm_or_refute": "no change => bursts fit the initial window",
+   "cost_or_risk": "none material"
+  },
+  "collected": "yes (client_rtt_avg_ms)",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.ipv4.tcp_tw_reuse",
+  "relevant_to": "os (client host); matters only for connect-per-transaction clients; default 2 enables reuse for loopback only.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client_net_time_wait and client_net_conn_per_s; connect errors",
+    "points_to": "enable (1)",
+    "condition": "TIME_WAIT count near the ephemeral port range size or EADDRNOTAVAIL errors on a non-loopback path",
+    "why": "Reuse lets a new outgoing connection take a TIME_WAIT port when timestamps prove it safe."
+   }
+  ],
+  "impact_bound": "Functional: avoids port exhaustion; bound = connect failures/latency share. Typical none with pooling.",
+  "experiment": {
+   "change": "tcp_tw_reuse=1",
+   "predict": "client connect errors -> 0, TIME_WAIT may stay but no failures",
+   "confirm_or_refute": "no errors before => no effect",
+   "cost_or_risk": "safe with TCP timestamps (on by default)"
+  },
+  "collected": "yes (client_net_time_wait, client_net_conn_per_s)",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.ipv4.tcp_wmem",
+  "relevant_to": "os (client host); send buffer autotuning ceiling; matters for bulk writes/loads over high bandwidth-delay paths.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client_net_tx_mbs per connection vs link speed; BDP vs tcp_wmem max (default 4 MiB)",
+    "points_to": "raise (max)",
+    "condition": "bulk loads (LOAD DATA LOCAL, multi-row inserts) limited below link speed with high RTT",
+    "why": "The send buffer bounds bytes in flight per connection."
+   }
+  ],
+  "impact_bound": "none for OLTP; medium for WAN bulk loads; bound = load time minus bytes/link speed.",
+  "experiment": {
+   "change": "raise max to 16-64 MiB",
+   "predict": "bulk-load tx MB/s up",
+   "confirm_or_refute": "no change => not limited",
+   "cost_or_risk": "memory per socket"
+  },
+  "collected": "partly: per-socket send-queue stats not collected",
+  "sources": [
+   "https://docs.kernel.org/networking/ip-sysctl.html"
+  ]
+ },
+ {
+  "variable": "client:os:net.netfilter.nf_conntrack_max",
+  "relevant_to": "os (client host); only when the conntrack module is loaded (firewall/NAT).",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client conntrack_fill_pct; dmesg 'nf_conntrack: table full, dropping packet'",
+    "points_to": "raise",
+    "condition": "fill above ~80% or any table-full drops",
+    "why": "A full table drops new connections' packets."
+   }
+  ],
+  "impact_bound": "Functional: drops cause connect timeouts (1 s+ SYN retries); bound = client_errors/timeouts share. Typical none, high when hit.",
+  "experiment": {
+   "change": "double nf_conntrack_max (and hashsize)",
+   "predict": "table-full drops -> 0, SYN retrans down",
+   "confirm_or_refute": "fill low => no effect",
+   "cost_or_risk": "kernel memory"
+  },
+  "collected": "partly: conntrack_fill_pct in client window, not summarised; table-full drop counter (conntrack -S drop) not collected",
+  "sources": [
+   "https://docs.kernel.org/networking/nf_conntrack-sysctl.html"
+  ]
+ },
+ {
+  "variable": "client:os:net_irq_cpus",
+  "relevant_to": "os (client host); matters when NIC interrupts land on the same few CPUs as the benchmark threads on a CPU-bound client.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client softirq_max_cpu_pct vs softirq_avg_cpu_pct; per-CPU busy",
+    "points_to": "a specific value (separate CPUs, or spread)",
+    "condition": "one CPU saturated by softirq (max >> avg) while the client is client-bound",
+    "why": "IRQ and softirq work concentrated on busy CPUs delays both packet processing and client threads."
+   }
+  ],
+  "impact_bound": "At most the client CPU time stolen from benchmark threads by softirq on shared CPUs, only when client-bound; typical low.",
+  "experiment": {
+   "change": "assign IRQs to a dedicated CPU set (or spread across queues)",
+   "predict": "client softirq_max_cpu_pct down, DB-side client-wait share down",
+   "confirm_or_refute": "no change in client wait => not limiting",
+   "cost_or_risk": "fewer CPUs for the client if dedicated"
+  },
+  "collected": "yes (client softirq max/avg)",
+  "sources": [
+   "https://docs.kernel.org/core-api/irq/irq-affinity.html",
+   "https://docs.kernel.org/networking/scaling.html"
+  ]
+ },
+ {
+  "variable": "client:os:rps",
+  "relevant_to": "os (client host); matters when the NIC has fewer RX queues than busy CPUs (common on VMs) and one CPU's softirq saturates.",
+  "signals": [
+   {
+    "source": "os",
+    "metric": "client_softirq_max_cpu_pct vs client_softirq_avg_cpu_pct",
+    "points_to": "enable",
+    "condition": "max > ~50% and avg < ~25% (one CPU doing all receive work)",
+    "why": "RPS hashes flows to other CPUs, spreading protocol processing."
+   },
+   {
+    "source": "ebpf",
+    "metric": "offcpu foreground 'Waiting: client (next statement)' share",
+    "points_to": "enable",
+    "condition": "material DB-side client wait together with the softirq hotspot",
+    "why": "Client-side receive delay lengthens the gap before the next statement."
+   }
+  ],
+  "impact_bound": "At most the client-side share of DB client-wait time while one client CPU is saturated; typical low-medium on small-queue VMs at high statement rates.",
+  "experiment": {
+   "change": "rps=on (all CPUs per RX queue)",
+   "predict": "softirq_max down, softirq_avg up slightly, client wait/latency down",
+   "confirm_or_refute": "max unchanged => multi-queue already; throughput flat => not the limit",
+   "cost_or_risk": "inter-processor interrupts add CPU when the client is not bottlenecked"
+  },
+  "collected": "yes (client softirq max/avg)",
+  "sources": [
+   "https://docs.kernel.org/networking/scaling.html"
+  ]
+ }
+]
