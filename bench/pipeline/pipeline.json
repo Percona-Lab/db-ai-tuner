@@ -1247,6 +1247,38 @@
    "group": false,
    "est_hours": 7,
    "question": "Redo capacity sweep on TPC-C 100 W commit-heavy, high concurrency: the same curve at higher write rates, for comparison with H1"
+  },
+  {
+   "id": "sweep-bp-P1-amd",
+   "script": "matrix.sh",
+   "args": [
+    "P1",
+    "sweep",
+    "innodb_buffer_pool_size",
+    "auto-bp"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 9,
+   "question": "Buffer pool sweep on partly cached read-only (60 GB, 256 threads) again with the fixed sweep tooling: range up to the tuned pool, knee points, every step judged against the start - P1 was still rising at 21G on atvbm2"
+  },
+  {
+   "id": "sweep-io-H1",
+   "script": "matrix.sh",
+   "args": [
+    "H1",
+    "sweep",
+    "innodb_io_capacity",
+    "200,500,1000,2000,4000,10000"
+   ],
+   "hosts": [
+    "atcanary"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "io_capacity sweep on HammerDB TPROC-C 200 W (the Parma Ham workload type): pmh97 showed io_capacity 200 cut disk writes 37% for +37% latency - where does the trade turn"
   }
  ]
 }

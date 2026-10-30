@@ -43,13 +43,15 @@ def load():
     return items + list(st.get("_auto_items") or []), st
 
 
-def source_session(iid, host):
-    """The tuning session a finished item ran (its collected session log says 'Session #N started')."""
-    import glob
+def source_session(iid, host, cell):
+    """The tuning session a finished matrix item ran: the last 'Session #N started' in its cell's own session log (the
+    collected folder holds every session log of the box)."""
     import re
-    ids = []
-    for f in sorted(glob.glob(os.path.join(OPS, "pipeline", iid, host, "session-pipe-*.log"))):
-        ids += [int(x) for x in re.findall(r"Session #(\d+) started", open(f, errors="replace").read())]
+    f = os.path.join(OPS, "pipeline", iid, host, f"session-pipe-matrix-{cell}.log")
+    try:
+        ids = [int(x) for x in re.findall(r"Session #(\d+) started", open(f, errors="replace").read())]
+    except OSError:
+        return None
     return ids[-1] if ids else None
 
 
@@ -60,7 +62,7 @@ def queue_confirm(iid, s, items, st):
         return
     host = s["hosts"][0]
     sib = next((g for g in SIBLINGS if host in g), None)
-    sid = source_session(iid, host)
+    sid = source_session(iid, host, it["args"][0])
     if not sib or not sid:
         return
     cid = f"confirm-{iid}"
