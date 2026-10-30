@@ -1279,6 +1279,20 @@
    "group": false,
    "est_hours": 7,
    "question": "io_capacity sweep on HammerDB TPROC-C 200 W (the Parma Ham workload type): pmh97 showed io_capacity 200 cut disk writes 37% for +37% latency - where does the trade turn"
+  },
+  {
+   "id": "purge-triage-P3-amd",
+   "script": "matrix.sh",
+   "args": [
+    "P3"
+   ],
+   "hosts": [
+    "atvbmamd",
+    "atcanary"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "The purge triage with purge-thread profiles (CPU / run queue / file I/O / latches, records purged/s), remedies by cause (change buffering first when purge waits on reads) and stacking of milder limits, on P3 (writes, 1024 threads, partly cached): which cause the profile finds and whether change buffering or a stacked limit holds the history for less than a low concurrency cap"
   }
  ]
 }
