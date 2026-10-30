@@ -722,6 +722,44 @@ def recommend(ctx):
         b.add("io-capacity-down", "Flush less eagerly", [("innodb_io_capacity", str(max(200, ioc // 2))), ("innodb_io_capacity_max", str(max(400, ioc)))],
               "Redo has plenty of headroom yet background flushing keeps the disk busy; lazier flushing merges more writes per page.",
               {"checkpoint_age_pct_max": ck, "disk_w_iops": s.get("disk_w_iops"), "disk_util": s.get("disk_util")}, impact=1, confidence=2)
+    # what drives flushing and whether it stalls the foreground (INNODB_METRICS, docs/research/var-evidence): sync flushes
+    # and redo space waits are the measured cost a larger redo removes; flushing driven by dirty pages, not redo age, is
+    # not; flushing requested beyond innodb_io_capacity is clipped by it
+    age_sh, sync_p, space_w = s.get("flush_by_age_share_pct"), s.get("flush_sync_pages_s") or 0, s.get("redo_space_waits_s") or 0
+    req_cap = s.get("flush_requested_vs_capacity")
+    fev = {k: s.get(k) for k in ("flush_by_age_share_pct", "flush_sync_pages_s", "flush_sync_waits_s", "redo_space_waits_s",
+                                 "flush_requested_vs_capacity", "flush_pages_per_trx") if s.get(k) is not None}
+    redo_it = next((i for i in b.items if i["id"] == "redo-grow"), None)
+    if redo_it and fev:
+        redo_it.setdefault("evidence", {}).update(fev)
+        if sync_p > 0 or space_w > 0:
+            redo_it["impact"], redo_it["confidence"] = 3, 3
+            redo_it["rationale"] += (f" Measured: {sync_p:,.0f} pages/s flushed synchronously and {space_w:,.1f} redo space waits/s - "
+                                     "the foreground waits for checkpoints.")
+        elif age_sh is not None and age_sh < 20:
+            redo_it["confidence"] = 1
+            redo_it["rationale"] += (f" But only {age_sh:.0f}% of the pages flushed were for redo age (the rest for dirty pages) and "
+                                     "nothing flushed synchronously: a larger redo is unlikely to reduce the flushing.")
+    elif have_run and cap and (sync_p > 0 or space_w > 0) and not redo_it:
+        var = "innodb_redo_log_capacity" if "innodb_redo_log_capacity" in v else "innodb_log_file_size"
+        want = min(cap * 2, 32 * GiB) // (512 * MiB) * (512 * MiB)
+        if want > cap:
+            val = want if var == "innodb_redo_log_capacity" or flavor == "mariadb" else want // max(1, _int(v, "innodb_log_files_in_group", 1))
+            b.add("redo-grow", "Larger redo log: the foreground waits for checkpoints", [(var, fmt_size(val))],
+                  f"Measured {sync_p:,.0f} pages/s flushed synchronously and {space_w:,.1f} redo space waits/s: user threads stop until a "
+                  f"checkpoint frees redo space. Twice the redo ({human_size(want)}) gives the page cleaners room to flush in the "
+                  "background. Cost: longer crash recovery.", dict(fev, redo_capacity=human_size(cap)), impact=3, confidence=3)
+    for io_it in [i for i in b.items if i["id"] == "io-capacity-up"]:
+        if req_cap is None:
+            continue
+        io_it.setdefault("evidence", {})["flush_requested_vs_capacity"] = req_cap
+        if req_cap >= 1:
+            io_it["confidence"] = 3
+            io_it["rationale"] += f" Measured: InnoDB asked to flush {req_cap:.1f}x innodb_io_capacity per second - the cap clips it."
+        elif req_cap < 0.5 and not (sync_p > 0):
+            io_it["confidence"] = 1
+            io_it["rationale"] += (f" But the flushing InnoDB asked for was only {req_cap:.2f}x the current cap: the budget is not what "
+                                   "limits it.")
     if have_run and rates.get("Innodb_buffer_pool_wait_free", 0) > 0:
         lru = _int(v, "innodb_lru_scan_depth", 1024)
         b.add("lru-depth", "Deeper LRU scan for free pages", [("innodb_lru_scan_depth", str(min(lru * 2, 8192)))],
@@ -2816,6 +2854,59 @@ def thread_pool_guard(items, ctx):
     return items
 
 
+# settings that cannot change anything here (docs/research/var-evidence, 2026-10-31): documented no-ops, and settings whose
+# mechanism the run shows unused - never proposed (confidence 0, with the reason)
+INERT = {
+    "binlog_max_flush_queue_time": "documented to have no effect",
+    "metadata_locks_hash_instances": "unused by the server (documented)",
+    "innodb_rollback_segments": "128, the default, is already the maximum",
+    "innodb_parallel_doublewrite_path": "ignored since Percona Server 8.0.22",
+}
+INERT_FLAGS = {"hash_join": "has no effect since MySQL 8.0.19 (block_nested_loop controls hash joins)",
+               "engine_condition_pushdown": "applies to NDB tables only"}
+CONNECTION_PATH = ("back_log", "host_cache_size", "skip_name_resolve", "thread_cache_size")
+DDL_ONLY = ("innodb_ddl_buffer_size", "innodb_ddl_threads", "innodb_sort_buffer_size", "innodb_fill_factor")
+NUMA_ONLY = ("innodb_numa_interleave", "os:mysqld_numa_policy", "os:kernel.numa_balancing", "os:vm.zone_reclaim_mode")
+
+
+def inert_reason(var, val, ctx):
+    """Why changing var to val cannot matter on this server and load, or None."""
+    v = ctx.get("variables") or {}
+    rates = (ctx.get("inputs") or {}).get("status_rates") or {}
+    if var in INERT:
+        return INERT[var]
+    if var == "optimizer_switch":
+        flags = {f.split("=")[0].strip() for f in str(val or "").split(",") if "=" in f}
+        hit = [f for f in flags if f in INERT_FLAGS and not (f == "hash_join" and str(ctx.get("flavor")) == "mariadb")]
+        if hit and flags <= set(INERT_FLAGS):
+            return "; ".join(f"{f} {INERT_FLAGS[f]}" for f in hit)
+    if var == "max_length_for_sort_data" and str(ctx.get("flavor")) != "mariadb" and tuple(ctx.get("version") or (0,)) >= (8, 0, 20):
+        return "ignored since MySQL 8.0.20"
+    if var in CONNECTION_PATH and rates and (rates.get("Connections") or 0) < 1:
+        return "no new connections during the run (persistent connections): the connection path is not used"
+    if var in DDL_ONLY and rates and not any((rates.get(k) or 0) > 0 for k in ("Com_alter_table", "Com_create_index", "Com_create_table")):
+        return "used by DDL only, and the load runs none"
+    if var in NUMA_ONLY and int((ctx.get("os_facts") or {}).get("os:numa_nodes") or 1) <= 1 and (ctx.get("os_facts") or {}).get("os:numa_nodes"):
+        return "a single NUMA node: nothing to interleave or balance"
+    if var == "innodb_change_buffer_max_size" and str(v.get("innodb_change_buffering", "")).lower() == "none":
+        return "change buffering is off (innodb_change_buffering=none)"
+    if var == "os:read_ahead_kb" and "O_DIRECT" in str(v.get("innodb_flush_method") or ""):
+        return "InnoDB reads its data files with O_DIRECT: kernel read-ahead does not apply"
+    return None
+
+
+def inert_guard(items, ctx):
+    """Ideas whose every change cannot matter here are not run, with the reason (docs/research/var-evidence)."""
+    for it in items:
+        if it.get("kind") != "config" or not it.get("changes"):
+            continue
+        why = [inert_reason(c["variable"], c.get("proposed"), ctx) for c in it["changes"]]
+        if all(why):
+            it["confidence"] = 0
+            it["note"] = (it.get("note", "") + " Not run: " + "; ".join(sorted(set(w for w in why if w))) + ".").strip()
+    return items
+
+
 def incompat_guard(items, ctx):
     """Ideas that would produce a setting combination this server's release refused before (on any host: the shared list,
     incompat.py): not run, with the server's error as the reason."""
@@ -3251,6 +3342,7 @@ def run_engine(ctx):
     items = nofile_guard(items, ctx)
     items = thread_pool_guard(items, ctx)
     items = incompat_guard(items, ctx)
+    items = inert_guard(items, ctx)
     items = balance_purge(items, ctx)
     if ctx.get("validate_discarded"):
         items = validate_discarded(items, ctx)

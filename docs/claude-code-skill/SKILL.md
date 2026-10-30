@@ -175,6 +175,14 @@ API keys: __SERVER__/#/connect (an account is free; __SERVER__/quickstart walks 
    (innodb_change_buffering=all) and fewer concurrent threads when purge waits on page reads; priority, CPUs of its own
    and more purge threads when it waits for a CPU. A stable remedy costing more than 20% throughput is followed by milder
    limits stacked with the best purge-side setting.
+   Each run records the mechanism evidence behind flushing / redo, binary log and thread pool settings (summary keys
+   flush_by_age_share_pct, flush_sync_pages_s, redo_space_waits_s, flush_requested_vs_capacity, flush_pages_per_trx,
+   binlog_sync_ms_per_trx, threadpool_queue_wait_us; inputs.mechanism_evidence): a larger redo is a measured fix when
+   the foreground waits for checkpoints (sync flushes, redo space waits) and unlikely when flushing is driven by dirty
+   pages; raising innodb_io_capacity is confirmed when InnoDB asks for more flushing than the cap. Settings that cannot
+   matter (documented no-ops; connection-path settings without new connections; DDL settings without DDL; NUMA settings
+   on one node; change-buffer size with buffering off) are never run. docs/research/var-evidence has the per-variable
+   evidence research.
    Combinations the server refuses with an "unsupported / incompatible" error (e.g. resource groups while Percona
    Server's thread pool is on, error 3658) are recorded and shared by flavor and release series: no agent proposes
    them again, and ideas that would produce one show "Not run: ... was refused by this release before". The engine and the LLM queue

@@ -87,6 +87,34 @@ class DB:
         except pymysql.MySQLError:
             return ""
 
+    _monitors_on = False
+
+    def ensure_monitors(self):
+        """Switch on the INNODB_METRICS modules the flushing / redo evidence reads (module_buffer, module_log; counters
+        only, cheap). Once per connection; returns None so `ensure_monitors() or innodb_metrics()` reads them."""
+        if not self._monitors_on:
+            for mod in ("module_buffer", "module_log"):
+                try:
+                    self.execute(f"SET GLOBAL innodb_monitor_enable = '{mod}'")
+                except pymysql.MySQLError:
+                    pass
+            self._monitors_on = True
+        return None
+
+    def threadpool_mariadb(self):
+        """MariaDB thread pool: stalls, throttles, threads created for stalls, and queueing time (information_schema)."""
+        out = {}
+        try:
+            r = self.rows("SELECT SUM(STALLS), SUM(THROTTLES), SUM(THREAD_CREATIONS_DUE_TO_STALL) FROM information_schema.THREAD_POOL_STATS")
+            if r:
+                out.update(stalls=int(r[0][0] or 0), throttles=int(r[0][1] or 0), creations_for_stall=int(r[0][2] or 0))
+            r = self.rows("SELECT COUNT(*), AVG(QUEUEING_TIME_MICROSECONDS), MAX(QUEUEING_TIME_MICROSECONDS) FROM information_schema.THREAD_POOL_QUEUES")
+            if r:
+                out.update(queued=int(r[0][0] or 0), queue_us_avg=float(r[0][1] or 0), queue_us_max=float(r[0][2] or 0))
+        except pymysql.MySQLError:
+            pass
+        return out
+
     def innodb_metrics(self):
         try:
             rows = self.rows("SELECT NAME, COUNT FROM information_schema.INNODB_METRICS WHERE STATUS='enabled'")

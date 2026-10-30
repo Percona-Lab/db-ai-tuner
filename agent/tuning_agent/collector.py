@@ -246,7 +246,7 @@ def full_snapshot(db, device):
         "t": time.time(),
         "variables": db.variables(),
         "status": db.status(),
-        "innodb_metrics": db.innodb_metrics(),
+        "innodb_metrics": (db.ensure_monitors() or db.innodb_metrics()),
         "innodb_text": db.innodb_status_text(),
         "os": OSCounters(device).snapshot(),
         "ps": ps,
@@ -265,6 +265,8 @@ def full_snapshot(db, device):
         snap["file_io"] = db.file_io()
         snap["wait_coverage"] = db.wait_coverage()
         snap["mem"] = db.memory()
+    if str(snap["variables"].get("thread_handling") or "") == "pool-of-threads" and "mariadb" in str(snap["variables"].get("version") or "").lower():
+        snap["threadpool_mariadb"] = db.threadpool_mariadb()
     snap["data_bytes"], snap["tables"] = db.table_sizes()
     snap["errors"] = db.errors_raised() if ps else None
     try:  # the data directory's filesystem: a seasoned / growing data set can fill it (session 222)
@@ -304,6 +306,66 @@ def memory_window(a, b):
 # file I/O by what it is for: data pages (read path vs flushing), doublewrite, redo, binlog, temporary files
 FILE_KINDS = (("innodb_data_file", "data"), ("innodb_dblwr_file", "doublewrite"), ("innodb_log_file", "redo"),
               ("innodb_temp_file", "temp"), ("binlog", "binlog"), ("relaylog", "binlog"))
+
+
+# what decides flushing and redo settings (docs/research/var-evidence, 2026-10-31): which mechanism drives flushing (redo
+# age vs dirty pages), whether flushing stalls the foreground (sync flushes, free-page waits, redo space waits), and how
+# much is written per transaction. INNODB_METRICS counters, switched on by DB.ensure_monitors (module_buffer, module_log)
+FLUSH_COUNTERS = {
+    "buffer_flush_n_to_flush_by_age": "flush_by_age_pages_s", "buffer_flush_n_to_flush_by_dirty_page": "flush_by_dirty_pages_s",
+    "buffer_flush_n_to_flush_requested": "flush_requested_pages_s", "buffer_flush_sync_total_pages": "flush_sync_pages_s",
+    "buffer_flush_sync_waits": "flush_sync_waits_s", "buffer_flush_adaptive_total_pages": "flush_adaptive_pages_s",
+    "buffer_LRU_batch_flush_total_pages": "flush_lru_pages_s", "buffer_LRU_get_free_waits": "lru_get_free_waits_s",
+    "buffer_LRU_single_flush_num_scan": "lru_single_flush_scans_s", "log_on_file_space_waits": "redo_space_waits_s",
+    "log_on_flush_waits": "redo_flush_waits_s", "log_on_buffer_space_waits": "redo_buffer_waits_s",
+}
+EVIDENCE_SUMMARY_KEYS = ("flush_pages_per_trx", "flush_by_age_share_pct", "flush_sync_pages_s", "flush_sync_waits_s",
+                         "lru_get_free_waits_s", "redo_space_waits_s", "flush_requested_vs_capacity",
+                         "binlog_syncs_per_trx", "binlog_sync_ms_per_trx", "binlog_write_ms_per_trx",
+                         "threadpool_queue_wait_us", "threadpool_waiting_avg")
+
+
+def mechanism_evidence(a, b, dt, summary, inputs):
+    """Per-run evidence for the flushing / redo, binary log and thread pool settings: rates from INNODB_METRICS deltas,
+    write amplification per transaction, binary log sync cost per transaction (file I/O), thread pool queueing."""
+    out = {}
+    trx = summary.get("tps") or summary.get("qps") or 0
+    ma, mb = a.get("innodb_metrics") or {}, b.get("innodb_metrics") or {}
+    for name, key in FLUSH_COUNTERS.items():
+        if name in mb and name in ma and mb[name] >= ma[name]:
+            out[key] = round((mb[name] - ma[name]) / dt, 3)
+    sa, sb = a.get("status") or {}, b.get("status") or {}
+    try:
+        fl = float(sb.get("Innodb_buffer_pool_pages_flushed")) - float(sa.get("Innodb_buffer_pool_pages_flushed"))
+        if trx and fl >= 0:
+            out["flush_pages_per_trx"] = round(fl / dt / trx, 4)  # write amplification: pages written per transaction
+    except (TypeError, ValueError):
+        pass
+    age, dirty = out.get("flush_by_age_pages_s"), out.get("flush_by_dirty_pages_s")
+    if age is not None and dirty is not None and age + dirty > 0:
+        out["flush_by_age_share_pct"] = round(100.0 * age / (age + dirty), 1)  # high: redo capacity drives flushing
+    cap = _num((b.get("variables") or {}).get("innodb_io_capacity"))
+    if out.get("flush_requested_pages_s") is not None and cap:
+        out["flush_requested_vs_capacity"] = round(out["flush_requested_pages_s"] / cap, 3)  # >= 1: flushing clipped
+    bl = (inputs.get("file_io") or {}).get("binlog")
+    if bl and trx:
+        out["binlog_syncs_per_trx"] = round(bl["syncs"] / dt / trx, 4)
+        out["binlog_sync_ms_per_trx"] = round(1000.0 * bl["sync_s"] / dt / trx, 4)
+        out["binlog_write_ms_per_trx"] = round(1000.0 * bl["write_s"] / dt / trx, 4)
+    # thread pool (Percona: Threadpool_* status; the average queue waits are "count/avg/min/max/stddev" strings)
+    for k in ("Threadpool_average_queue_wait_us", "Threadpool_average_hp_queue_wait_us"):
+        v = sb.get(k)
+        if isinstance(v, str) and "/" in v:
+            parts = v.split("/")
+            if len(parts) >= 2 and _num(parts[1]) is not None:
+                out["threadpool_queue_wait_us" if "_hp_" not in k else "threadpool_hp_queue_wait_us"] = _num(parts[1])
+    for k, key in (("Threadpool_requests_waiting_in_queue", "threadpool_waiting_avg"), ("Threadpool_threads", "threadpool_threads"),
+                   ("Threadpool_idle_threads", "threadpool_idle_threads"), ("Threadpool_requests_starved_in_queue", "threadpool_starved")):
+        if _num(sb.get(k)) is not None:
+            out[key] = _num(sb.get(k))
+    if b.get("threadpool_mariadb"):
+        out["threadpool_mariadb"] = b["threadpool_mariadb"]
+    return out
 
 
 def file_io_delta(a, b):
@@ -1147,6 +1209,10 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None, bench_started
         if d:
             im.append((k, round(d / dt, 3)))
     inputs["innodb_metrics_rates"] = dict(sorted(im))
+    ev = mechanism_evidence(a, b, dt, summary, inputs)
+    if ev:
+        inputs["mechanism_evidence"] = ev
+        summary.update({k: v for k, v in ev.items() if k in EVIDENCE_SUMMARY_KEYS})
     txt = b.get("innodb_text", "")
     inputs["innodb_status"] = {
         "semaphores": mysqldb.section(txt, "SEMAPHORES", 3000),

@@ -4124,6 +4124,41 @@ def test_triage_stacks_milder_limits_with_the_best_purge_side_setting():
     assert tp["restart"] and not any(k.startswith("rg:") for k, _ in tp["changes"]), tp
 
 
+def test_flushing_evidence_and_inert_settings():
+    """Flushing evidence from INNODB_METRICS: sync flushes make a larger redo a measured fix (even below 60% checkpoint
+    age); flushing driven by dirty pages makes it unlikely; flushing requested beyond innodb_io_capacity confirms raising
+    it. Documented no-ops and unused mechanisms are never run."""
+    from tuning_agent import engine, collector
+    GiB_ = 2 ** 30
+    a = {"t": 0, "innodb_metrics": {"buffer_flush_n_to_flush_by_age": 0, "buffer_flush_n_to_flush_by_dirty_page": 0,
+                                    "buffer_flush_sync_total_pages": 0, "log_on_file_space_waits": 0, "buffer_flush_n_to_flush_requested": 0},
+         "status": {"Innodb_buffer_pool_pages_flushed": "0"}, "variables": {"innodb_io_capacity": "2000"}}
+    b = {"t": 100, "innodb_metrics": {"buffer_flush_n_to_flush_by_age": 900000, "buffer_flush_n_to_flush_by_dirty_page": 100000,
+                                      "buffer_flush_sync_total_pages": 50000, "log_on_file_space_waits": 200, "buffer_flush_n_to_flush_requested": 500000},
+         "status": {"Innodb_buffer_pool_pages_flushed": "1000000"}, "variables": {"innodb_io_capacity": "2000"}}
+    ev = collector.mechanism_evidence(a, b, 100.0, {"tps": 2000}, {})
+    assert ev["flush_by_age_share_pct"] == 90.0 and ev["flush_sync_pages_s"] == 500.0 and ev["flush_pages_per_trx"] == 5.0, ev
+    assert ev["flush_requested_vs_capacity"] == 2.5 and ev["redo_space_waits_s"] == 2.0
+
+    base = dict(VARS, innodb_redo_log_capacity=str(2 * GiB_), innodb_io_capacity="2000", innodb_io_capacity_max="4000")
+    summ = dict(OLTP[0], checkpoint_age_pct_max=40, redo_mbs=2.0, disk_util=40, bp_wait_free=2, bp_dirty_pct_avg=80,
+                flush_sync_pages_s=500.0, redo_space_waits_s=2.0, flush_by_age_share_pct=90.0, flush_requested_vs_capacity=2.5)
+    ctx = {"goal": "tps", "policy": "safe", "os_tuning": False, "os_facts": {}, "hw": dict(HW, ram_bytes=32 * GiB_, disk_free_bytes=500 * GiB_),
+           "flavor": "percona", "version": (8, 4, 3), "variables": base, "summary": summ, "inputs": OLTP[1], "history": [],
+           "noise_pct": 2.0, "managed": {}}
+    it = {i["id"]: i for i in engine.run_engine(ctx)["items"]}
+    assert "redo-grow" in it and it["redo-grow"]["confidence"] == 3 and "synchronously" in it["redo-grow"]["rationale"], sorted(it)
+    dirty_driven = dict(summ, checkpoint_age_pct_max=70, flush_sync_pages_s=0, redo_space_waits_s=0, flush_by_age_share_pct=10.0)
+    it2 = {i["id"]: i for i in engine.run_engine(dict(ctx, summary=dirty_driven))["items"]}
+    assert it2["redo-grow"]["confidence"] <= 1 and "dirty pages" in it2["redo-grow"]["rationale"], it2["redo-grow"]
+    assert engine.inert_reason("binlog_max_flush_queue_time", "10", ctx)
+    assert engine.inert_reason("optimizer_switch", "hash_join=off", ctx)
+    assert not engine.inert_reason("optimizer_switch", "hash_join=off,index_merge_intersection=off", ctx)
+    assert engine.inert_reason("thread_cache_size", "64", dict(ctx, inputs={"status_rates": {"Connections": 0.0}}))
+    assert not engine.inert_reason("thread_cache_size", "64", dict(ctx, inputs={"status_rates": {"Connections": 50.0}}))
+    assert engine.inert_reason("innodb_change_buffer_max_size", "50", dict(ctx, variables=dict(base, innodb_change_buffering="none")))
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
