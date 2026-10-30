@@ -15,7 +15,7 @@ import time
 import urllib.parse
 import uuid
 
-from . import __version__, baseline, bench, bottleneck, clientrole, collector, engine, evaluate, hostinfo, incompat, llmassist, mechanisms, mysqldb, ostune, planner, runlock, serverwatch
+from . import __version__, baseline, bench, bottleneck, clientrole, collector, engine, evaluate, hostinfo, incompat, llmassist, purgeprof, mechanisms, mysqldb, ostune, planner, runlock, serverwatch
 from .knowledge import added_tradeoffs, run_tradeoffs, start_tradeoffs, tradeoffs_in
 from .applier import Applier, detect_cnf_path, detect_service
 from .knowledge import OPTIONS as KOPTIONS
@@ -2820,6 +2820,9 @@ PROVISIONAL_WINDOW_S = 600  # measurement length while no stable configuration e
 PROVISIONAL_WARMUP_S = 1800  # warm-up cap while no stable configuration exists: settling times measured across the triage's
                              # restarts are not a warm-up (matrix P5, 2026-10-27: 238 min recommended)
 TRIAGE_COMBOS = 3            # combinations of the best partial remedy with others that cut the growth, before giving up
+TRIAGE_STACK_COST = 20.0     # a stable remedy costing more throughput than this: milder limits stacked with the best purge-side
+TRIAGE_STACK = 3             # setting are tried (user, 2026-10-31: session 439 kept a concurrency cap of 4 at -68%)
+PURGE_SIDE = ("innodb_purge_threads", "rg:purge", "innodb_change_buffering", "innodb_purge_batch_size")
 
 
 def _segment(c, t0, t1):
@@ -2866,6 +2869,11 @@ def _triage_candidates(c):
     prio = ([("rg:purge", "prio=-10")] if rg and cap else [("os:mysqld_cap_sys_nice", "ON"), ("rg:purge", "prio=-10")] if can_cap else [])
     if prio:
         add("purge threads at a higher priority", prio, restart=not cap)
+    if str(v.get("innodb_change_buffering", "")).lower() in ("none", "inserts", "changes") and fl != "mariadb":
+        # purge removes delete-marked secondary index entries; with change buffering off (the 8.4 default) every leaf page
+        # not in the pool is a synchronous random read in the purge thread - buffered, it is a change-buffer entry merged
+        # later (user, 2026-10-31: does the change buffer make purge cheaper when it is I/O-bound?)
+        add("change buffering for purge", [("innodb_change_buffering", "all")])
     bs = int(v.get("innodb_purge_batch_size") or 300)
     for x in (1000, 5000):
         if x > bs:
@@ -2965,28 +2973,52 @@ def _purge_triage(c, running, deadline, start_bench=None, measure_all=False):
             while time.time() - t < TRIAGE_RESTART_LEAD_S and running.alive():
                 time.sleep(10)
 
+    pid = purgeprof.mysqld_pid(c.db)
+
     def measure(label, changes):
         t0 = time.time()
         c.activity("purge triage", f"{label} ({TRIAGE_SEG_S // 60} min)")
+        snap_a = None
         while time.time() - t0 < TRIAGE_SEG_S and running.alive():
             time.sleep(15)
+            if snap_a is None and time.time() - t0 >= TRIAGE_SETTLE_S:
+                snap_a = _purge_snap(c)
         seg = _segment(c, t0 + TRIAGE_SETTLE_S, time.time())
         seg.update(label=label, changes=[f"{k}={x}" for k, x in changes])
+        prof = purgeprof.profile(snap_a, _purge_snap(c)) if snap_a else None
+        if prof:
+            seg["purge"] = prof
         steps.append(seg)
         return seg
+
+    def _purge_snap(c_):
+        nonlocal pid
+        try:
+            if pid is None or not os.path.exists(f"/proc/{pid}"):
+                pid = purgeprof.mysqld_pid(c_.db)
+            return purgeprof.snapshot(c_.db, pid) if pid else None
+        except Exception:
+            return None
+    prof_undo = purgeprof.begin(c.db)
 
     log(f"== purge triage: the history list grows past {engine.PURGE_UNBOUNDED_MIN:,} without slowing down; each remedy "
         f"{TRIAGE_SEG_S // 60} min on the running benchmark (restart remedies after a {TRIAGE_RESTART_LEAD_S // 60}-min warm-up)")
     ref = measure("current configuration", [])
     if not ref["hll_per_min"] or ref["hll_per_min"] <= 0:
         log(f"   history not growing now ({ref['hll_per_min']}/min): nothing to fix")
+        purgeprof.end(c.db, prof_undo)
         return {"stable": True, "kept": [], "steps": steps, "running": running}
     log(f"   reference: history +{ref['hll_per_min']:,}/min at {ref['tps']} tps" + (f", buffer pool hit {ref['bp_hit_pct']}%" if ref.get("bp_hit_pct") is not None else ""))
     if ref.get("bp_hit_pct") is not None and ref["bp_hit_pct"] < 99:
         log(f"   NOTE: buffer pool hit rate {ref['bp_hit_pct']}%: purge may be waiting on reads, not on CPU - a larger buffer pool "
             "can be the real remedy (the session's experiments measure it)")
-    c.event("purge_triage", f"purge triage: history +{ref['hll_per_min']:,}/min at {ref['tps']} tps on the current configuration; "
-            f"trying {', '.join(x['label'] for x in cands) or 'nothing (no remedy available here)'}, {TRIAGE_SEG_S // 60} min each",
+    why = (ref.get("purge") or {}).get("cause")
+    if ref.get("purge"):
+        log("   " + purgeprof.text(ref["purge"]))
+    cands = _order_by_cause(cands, why)
+    c.event("purge_triage", f"purge triage: history +{ref['hll_per_min']:,}/min at {ref['tps']} tps on the current configuration"
+            + (f"; {purgeprof.text(ref['purge'])}" if ref.get("purge") else "")
+            + f"; trying {', '.join(x['label'] for x in cands) or 'nothing (no remedy available here)'}, {TRIAGE_SEG_S // 60} min each",
             dict(ref, steps_planned=[x["label"] for x in cands]))
 
     def judge(cand):
@@ -3007,7 +3039,8 @@ def _purge_triage(c, running, deadline, start_bench=None, measure_all=False):
         partial = not stable and _per_trx(seg) is not None and _per_trx(ref) and _per_trx(seg) <= TRIAGE_HELP * _per_trx(ref)
         seg.update(cost_pct=round(cost, 1), result="stable" if stable else "partial" if partial else "no effect", _changes=changes)
         log(f"   {cand['label']:42} history {seg['hll_per_min']:+,}/min, {seg['tps']} tps ({-cost:+.1f}%): {seg['result']}"
-            + (f" (purge threads' nice: {seg['purge_nice']})" if "purge_nice" in seg else ""))
+            + (f" (purge threads' nice: {seg['purge_nice']})" if "purge_nice" in seg else "")
+            + (f"\n      {purgeprof.text(seg['purge'])}" if seg.get("purge") else ""))
         c.event("purge_triage", f"purge triage step: {cand['label']} ({', '.join(f'{k}={x}' for k, x in changes)}): history "
                 f"{seg['hll_per_min']:+,}/min vs {ref['hll_per_min']:+,}/min, {seg['tps']} tps ({-cost:+.1f}%) - {seg['result']}",
                 dict({k: x for k, x in seg.items() if k != "_changes"}, reference=ref))
@@ -3072,6 +3105,20 @@ def _purge_triage(c, running, deadline, start_bench=None, measure_all=False):
                 if seg["result"] == "stable":
                     stable = [seg]
     win = max(stable, key=lambda x: x["tps"] or 0) if stable else None
+    if win and win["cost_pct"] > TRIAGE_STACK_COST:
+        # stable, but at a high price: milder limits with the best purge-side setting on top may hold it for less (the
+        # step from a cap of 8 - not stable - to 4 - stable at -68% - skipped everything between, session 439)
+        for cand in _stack_candidates(results, ref)[:TRIAGE_STACK]:
+            if not (time_left(cand) and running.alive()):
+                break
+            if any(sorted(x["_changes"]) == sorted(cand["changes"]) for x in results):
+                continue
+            seg = judge(cand)
+            results.append(seg)
+            if seg["result"] == "stable" and (seg["tps"] or 0) > (win["tps"] or 0):
+                win = seg
+                log(f"   stacked: {cand['label']} holds the history at {-seg['cost_pct']:+.1f}% instead of {-stable[0]['cost_pct']:+.1f}%")
+    purgeprof.end(c.db, prof_undo)
     switch(win["_changes"] if win else [], "the stable configuration" if win else "back to the starting configuration")
     kept = win["_changes"] if win else []
     for x in steps:
@@ -3084,6 +3131,60 @@ def _purge_triage(c, running, deadline, start_bench=None, measure_all=False):
     log("   " + txt)
     c.event("purge_triage", txt, {"stable": bool(win), "kept": kept, "steps": steps, "reference": ref})
     return {"stable": bool(win), "kept": kept, "steps": steps, "running": running}
+
+
+def _cause_rank(cand, cause):
+    """Order of a remedy for the purge threads' measured cause: what can act on it first."""
+    keys = {k for k, _ in cand["changes"]}
+    limiter = bool(keys & {"innodb_thread_concurrency", "thread_handling", "thread_pool_size", "thread_pool_oversubscribe",
+                           "thread_pool_max_threads", "thread_pool_stall_limit"})
+    cpu_side = bool(keys & {"rg:purge", "innodb_purge_threads", "os:mysqld_cap_sys_nice"})
+    if cause == "io":  # page reads: buffer the purge's index changes, then fewer foreground readers; more CPU cannot help
+        return 0 if "innodb_change_buffering" in keys else 1 if limiter else 2
+    if cause == "latch":  # contention on the same pages / index locks: fewer threads at once
+        return 0 if limiter else 1
+    if cause in ("cpu-starved", "cpu"):  # waiting for or busy on a CPU: priority, CPUs of its own, more threads
+        return 0 if cpu_side else 1
+    return 0
+
+
+def _order_by_cause(cands, cause):
+    """The remedies for the measured cause first; within a rank the usual order (online first). The purge lag bound
+    stays last."""
+    if not cause:
+        return cands
+    idx = {id(x): i for i, x in enumerate(cands)}
+    return sorted(cands, key=lambda x: (x["last"], _cause_rank(x, cause), idx[id(x)]))
+
+
+def _stack_candidates(results, ref):
+    """Milder limits with the best purge-side setting: for a concurrency cap, the middle between the highest cap measured
+    unstable and the lowest stable one, and the unstable cap itself, each with the purge-side remedy that cut the growth
+    per transaction most; the thread-pool step that came closest to stable, with it too."""
+    def ch(x):
+        return dict(x.get("_changes") or [])
+    side = [x for x in results if x.get("_changes") and set(ch(x)) <= set(PURGE_SIDE) and _per_trx(x) is not None]
+    best_side = min(side, key=lambda x: _per_trx(x))["_changes"] if side else []
+    out = []
+    tc = [(int(ch(x)["innodb_thread_concurrency"]), x["result"] == "stable") for x in results
+          if set(ch(x)) == {"innodb_thread_concurrency"} and str(ch(x)["innodb_thread_concurrency"]).isdigit()]
+    lo = max([v for v, ok in tc if ok] or [0])
+    hi = min([v for v, ok in tc if not ok and v > lo] or [0])
+    if lo and hi:
+        mid = (lo + hi) // 2
+        if lo < mid < hi:
+            out.append({"label": f"innodb_thread_concurrency {mid}" + (" + the best purge-side setting" if best_side else ""),
+                        "changes": [("innodb_thread_concurrency", str(mid))] + list(best_side), "restart": False, "last": False})
+        if best_side:
+            out.append({"label": f"innodb_thread_concurrency {hi} + the best purge-side setting",
+                        "changes": [("innodb_thread_concurrency", str(hi))] + list(best_side), "restart": False, "last": False})
+    tp = [x for x in results if "thread_handling" in ch(x) and x["result"] != "stable" and x.get("hll_per_min") is not None]
+    side_tp = [(k, v) for k, v in best_side if not k.startswith("rg:")]  # resource groups are refused with the thread pool
+    if tp and side_tp:
+        near = min(tp, key=lambda x: x["hll_per_min"])
+        out.append({"label": f"{near['label']} + the best purge-side setting", "changes": list(near["_changes"]) + side_tp,
+                    "restart": True, "last": False})
+    return out
 
 
 def _triage_online(c, var):

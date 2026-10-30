@@ -4085,6 +4085,45 @@ def test_trust_region_and_buffer_pool_rightsize():
     assert 14 * GiB_ <= new <= 16 * GiB_, new
 
 
+def test_purge_profile_cause_and_triage_order():
+    """Purge threads waiting mostly on file reads are I/O-bound: change buffering goes first, then the limiters; CPU-side
+    remedies (priority, own CPUs, more threads) last."""
+    from tuning_agent import purgeprof, cli
+    a = {"t": 0, "threads": {11: {"cpu_ns": 0, "runq_ns": 0, "read_bytes": 0, "io_ps": 0, "latch_ps": 0}},
+         "counters": {"purge_del_mark_records": 0, "purge_upd_exist_or_extern_records": 0, "purge_undo_log_pages": 0}}
+    b = {"t": 100, "threads": {11: {"cpu_ns": 8e9, "runq_ns": 1e9, "read_bytes": 500 * 2 ** 20, "io_ps": 70e9 * 1000, "latch_ps": 10e9 * 1000}},
+         "counters": {"purge_del_mark_records": 30000, "purge_upd_exist_or_extern_records": 10000, "purge_undo_log_pages": 500}}
+    p = purgeprof.profile(a, b)
+    assert p["io_pct"] == 70.0 and p["cpu_pct"] == 8.0 and p["cause"] == "io" and p["purged_records_s"] == 400.0, p
+    assert "file I/O 70.0%" in purgeprof.text(p)
+    cands = [{"label": "prio", "changes": [("rg:purge", "prio=-10")], "restart": False, "last": False},
+             {"label": "tc 8", "changes": [("innodb_thread_concurrency", "8")], "restart": False, "last": False},
+             {"label": "cb", "changes": [("innodb_change_buffering", "all")], "restart": False, "last": False},
+             {"label": "lag", "changes": [("innodb_max_purge_lag", "x")], "restart": False, "last": True}]
+    assert [x["label"] for x in cli._order_by_cause(cands, "io")] == ["cb", "tc 8", "prio", "lag"]
+    assert [x["label"] for x in cli._order_by_cause(cands, "cpu-starved")][0] == "prio"
+    assert cli._order_by_cause(cands, None) == cands
+
+
+def test_triage_stacks_milder_limits_with_the_best_purge_side_setting():
+    """Session 439: concurrency 8 not stable (-64%), 4 stable (-68%); 32 purge threads cut growth per transaction most of
+    the purge-side settings. Stacked: cap 6 + it, cap 8 + it, the closest thread-pool step + it (without the resource group)."""
+    from tuning_agent import cli
+    def r(label, changes, res, tps, hll):
+        return {"label": label, "_changes": changes, "result": res, "tps": tps, "hll_per_min": hll}
+    results = [r("32 purge threads", [("innodb_purge_threads", "32"), ("rg:purge", "prio=-20")], "no effect", 1711, 88592),
+               r("prio", [("rg:purge", "prio=-10")], "no effect", 1552, 92947),
+               r("tc 8", [("innodb_thread_concurrency", "8")], "no effect", 536, 19272),
+               r("tc 4", [("innodb_thread_concurrency", "4")], "stable", 478, -11598),
+               r("tp max 16", [("thread_handling", "pool-of-threads"), ("thread_pool_max_threads", "16")], "no effect", 657, 2536)]
+    st = cli._stack_candidates(results, {"tps": 1504, "hll_per_min": 90686})
+    labels = [x["label"] for x in st]
+    assert labels[0].startswith("innodb_thread_concurrency 6") and labels[1].startswith("innodb_thread_concurrency 8"), labels
+    assert ("innodb_purge_threads", "32") in st[0]["changes"]
+    tp = st[2]
+    assert tp["restart"] and not any(k.startswith("rg:") for k, _ in tp["changes"]), tp
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

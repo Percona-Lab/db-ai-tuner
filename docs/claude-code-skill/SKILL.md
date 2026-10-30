@@ -170,6 +170,11 @@ API keys: __SERVER__/#/connect (an account is free; __SERVER__/quickstart walks 
    loss it fully explains becomes neutral (the run's note says how much). Sweeps reach further for a setting whose changes
    won before and stay closer after losses; a buffer pool a quarter unused at a ~100% hit ratio is offered smaller
    (bp-rightsize, an efficiency gain).
+   The purge triage profiles the purge threads in every step (time on CPU, waiting for a CPU, file I/O, InnoDB latches;
+   records purged per second) and tries the remedies for the measured cause first: change buffering
+   (innodb_change_buffering=all) and fewer concurrent threads when purge waits on page reads; priority, CPUs of its own
+   and more purge threads when it waits for a CPU. A stable remedy costing more than 20% throughput is followed by milder
+   limits stacked with the best purge-side setting.
    Combinations the server refuses with an "unsupported / incompatible" error (e.g. resource groups while Percona
    Server's thread pool is on, error 3658) are recorded and shared by flavor and release series: no agent proposes
    them again, and ideas that would produce one show "Not run: ... was refused by this release before". The engine and the LLM queue
