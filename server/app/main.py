@@ -1332,6 +1332,34 @@ def agent_run(rid, key):
     return dict(r)
 
 
+@app.post("/api/v1/agent/incompat")
+def agent_incompat_add(body: dict = Body(...), key=Depends(auth.agent_key)):
+    """A combination of settings the server refused (error naming another setting as the reason): shared with every agent
+    on the same flavor and release series, which then never proposes it (session 432: resource groups + thread pool)."""
+    e = agent_env(body.get("environment_id"), key)
+    flavor, series = str(body.get("flavor") or "")[:40], str(body.get("series") or "")[:20]
+    conds = [{"variable": str(c.get("variable"))[:80], "value": str(c.get("value"))[:200]}
+             for c in (body.get("conditions") or [])[:6] if isinstance(c, dict) and c.get("variable")]
+    if not flavor or not series or len(conds) < 2:
+        raise HTTPException(400, "flavor, series and at least two conditions required")
+    k = json.dumps(sorted((c["variable"], c["value"].lower()) for c in conds))
+    row = store.q1("SELECT id, envs FROM incompat WHERE flavor=? AND series=? AND key=?", (flavor, series, k))
+    if row:
+        envs = sorted(set(json.loads(row["envs"] or "[]")) | {e["id"]})
+        store.ex("UPDATE incompat SET last_seen=?, seen=seen+1, envs=?, error=? WHERE id=?",
+                 (now(), json.dumps(envs), str(body.get("error") or "")[:300], row["id"]))
+    else:
+        store.ex("INSERT INTO incompat(flavor, series, key, conditions, error, first_seen, last_seen, envs) VALUES (?,?,?,?,?,?,?,?)",
+                 (flavor, series, k, json.dumps(conds), str(body.get("error") or "")[:300], now(), now(), json.dumps([e["id"]])))
+    return {"ok": True}
+
+
+@app.get("/api/v1/agent/incompat")
+def agent_incompat_list(flavor: str, series: str, key=Depends(auth.agent_key)):
+    return {"incompatible": [{"conditions": json.loads(r["conditions"]), "error": r["error"], "seen": r["seen"]}
+                             for r in store.q("SELECT conditions, error, seen FROM incompat WHERE flavor=? AND series=?", (flavor, series))]}
+
+
 @app.post("/api/v1/agent/hello")
 def agent_hello(body: dict = Body(...), key=Depends(auth.agent_key)):
     uid = (body.get("agent_uid") or "")[:64]

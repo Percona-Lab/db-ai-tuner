@@ -156,7 +156,10 @@ API keys: __SERVER__/#/connect (an account is free; __SERVER__/quickstart walks 
    beats the noise threshold. `experiment list --json` shows per-value results. Every value of a sweep is judged
    against the sweep's parent configuration. `--refine N` adds up to N more points inside the steepest measured step
    of the curve (the knee), e.g. between a 4G and an 8G buffer pool. Memory settings are checked against the host's
-   memory budget (measured mysqld memory and connections included); `--force` overrides. The engine and the LLM queue
+   memory budget (measured mysqld memory and connections included); `--force` overrides.
+   Combinations the server refuses with an "unsupported / incompatible" error (e.g. resource groups while Percona
+   Server's thread pool is on, error 3658) are recorded and shared by flavor and release series: no agent proposes
+   them again, and ideas that would produce one show "Not run: ... was refused by this release before". The engine and the LLM queue
    sweeps themselves when a numeric knob's best value is uncertain.
 8. `tuning-agent apply --next` or `--rec ID` or `--set var=value --reason "why"` (your own idea;
    always give a reason, it is shown in the web UI). `--unset var` stops managing a variable.

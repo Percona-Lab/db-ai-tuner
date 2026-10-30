@@ -3923,6 +3923,45 @@ def test_thread_pool_and_resource_groups_exclude_each_other():
     assert off["confidence"] == 2
 
 
+def test_refused_combinations_are_recorded_and_not_proposed_again():
+    """A refusal naming another setting (error 3658) is recorded with the batch that caused it, shared, and the engine
+    then skips ideas that would produce the combination again."""
+    from tuning_agent import incompat, engine
+    assert incompat.is_refusal("(3658, 'Feature Resource Groups is unsupported (Thread pool plugin enabled).')")
+    assert not incompat.is_refusal("(1231, \"Variable 'x' can't be set to the value of 'y'\")")
+
+    class St:
+        data = {}
+        def get(self, k, d=None):
+            return self.data.get(k, d)
+        def set(self, k, v):
+            self.data[k] = v
+    posted = []
+    class Cl:
+        def post(self, path, body):
+            posted.append((path, body))
+        def get(self, path):
+            return {"incompatible": []}
+    class C:
+        state, client = St(), Cl()
+        variables = {"version": "9.7.2-2", "version_comment": "Percona Server (GPL), Release 2, Revision abc"}
+        def env_id(self):
+            return 57
+    c = C()
+    e = incompat.report(c, "rg:purge", "prio=-10", "Feature Resource Groups is unsupported (Thread pool plugin enabled)",
+                        [{"variable": "thread_handling", "value": "pool-of-threads"}, {"variable": "rg:purge", "value": "prio=-10"}])
+    assert e and e["conditions"][0] == {"variable": "rg:purge", "value": "*"}, e
+    assert posted and posted[0][0] == "/incompat" and posted[0][1]["series"], posted
+    known = incompat.known(c)
+    it = {"id": "purge-prio", "kind": "config", "confidence": 2, "changes": [{"variable": "rg:purge", "proposed": "prio=-20"}]}
+    ok = {"id": "redo", "kind": "config", "confidence": 2, "changes": [{"variable": "innodb_redo_log_capacity", "proposed": "4G"}]}
+    engine.incompat_guard([it, ok], {"incompatible": known, "variables": {"thread_handling": "pool-of-threads"}})
+    assert it["confidence"] == 0 and "refused" in it["note"] and ok["confidence"] == 2, it
+    it2 = {"id": "purge-prio", "kind": "config", "confidence": 2, "changes": [{"variable": "rg:purge", "proposed": "prio=-20"}]}
+    engine.incompat_guard([it2], {"incompatible": known, "variables": {"thread_handling": "one-thread-per-connection"}})
+    assert it2["confidence"] == 2
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

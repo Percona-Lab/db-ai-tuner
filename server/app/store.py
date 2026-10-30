@@ -74,6 +74,11 @@ CREATE INDEX IF NOT EXISTS feedback_session ON feedback(session_id);
 CREATE INDEX IF NOT EXISTS feedback_item ON feedback(item_id);
 CREATE TABLE IF NOT EXISTS stars (
   user_id INTEGER NOT NULL, run_id INTEGER NOT NULL, created REAL NOT NULL, PRIMARY KEY (user_id, run_id)) WITHOUT ROWID;
+-- setting combinations a server refused (shared by every agent: a fact about a database release, not a user's data)
+CREATE TABLE IF NOT EXISTS incompat (
+  id INTEGER PRIMARY KEY, flavor TEXT NOT NULL, series TEXT NOT NULL, key TEXT NOT NULL, conditions TEXT NOT NULL,
+  error TEXT, first_seen REAL NOT NULL, last_seen REAL NOT NULL, seen INTEGER NOT NULL DEFAULT 1, envs TEXT,
+  UNIQUE (flavor, series, key));
 """
 
 _local = threading.local()

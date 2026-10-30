@@ -15,7 +15,7 @@ import time
 import urllib.parse
 import uuid
 
-from . import __version__, baseline, bench, bottleneck, clientrole, collector, engine, evaluate, hostinfo, llmassist, mechanisms, mysqldb, ostune, planner, runlock, serverwatch
+from . import __version__, baseline, bench, bottleneck, clientrole, collector, engine, evaluate, hostinfo, incompat, llmassist, mechanisms, mysqldb, ostune, planner, runlock, serverwatch
 from .knowledge import added_tradeoffs, run_tradeoffs, start_tradeoffs, tradeoffs_in
 from .applier import Applier, detect_cnf_path, detect_service
 from .knowledge import OPTIONS as KOPTIONS
@@ -620,6 +620,15 @@ def _apply_and_record(c, changes, source, reason_default="", restart=None):
     except Exception as e:  # noqa
         log(f"warning: could not refresh environment facts: {e}")
     c.event("apply", apply_summary(source, res, changes), {"result": res, "requested": changes})
+    batch = [{"variable": ch["variable"], "value": ch.get("value")} for ch in changes]
+    c.state.set("last_batch", batch)
+    for err in res.get("errors") or []:  # "var: message" - a refusal that names another setting as the reason
+        var_, _, msg = str(err).partition(": ")
+        if var_ in {b["variable"] for b in batch} and incompat.is_refusal(msg):
+            want = next((b["value"] for b in batch if b["variable"] == var_), None)
+            if incompat.report(c, var_, want, msg, batch):
+                log(f"   recorded as incompatible with this release: {var_}={want} together with "
+                    + ", ".join(f"{b['variable']}={b['value']}" for b in batch if b["variable"] != var_ and b["value"] is not None))
     if res.get("applied"):  # the suspect when mysqld crashes or hangs next (serverwatch)
         c.state.set("last_applied", [f"{x['variable']} {x.get('old') if x.get('old') not in (None, '') else '(default)'} -> "
                                      f"{x.get('new') if x.get('new') is not None else '(default)'}" for x in res["applied"][:8]])
@@ -2006,6 +2015,15 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
         want = resgroups.parse_purge((c.state.get("managed", {}).get("rg:purge") or {}).get("value")).get("prio")
         if want:
             purge_nice = {"want": want, "got": sorted(set(resgroups.thread_nice(c.db, resgroups.PURGE_THREADS)))}
+        for v_, w_, n_ in rt_wrong:
+            # refused because of another setting (error 3658 "Resource Groups is unsupported (Thread pool plugin enabled)"):
+            # shared, so no idea brings that combination back - on this host or any other with the same release
+            if not incompat.is_refusal(n_):
+                continue
+            mg_ = c.state.get("managed", {})
+            for var_ in ([v_] if v_ in mg_ else [k for k in mg_ if k.startswith("rg:")] if v_ == "resource groups" else []):
+                if incompat.report(c, var_, mg_[var_].get("value"), n_, c.state.get("last_batch") or []):
+                    log(f"   recorded as incompatible with this release: {var_} with the last applied changes")
         if rt_wrong:
             # not warning-only: the run measures another configuration than it is labelled with - recorded as a mismatch,
             # so the run is unreliable and measured again (user report, 2026-10-27)
@@ -3451,7 +3469,12 @@ def _engine_ctx(c, sess):
         log(f"note: no experience data ({e})")
     b = (last.get("inputs") or {}).get("bench") or {}
     bench_info = {k: b.get(k) for k in ("name", "run", "warmup", "duration", "goal_metric", "requires") if b.get(k) is not None}
-    return {"bench": bench_info, "diagnosis_basis_run": basis, "explore": bool(sess.get("explore")), "validate_discarded": bool(sess.get("validate_discarded")), "max_fruitless": sess.get("max_fruitless", FRUITLESS_STOP), "goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
+    try:
+        from . import incompat as _inc
+        known_incompat = _inc.known(c)
+    except Exception:
+        known_incompat = []
+    return {"incompatible": known_incompat, "bench": bench_info, "diagnosis_basis_run": basis, "explore": bool(sess.get("explore")), "validate_discarded": bool(sess.get("validate_discarded")), "max_fruitless": sess.get("max_fruitless", FRUITLESS_STOP), "goal": sess["goal"], "policy": sess["policy"], "hw": c.hw(), "flavor": flavor, "version": vt,
             "os_tuning": c.os_tuning_allowed() and sess.get("os_tuning", True), "os_facts": osf, "experience": experience,
             # swap = none in agent.ini: no swap by design (a production philosophy) - never add it, size memory for RAM alone
             "no_swap": str(c.cfg.get("swap", "allowed")).strip().lower() in ("none", "no", "off", "false"),

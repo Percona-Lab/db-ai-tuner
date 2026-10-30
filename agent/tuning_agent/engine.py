@@ -2743,6 +2743,24 @@ def thread_pool_guard(items, ctx):
     return items
 
 
+def incompat_guard(items, ctx):
+    """Ideas that would produce a setting combination this server's release refused before (on any host: the shared list,
+    incompat.py): not run, with the server's error as the reason."""
+    from .incompat import blocking
+    known_ = ctx.get("incompatible") or []
+    if not known_:
+        return items
+    for it in items:
+        if it.get("kind") != "config":
+            continue
+        hit = blocking(known_, ctx.get("variables"), it.get("changes"))
+        if hit:
+            combo = " + ".join(f"{x['variable']}={'(any)' if x['value'] == '*' else x['value']}" for x in hit["conditions"])
+            it["confidence"] = 0
+            it["note"] = (it.get("note", "") + f" Not run: {combo} was refused by this release before ({hit.get('error') or 'error'}).").strip()
+    return items
+
+
 def memory_fits(ctx, var, val):
     """(fits, text): a memory setting at this value against the host's memory budget as memory_gate measures it (model
     corrected by mysqld's measured memory, free swap, the no-swap margin). For experiments a person or a pipeline asks for:
@@ -3159,6 +3177,7 @@ def run_engine(ctx):
                               "shrinks the commit groups.").strip()
     items = nofile_guard(items, ctx)
     items = thread_pool_guard(items, ctx)
+    items = incompat_guard(items, ctx)
     items = balance_purge(items, ctx)
     if ctx.get("validate_discarded"):
         items = validate_discarded(items, ctx)

@@ -1057,3 +1057,21 @@ def test_experiment_sweep_with_settings_and_combinations():
     assert "with" not in spec
     kind, spec, _ = main._parse_experiment({"kind": "try", "settings": "thread_handling=pool-of-threads, thread_pool_size=16"})
     assert kind == "try" and len(spec["changes"]) == 2
+
+
+def test_incompatible_combinations_are_shared_by_release(user, make_user):
+    """Session 432: a refused combination reported by one agent is listed for every agent on the same flavor and
+    series; repeats count instead of duplicating; another series does not see it."""
+    env = user.hello()
+    body = {"environment_id": env, "flavor": "percona", "series": "9.7",
+            "conditions": [{"variable": "rg:purge", "value": "*"}, {"variable": "thread_handling", "value": "pool-of-threads"}],
+            "error": "(3658, 'Feature Resource Groups is unsupported (Thread pool plugin enabled).')"}
+    assert user.agent.post("/api/v1/agent/incompat", json=body).status_code == 200
+    assert user.agent.post("/api/v1/agent/incompat", json=dict(body, conditions=body["conditions"][::-1])).status_code == 200
+    other = make_user()
+    other.hello(uid="agent-x")
+    got = other.agent.get("/api/v1/agent/incompat", params={"flavor": "percona", "series": "9.7"}).json()["incompatible"]
+    assert len(got) == 1 and got[0]["seen"] == 2 and "3658" in got[0]["error"], got
+    assert other.agent.get("/api/v1/agent/incompat", params={"flavor": "percona", "series": "8.4"}).json()["incompatible"] == []
+    bad = dict(body, conditions=body["conditions"][:1])
+    assert user.agent.post("/api/v1/agent/incompat", json=bad).status_code == 400
