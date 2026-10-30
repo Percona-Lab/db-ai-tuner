@@ -1,6 +1,7 @@
 """Metric sampling and measurement-window analysis."""
 import hashlib
 import os
+import re
 import time
 
 from . import mysqldb
@@ -305,7 +306,8 @@ def memory_window(a, b):
 
 # file I/O by what it is for: data pages (read path vs flushing), doublewrite, redo, binlog, temporary files
 FILE_KINDS = (("innodb_data_file", "data"), ("innodb_dblwr_file", "doublewrite"), ("innodb_log_file", "redo"),
-              ("innodb_temp_file", "temp"), ("binlog", "binlog"), ("relaylog", "binlog"))
+              ("innodb_temp_file", "temp"), ("binlog_cache", "binlog_cache"), ("binlog_index", "binlog_index"),
+              ("binlog", "binlog"), ("relaylog", "binlog"))
 
 
 # what decides flushing and redo settings (docs/research/var-evidence, 2026-10-31): which mechanism drives flushing (redo
@@ -352,13 +354,11 @@ def mechanism_evidence(a, b, dt, summary, inputs):
         out["binlog_syncs_per_trx"] = round(bl["syncs"] / dt / trx, 4)
         out["binlog_sync_ms_per_trx"] = round(1000.0 * bl["sync_s"] / dt / trx, 4)
         out["binlog_write_ms_per_trx"] = round(1000.0 * bl["write_s"] / dt / trx, 4)
-    # thread pool (Percona: Threadpool_* status; the average queue waits are "count/avg/min/max/stddev" strings)
+    # thread pool (Percona: Threadpool_* status; the average queue waits read "avg: 12.300, min: ..., cnt: 45" - PS 9.7)
     for k in ("Threadpool_average_queue_wait_us", "Threadpool_average_hp_queue_wait_us"):
-        v = sb.get(k)
-        if isinstance(v, str) and "/" in v:
-            parts = v.split("/")
-            if len(parts) >= 2 and _num(parts[1]) is not None:
-                out["threadpool_queue_wait_us" if "_hp_" not in k else "threadpool_hp_queue_wait_us"] = _num(parts[1])
+        m = re.search(r"avg:\s*([0-9.]+)", str(sb.get(k) or ""))
+        if m:
+            out["threadpool_queue_wait_us" if "_hp_" not in k else "threadpool_hp_queue_wait_us"] = float(m.group(1))
     for k, key in (("Threadpool_requests_waiting_in_queue", "threadpool_waiting_avg"), ("Threadpool_threads", "threadpool_threads"),
                    ("Threadpool_idle_threads", "threadpool_idle_threads"), ("Threadpool_requests_starved_in_queue", "threadpool_starved")):
         if _num(sb.get(k)) is not None:
