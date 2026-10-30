@@ -1739,7 +1739,11 @@ def parameters_catalog(request: Request, workload: str = None):
             series = sorted(json.load(f).get("series") or {}, key=lambda s: (s.split()[0], [int(x) for x in s.split()[1].split(".")]))
     except (OSError, ValueError):
         series = []
-    return {"parameters": out, "admin": bool(u.get("is_admin")), "series": series}
+    # combinations a server refused (shared by every agent): what the tuner will not propose on that release
+    incompatible = [{"flavor": r["flavor"], "series": r["series"], "conditions": json.loads(r["conditions"]), "error": r["error"],
+                     "seen": r["seen"], "hosts": len(json.loads(r["envs"] or "[]")), "first_seen": r["first_seen"], "last_seen": r["last_seen"]}
+                    for r in store.q("SELECT * FROM incompat ORDER BY last_seen DESC")]
+    return {"parameters": out, "admin": bool(u.get("is_admin")), "series": series, "incompatible": incompatible}
 
 
 SERVICE = 0  # param_policy.user_id of the service defaults set by the admin

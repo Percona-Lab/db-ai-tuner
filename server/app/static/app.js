@@ -526,6 +526,17 @@ function releasesCell(p) {
   return `<span data-tip="${esc((v.series === "all" ? "" : "Releases: " + label + ". ") + tip + " Measured on the official images of every supported LTS series.")}" tabindex="0">${v.series === "all" ? "all releases" : `${n} of ${of} release series`}</span>${defs ? ' <span class="badge plain" data-tip="' + esc("Default differs between releases: " + defs) + '" tabindex="0">defaults</span>' : ""}`;
 }
 let paramAll = false;  // the full list instead of the first 100 rows
+// setting combinations a database release refused, reported by the agents: the tuner never proposes them on that release
+function incompatCard(list, q, release) {
+  const rows = list.filter(x => (!release || x.series === release || x.series.endsWith(" " + release)) && (!q || x.conditions.some(c => c.variable.toLowerCase().includes(q))));
+  const combo = x => x.conditions.map(c => `<span class="mono">${esc(c.variable)}</span>=${c.value === "*" ? '<span class="muted">any</span>' : `<span class="mono">${esc(c.value)}</span>`}`).join(" + ");
+  return `<h2 style="margin-top:20px">Refused combinations${info("Settings a database server refused together, with an error saying one is unsupported or incompatible while the other is set. Agents report them; the tuner then never proposes that combination on the same flavor and release series, on any host.")}</h2>
+  <div class="card tablewrap"><table><thead><tr><th>Release</th><th>Combination</th><th>Seen</th><th>Last</th></tr></thead><tbody>
+  ${rows.length ? rows.map(x => `<tr><td style="white-space:nowrap">${esc(x.series)}</td><td style="overflow-wrap:anywhere">${combo(x)}${x.error ? info(x.error) : ""}</td>
+    <td style="white-space:nowrap">${x.seen}× on ${x.hosts} host${x.hosts === 1 ? "" : "s"}</td><td style="white-space:nowrap">${ago(x.last_seen)}</td></tr>`).join("")
+    : `<tr><td colspan="4" class="muted">${list.length ? "None match the filters." : "No refused combinations recorded yet."}</td></tr>`}</tbody></table></div>`;
+}
+
 async function parametersPage() {
   setNav("parameters");
   setTitle("Parameters");
@@ -565,7 +576,8 @@ async function parametersPage() {
     <td>${impBadge(p)}</td><td style="font-size:12.5px;max-width:260px;min-width:160px">${esc(p.when || "")}</td>
     <td>${p.safety === "safe" ? '<span class="badge good">safe</span>' : `<span class="badge bad" ${p.safety_note ? `data-tip="${esc(p.safety_note)}"` : ""} tabindex="0">${esc(p.safety || "?")}</span>`}${p.restart ? '<div style="margin-top:3px"><span class="badge plain" data-tip="Changing it needs a server restart." tabindex="0">restart</span></div>' : ""}</td>
     <td style="white-space:nowrap">${polSel(p, false)}${d.admin ? `<div style="margin-top:3px">${polSel(p, true)}</div>` : ""}</td></tr>`).join("")}</tbody></table></div>
-  ${!paramAll && rows.length > 100 ? `<div style="margin-top:8px"><button id="pall">Show all ${rows.length}</button></div>` : ""}`;
+  ${!paramAll && rows.length > 100 ? `<div style="margin-top:8px"><button id="pall">Show all ${rows.length}</button></div>` : ""}
+  ${incompatCard(d.incompatible || [], q, fr)}`;
   const save = (extra) => { try { sessionStorage.setItem("paramFilter", JSON.stringify(Object.assign({ q: document.getElementById("pq").value, impact: document.getElementById("pimp").value, scope: document.getElementById("pscope").value, release: document.getElementById("prel").value, sort: st.sort, desc: st.desc }, extra || {}))); } catch (x) { } parametersPage(); };
   $view.querySelectorAll("th[data-sort]").forEach(el => el.onclick = () => { const k = el.dataset.sort; save({ sort: k, desc: (st.sort || "impact") === k ? !st.desc : false }); });
   // search as you type (debounced); the box keeps the focus and the caret across the redraw
