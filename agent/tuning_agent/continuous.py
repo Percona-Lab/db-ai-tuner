@@ -68,13 +68,16 @@ def fingerprint(run):
     """What the load looked like in a window: connections, statements per transaction, the read / write mix."""
     s = run.get("summary") or {}
     tps, qps = s.get("tps") or 0, s.get("qps") or 0
+    rc = s.get("rows_changed_per_s")
     return {"connections": s.get("threads_connected_avg"), "stmts_per_trx": round(qps / tps, 2) if tps else None,
-            "rows_changed_per_s": s.get("rows_changed_per_s"), "qps": qps}
+            "rows_changed_per_s": rc, "qps": qps,
+            # the write share of the load's statements: a phase change of the client (reads only, a batch) shows here
+            "write_share": round(rc / qps, 4) if rc is not None and qps else None}
 
 
 def workload_changed(fa, fb, tol=0.15):
     """The load itself differs between two windows beyond tol (relative), e.g. the benchmark switched phase. Reason or None."""
-    for k in ("connections", "stmts_per_trx"):
+    for k in ("connections", "stmts_per_trx", "write_share"):
         a, b = fa.get(k), fb.get(k)
         if a and b and abs(b - a) / max(abs(a), 1e-9) > tol:
             return f"{k} {a} -> {b}"

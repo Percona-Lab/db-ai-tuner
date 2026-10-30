@@ -993,6 +993,7 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None, bench_started
         "threads_connected_avg": avg("db", "threads_connected"),
         "checkpoint_age_pct_max": mx("db", "checkpoint_age_pct"),
         "bp_dirty_pct_avg": avg("db", "bp_dirty_pct"),
+        "bp_free_pct_avg": avg("db", "bp_free_pct"),
         "history_list_length_max": mx("db", "history_list_length"),
         "ibuf_size_max": mx("db", "ibuf_size"),
         "oldest_trx_s_max": mx("db", "oldest_trx_s"),

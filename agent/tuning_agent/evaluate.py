@@ -564,14 +564,49 @@ def calibrate(runs):
 RECENT = 3  # parent configuration = mean of its most recent runs (protects against slow drift)
 
 
+SHIFT_MIN_T = 5.0      # a step in a configuration's repeated results: Welch t of the two segments at least this
+SHIFT_MIN_PCT = 3.0    # and at least this large, relative
+
+
+def change_point(values):
+    """The index where a series of results of one configuration stepped to another level, or None (a single mean shift,
+    the strongest split with at least 2 values on each side; MongoDB's performance CI found change points beat fixed
+    thresholds - 1% -> 67% useful alerts, ICPE 2020). A step means the environment changed (data growth, a neighbour,
+    storage): only the results after it describe the configuration now."""
+    n = len(values)
+    if n < 4:
+        return None
+    best = None
+    for i in range(2, n - 1):
+        a, b = values[:i], values[i:]
+        if len(b) < 2:
+            continue
+        ma, mb = sum(a) / len(a), sum(b) / len(b)
+        va = sum((x - ma) ** 2 for x in a) / (len(a) - 1)
+        vb = sum((x - mb) ** 2 for x in b) / (len(b) - 1)
+        se = (va / len(a) + vb / len(b)) ** 0.5
+        rel = 100.0 * abs(mb - ma) / abs(ma) if ma else 0.0
+        t = abs(mb - ma) / se if se else (float("inf") if mb != ma else 0.0)
+        if t >= SHIFT_MIN_T and rel >= SHIFT_MIN_PCT and (best is None or t > best[1]):
+            best = (i, t)
+    return best[0] if best else None
+
+
 def config_means(runs, key, recent=None):
     sel = [r for r in runs if config_key(r.get("managed")) == key and r.get("goal_value") is not None
            and r.get("verdict") not in EXCLUDED]
+    cp = change_point([r["goal_value"] for r in sel])
+    shift = None
+    if cp is not None:
+        shift = sel[cp]["seq"]
+        sel = sel[cp:]  # the level the configuration measures at now
     if recent:
         sel = sel[-recent:]
     if not sel:
         return None
     out = {"n": len(sel), "seqs": [r["seq"] for r in sel], "goal": _mean([r["goal_value"] for r in sel])}
+    if shift is not None:
+        out["shift_at"] = shift
     for k in EFFICIENCY:
         vals = [r["summary"][k] for r in sel if (r.get("summary") or {}).get(k) is not None]
         if vals:
@@ -1192,9 +1227,74 @@ def _verdict(run, history, goal, noise):
                                   "offcpu_swapin_share_pct": s.get("offcpu_swapin_share_pct")}
     v = _goal_verdict(d_goal, goal_noise, better, worse, details)
     _secondary_latency(details, s, parent_runs, d_goal, goal_noise, run)
+    env = env_effect(run, parent_runs, history, goal)
+    if env:
+        details["environment"] = env
+        adj = round(d_goal - env["effect_pct"], 2) if d_goal is not None else None
+        env["adjusted_delta_pct"] = adj
+        # only ever towards "neutral": the estimate explains a result away, it never creates one
+        if adj is not None and v in ("improved", "regressed") and abs(adj) <= goal_noise:
+            details["note"] = (f"{v.capitalize()} {d_goal:+.1f}%, but {env['label']} differed from the parent's runs "
+                               f"({env['run_value']:,.4g} vs {env['parent_value']:,.4g}); in this session that alone moves the goal "
+                               f"by about {env['effect_pct']:+.1f}% (fit over {env['n']} runs, r={env['r']}): "
+                               f"{adj:+.1f}% after it, within the ±{goal_noise}% noise.")
+            v = "neutral"
     if v == "neutral" and d_goal is not None:
         _explain_neutral(details, d_goal, goal_noise, noise)
     return v, details
+
+
+# measured conditions of a run that move results without any setting changing (OtterTune at Societe Generale: shared
+# storage latency spikes, 4x swings; TUNA: noise models from guest OS metrics)
+ENV_COVARIATES = {"cpu_mhz": "the CPU clock (MHz)", "cpu_steal": "CPU steal (%)", "disk_w_await_ms": "storage write latency (ms)",
+                  "disk_r_await_ms": "storage read latency (ms)"}
+ENV_MIN_RUNS, ENV_MIN_R = 6, 0.6
+
+
+def env_effect(run, parent_runs, history, goal):
+    """How much of a run's difference from its parent the measured conditions explain: each run's deviation from its own
+    configuration's mean, regressed on each condition over the session (configurations measured 2+ times); the strongest
+    clear fit (|r| >= 0.6 over 6+ runs) gives the expected effect of this run's condition vs the parent's. None if no
+    condition explains the session's spread or the run's condition matches the parent's."""
+    s = run.get("summary") or {}
+    if not parent_runs or not s:
+        return None
+    groups = {}
+    for r in history:
+        if r.get("goal_value") is not None and r.get("verdict") not in EXCLUDED:
+            groups.setdefault(config_key(r.get("managed")), []).append(r)
+    best = None
+    for k, label in ENV_COVARIATES.items():
+        pts = []
+        for rs in groups.values():
+            if len(rs) < 2:
+                continue
+            m = sum(r["goal_value"] for r in rs) / len(rs)
+            for r in rs:
+                x = (r.get("summary") or {}).get(k)
+                if x is not None and m:
+                    dev = 100.0 * ((m - r["goal_value"]) if goal == "latency" else (r["goal_value"] - m)) / abs(m)
+                    pts.append((float(x), dev))
+        if len(pts) < ENV_MIN_RUNS:
+            continue
+        mx = sum(x for x, _ in pts) / len(pts)
+        my = sum(y for _, y in pts) / len(pts)
+        sxx = sum((x - mx) ** 2 for x, _ in pts)
+        syy = sum((y - my) ** 2 for _, y in pts)
+        if not sxx or not syy:
+            continue
+        sxy = sum((x - mx) * (y - my) for x, y in pts)
+        r_ = sxy / (sxx * syy) ** 0.5
+        xr = s.get(k)
+        xp = [(p.get("summary") or {}).get(k) for p in parent_runs]
+        xp = [x for x in xp if x is not None]
+        if abs(r_) < ENV_MIN_R or xr is None or not xp:
+            continue
+        effect = sxy / sxx * (xr - sum(xp) / len(xp))
+        if best is None or abs(effect) > abs(best["effect_pct"]):
+            best = {"covariate": k, "label": label, "r": round(r_, 2), "n": len(pts), "run_value": xr,
+                    "parent_value": round(sum(xp) / len(xp), 4), "effect_pct": round(effect, 2)}
+    return best if best and abs(best["effect_pct"]) >= 0.5 else None
 
 
 def _goal_verdict(d_goal, goal_noise, better, worse, details):

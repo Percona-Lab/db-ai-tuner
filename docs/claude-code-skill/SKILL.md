@@ -164,6 +164,12 @@ API keys: __SERVER__/#/connect (an account is free; __SERVER__/quickstart walks 
    Continuous mode (a load that is always running) judges each change A-B-A on resource use per transaction (CPU,
    fsyncs, redo, I/O, memory) with the goal and throughput as guards; windows span whole cycles of the load, noise per
    metric is learned from every pair of unchanged windows, and a result near the noise gets one more interleaved B / A pair.
+   Results are read against the session's own history: when a configuration's repeated results stepped to another
+   level (a change point: the environment changed), only the runs after the step count; when the CPU clock, steal or
+   storage latency of a run differed from its parent's and that condition tracks the goal across the session, a gain or
+   loss it fully explains becomes neutral (the run's note says how much). Sweeps reach further for a setting whose changes
+   won before and stay closer after losses; a buffer pool a quarter unused at a ~100% hit ratio is offered smaller
+   (bp-rightsize, an efficiency gain).
    Combinations the server refuses with an "unsupported / incompatible" error (e.g. resource groups while Percona
    Server's thread pool is on, error 3658) are recorded and shared by flavor and release series: no agent proposes
    them again, and ideas that would produce one show "Not run: ... was refused by this release before". The engine and the LLM queue

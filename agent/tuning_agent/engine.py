@@ -124,6 +124,41 @@ def nice_values(var, values, current=None):
     return out
 
 
+def trust_factor(history, var):
+    """How far this session's sweeps of `var` reach, from how its earlier changes of it went (OnlineTune, SIGMOD 2022:
+    a region around the best configuration that doubles after a success and halves after a failure): 2^(wins - losses)
+    over the runs that changed it, in [0.25, 4]. 1 when it was never changed."""
+    f = 1.0
+    for r in history or []:
+        if not any(c.get("variable") == var for c in r.get("changes") or []):
+            continue
+        if r.get("verdict") in ("improved", "efficiency-gain"):
+            f = min(4.0, f * 2)
+        elif r.get("verdict") in ("regressed", "efficiency-loss"):
+            f = max(0.25, f / 2)
+    return f
+
+
+def trust_scaled(var, values, current, factor):
+    """Sweep values moved towards (factor < 1) or away from (factor > 1) the current value: in log space for sizes and
+    other positive values (2G from 1G with factor 2 -> 4G), linearly otherwise. Non-numeric values stay."""
+    if factor == 1.0:
+        return values
+    cur = parse_size(str(current)) if current is not None else None
+    if not cur:
+        return values
+    out = []
+    for x in values:
+        n = parse_size(str(x))
+        if n is None or n <= 0:
+            out.append(x)
+            continue
+        new = cur * (n / cur) ** factor
+        is_size = (KB.get(var) or {}).get("kind") == "size"
+        out.append(fmt_size(int(new)) if is_size else str(int(round(new))))
+    return out
+
+
 def shaped_values(var, values, current, direction=None):
     """Sweep points ordered (and completed) by how the setting's response is expected to look (catalog):
     saturating - upward from the current value, smallest step first (the sweep stops once a step stops helping);
@@ -1386,6 +1421,9 @@ def recommend(ctx):
     def sweep(id_, title, var, values, rationale, evidence, impact=2, lead=None, direction=None):
         if var in NUMA_PARTITIONED:
             values = [_numa_multiple(var, x, ctx) for x in values]
+        tf = trust_factor(ctx.get("history"), var)
+        if tf != 1.0 and var != "innodb_buffer_pool_size":  # the pool's range is set by memory, not by earlier steps
+            values = trust_scaled(var, values, v.get(var), tf)
         values = [x for x in dict.fromkeys(values) if x is not None and normalize(var, x) != normalize(var, v.get(var))]
         values, shape = shaped_values(var, values, v.get(var), direction)
         if var in v and len(values) >= 2:
@@ -1450,6 +1488,22 @@ def recommend(ctx):
                   "memory settings measured before it are measured again with it.",
                   {"swap_total": human_size(swap_total), "ram": human_size(ram), "disk_free": human_size(free) if free else None},
                   impact=3 if not swap_total else 2, confidence=2)
+    # right-sizing (iBTune, VLDB 2019: per-instance pools shrunk where the response time allows, 12% of memory saved over
+    # 10,000 instances): a quarter or more of the pool free at steady state, every page the load needs cached and no reads
+    # to speak of - the same work with less memory, judged as an efficiency gain under the goal's guard
+    free_ = s.get("bp_free_pct_avg") or 0
+    tps_ = s.get("tps") or s.get("qps") or 0
+    if (have_run and not swapping and bp > GiB and free_ >= 25 and (s.get("bp_hit_pct") or 0) >= 99.5
+            and (s.get("bp_disk_reads") or 0) <= max(20.0, 0.01 * tps_)):
+        used = bp * (1 - free_ / 100.0)
+        new = bp_round(v, max(used * 1.25, 512 * MiB))
+        if new <= bp * 0.8:
+            b.add("bp-rightsize", "Right-size the buffer pool: a quarter of it is never used",
+                  [("innodb_buffer_pool_size", fmt_size(new))],
+                  f"{free_:.0f}% of the buffer pool stayed free through the run with a {s.get('bp_hit_pct'):.2f}% hit ratio: the load's "
+                  f"pages need about {human_size(int(used))}. {fmt_size(new)} keeps 25% headroom and gives the rest back.",
+                  {"bp_free_pct_avg": free_, "bp_hit_pct": s.get("bp_hit_pct"), "innodb_buffer_pool_size": human_size(bp)},
+                  impact=2, confidence=2)
     if have_run and diag_types & {"memory", "io"} and not swapping and mem_avail > 512 * MiB and bp:
         top = bp_round(v, min(ram * 0.80, bp + mem_avail - 512 * MiB))
         mid = bp_round(v, (bp + top) // 2)

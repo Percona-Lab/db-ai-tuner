@@ -4036,6 +4036,55 @@ def test_erratic_configuration_is_not_best():
     assert best["managed"] == A, best
 
 
+def test_change_point_uses_the_current_level_of_a_configuration():
+    """A configuration whose repeats stepped (the environment changed mid-session) is compared at its current level;
+    plain noise is not a step."""
+    from tuning_agent import evaluate
+    assert evaluate.change_point([1000, 1004, 998, 1002, 1100, 1104, 1098]) == 4
+    assert evaluate.change_point([1000, 1010, 995, 1005, 1001, 999]) is None
+    A = {"x": "1"}
+    runs = [{"seq": i + 1, "managed": A, "goal_value": g, "verdict": "repeat"} for i, g in enumerate([1000, 1004, 998, 1100, 1104, 1098])]
+    m = evaluate.config_means(runs, evaluate.config_key(A))
+    assert m["shift_at"] == 4 and m["seqs"] == [4, 5, 6] and abs(m["goal"] - 1100.67) < 0.1, m
+
+
+def test_environment_effect_explains_a_result_away():
+    """Session runs whose deviations track the CPU clock: a 'gain' measured at a higher clock than its parent's runs is
+    neutral once the clock's effect is taken out (never the other way round)."""
+    from tuning_agent import evaluate
+    A, B = {"x": "1"}, {"x": "2"}
+    hist = []
+    for i, (g, mhz) in enumerate([(1000, 3500), (960, 3350), (1040, 3650), (980, 3420), (1020, 3580), (1000, 3500)]):
+        hist.append({"seq": i + 1, "label": "baseline" if i < 3 else "A", "managed": A, "goal_value": g, "verdict": "repeat",
+                     "summary": {"cpu_mhz": mhz}, "changes": []})
+    run = {"seq": 7, "label": "x2", "managed": B, "goal_value": 1060, "summary": {"cpu_mhz": 3800},
+           "changes": [{"variable": "x", "old": "1", "new": "2"}]}
+    v, d = evaluate.verdict(run, hist, "tps", {"noise_pct": 3.0, "runs": [1, 2, 3]})
+    assert d.get("environment") and d["environment"]["covariate"] == "cpu_mhz", d
+    assert v == "neutral" and "CPU clock" in d["note"], (v, d.get("note"))
+
+
+def test_trust_region_and_buffer_pool_rightsize():
+    """Sweeps of a setting reach further after it won and stay closer after it lost; a pool a quarter unused is offered
+    smaller."""
+    from tuning_agent import engine
+    win = [{"changes": [{"variable": "innodb_io_capacity"}], "verdict": "improved"}]
+    lose = [{"changes": [{"variable": "innodb_io_capacity"}], "verdict": "regressed"}] * 2
+    assert engine.trust_factor(win, "innodb_io_capacity") == 2.0 and engine.trust_factor(lose, "innodb_io_capacity") == 0.25
+    assert engine.trust_factor([], "innodb_io_capacity") == 1.0
+    assert engine.trust_scaled("innodb_io_capacity", ["4000"], "2000", 2.0) == ["8000"]
+    assert engine.trust_scaled("innodb_io_capacity", ["8000"], "2000", 0.5) == ["4000"]
+    GiB_ = 2 ** 30
+    summ = dict(OLTP[0], bp_free_pct_avg=40.0, bp_hit_pct=99.99, bp_disk_reads=0, tps=1000)
+    ctx = {"goal": "tps", "policy": "safe", "os_tuning": False, "os_facts": {}, "hw": dict(HW, ram_bytes=32 * GiB_),
+           "flavor": "percona", "version": (8, 4, 3), "variables": dict(VARS, innodb_buffer_pool_size=str(20 * GiB_)),
+           "summary": summ, "inputs": OLTP[1], "history": [], "noise_pct": 2.0, "managed": {}}
+    it = {i["id"]: i for i in engine.run_engine(ctx)["items"]}
+    assert "bp-rightsize" in it, sorted(it)
+    new = engine.parse_size(it["bp-rightsize"]["changes"][0]["proposed"])
+    assert 14 * GiB_ <= new <= 16 * GiB_, new
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
