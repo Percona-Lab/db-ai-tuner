@@ -1588,11 +1588,15 @@ def test_decision_rules_from_the_audit():
     assert res["next"] is None and "Storage-bound commits" in (res.get("stop_reason") or ""), (res["next"], res.get("stop_reason"))
     for q in ("thread-pool", "sweep-thread-concurrency"):
         assert q not in it or it[q]["confidence"] == 0, q
-    # benchmark policy: a durability trade-off acting on the 78% commit time goes before a safe idea with no evidence
+    # benchmark policy (user, 2026-10-30): safe ideas first even when a trade-off acts on the 78% commit time - the
+    # trade-offs come on top of the safe configuration, in the trade-off budget
     calm = dict(summ, checkpoint_age_pct_max=10, bp_dirty_pct_avg=5, disk_util=20, bp_hit_pct=99.9, bp_disk_reads=0, bp_wait_free=0)
     b = engine.run_engine(dict(ctx, policy="benchmark", history=hist[:2], summary=calm))
-    nx = {i["id"]: i for i in b["items"]}.get(b["next"]) or {}
-    assert nx.get("safety") == "trade-off", (b["next"], nx.get("safety"))
+    items_ = {i["id"]: i for i in b["items"]}
+    nx = items_.get(b["next"]) or {}
+    safe_left = [i for i in b["items"] if i["kind"] == "config" and i["confidence"] > 0 and i["safety"] == "safe"]
+    assert nx.get("safety") == "safe" or not safe_left, (b["next"], nx.get("safety"))
+    assert any(i["safety"] == "trade-off" and i["confidence"] > 0 for i in b["items"])  # still offered, later
 
 
 def test_unbounded_growth_vs_settling():
@@ -3960,6 +3964,21 @@ def test_refused_combinations_are_recorded_and_not_proposed_again():
     it2 = {"id": "purge-prio", "kind": "config", "confidence": 2, "changes": [{"variable": "rg:purge", "proposed": "prio=-20"}]}
     engine.incompat_guard([it2], {"incompatible": known, "variables": {"thread_handling": "one-thread-per-connection"}})
     assert it2["confidence"] == 2
+
+
+def test_remedy_on_an_excluded_parent_is_judged_against_the_last_usable_configuration():
+    """Session 434 run 10: balance-concurrency stacked on the unsustainable sync-binlog run measured -38.8% and was
+    labelled neutral with no comparison; it is compared with the last configuration that has usable runs."""
+    from tuning_agent import evaluate
+    base = {"innodb_flush_log_at_trx_commit": "2"}
+    hist = [{"seq": 7, "label": "trx-commit-2", "managed": dict(base), "goal_value": 1295.1, "verdict": "improved", "changes": []},
+            {"seq": 8, "label": "trx-commit-2 (confirm)", "managed": dict(base), "goal_value": 1265.7, "verdict": "repeat", "changes": []},
+            {"seq": 9, "label": "sync-binlog", "managed": dict(base, sync_binlog="1000"), "goal_value": 1335.3, "verdict": "unreliable",
+             "changes": [{"variable": "sync_binlog", "old": "1", "new": "1000"}]}]
+    run = {"seq": 10, "label": "balance-concurrency", "managed": dict(base, sync_binlog="1000", innodb_thread_concurrency="8"),
+           "goal_value": 817.5, "summary": {}, "changes": [{"variable": "innodb_thread_concurrency", "old": "0", "new": "8"}]}
+    v, d = evaluate.verdict(run, hist, "tps", {"noise_pct": 3.28, "runs": [4, 5, 6]})
+    assert v == "regressed" and d["parent_runs"] == [7, 8] and d.get("parent_fallback"), (v, d)
 
 
 if __name__ == "__main__":

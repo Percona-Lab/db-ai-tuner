@@ -1133,14 +1133,29 @@ def _verdict(run, history, goal, noise):
         return "repeat", d
     parent = _parent_key(run, history, key)
     pm = config_means(history, parent, recent=RECENT)
+    fallback = None
     if not pm:
-        return "neutral", {}
+        # the parent has no usable runs (an unsustainable or unreliable experiment that a remedy is stacked on): judged
+        # against the last configuration that has some - session 434 run 10 measured -38.8% and was labelled "neutral"
+        # with no comparison at all, because its parent (sync-binlog) was excluded as unsustainable
+        for h in reversed(history):
+            k_ = config_key(h.get("managed"))
+            if k_ != key and k_ != parent:
+                pm = config_means(history, k_, recent=RECENT)
+                if pm:
+                    parent, fallback = k_, h.get("seq")
+                    break
+    if not pm:
+        return "neutral", {"note": "No configuration measured before this one has a usable result to compare it with."}
     goal_noise = (noise or {}).get("noise_pct") or DEFAULT_GOAL_NOISE
     d_goal = improvement(goal, run.get("goal_value"), pm["goal"])
     last_parent = max(pm["seqs"])
     details = {"parent_runs": pm["seqs"], "parent_goal_mean": round(pm["goal"], 4), "goal_delta_pct": d_goal,
                "runs_since_parent_measured": len([r for r in history if r["seq"] > last_parent]),
                "goal_noise_pct": goal_noise, "calibrated": bool(noise and noise.get("runs")), "efficiency": {}}
+    if fallback is not None:
+        details["parent_fallback"] = (f"Compared with runs {pm['seqs']}: the configuration this run was derived from has no "
+                                      "usable result (unsustainable or unreliable).")
     s = run.get("summary") or {}
     parent_runs = [r for r in history if config_key(r.get("managed")) == parent]
     rel = relevant_resources(s, *[r.get("summary") for r in parent_runs])

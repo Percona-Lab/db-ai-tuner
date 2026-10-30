@@ -3185,24 +3185,11 @@ def run_engine(ctx):
     safe_next = next((i for i in actionable if i["safety"] == "safe"), None)
     trade_next = next((i for i in actionable if i["safety"] == "trade-off"), None)
     nxt = safe_next or (trade_next if benchmark else None)
-    # benchmark policy: a trade-off backed by evidence goes before a safe idea that has none, or that scores far lower
-    # (trx-commit-2 / ps-off / doublewrite-off had the top scores in five sessions and ran last or never)
-    # Not when the trade-off switches performance_schema off: every later run then loses the statement latency and wait
-    # data the diagnosis stands on, for a gain everyone knows (session 432 ran ps-off as its 8th run of 100). And not in
-    # an explore session: it exists to learn from real tuning, its trade-off budget (the last 30%) has room for them
-    blinds = any(c["variable"] == "performance_schema" and str(c.get("proposed")).upper() in ("OFF", "0")
-                 for c in (trade_next or {}).get("changes") or [])
-    if benchmark and safe_next and trade_next and safe_next["kind"] == "config" and not blinds and not ctx.get("explore") and (
-            trade_next["score"] > safe_next["score"] + 4
-            or ((safe_next.get("no_mechanism") or (safe_next.get("relevance") or 0) <= 1) and (trade_next.get("relevance") or 0) >= 2)):
-        nxt = trade_next
-    # commit-bound under the benchmark policy: the commit-path trade-off first (backtest: canaries ran best-practices and
-    # ahi-on before trx-commit-2, which then gained +19% to +29.5%). Still a trade-off: never part of the production-safe
-    # configuration, and never run under policy=safe
-    commit_now = sum(p.get("share_pct") or 0 for p in ctx.get("breakdown") or [] if "commit" in (p.get("tags") or ()))
-    tc2 = next((i for i in actionable if i["id"] == "trx-commit-2"), None)
-    if benchmark and tc2 and commit_now >= 20 and not (nxt and nxt.get("kind") == "revert") and not (nxt and nxt.get("stability")):
-        nxt = tc2
+    # benchmark policy: trade-offs wait for the safe ideas - the session builds a production-safe configuration first and
+    # measures the trade-offs on top of it in its trade-off budget (the last 30% of runs), or once safe ideas run out or
+    # stop paying (user, 2026-10-30: session 434 ran trx-commit-2 and sync-binlog as its first experiments; their gain is
+    # well known, and the safe configuration then never got built on its own). The earlier shortcuts - a strong trade-off
+    # before a weak safe idea, the commit-path trade-off first when commits dominate - are gone.
     # value of information: after a long run of experiments that kept nothing, an idea that acts on little or nothing of
     # the measured time will not be the one that changes that - stop and say what limits the workload (user 194: 21 runs
     # after run 10 on a storage-bound host, all neutral)
