@@ -1532,8 +1532,6 @@ def cmd_confirm(a):
     session on a host with the same hardware and workload."""
     c = Ctx()
     sess = c.session(required=True)
-    if not sess.get("noise"):
-        raise Fail("calibrate this session first (its noise threshold judges the confirmation)")
     prof = bench.Profile(a.bench or sess.get("bench") or "")
     src = c.client.get(f"/sessions/{a.source}/runs")
     sruns = src.get("runs") or []
@@ -1557,7 +1555,9 @@ def cmd_confirm(a):
     if not targets:
         log(f"== session #{a.source} kept nothing beyond its start configuration: nothing to confirm")
         return
-    noise = float(sess["noise"].get("noise_pct") or 2.0)
+    # the session's calibrated noise; without one (its own calibration failed - P3's purge triage found nothing stable on
+    # atvbm2, while the source's start carries the remedy), the spread of the start configuration's runs measured here
+    noise = float(((sess.get("noise") or {}).get("noise_pct")) or 0)
     results = []
     for name, cfg, b in targets:
         src_ref = [r["goal_value"] for r in sruns if evaluate.config_key(val(r["managed"])) == evaluate.config_key(start)
@@ -1572,6 +1572,10 @@ def cmd_confirm(a):
                 run, _ = _bench_run(c, prof, f"confirm #{a.source} {which} ({i + 1}/{a.pairs})")
                 (av if which == "start" else bv).append(run.get("goal_value"))
         av, bv = [x for x in av if x is not None], [x for x in bv if x is not None]
+        if not noise:
+            sd = (sum((x - sum(av) / len(av)) ** 2 for x in av) / (len(av) - 1)) ** 0.5 if len(av) >= 2 else 0
+            noise = max(2.0, round(evaluate.NOISE_K * 100.0 * sd / (sum(av) / len(av)), 2)) if av else 2.0
+            log(f"   no calibrated noise in this session: ±{noise}% from the start configuration's runs here")
         gain = _improvement(sess["goal"], sum(bv) / len(bv), sum(av) / len(av)) if av and bv else None
         thr = evaluate.mean_noise(noise, len(bv), len(av))
         # its runs here spread far beyond the noise: the same flag best_config uses (engine.config_erratic)

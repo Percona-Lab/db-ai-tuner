@@ -114,7 +114,9 @@ if [ -n "${EXPLORE_CELL:-}" ]; then export EXPLORE=1; else export AI_OFF=1; fi
 # configuration, inert-settings guard, purge profile) in a study of its own
 case "${PIPE_ITEM:-}" in matrix-v3-*) MATRIX_STUDY="case-base matrix v3 (evidence) 2026-11-01" ;; esac
 if [ -n "${CONFIRM_SESSION:-}" ]; then
-  export CONFIRM_SESSION POST=/root/bench/pipeline/items/confirm-post.sh
+  # no server-defaults reference run: the confirmation compares the source's start and best configurations only (C4's
+  # defaults run at 1024 threads crashed go-tpc, 2026-10-31)
+  export CONFIRM_SESSION POST=/root/bench/pipeline/items/confirm-post.sh SKIP_DEFAULTS=1
   STUDY="cross-host confirmations" run_session $P "confirm session #$CONFIRM_SESSION: matrix $CELL ($(hostname))" $GOAL 0
 elif [ -n "${SWEEP_VAR:-}" ]; then
   # characterization sweep (user, 2026-10-29): the cell's workload, calibrated, then one setting across its whole range -

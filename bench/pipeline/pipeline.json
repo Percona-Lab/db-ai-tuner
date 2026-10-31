@@ -1346,12 +1346,27 @@
     "P5"
    ],
    "hosts": [
-    "atvbmamd",
-    "atcanary"
+    "atvbmamd"
    ],
    "group": false,
    "est_hours": 10,
    "question": "Evidence wave: matrix cell P5 (commit-heavy (update_index), medium concurrency, partly cached) with the I/O profile, mechanism evidence, trade-offs after the safe configuration, the inert-settings guard and the purge profile; confirmed on a sibling box afterwards"
+  },
+  {
+   "id": "sweep-cb-P3-canary",
+   "script": "matrix.sh",
+   "args": [
+    "P3",
+    "sweep",
+    "innodb_change_buffering",
+    "none,all"
+   ],
+   "hosts": [
+    "atcanary"
+   ],
+   "group": false,
+   "est_hours": 8,
+   "question": "Change buffering on P3 (writes, 1024 threads, partly cached), where purge cannot keep up: does buffering purge's secondary-index work (all vs none) change the history growth, page reads per transaction and throughput? Uses the P3 data already on atcanary"
   }
  ]
 }
