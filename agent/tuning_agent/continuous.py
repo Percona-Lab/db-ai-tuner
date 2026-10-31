@@ -75,13 +75,80 @@ def fingerprint(run):
             "write_share": round(rc / qps, 4) if rc is not None and qps else None}
 
 
-def workload_changed(fa, fb, tol=0.15):
-    """The load itself differs between two windows beyond tol (relative), e.g. the benchmark switched phase. Reason or None."""
-    for k in ("connections", "stmts_per_trx", "write_share"):
+# how far each fingerprint may move between windows of one load: the write share (rows changed per statement) moves
+# 15-17% between Parma Ham's own windows - at 15% it threw away log writer threads ON (-31%) in session 447
+CHANGE_TOL = {"connections": 0.15, "stmts_per_trx": 0.15, "write_share": 0.40}
+
+
+def workload_changed(fa, fb, tol=None):
+    """The load itself differs between two windows beyond its tolerance (relative), e.g. the benchmark switched phase.
+    Reason or None."""
+    for k, t in CHANGE_TOL.items():
         a, b = fa.get(k), fb.get(k)
-        if a and b and abs(b - a) / max(abs(a), 1e-9) > tol:
+        if a and b and abs(b - a) / max(abs(a), 1e-9) > (tol if tol is not None else t):
             return f"{k} {a} -> {b}"
     return None
+
+
+CYCLE_LOOKBACK_S = 4 * 3600
+CYCLE_MARGIN_S = 60       # the window ends at least this long before the client's next restart
+CYCLE_RECOVER_S = 180     # after a restart: the client reconnects and ramps up before a window starts
+
+
+def client_dips(samples, frac=None):
+    """Times (s) the client's connections dropped below `frac` of their median (one per dip, from the daemon's samples)."""
+    frac = frac or CLIENT_DIP_FRAC
+    pts = [((x.get("ts") or 0), (x.get("db") or {}).get("threads_connected")) for x in samples]
+    pts = [(t, v) for t, v in pts if v is not None]
+    if len(pts) < 30:
+        return []
+    med = sorted(v for _, v in pts)[len(pts) // 2]
+    if med < 4:
+        return []
+    dips, last = [], None
+    for t, v in pts:
+        if v < frac * med and (last is None or t - last > 300):
+            dips.append(t)
+            last = t
+        elif v < frac * med:
+            last = t
+    return dips
+
+
+def next_client_restart(dips, now):
+    """When the client restarts next, if it restarts on a regular cycle (Parma Ham: a new HammerDB run every ~61 min):
+    the median gap between the last dips, consistent within 15%, projected from the last one. None otherwise."""
+    if len(dips) < 3:
+        return None
+    gaps = [b - a for a, b in zip(dips, dips[1:])][-6:]
+    med = sorted(gaps)[len(gaps) // 2]
+    if med < 600 or any(abs(g - med) > 0.15 * med for g in gaps):
+        return None
+    t = dips[-1] + med
+    while t < now:
+        t += med
+    return t, med
+
+
+def wait_for_client_cycle(c, window_s):
+    """Do not start a window the client's next regular restart would cut (session 447: 17 of 54 windows lost to Parma
+    Ham's hourly HammerDB restart): wait until it has restarted and ramped up. Returns the seconds waited."""
+    from .state import SampleStore
+    now = time.time()
+    nxt = next_client_restart(client_dips(SampleStore(c.state.dir).window(now - CYCLE_LOOKBACK_S, now)), now)
+    if not nxt:
+        return 0
+    t_next, period = nxt
+    if t_next - now >= window_s + CYCLE_MARGIN_S:
+        return 0
+    wait = t_next + CYCLE_RECOVER_S - now
+    if wait <= 0 or wait > period:
+        return 0
+    _cli().log(f"   the client restarts every {period / 60:.0f} min, next at {time.strftime('%H:%M', time.gmtime(t_next))} UTC: "
+               f"waiting {wait / 60:.0f} min so the window does not straddle it")
+    c.activity("waiting for the client's restart", f"next at {time.strftime('%H:%M', time.gmtime(t_next))} UTC", wait)
+    time.sleep(wait)
+    return int(wait)
 
 
 def wait_settled(c, t0, label, min_s=SETTLE_MIN_S, max_s=SETTLE_MAX_S, hold_s=SETTLE_HOLD_S):
@@ -139,6 +206,10 @@ def measure(c, label, window_s, notes=None, attempts=3):
     414's third calibration window: throughput spread 10.8% vs 0.4-2%, latency +13%) measured the client, not the
     configuration: flagged unreliable and measured again, up to `attempts` windows."""
     for i in range(attempts):
+        try:
+            wait_for_client_cycle(c, window_s)
+        except Exception:
+            pass
         t0 = time.time()
         run = _measure_once(c, label + (" (again: the client reconnected)" if i else ""), window_s, notes)
         why = client_restarted(c, t0, time.time())

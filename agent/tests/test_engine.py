@@ -4159,6 +4159,24 @@ def test_flushing_evidence_and_inert_settings():
     assert engine.inert_reason("innodb_change_buffer_max_size", "50", dict(ctx, variables=dict(base, innodb_change_buffering="none")))
 
 
+def test_continuous_avoids_the_clients_regular_restart():
+    """Parma Ham's HammerDB reconnects every ~61 min (session 447: 17 of 54 windows lost): the dips are found, the next one
+    projected, and a 22-min window is not started across it. The write share tolerates Parma Ham's own spread."""
+    from tuning_agent import continuous as cm
+    smp = []
+    for i in range(int(4 * 3600 / 10)):
+        t = 10 * i
+        dip = (t % 3660) < 30
+        smp.append({"ts": t, "db": {"threads_connected": 3 if dip else 68}})
+    dips = cm.client_dips(smp)
+    assert len(dips) == 4 and all(abs((b - a) - 3660) <= 10 for a, b in zip(dips, dips[1:])), dips
+    nxt, period = cm.next_client_restart(dips, smp[-1]["ts"])
+    assert abs(period - 3660) <= 10 and nxt > smp[-1]["ts"], (nxt, period)
+    assert cm.next_client_restart(dips[:2], smp[-1]["ts"]) is None
+    assert cm.workload_changed({"write_share": 7.28}, {"write_share": 8.48}) is None
+    assert cm.workload_changed({"connections": 68}, {"connections": 40})
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
