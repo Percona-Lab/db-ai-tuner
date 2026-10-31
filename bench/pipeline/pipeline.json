@@ -1293,6 +1293,64 @@
    "group": false,
    "est_hours": 10,
    "question": "The purge triage with purge-thread profiles (CPU / run queue / file I/O / latches, records purged/s), remedies by cause (change buffering first when purge waits on reads) and stacking of milder limits, on P3 (writes, 1024 threads, partly cached): which cause the profile finds and whether change buffering or a stacked limit holds the history for less than a low concurrency cap"
+  },
+  {
+   "id": "matrix-v3-P4",
+   "script": "matrix.sh",
+   "args": [
+    "P4"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Evidence wave: matrix cell P4 (writes, low concurrency, partly cached) with the I/O profile, mechanism evidence, trade-offs after the safe configuration, the inert-settings guard and the purge profile; confirmed on a sibling box afterwards"
+  },
+  {
+   "id": "matrix-v3-D4",
+   "script": "matrix.sh",
+   "args": [
+    "D4"
+   ],
+   "hosts": [
+    "atvbm2",
+    "atvbm",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Evidence wave: matrix cell D4 (writes, low concurrency, on disk) with the I/O profile, mechanism evidence, trade-offs after the safe configuration, the inert-settings guard and the purge profile; confirmed on a sibling box afterwards"
+  },
+  {
+   "id": "matrix-v3-M5",
+   "script": "matrix.sh",
+   "args": [
+    "M5"
+   ],
+   "hosts": [
+    "atvbmmia",
+    "atvbm",
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Evidence wave: matrix cell M5 (commit-heavy, extreme concurrency, in memory) with the I/O profile, mechanism evidence, trade-offs after the safe configuration, the inert-settings guard and the purge profile; confirmed on a sibling box afterwards"
+  },
+  {
+   "id": "matrix-v3-P5",
+   "script": "matrix.sh",
+   "args": [
+    "P5"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Evidence wave: matrix cell P5 (commit-heavy (update_index), medium concurrency, partly cached) with the I/O profile, mechanism evidence, trade-offs after the safe configuration, the inert-settings guard and the purge profile; confirmed on a sibling box afterwards"
   }
  ]
 }

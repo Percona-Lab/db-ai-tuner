@@ -110,6 +110,9 @@ esac
 grep -q "^warmup = auto" $P || [ $CELL = D5 ] || [ $CELL = D6 ] || [ $CELL = H1 ] || auto_len $P
 # the explore cells use the AI once the rules run out (autotune --explore); the others run without AI
 if [ -n "${EXPLORE_CELL:-}" ]; then export EXPLORE=1; else export AI_OFF=1; fi
+# items named matrix-v3-*: the evidence wave (2026-11-01: I/O profile, mechanism evidence, trade-offs after the safe
+# configuration, inert-settings guard, purge profile) in a study of its own
+case "${PIPE_ITEM:-}" in matrix-v3-*) MATRIX_STUDY="case-base matrix v3 (evidence) 2026-11-01" ;; esac
 if [ -n "${CONFIRM_SESSION:-}" ]; then
   export CONFIRM_SESSION POST=/root/bench/pipeline/items/confirm-post.sh
   STUDY="cross-host confirmations" run_session $P "confirm session #$CONFIRM_SESSION: matrix $CELL ($(hostname))" $GOAL 0
