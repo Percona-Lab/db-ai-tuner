@@ -183,6 +183,10 @@ API keys: __SERVER__/#/connect (an account is free; __SERVER__/quickstart walks 
    matter (documented no-ops; connection-path settings without new connections; DDL settings without DDL; NUMA settings
    on one node; change-buffer size with buffering off) are never run. docs/research/var-evidence has the per-variable
    evidence research.
+   Every measured run also profiles disk I/O by who issued it (eBPF on submit_bio / bio_endio, inputs.io_profile):
+   per InnoDB subsystem - connection threads, page cleaner, redo log threads, purge, I/O threads, kernel writeback of
+   buffered files (binlog, temp files) - reads, writes and cache flushes per second, MB/s and device time; summary keys
+   io_<role>_read_kb_per_trx / _write_kb_per_trx / _device_share_pct. agent.ini: io_profile = off disables it.
    Combinations the server refuses with an "unsupported / incompatible" error (e.g. resource groups while Percona
    Server's thread pool is on, error 3658) are recorded and shared by flavor and release series: no agent proposes
    them again, and ideas that would produce one show "Not run: ... was refused by this release before". The engine and the LLM queue

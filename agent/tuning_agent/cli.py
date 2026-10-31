@@ -1407,6 +1407,25 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
                     summary[f"blk_{key}_p999_ms"] = round((v.get("p999_us") or 0) / 1000, 3)
                     summary[f"blk_{key}_max_ms"] = round((v.get("max_us") or 0) / 1000, 3)
                     summary[f"blk_{key}_slow_ios"] = v.get("slow_10ms")
+        # disk I/O by issuer (eBPF): per transaction, so runs compare - reads and writes of the connection threads (page
+        # reads; redo writes when they write it themselves; single-page flushes), of the page cleaner, and device time
+        # shares: who keeps the disk busy
+        io_ = (extra_inputs.get("io_profile") or {}).get("by_role") or {}
+        trx_ = summary.get("tps") or summary.get("qps") or 0
+        if io_ and trx_:
+            short = {"queries (connection threads)": "queries", "page cleaner (flushing)": "cleaner", "redo log threads": "redo_threads",
+                     "purge": "purge", "read I/O threads": "io_read_threads", "write I/O threads": "io_write_threads",
+                     "kernel writeback (buffered files: binlog, temp files)": "writeback"}
+            tot = sum(v["device_s_per_s"] for v in io_.values()) or 0
+            for role, v in io_.items():
+                k = short.get(role)
+                if not k:
+                    continue
+                for op in ("read", "write"):
+                    if isinstance(v.get(op), dict):
+                        summary[f"io_{k}_{op}_kb_per_trx"] = round(v[op]["mb_s"] * 1024 / trx_, 3)
+                if tot:
+                    summary[f"io_{k}_device_share_pct"] = round(100.0 * v["device_s_per_s"] / tot, 1)
     summary["tradeoffs"] = tradeoffs_in(m["managed"])
     clients = {}
     for h in c.client_hosts():
@@ -1777,6 +1796,8 @@ def _start_probes(c, seconds):
         p = probes.Probes(pid, seconds).start() if pid else None
         if p:
             p.block = probes.BlockLatency(seconds).start()  # storage tail latency over the same window
+            if str(c.cfg.get("io_profile", "on")).lower() != "off":
+                p.io = probes.IoProfile(pid, seconds).start()  # disk I/O by issuing InnoDB subsystem, same window
         return p
     except Exception as e:  # never fail a run because of a probe
         log(f"   eBPF probes not started: {e}")
@@ -2269,6 +2290,8 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
             probes.stop()
             if getattr(probes, "block", None):
                 probes.block.stop()
+            if getattr(probes, "io", None):
+                probes.io.stop()
         b_snap = _end_snapshot(c)
         collector.use_prepared_tail(b_snap, prep_tail)
         # after the measured window the benchmark still has to exit (1024 threads disconnecting, a final report): said so,
@@ -2363,6 +2386,15 @@ def _bench_run_once(c, prof, label=None, notes=None, warmup_override=None):
             if bl:
                 log("   block I/O latency: " + ", ".join(f"{k} p99 {v['p99_us'] / 1000:.2f} ms / max {(v.get('max_us') or 0) / 1000:.1f} ms"
                                                        for k, v in sorted(bl.items(), key=lambda x: -x[1]["count"])[:3]))
+        if getattr(probes, "io", None):
+            probes.io.stop()
+            extra["io_profile"] = probes.io.result()
+            br = extra["io_profile"].get("by_role") or {}
+            if br:
+                log("   disk I/O by who issued it (device s/s): " + ", ".join(
+                    f"{k} {v['device_s_per_s']:.2f}" + "".join(f" {op} {x['mb_s']:.1f} MB/s" for op, x in v.items()
+                                                                if isinstance(x, dict) and op in ("read", "write") and x["mb_s"] >= 0.1)
+                    for k, v in list(br.items())[:4]))
         nr = extra["probes"].get("name_resolution")
         if nr:
             log(f"   eBPF probes: name resolution {nr['calls']} calls, {nr['seconds']:.3f} s in the window")

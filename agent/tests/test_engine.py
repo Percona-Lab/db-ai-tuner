@@ -4177,6 +4177,36 @@ def test_continuous_avoids_the_clients_regular_restart():
     assert cm.workload_changed({"connections": 68}, {"connections": 40})
 
 
+def test_io_profile_attributes_disk_io_to_innodb_subsystems():
+    """pmh-ps97 (log writer threads OFF): connection threads wrote the redo themselves - 14.7k writes, 1.7 s of device time
+    in 10 s - next to the page cleaner's 335 MB; zero-byte writes of the I/O threads are cache flushes."""
+    from tuning_agent import probes
+    out = """@by[1, connection, 1, 1]: 70152192
+@by[1, ib_pg_flush_co, 1, 1]: 335478784
+@by[1, connection, 0, 1]: 66371584
+@by[1, ib_io_wr-1, 1, 0]: 0
+@by[0, kworker/u8:4, 1, 1]: 401408
+@dev[1, connection, 1, 1]: 1716635274
+@dev[1, ib_pg_flush_co, 1, 1]: 1622593387
+@dev[1, connection, 0, 1]: 1085245757
+@dev[1, ib_io_wr-1, 1, 0]: 14061562
+@dev[0, kworker/u8:4, 1, 1]: 44551607
+@n[1, connection, 1, 1]: 14716
+@n[1, ib_pg_flush_co, 1, 1]: 10343
+@n[1, connection, 0, 1]: 4051
+@n[1, ib_io_wr-1, 1, 0]: 198
+@n[0, kworker/u8:4, 1, 1]: 80
+"""
+    r = probes.io_summary(probes.parse_io(out), 10.0)
+    q = r["queries (connection threads)"]
+    assert q["write"]["per_s"] == 1471.6 and q["read"]["per_s"] == 405.1 and abs(q["device_s_per_s"] - 0.28) < 0.01, q
+    assert list(r)[0] == "queries (connection threads)"
+    assert r["page cleaner (flushing)"]["write"]["mb_s"] == 31.99
+    assert "flush" in r["write I/O threads"] and "write" not in r["write I/O threads"]
+    assert "kernel writeback (buffered files: binlog, temp files)" in r
+    assert probes.io_role(1, "ib_srv_purge") == "purge" and probes.io_role(0, "jbd2/sda-8") == "filesystem journal"
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

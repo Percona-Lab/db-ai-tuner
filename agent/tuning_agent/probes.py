@@ -483,6 +483,117 @@ BLOCK_SCRIPT = (
     "delete(@s[args->dev, args->sector]); }}\n"
     "interval:s:{secs} {{ exit(); }}\n"
     "END {{ clear(@s); }}\n")
+# disk I/O by who issued it (user, 2026-10-31, after Coroot's eBPF disk I/O profiler): every block request (bio) the host
+# submits, keyed by the issuing process (mysqld or not) and thread name, with its bytes and its device time (submission to
+# completion). mysqld's thread names say which InnoDB subsystem did the I/O; kernel writeback threads carry buffered
+# files (binlog, temporary files) and the filesystem journal. All requests are counted: a few thousand per second cost
+# ~0.2 us each.
+IO_SCRIPT = (
+    "kprobe:submit_bio {{ $b = (struct bio *)arg0; $op = $b->bi_opf & 0xff; $sz = $b->bi_iter.bi_size; "
+    "$m = pid == {pid} ? 1 : 0; @n[$m, comm, $op, $sz > 0] = count(); @by[$m, comm, $op, $sz > 0] = sum($sz); "
+    "@st[arg0] = nsecs; @who[arg0] = comm; @mm[arg0] = $m; @oo[arg0] = $op; @zz[arg0] = $sz > 0; }}\n"
+    "kprobe:bio_endio /@st[arg0]/ {{ $d = nsecs - @st[arg0]; "
+    "if ($d < 60000000000) {{ @dev[@mm[arg0], @who[arg0], @oo[arg0], @zz[arg0]] = sum($d); }} "
+    "delete(@st[arg0]); delete(@who[arg0]); delete(@mm[arg0]); delete(@oo[arg0]); delete(@zz[arg0]); }}\n"
+    "interval:s:{secs} {{ exit(); }}\n"
+    "END {{ clear(@st); clear(@who); clear(@mm); clear(@oo); clear(@zz); }}\n")
+# thread name prefix -> role (MySQL / Percona 8.0-9.7 InnoDB thread names; MariaDB names its threads less)
+IO_ROLES = (("connection", "queries (connection threads)"), ("one_connection", "queries (connection threads)"),
+            ("tp_worker", "queries (connection threads)"), ("my-thread", "queries (connection threads)"),
+            ("ib_pg_flush", "page cleaner (flushing)"), ("ib_log_", "redo log threads"), ("ib_srv_purge", "purge"),
+            ("ib_srv_wkr", "purge"), ("ib_src_main", "master thread"), ("ib_io_rd", "read I/O threads"),
+            ("ib_io_wr", "write I/O threads"), ("ib_io_ibuf", "change buffer"), ("ib_io_log", "redo log threads"),
+            ("ib_buf_", "buffer pool dump / resize"), ("ib_dict_stats", "statistics"), ("mysqld", "mysqld (main)"))
+IO_OPS = {0: "read", 1: "write", 2: "flush", 3: "discard", 9: "write_zeroes"}
+
+
+def io_role(mysqld, comm):
+    if mysqld:
+        return next((r for p, r in IO_ROLES if comm.startswith(p)), "mysqld: " + comm)
+    if comm.startswith("kworker"):
+        return "kernel writeback (buffered files: binlog, temp files)"
+    if comm.startswith("jbd2"):
+        return "filesystem journal"
+    return "other processes"
+
+
+def parse_io(out):
+    """{(mysqld 0/1, comm, op, data 0/1): {n, bytes, dev_ns}}"""
+    res = {}
+    for line in out.splitlines():
+        m = re.match(r"^@(n|by|dev)\[(\d+), (.*), (\d+), (\d+)\]:\s*(\d+)", line)
+        if m:
+            k = (int(m.group(2)), m.group(3).strip(), int(m.group(4)), int(m.group(5)))
+            res.setdefault(k, {"n": 0, "bytes": 0, "dev_ns": 0})[{"n": "n", "by": "bytes", "dev": "dev_ns"}[m.group(1)]] = int(m.group(6))
+    return res
+
+
+def io_summary(parsed, seconds):
+    """Per role: reads / writes / cache flushes per second, MB/s, device seconds per second (the share of one device
+    busy with them), average device time per request. Sorted by device time."""
+    roles = {}
+    for (mysqld, comm, op, data), v in parsed.items():
+        kind = "flush" if (op == 1 and not data) or op == 2 else IO_OPS.get(op, "other")
+        r = roles.setdefault(io_role(mysqld, comm), {})
+        x = r.setdefault(kind, {"n": 0, "bytes": 0, "dev_ns": 0})
+        for f in ("n", "bytes", "dev_ns"):
+            x[f] += v[f]
+    out = {}
+    for role, kinds in roles.items():
+        o = {}
+        for kind, x in kinds.items():
+            if not x["n"]:
+                continue
+            o[kind] = {"per_s": round(x["n"] / seconds, 1), "mb_s": round(x["bytes"] / seconds / 2 ** 20, 2),
+                       "device_s_per_s": round(x["dev_ns"] / 1e9 / seconds, 3), "avg_ms": round(x["dev_ns"] / 1e6 / x["n"], 3)}
+        if o:
+            o["device_s_per_s"] = round(sum(k["device_s_per_s"] for k in o.values() if isinstance(k, dict)), 3)
+            out[role] = o
+    return dict(sorted(out.items(), key=lambda kv: -kv[1]["device_s_per_s"]))
+
+
+class IoProfile:
+    """Background bpftrace disk I/O attribution over the measured window; result() afterwards."""
+
+    def __init__(self, pid, seconds):
+        self.pid, self.seconds = pid, max(5, int(seconds))
+        self.out = self.err = None
+        self._p = self._th = None
+        self.t0 = None
+
+    def start(self):
+        self.t0 = time.time()
+        self._p = subprocess.Popen(["nice", "-n", "10", "bpftrace", "-e", IO_SCRIPT.format(pid=int(self.pid), secs=self.seconds)],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        def wait():
+            try:
+                self.out, err = self._p.communicate(timeout=self.seconds + 120)
+                if self._p.returncode != 0 and not self.out:
+                    self.err = (err or "").strip()[-300:]
+            except Exception as e:  # noqa
+                self.err = str(e)[:300]
+        self._th = threading.Thread(target=wait, daemon=True)
+        self._th.start()
+        return self
+
+    def stop(self):
+        if self._p and self._p.poll() is None:
+            try:
+                self._p.send_signal(2)
+            except OSError:
+                pass
+        if self._th:
+            self._th.join(60)
+
+    def result(self):
+        if self.err or not self.out:
+            return {"error": self.err or "no block I/O traced"}
+        secs = max(1.0, min(float(self.seconds), time.time() - (self.t0 or time.time())))
+        roles = io_summary(parse_io(self.out), secs)
+        return {"seconds": round(secs, 1), "by_role": roles} if roles else {"error": "no block I/O traced"}
+
+
 _UNIT = {"": 1, "K": 1024, "M": 1024 ** 2, "G": 1024 ** 3}
 _BUCKET = re.compile(r"^\[(\d+)([KMG]?),\s*(\d+)([KMG]?)\)\s+(\d+)")
 _OPS = {"R": "read", "W": "write", "D": "discard", "N": "other"}

@@ -280,6 +280,7 @@ def _measure_once(c, label, window_s, notes=None):
     cli = _cli()
     cli._measure_start(c, label, notes, warmed=True)
     c.activity("measuring", label, window_s)
+    io = _start_io_profile(c, window_s)
     t = time.time()
     try:
         while time.time() - t < window_s:
@@ -295,9 +296,25 @@ def _measure_once(c, label, window_s, notes=None):
             c.state.data["measurement"] = None
             c.state.save()
         raise
-    run, _ = cli._measure_stop(c, {}, None, notes)
+    extra = {}
+    if io:
+        io.stop()
+        extra["io_profile"] = io.result()
+    run, _ = cli._measure_stop(c, {}, None, notes, extra_inputs=extra or None)
     run["fingerprint"] = fingerprint(run)
     return run
+
+
+def _start_io_profile(c, seconds):
+    """Disk I/O by issuing InnoDB subsystem over the window (eBPF, as in benchmark runs); None where eBPF is off."""
+    from . import probes, hostinfo
+    if str(c.cfg.get("probes", "auto")).lower() == "off" or str(c.cfg.get("io_profile", "on")).lower() == "off" or not probes.available():
+        return None
+    try:
+        pid = hostinfo.mysqld_pid()
+        return probes.IoProfile(pid, seconds).start() if pid else None
+    except Exception:
+        return None
 
 
 def noise_pct(values):
