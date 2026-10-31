@@ -4233,6 +4233,18 @@ def test_rules_use_the_io_profile():
     assert grow["relevance"] == 1, grow
 
 
+def test_purge_blocked_by_read_views():
+    """Purge threads mostly idle and next to nothing purged while the history grows: purge may not remove the history
+    yet (open read views) - the limiters go first."""
+    from tuning_agent import purgeprof, cli
+    p = {"cpu_pct": 0.2, "runq_pct": 0.2, "io_pct": 19.9, "latch_pct": 0.0, "other_pct": 79.7, "purged_records_s": 0.0}
+    assert purgeprof.cause(p) == "read-view"
+    assert purgeprof.cause(dict(p, purged_records_s=None)) is None
+    cands = [{"label": "prio", "changes": [("rg:purge", "prio=-10")], "restart": False, "last": False},
+             {"label": "tc 8", "changes": [("innodb_thread_concurrency", "8")], "restart": False, "last": False}]
+    assert cli._order_by_cause(cands, "read-view")[0]["label"] == "tc 8"
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

@@ -90,11 +90,18 @@ def snapshot(db, pid):
         out["threads"][os_tid] = {"cpu_ns": int(st[0]) if len(st) > 1 else None, "runq_ns": int(st[1]) if len(st) > 1 else None,
                                   "read_bytes": int(io.get("read_bytes", 0) or 0), **waits.get(thread_id, {"io_ps": 0, "latch_ps": 0})}
     try:
-        for name, cnt in db.rows("SELECT NAME, COUNT FROM information_schema.INNODB_METRICS WHERE NAME IN (%s)"
-                                 % ",".join("'%s'" % n for n in PURGE_COUNTERS)):
+        off = False
+        for name, status, cnt in db.rows("SELECT NAME, STATUS, COUNT FROM information_schema.INNODB_METRICS WHERE NAME IN (%s)"
+                                         % ",".join("'%s'" % n for n in PURGE_COUNTERS)):
+            if str(status).lower() != "enabled":
+                off = True
             out["counters"][name] = int(cnt or 0)
+        if off:
+            # switched off again by a mysqld restart (a triage step): on again, and this snapshot's counts are not a base
+            db.execute("SET GLOBAL innodb_monitor_enable = 'module_purge'")
+            out["counters"] = {}
     except Exception:
-        pass
+        out["counters"] = {}
     return out
 
 
@@ -125,7 +132,7 @@ def profile(a, b):
     ca, cb = a.get("counters") or {}, b.get("counters") or {}
     recs = sum(cb.get(k, 0) - ca.get(k, 0) for k in ("purge_del_mark_records", "purge_upd_exist_or_extern_records")
                if k in ca and k in cb)
-    if any(k in ca for k in PURGE_COUNTERS):
+    if any(k in ca for k in PURGE_COUNTERS) and any(k in cb for k in PURGE_COUNTERS):
         out["purged_records_s"] = round(recs / dt, 1)
         out["undo_pages_s"] = round((cb.get("purge_undo_log_pages", 0) - ca.get("purge_undo_log_pages", 0)) / dt, 1)
     out["cause"] = cause(out)
@@ -134,9 +141,14 @@ def profile(a, b):
 
 def cause(p):
     """The dominant reason the purge threads do not go faster, if one stands out (at least 25% of their time and the
-    largest): io, latch, cpu-starved (run queue), cpu (busy computing)."""
+    largest): io, latch, cpu-starved (run queue), cpu (busy computing) - or read-view: the threads mostly idle and next to
+    nothing purged while the history grows, i.e. purge may not remove it yet because an open transaction's read view
+    still needs it (P3 at 1024 threads on atcanary: purge 68-80% idle; more threads, priority and CPUs changed nothing).
+    Only fewer concurrent / shorter transactions help then."""
     if not p:
         return None
+    if p.get("purged_records_s") is not None and p["purged_records_s"] < 1 and p["other_pct"] >= 60:
+        return "read-view"
     cands = {"io": p["io_pct"], "latch": p["latch_pct"], "cpu-starved": p["runq_pct"], "cpu": p["cpu_pct"]}
     k, v = max(cands.items(), key=lambda kv: kv[1])
     return k if v >= 25 else None

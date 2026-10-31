@@ -3070,11 +3070,12 @@ def _purge_triage(c, running, deadline, start_bench=None, measure_all=False):
         # (env 56: batch size 1000 "cut" growth 40% at -38% tps, the same ~1 undo log per transaction)
         partial = not stable and _per_trx(seg) is not None and _per_trx(ref) and _per_trx(seg) <= TRIAGE_HELP * _per_trx(ref)
         seg.update(cost_pct=round(cost, 1), result="stable" if stable else "partial" if partial else "no effect", _changes=changes)
-        log(f"   {cand['label']:42} history {seg['hll_per_min']:+,}/min, {seg['tps']} tps ({-cost:+.1f}%): {seg['result']}"
+        hll_ = f"{seg['hll_per_min']:+,}/min" if seg.get("hll_per_min") is not None else "not measured"
+        log(f"   {cand['label']:42} history {hll_}, {seg['tps']} tps ({-cost:+.1f}%): {seg['result']}"
             + (f" (purge threads' nice: {seg['purge_nice']})" if "purge_nice" in seg else "")
             + (f"\n      {purgeprof.text(seg['purge'])}" if seg.get("purge") else ""))
         c.event("purge_triage", f"purge triage step: {cand['label']} ({', '.join(f'{k}={x}' for k, x in changes)}): history "
-                f"{seg['hll_per_min']:+,}/min vs {ref['hll_per_min']:+,}/min, {seg['tps']} tps ({-cost:+.1f}%) - {seg['result']}",
+                f"{hll_} vs {ref['hll_per_min']:+,}/min, {seg['tps']} tps ({-cost:+.1f}%) - {seg['result']}",
                 dict({k: x for k, x in seg.items() if k != "_changes"}, reference=ref))
         return seg
 
@@ -3173,8 +3174,8 @@ def _cause_rank(cand, cause):
     cpu_side = bool(keys & {"rg:purge", "innodb_purge_threads", "os:mysqld_cap_sys_nice"})
     if cause == "io":  # page reads: buffer the purge's index changes, then fewer foreground readers; more CPU cannot help
         return 0 if "innodb_change_buffering" in keys else 1 if limiter else 2
-    if cause == "latch":  # contention on the same pages / index locks: fewer threads at once
-        return 0 if limiter else 1
+    if cause in ("latch", "read-view"):  # contention on the same pages / index locks, or open read views holding the
+        return 0 if limiter else 1           # history: fewer transactions at once
     if cause in ("cpu-starved", "cpu"):  # waiting for or busy on a CPU: priority, CPUs of its own, more threads
         return 0 if cpu_side else 1
     return 0
