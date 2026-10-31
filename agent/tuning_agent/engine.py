@@ -2925,6 +2925,81 @@ def incompat_guard(items, ctx):
     return items
 
 
+# what an idea's settings act on, by the disk I/O they would change (docs/research/var-evidence + the eBPF I/O profile)
+IO_FLUSHING = {"innodb_io_capacity", "innodb_io_capacity_max", "innodb_max_dirty_pages_pct", "innodb_max_dirty_pages_pct_lwm",
+               "innodb_adaptive_flushing_lwm", "innodb_adaptive_flushing", "innodb_flush_neighbors", "innodb_lru_scan_depth",
+               "innodb_page_cleaners", "innodb_redo_log_capacity", "innodb_log_file_size", "innodb_flush_sync",
+               "innodb_doublewrite", "innodb_doublewrite_pages"}
+IO_COMMIT = {"innodb_flush_log_at_trx_commit", "innodb_log_writer_threads", "sync_binlog", "binlog_group_commit_sync_delay",
+             "binlog_group_commit_sync_no_delay_count", "innodb_log_spin_cpu_abs_lwm", "innodb_log_spin_cpu_pct_hwm",
+             "innodb_log_wait_for_flush_spin_hwm", "innodb_use_fdatasync", "innodb_flush_method"}
+IO_READS = {"innodb_buffer_pool_size", "innodb_random_read_ahead", "innodb_read_ahead_threshold", "innodb_old_blocks_time",
+            "innodb_old_blocks_pct"}
+
+
+def io_facts(ctx):
+    """From the run's I/O profile: page cleaner device share and KiB per transaction, connection-thread reads per
+    transaction and their device share, cache flushes per transaction issued by connection threads (a commit that
+    syncs its own redo / binlog), and how busy the disk is. None without a profile."""
+    s = ctx.get("summary") or {}
+    roles = (((ctx.get("inputs") or {}).get("io_profile") or {}).get("by_role")) or {}
+    if not roles:
+        return None
+    trx = s.get("tps") or s.get("qps") or 0
+    q = roles.get("queries (connection threads)") or {}
+    fl = (q.get("flush") or {}).get("per_s") or 0
+    return {"cleaner_share": s.get("io_cleaner_device_share_pct") or 0.0,
+            "cleaner_kb_per_trx": s.get("io_cleaner_write_kb_per_trx") or 0.0,
+            "query_read_kb_per_trx": s.get("io_queries_read_kb_per_trx") or 0.0,
+            "query_share": s.get("io_queries_device_share_pct") or 0.0,
+            "query_read_share": round(100.0 * ((q.get("read") or {}).get("device_s_per_s") or 0)
+                                      / max(1e-9, sum(v.get("device_s_per_s") or 0 for v in roles.values())), 1),
+            "commit_flushes_per_trx": round(fl / trx, 3) if trx else None,
+            "disk_util": s.get("disk_util") or 0.0,
+            "stalls": (s.get("flush_sync_pages_s") or 0) > 0 or (s.get("bp_wait_free") or 0) >= 1 or (s.get("redo_space_waits_s") or 0) > 0}
+
+
+def io_adjust(it, ctx):
+    """An idea's relevance from what its settings act on in the measured disk I/O: flushing settings when the page
+    cleaner barely touches the disk and nothing stalls on flushing (less likely); commit settings when connection
+    threads sync on every transaction (more); read settings when connection threads' page reads hold most of the
+    device time (more) or read nothing (less). Evidence recorded either way."""
+    f = io_facts(ctx)
+    if not f:
+        return
+    keys = {c["variable"] for c in it.get("changes") or []}
+    ev = it.setdefault("evidence", {})
+    rel = it.get("relevance")
+    def note(txt):
+        it["rationale"] = (it.get("rationale") or "") + " " + txt
+    if keys & IO_FLUSHING:
+        ev.update(io_cleaner_device_share_pct=f["cleaner_share"], io_cleaner_write_kb_per_trx=f["cleaner_kb_per_trx"])
+        if f["cleaner_share"] < 10 and not f["stalls"] and f["disk_util"] < 50:
+            it["relevance"] = 0 if rel is None else min(rel, 1)
+            note(f"Disk I/O profile: the page cleaner has {f['cleaner_share']:.0f}% of the device time and nothing waits on "
+                 "flushing - flushing settings have little to act on.")
+        elif f["cleaner_share"] >= 40 and f["disk_util"] >= 50:
+            it["relevance"] = max(rel or 0, 3)
+            it.setdefault("addresses", []).append(f"page cleaner {f['cleaner_share']:.0f}% of the device time")
+    if keys & IO_COMMIT and f["commit_flushes_per_trx"] is not None:
+        ev["io_commit_flushes_per_trx"] = f["commit_flushes_per_trx"]
+        if f["commit_flushes_per_trx"] >= 0.5:
+            it["relevance"] = max(rel or 0, 3 if f["commit_flushes_per_trx"] >= 0.9 else 2)
+            it.setdefault("addresses", []).append(f"{f['commit_flushes_per_trx']:.2f} cache flushes per transaction by connection threads")
+            note(f"Disk I/O profile: connection threads issue {f['commit_flushes_per_trx']:.2f} cache flushes per transaction - "
+                 "commits sync on their own, little grouping.")
+    def shrinks_pool(c):
+        return c["variable"] == "innodb_buffer_pool_size" and (parse_size(str(c.get("proposed"))) or 0) < (parse_size(str(c.get("current"))) or 0)
+    if keys & IO_READS and not any(shrinks_pool(c) for c in it.get("changes") or []):  # a smaller pool is judged on memory
+        ev.update(io_queries_read_kb_per_trx=f["query_read_kb_per_trx"], io_queries_read_device_share_pct=f["query_read_share"])
+        if f["query_read_share"] >= 40:
+            it["relevance"] = max(rel or 0, 3)
+            it.setdefault("addresses", []).append(f"page reads by queries {f['query_read_share']:.0f}% of the device time")
+        elif f["query_read_kb_per_trx"] < 0.5 and f["query_read_share"] < 5:
+            it["relevance"] = 0 if rel is None else min(rel, 1)
+            note("Disk I/O profile: queries read almost nothing from disk - read settings have little to act on.")
+
+
 def memory_fits(ctx, var, val):
     """(fits, text): a memory setting at this value against the host's memory budget as memory_gate measures it (model
     corrected by mysqld's measured memory, free swap, the no-swap margin). For experiments a person or a pipeline asks for:
@@ -3191,6 +3266,8 @@ def run_engine(ctx):
         if it["safety"] == "trade-off" and it["kind"] == "config" and not benchmark:
             it["kind"] = "advice"
             it["note"] = (it.get("note", "") + " Trade-off: not applied under policy=safe.").strip()
+        if it["kind"] == "config":
+            io_adjust(it, ctx)
         sc = score(it, ctx.get("goal", "tps")) + (2 if it["kind"] == "revert" else 0) - (2 if it.get("score_note") else 0) + it.get("score_prior", 0) \
             - (10 if it.get("no_mechanism") else 0) + (it.get("rescore") or {}).get("delta", 0)
         if it.get("relevance") is not None:

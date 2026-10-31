@@ -4207,6 +4207,32 @@ def test_io_profile_attributes_disk_io_to_innodb_subsystems():
     assert probes.io_role(1, "ib_srv_purge") == "purge" and probes.io_role(0, "jbd2/sda-8") == "filesystem journal"
 
 
+def test_rules_use_the_io_profile():
+    """Flushing ideas lose relevance when the page cleaner barely uses the disk and nothing stalls; commit ideas gain it
+    when connection threads sync every transaction; a buffer pool shrink is never judged on reads."""
+    from tuning_agent import engine
+    roles = {"queries (connection threads)": {"flush": {"per_s": 780.0, "device_s_per_s": 0.06}, "read": {"per_s": 5, "mb_s": 0.0, "device_s_per_s": 0.001},
+                                              "write": {"per_s": 780, "mb_s": 6.8, "device_s_per_s": 0.12}, "device_s_per_s": 0.18},
+             "page cleaner (flushing)": {"write": {"per_s": 20, "mb_s": 0.3, "device_s_per_s": 0.01}, "device_s_per_s": 0.01}}
+    s = {"tps": 800.0, "io_cleaner_device_share_pct": 5.0, "io_cleaner_write_kb_per_trx": 0.4, "io_queries_read_kb_per_trx": 0.0,
+         "io_queries_device_share_pct": 95.0, "disk_util": 20.0}
+    ctx = {"summary": s, "inputs": {"io_profile": {"by_role": roles}}}
+    io = {"id": "io-capacity-up", "kind": "config", "relevance": 2, "rationale": "r", "changes": [{"variable": "innodb_io_capacity", "proposed": "4000", "current": "2000"}]}
+    engine.io_adjust(io, ctx)
+    assert io["relevance"] == 1 and "page cleaner" in io["rationale"], io
+    tc = {"id": "trx-commit-2", "kind": "config", "relevance": 1, "rationale": "r", "changes": [{"variable": "innodb_flush_log_at_trx_commit", "proposed": "2", "current": "1"}]}
+    engine.io_adjust(tc, ctx)
+    assert tc["relevance"] == 3 and tc["evidence"]["io_commit_flushes_per_trx"] == 0.975, tc
+    shrink = {"id": "bp-rightsize", "kind": "config", "relevance": 2, "rationale": "r",
+              "changes": [{"variable": "innodb_buffer_pool_size", "proposed": "8G", "current": "16G"}]}
+    engine.io_adjust(shrink, ctx)
+    assert shrink["relevance"] == 2 and "io_queries_read_kb_per_trx" not in shrink.get("evidence", {}), shrink
+    grow = {"id": "bp-grow", "kind": "config", "relevance": 2, "rationale": "r",
+            "changes": [{"variable": "innodb_buffer_pool_size", "proposed": "24G", "current": "16G"}]}
+    engine.io_adjust(grow, ctx)
+    assert grow["relevance"] == 1, grow
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
