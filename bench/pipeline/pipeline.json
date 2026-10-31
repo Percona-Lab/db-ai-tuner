@@ -1366,7 +1366,8 @@
    ],
    "group": false,
    "est_hours": 8,
-   "question": "Change buffering on P3 (writes, 1024 threads, partly cached), where purge cannot keep up: does buffering purge's secondary-index work (all vs none) change the history growth, page reads per transaction and throughput? Uses the P3 data already on atcanary"
+   "question": "Change buffering on P3 (writes, 1024 threads, partly cached), where purge cannot keep up: does buffering purge's secondary-index work (all vs none) change the history growth, page reads per transaction and throughput? Uses the P3 data already on atcanary",
+   "min_free_gb": 15
   }
  ]
 }

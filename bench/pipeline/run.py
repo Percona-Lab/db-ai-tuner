@@ -93,6 +93,9 @@ PREFLIGHT = ("df -k --output=avail,size /var/lib | tail -1; "
              "ls /swapstudy.img /etc/mysql/mysql.conf.d/zzz-swapstudy.cnf 2>/dev/null")
 
 
+FREE_GB = {}  # hosts held back only for free disk: their free GB (an item reusing the data set already there may run)
+
+
 def preflight(host):
     """None when the box can take an item, else why not: little free disk, the database server down, a study's
     leftovers (h2h W4 on AMD, 2026-10-24: the swap study left a full disk and its swap file; the next item failed in
@@ -111,6 +114,7 @@ def preflight(host):
     why = []
     if avail < max(50 * 2 ** 20, size // 10):
         why.append(f"disk {avail // 2 ** 20} GB free of {size // 2 ** 20} GB")
+        FREE_GB[host] = avail // 2 ** 20
     if "DB_UP" not in out:
         why.append("database server not running")
     left = [l for l in lines[1:] if l.startswith("/")]
@@ -198,8 +202,12 @@ def tick():
         return
     free = {h for it in items for h in it["hosts"]} - busy
     blocked = st.setdefault("_blocked", {})
+    low_disk = {}
     for h in sorted(free):
+        FREE_GB.pop(h, None)
         why = preflight(h)
+        if why and why.startswith("disk ") and ";" not in why and h in FREE_GB:
+            low_disk[h] = FREE_GB[h]  # only short of disk: items that bring no new data set (min_free_gb) may still run
         if why:
             free.discard(h)
             if blocked.get(h) != why:  # logged once per reason; checked again every tick
@@ -213,7 +221,8 @@ def tick():
             continue
         if it["script"] in st.get("_held", {}):
             continue
-        cand = [h for h in it["hosts"] if h in free]
+        cand = [h for h in it["hosts"] if h in free or (it.get("min_free_gb") and low_disk.get(h, -1) >= it["min_free_gb"]
+                                                         and h not in busy)]
         if it.get("group"):
             if len(cand) == len(it["hosts"]):
                 start(it, it["hosts"], st)
@@ -221,6 +230,7 @@ def tick():
         elif cand:
             start(it, [cand[0]], st)
             free.discard(cand[0])
+            low_disk.pop(cand[0], None)
     save(st)
 
 
