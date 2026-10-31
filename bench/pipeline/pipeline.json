@@ -1346,7 +1346,8 @@
     "P5"
    ],
    "hosts": [
-    "atvbmamd"
+    "atvbmamd",
+    "atcanary"
    ],
    "group": false,
    "est_hours": 10,
