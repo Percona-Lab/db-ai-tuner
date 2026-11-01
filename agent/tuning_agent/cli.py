@@ -4051,9 +4051,30 @@ def _validate_changes(c, changes, force=False):
                 errors.append(f"{var}={val} exceeds the memory budget of this {ram / 2 ** 30:.1f} GiB host (use force to override)")
             elif not force and (fit := _memory_fit(c, var, val)):
                 errors.append(fit + " (use force to override)")
+            elif (rng := _out_of_range(c, var, val)):
+                errors.append(rng)
             else:
                 ok.append({"variable": var, "value": val})
     return ok, errors
+
+
+def _out_of_range(c, var, val):
+    """Why var=val is outside the range the server accepts (it would be capped silently and the run would measure
+    another value), or None."""
+    from .knowledge import value_bounds, parse_size, series_of
+    from .mysqldb import flavor_of
+    n = parse_size(str(val))
+    if n is None:
+        return None
+    try:
+        v_ = c.db.variables()
+        series = series_of(flavor_of(v_)[0], v_.get("version"))
+    except Exception:
+        series = None
+    lo, hi = value_bounds(var, series)
+    if (lo is not None and n < lo) or (hi is not None and n > hi):
+        return f"{var}={val} is outside the range this server accepts ({lo:g} - {hi:g}): it would be capped and measure another value"
+    return None
 
 
 def _memory_fit(c, var, val):

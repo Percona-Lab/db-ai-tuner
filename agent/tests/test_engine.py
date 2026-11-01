@@ -4291,6 +4291,25 @@ def test_bundle_ablation_thp_rule_and_rejudge_note():
     assert thp_defrag("always") == "defer+madvise" and thp_defrag("never") == "never"
 
 
+def test_sweep_values_stay_in_range_and_commit_tradeoffs_need_commit_cost():
+    """Session 439: a dirty-page low-water mark sweep reached 160 and 320 (the server capped them at 99) and kept one as a
+    win; the large box: trx_commit=2 at 0.001 syncs per transaction and no commit waits has nothing to remove."""
+    from tuning_agent import engine
+    ctx = {"flavor": "percona", "version": (8, 4, 11), "variables": {"innodb_max_dirty_pages_pct": "90"}}
+    assert engine.clamp_values("innodb_max_dirty_pages_pct_lwm", ["20", "40", "160", "320"], ctx) == ["20", "40", "90"]
+    assert engine.clamp_values("innodb_io_capacity", ["50", "4000"], ctx) == ["100", "4000"]
+    it = {"id": "trx-commit-2", "kind": "config", "relevance": 2, "rationale": "r",
+          "changes": [{"variable": "innodb_flush_log_at_trx_commit", "proposed": "2", "current": "1"}]}
+    engine.commit_adjust(it, {"summary": {"tps": 7000.0, "log_fsyncs_per_s": 8.0},
+                              "breakdown": [{"name": "Waiting: row lock", "share_pct": 66, "tags": ["row-lock"]}]})
+    assert it["relevance"] == 0 and "group commit" in it["rationale"], it
+    hot = {"id": "trx-commit-2", "kind": "config", "relevance": 2, "rationale": "r",
+           "changes": [{"variable": "innodb_flush_log_at_trx_commit", "proposed": "2", "current": "1"}]}
+    engine.commit_adjust(hot, {"summary": {"tps": 1200.0, "log_fsyncs_per_s": 900.0},
+                               "breakdown": [{"name": "Waiting: commit - redo flush", "share_pct": 40, "tags": ["commit"]}]})
+    assert hot["relevance"] == 2, hot
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

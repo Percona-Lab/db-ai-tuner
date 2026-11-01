@@ -472,6 +472,24 @@ def server_variables():
     return _SERVER_VARS
 
 
+def value_bounds(variable, series=None):
+    """(min, max) a numeric setting accepts on this release series, from the parameter catalog (documented server
+    ranges), or (None, None). A value outside it is silently capped by the server: the sweep that 'kept' a dirty-page
+    low-water mark of 320 measured 99 (session 439, 2026-11-01)."""
+    try:
+        meta = (catalog().get(variable) or {}).get("versions") or {}
+    except Exception:
+        return None, None
+    def pick(x):
+        if isinstance(x, dict):
+            x = x.get(series) if series in x else (min(x.values(), key=lambda y: float(y)) if x else None)
+        try:
+            return float(x) if x not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+    return pick(meta.get("min")), pick(meta.get("max"))
+
+
 def series_of(flavor, version):
     """'percona 8.4' from a flavor and a version string (the inventory's and the server's evidence key)."""
     import re

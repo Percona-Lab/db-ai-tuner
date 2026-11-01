@@ -139,6 +139,35 @@ def trust_factor(history, var):
     return f
 
 
+def clamp_values(var, values, ctx):
+    """Sweep values within the range the server accepts on this release (catalog), and the dirty-page low-water mark
+    below the dirty-page limit: out of range the server caps silently and the run measures another value (session 439:
+    a low-water mark of 160 and 320 - 99 in fact - one of them kept as a win). Duplicates after clamping drop out."""
+    fl, ver = ctx.get("flavor"), ctx.get("version")
+    series = f"{fl} {ver[0]}.{ver[1]}" if fl and isinstance(ver, (tuple, list)) and len(ver) >= 2 else None
+    lo, hi = knowledge.value_bounds(var, series)
+    if var == "innodb_max_dirty_pages_pct_lwm":
+        try:
+            mx = float((ctx.get("variables") or {}).get("innodb_max_dirty_pages_pct") or 90)
+            hi = min(hi, mx) if hi is not None else mx
+        except (TypeError, ValueError):
+            pass
+    if lo is None and hi is None:
+        return values
+    out = []
+    for x in values:
+        n = parse_size(str(x))
+        if n is None:
+            out.append(x)
+            continue
+        c = min(max(n, lo if lo is not None else n), hi if hi is not None else n)
+        if c == n:
+            out.append(x)
+        else:
+            out.append(fmt_size(int(c)) if (KB.get(var) or {}).get("kind") == "size" else (str(int(c)) if float(c).is_integer() else str(c)))
+    return list(dict.fromkeys(out))
+
+
 def trust_scaled(var, values, current, factor):
     """Sweep values moved towards (factor < 1) or away from (factor > 1) the current value: in log space for sizes and
     other positive values (2G from 1G with factor 2 -> 4G), linearly otherwise. Non-numeric values stay."""
@@ -1475,6 +1504,7 @@ def recommend(ctx):
         tf = trust_factor(ctx.get("history"), var)
         if tf != 1.0 and var != "innodb_buffer_pool_size":  # the pool's range is set by memory, not by earlier steps
             values = trust_scaled(var, values, v.get(var), tf)
+        values = clamp_values(var, values, ctx)
         values = [x for x in dict.fromkeys(values) if x is not None and normalize(var, x) != normalize(var, v.get(var))]
         values, shape = shaped_values(var, values, v.get(var), direction)
         if var in v and len(values) >= 2:
@@ -3071,6 +3101,34 @@ def io_adjust(it, ctx):
             note("Disk I/O profile: queries read almost nothing from disk - read settings have little to act on.")
 
 
+COMMIT_PATH = {"innodb_flush_log_at_trx_commit", "sync_binlog", "binlog_group_commit_sync_delay",
+               "binlog_group_commit_sync_no_delay_count", "innodb_log_writer_threads", "innodb_use_fdatasync"}
+
+
+def commit_adjust(it, ctx):
+    """Commit-path settings when commits cost next to nothing: redo / binlog syncs well below one per 20 transactions
+    (group commit already spreads each over many) and commit waits under 5% of the time - their mechanism has nothing
+    to remove (the large box, sessions 432 / 438: ~7,000 tps at 6-11 redo fsyncs/s, 66% row-lock waits, CPU 96%:
+    trx_commit=2 measured +3.8% once, +0.1% later). Less relevant, with the reason."""
+    keys = {c["variable"] for c in it.get("changes") or []}
+    if not keys & COMMIT_PATH:
+        return
+    s = ctx.get("summary") or {}
+    tps = s.get("tps") or 0
+    if not tps:
+        return
+    syncs = (s.get("log_fsyncs_per_s") or 0) + (s.get("binlog_syncs_per_trx") or 0) * tps
+    per = syncs / tps
+    commit_sh = sum(p.get("share_pct") or 0 for p in ctx.get("breakdown") or [] if "commit" in (p.get("tags") or ()))
+    it.setdefault("evidence", {}).update(commit_syncs_per_trx=round(per, 4), commit_share_pct=round(commit_sh, 1))
+    if per < 0.05 and commit_sh < 5:
+        rel = it.get("relevance")
+        it["relevance"] = 0 if rel is None else min(rel, 0)
+        it["rationale"] = (it.get("rationale") or "") + (
+            f" Measured: {per:.3f} commit syncs per transaction ({syncs:.0f}/s at {tps:,.0f} tps) and commits {commit_sh:.0f}% of "
+            "the time - group commit already spreads each sync over many transactions; little for this setting to remove.")
+
+
 def memory_fits(ctx, var, val):
     """(fits, text): a memory setting at this value against the host's memory budget as memory_gate measures it (model
     corrected by mysqld's measured memory, free swap, the no-swap margin). For experiments a person or a pipeline asks for:
@@ -3340,6 +3398,7 @@ def run_engine(ctx):
             it["note"] = (it.get("note", "") + " Trade-off: not applied under policy=safe.").strip()
         if it["kind"] == "config":
             io_adjust(it, ctx)
+            commit_adjust(it, ctx)
         sc = score(it, ctx.get("goal", "tps")) + (2 if it["kind"] == "revert" else 0) - (2 if it.get("score_note") else 0) + it.get("score_prior", 0) \
             - (10 if it.get("no_mechanism") else 0) + (it.get("rescore") or {}).get("delta", 0)
         if it.get("relevance") is not None:
