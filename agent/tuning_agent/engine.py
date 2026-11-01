@@ -1239,6 +1239,19 @@ def recommend(ctx):
             b.add("os-thp-off", "Disable Transparent Huge Pages", [("os:thp", "never")],
                   "InnoDB accesses memory sparsely; THP compaction and khugepaged add latency spikes and memory bloat (worse with jemalloc).",
                   {"transparent_hugepage": v.get("os:thp")}, impact=2, confidence=2)
+        # transparent huge pages ON (a user's box, 2026-11-01: an AI idea, improved, 7,060-7,067): the rules only ever
+        # switched THP off (the usual MySQL advice). On a CPU-bound load working in memory, THP covers everything mysqld
+        # allocates - connection buffers, the adaptive hash index, allocator arenas - not only the buffer pool explicit huge
+        # pages cover, and TLB misses cost CPU. An experiment: compaction stalls and memory growth are its risks, and it
+        # must win beyond noise (not kept as hygiene)
+        if v.get("os:thp") in ("never", "madvise") and busy_ >= 70 and (s.get("bp_hit_pct") or 0) >= 99.5 \
+                and str(v.get("large_pages", "OFF")).upper() not in ("ON", "1") and not swapping:
+            b.add("os-thp-on", "Try Transparent Huge Pages (always)", [("os:thp", "always")],
+                  f"CPU-bound ({busy_:.0f}% busy) with the working set in memory ({s.get('bp_hit_pct'):.2f}% hits) and no explicit huge "
+                  "pages: with 4 KiB pages the CPU's TLB covers little of a large heap, and page walks cost CPU on every memory "
+                  "access. THP backs all of mysqld's memory with 2 MiB pages. Risks: khugepaged / compaction stalls (latency "
+                  "spikes) and memory growth - watch the p99 latency and memory. Experiment.",
+                  {"transparent_hugepage": v.get("os:thp"), "cpu_busy": busy_, "bp_hit_pct": s.get("bp_hit_pct")}, impact=1, confidence=1)
         if ssd and v.get("os:scheduler") not in (None, "none", "noop", "mq-deadline"):
             b.add("os-scheduler", "Use the 'none' I/O scheduler on SSD", [("os:scheduler", "none")],
                   f"Scheduler {v.get('os:scheduler')} reorders requests for rotating disks; SSD/NVMe/virtual disks do better without.",
@@ -1968,6 +1981,64 @@ def _practice_vars(r):
 def accepted_practices(history):
     """Variables of practice runs that did not regress: they stay."""
     return {v for r in history if is_practice_run(r) and r.get("verdict") not in ("regressed", "efficiency-loss") for v in _practice_vars(r)}
+
+
+ABLATE_MIN = 3        # a run changing at least this many settings of its own is a bundle
+ABLATE_MAX = 3        # settings ablated per bundle (trade-offs first)
+NOT_EXPERIMENTS = ("baseline", "confirm #", "best ", "rollback", "revert", "re-check", "server defaults", "validation", "ablate-")
+
+
+def ablation_items(items, ctx):
+    """Which setting of a bundle did it (learner 737 / 762: a six-setting group -7.6% and a three-setting change +23% that
+    nobody could attribute): after a run that changed ABLATE_MIN or more settings of its own beat or lost by more than twice
+    the noise, each of up to ABLATE_MAX of them is measured on its own - reverted alone from the kept bundle (a win), or
+    applied alone (a loss) - trade-offs first. Once per bundle run."""
+    hist = ctx.get("history") or []
+    v = ctx["variables"]
+    noise = float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0)
+    done = {str(h.get("label") or "").split(" ")[0] for h in hist}
+    out = []
+    for r in reversed(hist):
+        lab = str(r.get("label") or "")
+        if lab.startswith(NOT_EXPERIMENTS) or r.get("verdict") not in ("improved", "efficiency-gain", "regressed"):
+            continue
+        own = {}
+        for c in r.get("changes") or []:
+            if str(c.get("source") or "").startswith("rec:") and not str(c.get("reason") or "").startswith("companion") \
+                    and not str(c.get("source") or "")[4:].startswith(("revert", "rollback")):
+                own[c["variable"]] = c
+        d = (r.get("evaluation") or {}).get("goal_delta_pct")
+        if len(own) < ABLATE_MIN or d is None or abs(d) <= 2 * noise:
+            continue
+        won = r.get("verdict") != "regressed"
+        order = sorted(own.values(), key=lambda c: (not tradeoff_of(c["variable"], c.get("new")), c["variable"]))
+        for c in order[:ABLATE_MAX]:
+            var = c["variable"]
+            iid = f"ablate-{r['seq']}-{var.replace(':', '_')}"
+            if iid in done:
+                continue
+            if won:  # kept: revert this one alone, the rest stays
+                if normalize(var, v.get(var)) != normalize(var, c.get("new")):
+                    continue  # no longer in effect
+                val, what = c.get("old"), f"run {r['seq']} ({lab.split(' ')[0]}, {d:+.1f}%) without {var}"
+            else:     # reverted: apply this one alone
+                if normalize(var, v.get(var)) == normalize(var, c.get("new")):
+                    continue
+                val, what = c.get("new"), f"{var} alone from run {r['seq']} ({lab.split(' ')[0]}, {d:+.1f}%)"
+            if val in (None, ""):
+                continue
+            meta = KB.get(var, {})
+            trade = [t for t in [tradeoff_of(var, val)] if t]
+            out.append({"id": iid, "title": f"Ablation: {what}", "kind": "config",
+                        "changes": [{"variable": var, "current": v.get(var), "proposed": val}],
+                        "rationale": (f"Run {r['seq']} changed {len(own)} settings at once and measured {d:+.1f}% (noise ±{noise:.1f}%). "
+                                      + ("Reverting one at a time shows which of them the gain needs."
+                                         if won else "Applying one at a time shows which of them did the damage.")),
+                        "safety": "trade-off" if trade else "safe", "tradeoffs": trade, "evidence": {"bundle_run": r["seq"], "bundle_delta_pct": d},
+                        "impact": 2, "confidence": 2, "risk": meta.get("risk", "low"), "restart": not meta.get("dynamic", False),
+                        "goals": ["tps", "latency"], "score_prior": 4, "ablation": True})
+        break  # the latest bundle first; an older one after it
+    return items + out
 
 
 def stack_small_wins(items, ctx):
@@ -3129,6 +3200,7 @@ def run_engine(ctx):
     items = apply_history(items, ctx.get("history") or [], (ctx.get("summary") or {}).get("swap_total_mb"), ctx.get("managed"))
     items = practice_bundle(items, ctx.get("history") or [])
     items = stack_small_wins(items, ctx)
+    items = ablation_items(items, ctx)
     items = items + per_query_hints(ctx.get("history") or [], ctx["variables"])
     items = revert_suggestions(ctx.get("history") or [], ctx["variables"], ctx.get("goal", "tps"),
                                float(((ctx.get("noise") or {}).get("noise_pct")) or ctx.get("noise_pct") or 2.0), ctx.get("managed"),

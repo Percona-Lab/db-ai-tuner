@@ -1279,6 +1279,7 @@ async function sessionPage(id) {
     const sm = r.summary || {}, ev = r.evaluation || {}, out = [];
     const notSteady = ev.not_steady || (sm.steady_state && sm.steady_state.steady === false ? sm.steady_state.growing : null), warmShort = ev.warmup_short || sm.warmup_signals;
     if (mixedSwap && sm.swap_total_mb === 0) out.push(badge("noswap", "warn", "no swap", NO_SWAP_TIP));
+    if (ev.inconclusive) out.push(badge("inconclusive", "warn", "inconclusive", `Within the ±${ev.goal_noise_pct}% noise of this session: too noisy to tell no effect from a small one.`));
     if (ev.promising) out.push(badge("promising", "info", "promising", `${pct(ev.promising.goal_delta_pct)} beats the measured variation (±${ev.promising.point_threshold_pct}%) but not the ±${ev.promising.threshold_pct}% floor that holds until a re-check measures drift: measured again (with repeats) once a re-check has lowered the threshold.`));
     const pool = x => String(((x || {}).managed || {}).thread_handling || ((x || {}).config || {}).thread_handling || "").toLowerCase() === "pool-of-threads";
     const poolDiffers = d.runs.length && pool(r) !== pool(d.runs[0]);

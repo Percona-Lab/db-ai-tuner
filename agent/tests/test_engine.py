@@ -352,7 +352,7 @@ def test_noise_is_measured_per_environment():
     assert est["long_term_dof"] > 0 and est["noise_pct"] > 5, est
     # stable re-checks over time: threshold follows the measured variance
     runs = [mk(1, 1000), mk(2, 1001), mk(3, 999), mk(4, 1050, "b"), mk(5, 1000.5)]
-    assert evaluate.noise_estimate(runs)["noise_pct"] < 1
+    assert evaluate.noise_estimate(runs)["noise_pct"] <= evaluate.RESOLUTION_NOISE
 
 
 def test_ps_lite_before_ps_off():
@@ -1725,13 +1725,14 @@ def test_neutral_explained_promising_and_latency_gain():
     base = {"innodb_buffer_pool_size": "8G"}
     hist = [mk(1, "baseline (1/3)", 19685, 0.1815, 0.549, base), mk(2, "baseline (2/3)", 19703, 0.1812, 0.549, base),
             mk(3, "baseline (3/3)", 19624, 0.1822, 0.549, base)]
-    run = mk(4, "os-autogroup", 19802, 0.1376, 0.347, dict(base, **{"os:kernel.sched_autogroup_enabled": "0"}),
+    # +1.27% (the 1% resolution floor, 2026-11-01: +0.67% no longer counts as promising however tight the repeats)
+    run = mk(4, "os-autogroup", 19920, 0.1376, 0.347, dict(base, **{"os:kernel.sched_autogroup_enabled": "0"}),
              [{"variable": "os:kernel.sched_autogroup_enabled", "new": "0", "source": "rec:os-autogroup"}])
     noise = {"noise_pct": 2.0, "pooled_cv_pct": 0.21, "dof": 2, "long_term_dof": 0, "runs": [1, 2, 3]}
     v, d = evaluate.verdict(run, hist, "tps", noise)
     assert v == "neutral" and "within the ±2.0% noise threshold" in d["note"] and d.get("promising"), d
     assert d["secondary_gain"]["avg_latency_ms"]["faster_pct"] > 20 and "faster" in d["note"], d
-    v2, d2 = evaluate.verdict(run, hist, "tps", dict(noise, long_term_dof=3, noise_pct=0.53))
+    v2, d2 = evaluate.verdict(run, hist, "tps", dict(noise, long_term_dof=3, noise_pct=1.0))
     assert v2 == "improved" and not d2.get("promising"), (v2, d2)
 
 def test_steal_steady_level_not_flagged():
@@ -4256,6 +4257,38 @@ def test_purge_blocked_by_read_views():
     cands = [{"label": "prio", "changes": [("rg:purge", "prio=-10")], "restart": False, "last": False},
              {"label": "tc 8", "changes": [("innodb_thread_concurrency", "8")], "restart": False, "last": False}]
     assert cli._order_by_cause(cands, "read-view")[0]["label"] == "tc 8"
+
+
+def test_bundle_ablation_thp_rule_and_rejudge_note():
+    """A three-setting win beyond twice the noise gets one-at-a-time ablations (trade-offs first); THP ON is proposed on
+    a CPU-bound in-memory load without explicit huge pages and never kept as hygiene; a repeat-confirmed run's note says so."""
+    from tuning_agent import engine, evaluate
+    v = dict(VARS, innodb_doublewrite="OFF", innodb_buffer_pool_size=str(24 * 2 ** 30), **{"os:mount_barrier": "OFF"})
+    run = {"seq": 10, "label": "llm-bundle", "verdict": "improved", "evaluation": {"goal_delta_pct": 23.4},
+           "changes": [{"variable": "innodb_doublewrite", "old": "ON", "new": "OFF", "source": "rec:llm-bundle"},
+                       {"variable": "innodb_buffer_pool_size", "old": str(20 * 2 ** 30), "new": str(24 * 2 ** 30), "source": "rec:llm-bundle"},
+                       {"variable": "os:mount_barrier", "old": "ON", "new": "OFF", "source": "rec:llm-bundle"}]}
+    items = engine.ablation_items([], {"history": [run], "variables": v, "noise_pct": 2.0})
+    assert [i["id"] for i in items][:2] == ["ablate-10-innodb_doublewrite", "ablate-10-os_mount_barrier"], [i["id"] for i in items]
+    assert items[0]["changes"][0]["proposed"] == "ON" and items[0]["safety"] == "safe"
+    done = engine.ablation_items([], {"history": [run] + [{"seq": 11, "label": i["id"]} for i in items], "variables": v, "noise_pct": 2.0})
+    assert done == []
+    small = dict(run, evaluation={"goal_delta_pct": 3.0})
+    assert engine.ablation_items([], {"history": [small], "variables": v, "noise_pct": 2.0}) == []
+    thp = {"changes": [{"variable": "os:thp", "new": "always", "source": "rec:os-thp-on"}]}
+    assert evaluate.low_downside_kept(thp, "neutral", {"goal_delta_pct": 0.5, "goal_noise_pct": 2.0}) is None
+    off = {"changes": [{"variable": "os:thp", "new": "never", "source": "rec:best-practices"}]}
+    assert evaluate.low_downside_kept(off, "neutral", {"goal_delta_pct": 0.5, "goal_noise_pct": 2.0})
+    A, B = {"x": "1"}, {"x": "2"}
+    runs = [{"seq": 1, "managed": A, "goal_value": 1000, "verdict": "reference"}, {"seq": 2, "managed": A, "goal_value": 1002, "verdict": "repeat"},
+            {"seq": 3, "managed": B, "goal_value": 1015, "verdict": "neutral",
+             "evaluation": {"parent_runs": [1, 2], "hint_repeat": True, "note": "+1.40% is within the ±2.0% noise threshold: not kept."}},
+            {"seq": 4, "managed": B, "goal_value": 1030, "verdict": "repeat"}, {"seq": 5, "managed": B, "goal_value": 1028, "verdict": "repeat"}]
+    evaluate.confirm_pass(runs, "tps", {"noise_pct": 2.0})
+    assert runs[2]["verdict"] == "improved" and runs[2]["evaluation"]["note"].startswith("Confirmed by its repeats"), runs[2]
+    from tuning_agent import continuous  # noqa: F401
+    from tuning_agent.ostune import thp_defrag
+    assert thp_defrag("always") == "defer+madvise" and thp_defrag("never") == "never"
 
 
 if __name__ == "__main__":

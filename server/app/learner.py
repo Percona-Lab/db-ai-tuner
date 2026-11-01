@@ -179,6 +179,13 @@ def digest(sid):
         out_runs.append({
             "run": r["seq"], "label": (r["label"] or "")[:60], "verdict": r["verdict"],
             "goal": r["goal_value"], "delta_vs_parent_pct": ev.get("goal_delta_pct"),
+            # the threshold this verdict used (a confirmed repeat is judged on its repeats, at a lower two-stage threshold)
+            "threshold_pct": ev.get("confirmed_threshold_pct") if ev.get("confirmed") is not None else ev.get("goal_noise_pct"),
+            **({"confirmed_delta_pct": ev.get("confirmed_delta_pct")} if ev.get("confirmed") is not None else {}),
+            **({"inconclusive": True} if ev.get("inconclusive") else {}),
+            # cross-host confirmations re-measure another session's start and best configurations: not experiments
+            # (learner 737 / 749 read their start runs - the source's older baseline - as an untested six-setting bundle)
+            **({"role": "cross-host confirmation of another session (not an experiment)"} if str(r["label"] or "").startswith("confirm #") else {}),
             "changes": [f"{c.get('variable')}={c.get('new')}" for c in _uj(r["changes"], []) or []][:8],
             "hypothesis": {k: h.get(k) for k in ("kind", "target", "outcome") if h.get(k)} or None,
             "top_time": bd or None,
@@ -209,6 +216,8 @@ def digest(sid):
 SYSTEM = """You review finished MySQL tuning sessions of an automated, evidence-driven tuner and extract what they teach.
 Input: one session digest (conditions, measured time breakdown, every experiment with its verdict against its parent
 configuration and the noise threshold, hypothesis outcomes, measurement flags) and a list of insights already known.
+Each run carries delta_vs_parent_pct and the threshold_pct its verdict used (a repeat confirmed or refuted on its repeats
+also carries confirmed_delta_pct; that two-stage threshold is lower by design). Runs with a "role" are not experiments.
 These are summaries of experiment data, not general truths: one session on one host, with noise, in narrow conditions.
 Return:
 - insights: what was measured about a setting (or small group of settings) and its effect, phrased as an observation

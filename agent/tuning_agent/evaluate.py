@@ -37,7 +37,11 @@ KEY_EFFICIENCY = ("mysqld_cpu_ms_per_trx", "host_cpu_ms_per_trx", "disk_ios_per_
 
 DEFAULT_GOAL_NOISE = 2.0
 MIN_GOAL_NOISE = 2.0  # used only until the session (or this environment's history) has measured long-term variance
-RESOLUTION_NOISE = 0.5  # below this a difference is not worth acting on, however stable the environment
+# below this a difference is not worth acting on, however stable the environment: three agreeing baselines set +-0.5% in
+# session 459 and its runs then flipped between "regressed" -0.9% and "improved" +0.8% (learner, 2026-11-01); cross-host
+# confirmations: gains of a few percent often did not reproduce on an identical box
+RESOLUTION_NOISE = 1.0
+INCONCLUSIVE_NOISE = 5.0  # above this noise a result within it says nothing: "inconclusive", not a measured null
 MIN_EFF_NOISE = 3.0
 # an efficiency metric decides a verdict only when the resource is under load and its per-unit value is material: on an
 # in-memory read-only load 0.0014 -> 0.0008 KiB of disk per transaction is "-40%" of nothing (r1 RO-1: 6 such "gains")
@@ -1000,10 +1004,14 @@ def low_downside_kept(run, v, d, noise_pct=None):
     from .engine import LOW_DOWNSIDE_VARS
     if v != "neutral" or (d or {}).get("not_steady") or (d or {}).get("efficiency_worse"):
         return None
-    ch = [c.get("variable") for c in run.get("changes") or [] if not str(c.get("source") or "").startswith(("rollback", "rec:revert", "rec:drop-"))]
+    own = [c for c in run.get("changes") or [] if not str(c.get("source") or "").startswith(("rollback", "rec:revert", "rec:drop-"))]
+    ch = [c.get("variable") for c in own]
     dg = (d or {}).get("goal_delta_pct")
     harm_at = -0.5 * float((d or {}).get("goal_noise_pct") or noise_pct or DEFAULT_GOAL_NOISE)
-    if not ch or dg is None or dg <= harm_at or any(x not in LOW_DOWNSIDE_VARS for x in ch):
+    # transparent huge pages ON is no hygiene setting: it can help (TLB) or hurt (compaction stalls, memory bloat) - it
+    # earns its place with a gain like any experiment; switching it off stays low-downside
+    risky = any(c.get("variable") == "os:thp" and str(c.get("new")).lower() == "always" for c in own)
+    if not ch or dg is None or dg <= harm_at or risky or any(x not in LOW_DOWNSIDE_VARS for x in ch):
         return None
     return {"settings": sorted(set(ch)), "goal_delta_pct": dg}
 
@@ -1066,8 +1074,12 @@ def confirm_pass(runs, goal, noise):
                           f"the ±{thr:.2f}% threshold for these run counts." if eff else
                           f"Not confirmed: the repeat run(s) {ev['confirmed_runs']} measured {d:+.2f}% vs the parent, within the ±{thr:.2f}% "
                           "threshold for these run counts (the first run was lucky).")
-        elif ev.get("note", "").startswith(("Not confirmed", "Efficiency gain not confirmed")):
-            ev.pop("note")
+        elif new != r.get("verdict") or ev.get("note", "").startswith(("Not confirmed", "Efficiency gain not confirmed")) \
+                or "noise threshold" in ev.get("note", ""):
+            # the first run's note ("within the threshold", "not kept") no longer describes the verdict (learner 726:
+            # session 432 run 34 "improved" with a note saying +1.58% was within +-1.83%)
+            ev["note"] = (f"Confirmed by its repeats: runs {ev['confirmed_runs']} measured {d:+.2f}% vs the parent, beyond the "
+                          f"±{thr:.2f}% threshold for a repeat of a screened change ({len(rep)} vs {len(par)} runs).")
         if new != r.get("verdict") or ev != r.get("evaluation"):
             changed.append((r["seq"], r.get("verdict"), new))
             r["verdict"], r["evaluation"] = new, ev
@@ -1376,6 +1388,12 @@ def _explain_neutral(details, d_goal, goal_noise, noise):
     if floor_held and d_goal >= point:
         details["promising"] = {"goal_delta_pct": d_goal, "point_threshold_pct": round(point, 2), "threshold_pct": goal_noise}
         base += " Promising: it beats the measured variation, so it is measured again once a re-check has lowered the threshold."
+    if goal_noise >= INCONCLUSIVE_NOISE:
+        # with noise this high a result within it cannot tell "no effect" from "an effect the noise hides" (learner 763:
+        # spin loops toggled four times at +-6.2%)
+        details["inconclusive"] = True
+        base = (f"Inconclusive: {d_goal:+.2f}% is within the ±{goal_noise}% noise of this session - too noisy to tell no effect "
+                "from a small one. Not kept.")
     details["note"] = base + ((" " + details["note"]) if details.get("note") else "")
 
     if d_goal > goal_noise:

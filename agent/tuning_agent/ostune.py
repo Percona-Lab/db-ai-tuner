@@ -22,6 +22,12 @@ ALLOCATORS = {  # name -> (library candidates, apt package, dnf package)
 }
 
 
+
+def thp_defrag(enabled):
+    """The THP defrag mode for an 'enabled' mode: with THP always, compaction in the background (defer+madvise) - 'always'
+    would stall allocations for direct compaction, the latency risk THP is known for; otherwise the same word."""
+    return "defer+madvise" if str(enabled) == "always" else enabled
+
 def allocator_lib(name):
     libs = ALLOCATORS.get(name, ([], None, None))[0]
     return next((p for p in libs if os.path.exists(p)), None)
@@ -382,7 +388,7 @@ class OSApplier:
             for f in ("enabled", "defrag"):
                 p = f"/sys/kernel/mm/transparent_hugepage/{f}"
                 if os.path.exists(p):
-                    _write(p, value)
+                    _write(p, thp_defrag(value) if f == "defrag" else value)
             return False
         if name == "os:scheduler":
             _write(f"/sys/block/{self.device}/queue/scheduler", value)
@@ -569,7 +575,7 @@ class OSApplier:
         cmds = []
         if "os:thp" in osm:
             cmds += [f"/bin/sh -c 'echo {osm['os:thp']} > /sys/kernel/mm/transparent_hugepage/enabled'",
-                     f"/bin/sh -c 'echo {osm['os:thp']} > /sys/kernel/mm/transparent_hugepage/defrag'"]
+                     f"/bin/sh -c 'echo {thp_defrag(osm['os:thp'])} > /sys/kernel/mm/transparent_hugepage/defrag'"]
         if osm.get("os:rps") == "on":
             ncpu = os.cpu_count() or 1
             cmds.append("/bin/sh -c 'for q in /sys/class/net/*/queues/rx-*; do case $q in */lo/*) continue;; esac; "
