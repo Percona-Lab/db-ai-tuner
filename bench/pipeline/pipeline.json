@@ -1381,6 +1381,32 @@
    "group": false,
    "est_hours": 9,
    "question": "Evidence wave: matrix cell C2 (TPC-C 100 W, commit-heavy, high concurrency) with the I/O profile, mechanism evidence, trade-offs after the safe configuration, the inert-settings guard and the purge profile"
+  },
+  {
+   "id": "matrix-v3-D1",
+   "script": "matrix.sh",
+   "args": [
+    "D1"
+   ],
+   "hosts": [
+    "atvbm2"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Evidence wave: matrix cell D1 (read-only, medium concurrency, mostly on disk) with the I/O profile, mechanism evidence, trade-offs after the safe configuration, the inert-settings guard and the purge profile"
+  },
+  {
+   "id": "matrix-v3-X1",
+   "script": "matrix.sh",
+   "args": [
+    "X1"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Evidence wave: matrix cell X1 (explore: read-write, high concurrency, with AI ideas) with the I/O profile, mechanism evidence, trade-offs after the safe configuration, the inert-settings guard and the purge profile"
   }
  ]
 }
