@@ -1368,6 +1368,19 @@
    "est_hours": 8,
    "question": "Change buffering on P3 (writes, 1024 threads, partly cached), where purge cannot keep up: does buffering purge's secondary-index work (all vs none) change the history growth, page reads per transaction and throughput? Uses the P3 data already on atcanary",
    "min_free_gb": 15
+  },
+  {
+   "id": "matrix-v3-C2",
+   "script": "matrix.sh",
+   "args": [
+    "C2"
+   ],
+   "hosts": [
+    "atcanary"
+   ],
+   "group": false,
+   "est_hours": 9,
+   "question": "Evidence wave: matrix cell C2 (TPC-C 100 W, commit-heavy, high concurrency) with the I/O profile, mechanism evidence, trade-offs after the safe configuration, the inert-settings guard and the purge profile"
   }
  ]
 }
