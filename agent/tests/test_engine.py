@@ -2348,7 +2348,9 @@ def test_purge_triage_keeps_substantial_cuts_and_tries_the_lag_bound_last():
         kill = staticmethod(lambda: None)
 
     saved = {k: getattr(cli, k) for k in ("TRIAGE_SEG_S", "TRIAGE_RESTART_LEAD_S", "_apply_and_record", "_triage_candidates", "_segment",
-                                          "_triage_online")}
+                                          "_triage_online", "_stack_candidates")}
+    real_stack = cli._stack_candidates
+    cli._stack_candidates = lambda results, ref, cpus=None: []  # the stacking stage has its own scenario below
     saved_sleep = cli.time.sleep
     cli.time.sleep = lambda s: None
     cli.TRIAGE_SEG_S = cli.TRIAGE_RESTART_LEAD_S = 0
@@ -2399,6 +2401,13 @@ def test_purge_triage_keeps_substantial_cuts_and_tries_the_lag_bound_last():
         # the history is not growing now: nothing to do
         out = run([cand("conc 8", [("innodb_thread_concurrency", "8")])], [{"hll_per_min": -20, "tps": 1000, "hll_end": 5e5}])
         assert out["stable"] and not out["kept"] and not applied
+        # a user's box (2026-11-01): cap 4 held at -68%; the mildest cap (2 x 8 CPUs) with 32 purge threads holds at -6%
+        cli._stack_candidates = lambda results, ref, cpus=None: real_stack(results, ref, cpus=8)
+        out = run([cand("32 purge", [("innodb_purge_threads", "32")], restart=True), cand("conc 8", [("innodb_thread_concurrency", "8")]),
+                   cand("conc 4", [("innodb_thread_concurrency", "4")])],
+                  [ref, {"hll_per_min": 260000, "tps": 5100}, {"hll_per_min": 60000, "tps": 1800}, {"hll_per_min": -1000, "tps": 1600},
+                   {"hll_per_min": -200, "tps": 4700}])
+        assert out["stable"] and out["kept"] == [("innodb_thread_concurrency", "16"), ("innodb_purge_threads", "32")], out
     finally:
         cli.time.sleep = saved_sleep
         for k, x in saved.items():
@@ -4106,8 +4115,10 @@ def test_purge_profile_cause_and_triage_order():
 
 
 def test_triage_stacks_milder_limits_with_the_best_purge_side_setting():
-    """Session 439: concurrency 8 not stable (-64%), 4 stable (-68%); 32 purge threads cut growth per transaction most of
-    the purge-side settings. Stacked: cap 6 + it, cap 8 + it, the closest thread-pool step + it (without the resource group)."""
+    """Session 439 (8 CPUs): cap 8 not stable (-64%), cap 4 stable (-68%); 32 purge threads cut growth per transaction most.
+    A user's box held the history at -3..-8% with a cap or the thread pool plus more purge threads: the stacking tries
+    caps milder than any that held alone (2 x CPUs, CPUs, ... mildest first), then every thread-pool step - each with the
+    best purge-side setting, the thread pool without the resource group."""
     from tuning_agent import cli
     def r(label, changes, res, tps, hll):
         return {"label": label, "_changes": changes, "result": res, "tps": tps, "hll_per_min": hll}
@@ -4115,14 +4126,16 @@ def test_triage_stacks_milder_limits_with_the_best_purge_side_setting():
                r("prio", [("rg:purge", "prio=-10")], "no effect", 1552, 92947),
                r("tc 8", [("innodb_thread_concurrency", "8")], "no effect", 536, 19272),
                r("tc 4", [("innodb_thread_concurrency", "4")], "stable", 478, -11598),
-               r("tp max 16", [("thread_handling", "pool-of-threads"), ("thread_pool_max_threads", "16")], "no effect", 657, 2536)]
-    st = cli._stack_candidates(results, {"tps": 1504, "hll_per_min": 90686})
-    labels = [x["label"] for x in st]
-    assert labels[0].startswith("innodb_thread_concurrency 6") and labels[1].startswith("innodb_thread_concurrency 8"), labels
-    assert ("innodb_purge_threads", "32") in st[0]["changes"]
-    tp = st[2]
-    assert tp["restart"] and not any(k.startswith("rg:") for k, _ in tp["changes"]), tp
-
+               r("tp max 16", [("thread_handling", "pool-of-threads"), ("thread_pool_max_threads", "16")], "no effect", 657, 2536),
+               r("tp", [("thread_handling", "pool-of-threads")], "no effect", 864, 40886)]
+    st = cli._stack_candidates(results, {"tps": 1504, "hll_per_min": 90686}, cpus=8)
+    caps = [int(dict(x["changes"])["innodb_thread_concurrency"]) for x in st if x["family"] == "cap"]
+    assert caps == [16, 8, 6], caps
+    assert all(("innodb_purge_threads", "32") in x["changes"] for x in st)
+    tp = [x for x in st if x["family"] == "thread pool"]
+    assert [x["alone_tps"] for x in tp] == [864, 657] and all(x["restart"] for x in tp)
+    assert not any(k.startswith("rg:") for x in tp for k, _ in x["changes"])
+    assert cli._stack_candidates([r("tc 4", [("innodb_thread_concurrency", "4")], "stable", 478, -1)], {}, cpus=8) == []
 
 def test_flushing_evidence_and_inert_settings():
     """Flushing evidence from INNODB_METRICS: sync flushes make a larger redo a measured fix (even below 60% checkpoint

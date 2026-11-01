@@ -2857,7 +2857,7 @@ PROVISIONAL_WARMUP_S = 1800  # warm-up cap while no stable configuration exists:
                              # restarts are not a warm-up (matrix P5, 2026-10-27: 238 min recommended)
 TRIAGE_COMBOS = 3            # combinations of the best partial remedy with others that cut the growth, before giving up
 TRIAGE_STACK_COST = 20.0     # a stable remedy costing more throughput than this: milder limits stacked with the best purge-side
-TRIAGE_STACK = 3             # setting are tried (user, 2026-10-31: session 439 kept a concurrency cap of 4 at -68%)
+TRIAGE_STACK = 5             # setting are tried (user, 2026-10-31: session 439 kept a concurrency cap of 4 at -68%)
 PURGE_SIDE = ("innodb_purge_threads", "rg:purge", "innodb_change_buffering", "innodb_purge_batch_size")
 
 
@@ -3135,6 +3135,32 @@ def _purge_triage(c, running, deadline, start_bench=None, measure_all=False):
                 results.append(seg)
                 if seg["result"] == "stable":
                     stable = [seg]
+    win = max(stable, key=lambda x: x["tps"] or 0) if stable else None
+    if not win or win["cost_pct"] > TRIAGE_STACK_COST:
+        # nothing stable, or stable at a high price: limits milder than any that held alone, with more purge threads (the
+        # best purge-side setting) on top. A user's box: a cap or the thread pool plus more purge threads held the history
+        # at -3..-8% where the cap alone needed -68% (2026-11-01); session 439 jumped from a cap of 8 to 4.
+        before = win
+        tried_stack, cap_done = 0, False
+        for cand in _stack_candidates(results, ref):
+            if tried_stack >= TRIAGE_STACK or not (time_left(cand) and running.alive()):
+                break
+            if cand.get("family") == "cap" and cap_done:
+                continue  # a stricter cap than one that held only costs more
+            if win and cand.get("alone_tps") is not None and cand["alone_tps"] <= (win["tps"] or 0):
+                continue  # this limit alone already ran slower than the configuration that holds
+            if any(sorted(x["_changes"]) == sorted(cand["changes"]) for x in results):
+                continue
+            seg = judge(cand)
+            results.append(seg)
+            tried_stack += 1
+            if seg["result"] == "stable":
+                cap_done = cap_done or cand.get("family") == "cap"
+                if not win or (seg["tps"] or 0) > (win["tps"] or 0):
+                    win = seg
+                    log(f"   stacked: {cand['label']} holds the history at {-seg['cost_pct']:+.1f}%"
+                        + (f" instead of {-before['cost_pct']:+.1f}%" if before else ""))
+        stable = [win] if win else []
     if not stable:
         for cand in [x for x in cands if x["last"]]:
             if time_left(cand) and running.alive():
@@ -3142,19 +3168,6 @@ def _purge_triage(c, running, deadline, start_bench=None, measure_all=False):
                 if seg["result"] == "stable":
                     stable = [seg]
     win = max(stable, key=lambda x: x["tps"] or 0) if stable else None
-    if win and win["cost_pct"] > TRIAGE_STACK_COST:
-        # stable, but at a high price: milder limits with the best purge-side setting on top may hold it for less (the
-        # step from a cap of 8 - not stable - to 4 - stable at -68% - skipped everything between, session 439)
-        for cand in _stack_candidates(results, ref)[:TRIAGE_STACK]:
-            if not (time_left(cand) and running.alive()):
-                break
-            if any(sorted(x["_changes"]) == sorted(cand["changes"]) for x in results):
-                continue
-            seg = judge(cand)
-            results.append(seg)
-            if seg["result"] == "stable" and (seg["tps"] or 0) > (win["tps"] or 0):
-                win = seg
-                log(f"   stacked: {cand['label']} holds the history at {-seg['cost_pct']:+.1f}% instead of {-stable[0]['cost_pct']:+.1f}%")
     purgeprof.end(c.db, prof_undo)
     switch(win["_changes"] if win else [], "the stable configuration" if win else "back to the starting configuration")
     kept = win["_changes"] if win else []
@@ -3194,33 +3207,39 @@ def _order_by_cause(cands, cause):
     return sorted(cands, key=lambda x: (x["last"], _cause_rank(x, cause), idx[id(x)]))
 
 
-def _stack_candidates(results, ref):
-    """Milder limits with the best purge-side setting: for a concurrency cap, the middle between the highest cap measured
-    unstable and the lowest stable one, and the unstable cap itself, each with the purge-side remedy that cut the growth
-    per transaction most; the thread-pool step that came closest to stable, with it too."""
+def _stack_candidates(results, ref, cpus=None):
+    """Limits stacked with the best purge-side setting (the one that cut the growth per transaction most, usually the
+    most purge threads at the highest priority): concurrency caps milder than the strictest one that held alone - twice
+    the CPUs, the CPUs, the lowest cap measured unstable, the middle between it and the highest stable one - mildest
+    first; then every thread-pool step that did not hold alone, fastest first (without a resource group: refused with the
+    thread pool). Each carries family and the throughput the limit had alone."""
     def ch(x):
         return dict(x.get("_changes") or [])
+    cpus = cpus or os.cpu_count() or 1
     side = [x for x in results if x.get("_changes") and set(ch(x)) <= set(PURGE_SIDE) and _per_trx(x) is not None]
-    best_side = min(side, key=lambda x: _per_trx(x))["_changes"] if side else []
+    best_side = list(min(side, key=lambda x: _per_trx(x))["_changes"]) if side else []
+    if not best_side:
+        return []
     out = []
-    tc = [(int(ch(x)["innodb_thread_concurrency"]), x["result"] == "stable") for x in results
-          if set(ch(x)) == {"innodb_thread_concurrency"} and str(ch(x)["innodb_thread_concurrency"]).isdigit()]
-    lo = max([v for v, ok in tc if ok] or [0])
-    hi = min([v for v, ok in tc if not ok and v > lo] or [0])
-    if lo and hi:
-        mid = (lo + hi) // 2
-        if lo < mid < hi:
-            out.append({"label": f"innodb_thread_concurrency {mid}" + (" + the best purge-side setting" if best_side else ""),
-                        "changes": [("innodb_thread_concurrency", str(mid))] + list(best_side), "restart": False, "last": False})
-        if best_side:
-            out.append({"label": f"innodb_thread_concurrency {hi} + the best purge-side setting",
-                        "changes": [("innodb_thread_concurrency", str(hi))] + list(best_side), "restart": False, "last": False})
-    tp = [x for x in results if "thread_handling" in ch(x) and x["result"] != "stable" and x.get("hll_per_min") is not None]
-    side_tp = [(k, v) for k, v in best_side if not k.startswith("rg:")]  # resource groups are refused with the thread pool
-    if tp and side_tp:
-        near = min(tp, key=lambda x: x["hll_per_min"])
-        out.append({"label": f"{near['label']} + the best purge-side setting", "changes": list(near["_changes"]) + side_tp,
-                    "restart": True, "last": False})
+    tc = {int(ch(x)["innodb_thread_concurrency"]): x for x in results
+          if set(ch(x)) == {"innodb_thread_concurrency"} and str(ch(x)["innodb_thread_concurrency"]).isdigit()}
+    lo = max([v for v, x in tc.items() if x["result"] == "stable"] or [0])
+    unstable = sorted(v for v, x in tc.items() if x["result"] != "stable" and v > lo)
+    caps = {2 * cpus, cpus}
+    if unstable:
+        caps.add(unstable[0])
+        if lo and lo < (lo + unstable[0]) // 2 < unstable[0]:
+            caps.add((lo + unstable[0]) // 2)
+    for cap in sorted((x for x in caps if x > lo), reverse=True):
+        out.append({"label": f"innodb_thread_concurrency {cap} + {', '.join(f'{k}={v}' for k, v in best_side)}",
+                    "changes": [("innodb_thread_concurrency", str(cap))] + best_side, "restart": False, "last": False,
+                    "family": "cap", "alone_tps": (tc.get(cap) or {}).get("tps")})
+    side_tp = [(k, v) for k, v in best_side if not k.startswith("rg:")]
+    tps_ = sorted([x for x in results if "thread_handling" in ch(x) and x["result"] != "stable"], key=lambda x: -(x.get("tps") or 0))
+    if side_tp:
+        for x in tps_:
+            out.append({"label": f"{x['label']} + {', '.join(f'{k}={v}' for k, v in side_tp)}", "changes": list(x["_changes"]) + side_tp,
+                        "restart": True, "last": False, "family": "thread pool", "alone_tps": x.get("tps")})
     return out
 
 
