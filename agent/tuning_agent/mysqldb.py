@@ -87,18 +87,21 @@ class DB:
         except pymysql.MySQLError:
             return ""
 
-    _monitors_on = False
-
     def ensure_monitors(self):
         """Switch on the INNODB_METRICS modules the flushing / redo evidence reads (module_buffer, module_log; counters
-        only, cheap). Once per connection; returns None so `ensure_monitors() or innodb_metrics()` reads them."""
-        if not self._monitors_on:
+        only, cheap) whenever they are off: every mysqld restart (a run's data reset) switches them off again - M5 v3
+        ran with them off after the first reset. Returns None so `ensure_monitors() or innodb_metrics()` reads them."""
+        try:
+            on = self.scalar("SELECT COUNT(*) FROM information_schema.INNODB_METRICS WHERE NAME IN "
+                             "('buffer_flush_n_to_flush_by_age', 'log_on_file_space_waits') AND STATUS = 'enabled'")
+        except pymysql.MySQLError:
+            return None
+        if int(on or 0) < 2:
             for mod in ("module_buffer", "module_log"):
                 try:
                     self.execute(f"SET GLOBAL innodb_monitor_enable = '{mod}'")
                 except pymysql.MySQLError:
                     pass
-            self._monitors_on = True
         return None
 
     def threadpool_mariadb(self):
