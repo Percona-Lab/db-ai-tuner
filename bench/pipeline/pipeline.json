@@ -1407,6 +1407,129 @@
    "group": false,
    "est_hours": 10,
    "question": "Evidence wave: matrix cell X1 (explore: read-write, high concurrency, with AI ideas) with the I/O profile, mechanism evidence, trade-offs after the safe configuration, the inert-settings guard and the purge profile"
+  },
+  {
+   "id": "matrix-v3-P1",
+   "script": "matrix.sh",
+   "args": [
+    "P1"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Evidence wave: matrix cell P1 (read-only, high concurrency, partly cached) with the I/O profile, mechanism evidence, verdict and bundle fixes, trade-offs after the safe configuration"
+  },
+  {
+   "id": "matrix-v3-D3",
+   "script": "matrix.sh",
+   "args": [
+    "D3"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Evidence wave: matrix cell D3 (read-only, extreme concurrency, on disk) with the I/O profile, mechanism evidence, verdict and bundle fixes, trade-offs after the safe configuration"
+  },
+  {
+   "id": "matrix-v3-C4",
+   "script": "matrix.sh",
+   "args": [
+    "C4"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Evidence wave: matrix cell C4 (TPC-C 1000 W, commit-heavy, extreme concurrency) with the I/O profile, mechanism evidence, verdict and bundle fixes, trade-offs after the safe configuration"
+  },
+  {
+   "id": "matrix-v3-M1",
+   "script": "matrix.sh",
+   "args": [
+    "M1"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Evidence wave: matrix cell M1 (point selects, extreme concurrency, in memory) with the I/O profile, mechanism evidence, verdict and bundle fixes, trade-offs after the safe configuration"
+  },
+  {
+   "id": "matrix-v3-M6",
+   "script": "matrix.sh",
+   "args": [
+    "M6"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Evidence wave: matrix cell M6 (read-mostly hot rows, p95 latency) with the I/O profile, mechanism evidence, verdict and bundle fixes, trade-offs after the safe configuration"
+  },
+  {
+   "id": "matrix-v3-D5",
+   "script": "matrix.sh",
+   "args": [
+    "D5"
+   ],
+   "hosts": [
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Evidence wave: matrix cell D5 (TPC-H SF10, analytics) with the I/O profile, mechanism evidence, verdict and bundle fixes, trade-offs after the safe configuration"
+  },
+  {
+   "id": "matrix-v3-H1",
+   "script": "matrix.sh",
+   "args": [
+    "H1"
+   ],
+   "hosts": [
+    "atcanary"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Evidence wave: matrix cell H1 (HammerDB TPROC-C 200 W, 64 VU) with the I/O profile, mechanism evidence, verdict and bundle fixes, trade-offs after the safe configuration"
+  },
+  {
+   "id": "matrix-v3-C6",
+   "script": "matrix.sh",
+   "args": [
+    "C6"
+   ],
+   "hosts": [
+    "atcanary"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Evidence wave: matrix cell C6 (read-only point lookups, hot set) with the I/O profile, mechanism evidence, verdict and bundle fixes, trade-offs after the safe configuration"
+  },
+  {
+   "id": "matrix-v3-M2",
+   "script": "matrix.sh",
+   "args": [
+    "M2"
+   ],
+   "hosts": [
+    "atcanary"
+   ],
+   "group": false,
+   "est_hours": 10,
+   "question": "Evidence wave: matrix cell M2 (read-only, medium concurrency, in memory) with the I/O profile, mechanism evidence, verdict and bundle fixes, trade-offs after the safe configuration"
   }
  ]
 }
