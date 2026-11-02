@@ -205,6 +205,28 @@ API keys: __SERVER__/#/connect (an account is free; __SERVER__/quickstart walks 
 11. Finish: `tuning-agent rollback --best`, re-measure the best and the first configuration once more
     to confirm the gain is above noise, then `tuning-agent session stop`.
 
+## A load that is already running (continuous mode)
+
+When the workload is not started by the agent - a production-like load or a third-party benchmark that runs all the
+time and reconnects on its own after a restart - use a profile with `mode = continuous` (no `run` command):
+
+```ini
+[bench]
+name = live HammerDB load
+mode = continuous
+duration = 300        ; first calibration window; grown to whole cycles of the load
+min_qps = 20          ; the load counts as running above this ...
+min_connections = 4   ; ... and with at least this many client connections
+reconnect_max = 3900  ; seconds the client may take to come back after a mysqld restart
+```
+
+`tuning-agent autotune --bench live.ini` then judges each change A-B-A (the current configuration, the change, the
+current configuration again) on resource use per transaction (CPU, fsyncs, redo, I/O, memory) with the goal (e.g.
+average latency) and throughput as guards; windows cover whole cycles of the load (a purge job every 15 minutes, a
+checkpoint wave), windows that would straddle the client's own regular restart wait it out, online changes first,
+restart changes after, and a final start - tuned - start validation with full restarts. Expect about 1-2 hours per
+change.
+
 ## Long-running commands
 
 `measure run` blocks for warm-up + duration. Coding-agent shell tools usually time out after a few
@@ -227,7 +249,17 @@ a multi-GB buffer pool can take a minute.
   A change is kept only with a gain beyond noise - except low-downside best practices (huge pages, swappiness,
   noatime, the CPU governor, the I/O scheduler, THP off, flush_neighbors 0 ...), which stay unless the run leans to
   harm (worse than half the threshold, or more CPU / I/O per transaction). Settings that can help or hurt (NUMA
-  interleave, the thread pool ...) always need proof.
+  interleave, the thread pool, THP on ...) always need proof. The threshold is never below 1%; with session noise of
+  5% or more a result within it is marked `inconclusive` (too noisy to tell no effect from a small one), not a null.
+  A run re-judged on its repeats says so in its note, with the repeats' delta and threshold.
+* **Order of experiments:** safe ideas first; trade-offs (trx_commit=2, sync_binlog, performance_schema OFF, ...)
+  are measured on top of the best safe configuration in the trade-off budget (the last 30% of runs) or once safe
+  ideas run out, so a session reports both a production-safe and a trade-off configuration. Ideas whose mechanism
+  the measurements show idle are ranked down with the reason (e.g. commit-path settings when commits cost under one
+  sync per 20 transactions); settings that cannot matter are not run at all; sweep values stay within the range the
+  server accepts.
+* **Bundles:** when a run that changed three or more settings wins or loses by more than twice the noise, the next
+  runs measure its settings one at a time (`ablate-...` runs) to show which of them did it.
 * **Run quality flags** (on the run page and in `--json` evaluations) - say them when you report a result:
   * *CPU steal* (VMs): compared with the session's usual level and checked for swings inside the window; a steady
     level affects every run alike and is fine. Steal well off the usual level makes the run `unreliable` (excluded,
@@ -246,7 +278,11 @@ a multi-GB buffer pool can take a minute.
     the clean start does not count as stable; if the calibration or a re-check is unsustainable the triage runs again,
     and when nothing bounds the history autotune stops. `autotune --allow-unstable` tunes anyway (results then drift).
     The lag bound needs both `innodb_max_purge_lag` and `innodb_max_purge_lag_delay`: with a delay of 0 (the default)
-    InnoDB applies no delay at all.
+    InnoDB applies no delay at all. Each triage step shows where the purge threads' time goes (CPU, waiting for a CPU,
+    disk reads, latches, idle) and the remedies for that cause go first; "read-view" (purge mostly idle, nothing
+    purged) means open transactions hold the history and only fewer concurrent transactions help. When nothing holds
+    alone, or the fix costs over 20%, milder limits (a higher concurrency cap, the thread pool) are combined with more
+    purge threads - often far cheaper than a strict cap.
   * *not steady*, *low disk space*, *stalls*: see the badges.
 * Verdicts are re-judged against all other runs of the session when the noise is recalibrated; after updating the
   agent mid-session, `tuning-agent reevaluate` applies the current rules to earlier runs.
