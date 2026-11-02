@@ -1439,6 +1439,94 @@
    "question": "Evidence wave: matrix cell D3 (read-only, extreme concurrency, on disk) with the I/O profile, mechanism evidence, verdict and bundle fixes, trade-offs after the safe configuration"
   },
   {
+   "id": "micro-ahi-positive",
+   "script": "micro.sh",
+   "args": [
+    "ahi/positive"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark (adaptive hash index, positive): On in-memory point lookups at high concurrency, B-tree descents cost CPU and the adaptive hash index removes them: AHI ON raises throughput, with hash searches outnumbering B-tree searches."
+  },
+  {
+   "id": "micro-ahi-negative",
+   "script": "micro.sh",
+   "args": [
+    "ahi/negative"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark (adaptive hash index, negative): On updates of an indexed column the hash index is invalidated as fast as it is built: AHI ON does not raise throughput."
+  },
+  {
+   "id": "micro-cb-negative",
+   "script": "micro.sh",
+   "args": [
+    "cb/negative"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark (change buffering, negative): With the data in memory there are no leaf reads to defer: buffering 'all' changes nothing."
+  },
+  {
+   "id": "micro-bp-negative",
+   "script": "micro.sh",
+   "args": [
+    "bp/negative"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 4,
+   "question": "Mechanism micro-benchmark (buffer pool size, negative): With the whole data set in the pool, more pool changes nothing."
+  },
+  {
+   "id": "micro-cb-positive",
+   "script": "micro.sh",
+   "args": [
+    "cb/positive"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 6,
+   "question": "Mechanism micro-benchmark (change buffering, positive): Inserts with random secondary keys into data much larger than the buffer pool read a secondary-index leaf per row; change buffering defers those reads: buffering 'all' raises throughput and cuts page reads per transaction."
+  },
+  {
+   "id": "micro-bp-positive",
+   "script": "micro.sh",
+   "args": [
+    "bp/positive"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "Mechanism micro-benchmark (buffer pool size, positive): With a skewed working set larger than the pool, page reads are the cost a larger pool removes: throughput rises and reads per transaction fall as the pool grows."
+  },
+  {
    "id": "matrix-v3-C4",
    "script": "matrix.sh",
    "args": [

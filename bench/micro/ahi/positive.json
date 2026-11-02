@@ -1,0 +1,51 @@
+{
+ "mechanism": "adaptive hash index",
+ "role": "positive",
+ "claim": "On in-memory point lookups at high concurrency, B-tree descents cost CPU and the adaptive hash index removes them: AHI ON raises throughput, with hash searches outnumbering B-tree searches.",
+ "dataset": {
+  "tables": 8,
+  "rows": 4000000
+ },
+ "fixed": {},
+ "workload": {
+  "test": "oltp_point_select",
+  "threads": 64,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "innodb_adaptive_hash_index",
+  "values": [
+   "OFF",
+   "ON"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "OFF",
+   "to": "ON",
+   "metric": "tps",
+   "direction": "up",
+   "min_pct": 2
+  },
+  {
+   "kind": "signal",
+   "at": "OFF",
+   "metric": "cpu:B-tree / row access",
+   "op": ">=",
+   "value": 8
+  },
+  {
+   "kind": "ratio",
+   "at": "ON",
+   "num": "im:adaptive_hash_searches",
+   "den": "im:adaptive_hash_searches_btree",
+   "op": ">=",
+   "value": 1
+  }
+ ]
+}

@@ -19,6 +19,8 @@ for kv in $PRE_APPLY; do tuning-agent apply --set "$kv" --reason "session setup"
 tuning-agent session start --goal $GOAL ${LATENCY_STAT:+--latency-stat $LATENCY_STAT} --policy benchmark ${PLANNER:+--planner} ${AI_OFF:+--ai off} ${SCOPE:+--scope $SCOPE} ${STUDY:+--study "$STUDY"} --name "$NAME" --workload "$(grep '^name' $PROF | cut -d= -f2- | sed 's/^ //')" || exit 1
 [ -n "$SKIP_DEFAULTS" ] || tuning-agent measure run --bench $PROF --label "server defaults" || exit 1
 tuning-agent baseline --apply $BASELINE_ARGS || exit 1  # e.g. BASELINE_ARGS="--reserve-mem 1.5G" with a co-located client
+# settings a study fixes on top of the baseline (a micro-benchmark's 2 GB buffer pool): after it, or the baseline resets them
+for kv in $AFTER_BASELINE; do tuning-agent apply --set "$kv" --force --reason "study setup (fixed for this study)" || exit 1; done
 tuning-agent autotune --bench $PROF --calibrate ${CALIBRATE:-3} --max-runs $MAX --tradeoffs ${EXPLORE:+--explore} || exit 1
 [ -n "$POST" ] && { $POST "$PROF" || exit 1; }  # extra phases in the same session (e.g. queued experiment series)
 tuning-agent session stop

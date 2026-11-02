@@ -1,0 +1,53 @@
+{
+ "mechanism": "buffer pool size",
+ "role": "positive",
+ "claim": "With a skewed working set larger than the pool, page reads are the cost a larger pool removes: throughput rises and reads per transaction fall as the pool grows.",
+ "dataset": {
+  "tables": 8,
+  "rows": 16000000
+ },
+ "fixed": {},
+ "workload": {
+  "test": "oltp_point_select",
+  "threads": 64,
+  "rand": "pareto"
+ },
+ "warmup": 600,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "innodb_buffer_pool_size",
+  "values": [
+   "2G",
+   "4G",
+   "8G",
+   "16G"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "2G",
+   "to": "16G",
+   "metric": "tps",
+   "direction": "up",
+   "min_pct": 20
+  },
+  {
+   "kind": "response",
+   "from": "2G",
+   "to": "16G",
+   "metric": "trx:Innodb_buffer_pool_reads",
+   "direction": "down",
+   "min_pct": 30
+  },
+  {
+   "kind": "signal",
+   "at": "2G",
+   "metric": "off:Waiting: data page read",
+   "op": ">=",
+   "value": 1
+  }
+ ]
+}

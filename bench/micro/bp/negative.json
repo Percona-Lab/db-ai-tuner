@@ -1,0 +1,44 @@
+{
+ "mechanism": "buffer pool size",
+ "role": "negative",
+ "claim": "With the whole data set in the pool, more pool changes nothing.",
+ "dataset": {
+  "tables": 8,
+  "rows": 2000000
+ },
+ "fixed": {},
+ "workload": {
+  "test": "oltp_point_select",
+  "threads": 64,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "innodb_buffer_pool_size",
+  "values": [
+   "6G",
+   "12G",
+   "20G"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "6G",
+   "to": "20G",
+   "metric": "tps",
+   "direction": "flat",
+   "max_pct": 3
+  },
+  {
+   "kind": "signal",
+   "at": "6G",
+   "metric": "bp_hit_pct",
+   "op": ">=",
+   "value": 99.9
+  }
+ ]
+}

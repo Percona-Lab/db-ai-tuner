@@ -1,0 +1,35 @@
+{
+ "mechanism": "adaptive hash index",
+ "role": "negative",
+ "claim": "On updates of an indexed column the hash index is invalidated as fast as it is built: AHI ON does not raise throughput.",
+ "dataset": {
+  "tables": 8,
+  "rows": 4000000
+ },
+ "fixed": {},
+ "workload": {
+  "test": "oltp_update_index",
+  "threads": 64,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "innodb_adaptive_hash_index",
+  "values": [
+   "OFF",
+   "ON"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "OFF",
+   "to": "ON",
+   "metric": "tps",
+   "direction": "not_up"
+  }
+ ]
+}

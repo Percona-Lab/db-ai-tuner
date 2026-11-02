@@ -1,0 +1,53 @@
+{
+ "mechanism": "change buffering",
+ "role": "positive",
+ "claim": "Inserts with random secondary keys into data much larger than the buffer pool read a secondary-index leaf per row; change buffering defers those reads: buffering 'all' raises throughput and cuts page reads per transaction.",
+ "dataset": {
+  "tables": 8,
+  "rows": 16000000
+ },
+ "fixed": {
+  "innodb_buffer_pool_size": "2G"
+ },
+ "workload": {
+  "test": "oltp_insert",
+  "threads": 32,
+  "rand": "uniform"
+ },
+ "warmup": 600,
+ "duration": 600,
+ "goal": "tps",
+ "sweep": {
+  "variable": "innodb_change_buffering",
+  "values": [
+   "none",
+   "all"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "none",
+   "to": "all",
+   "metric": "tps",
+   "direction": "up",
+   "min_pct": 5
+  },
+  {
+   "kind": "response",
+   "from": "none",
+   "to": "all",
+   "metric": "trx:Innodb_buffer_pool_reads",
+   "direction": "down",
+   "min_pct": 20
+  },
+  {
+   "kind": "signal",
+   "at": "none",
+   "metric": "off:Waiting: data page read",
+   "op": ">=",
+   "value": 1
+  }
+ ]
+}

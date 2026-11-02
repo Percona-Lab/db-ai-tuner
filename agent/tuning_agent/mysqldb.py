@@ -91,13 +91,16 @@ class DB:
         """Switch on the INNODB_METRICS modules the flushing / redo evidence reads (module_buffer, module_log; counters
         only, cheap) whenever they are off: every mysqld restart (a run's data reset) switches them off again - M5 v3
         ran with them off after the first reset. Returns None so `ensure_monitors() or innodb_metrics()` reads them."""
+        # + the adaptive hash index and change buffer modules: their hit and merge counters are what the mechanism
+        # micro-benchmarks (and the AHI / change-buffering rules) read
         try:
             on = self.scalar("SELECT COUNT(*) FROM information_schema.INNODB_METRICS WHERE NAME IN "
-                             "('buffer_flush_n_to_flush_by_age', 'log_on_file_space_waits') AND STATUS = 'enabled'")
+                             "('buffer_flush_n_to_flush_by_age', 'log_on_file_space_waits', 'adaptive_hash_searches', "
+                             "'ibuf_merges') AND STATUS = 'enabled'")
         except pymysql.MySQLError:
             return None
-        if int(on or 0) < 2:
-            for mod in ("module_buffer", "module_log"):
+        if int(on or 0) < 4:
+            for mod in ("module_buffer", "module_log", "module_adaptive_hash", "module_ibuf_system"):
                 try:
                     self.execute(f"SET GLOBAL innodb_monitor_enable = '{mod}'")
                 except pymysql.MySQLError:
