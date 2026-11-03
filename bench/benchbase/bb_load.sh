@@ -9,7 +9,9 @@ DB=$(sed -n 's#.*jdbc:mysql://[^/]*/\([A-Za-z0-9_]*\)?.*#\1#p' "$T" | head -1)
 mysql -e "CREATE USER IF NOT EXISTS bb@'localhost' IDENTIFIED BY 'bb'; GRANT ALL ON *.* TO bb@'localhost'" || exit 2
 mysql -e "DROP DATABASE IF EXISTS $DB; CREATE DATABASE $DB"
 mkdir -p $D/load; C=$D/load/$W.xml
-sed -e "s/@WARMUP@/0/g" -e "s/@TIME@/10/g" -e "s/@TERMINALS@/1/g" "$T" > "$C"
+# scale factor (templates with @SF@): BB_SF, else the one chosen for this host (/root/bench/bb-sf/<workload>.sf), else 1
+SF=${BB_SF:-$(cut -d" " -f1 /root/bench/bb-sf/$W.sf 2>/dev/null)}
+sed -e "s/@WARMUP@/0/g" -e "s/@TIME@/10/g" -e "s/@TERMINALS@/1/g" -e "s/@SF@/${SF:-1}/g" "$T" > "$C"
 [ -n "$2" ] && sed -i "s#<loaderThreads>[0-9]*</loaderThreads>#<loaderThreads>$2</loaderThreads>#" "$C"
 cd /opt/benchbase || exit 2
 t0=$(date +%s)

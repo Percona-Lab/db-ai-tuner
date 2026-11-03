@@ -10,7 +10,9 @@ D=/root/bench/benchbase; T=$D/$W.xml.tpl
 BENCH=$(sed -n 's/.*bb-bench: *\([a-z]*\).*/\1/p' "$T" | head -1)
 [ -n "$TERM" ] || TERM=$(sed -n 's/.*bb-terminals: *\([0-9]*\).*/\1/p' "$T" | head -1)
 TS=$(date +%Y%m%d-%H%M%S); OUT=$D/results/$W-$TS; mkdir -p "$OUT"
-sed -e "s/@WARMUP@/$WARM/g" -e "s/@TIME@/$DUR/g" -e "s/@TERMINALS@/${TERM:-64}/g" "$T" > "$OUT/config.xml"
+# the scale factor the data was loaded with (some benchmarks pick keys from it): see bb_load.sh
+SF=${BB_SF:-$(cut -d" " -f1 /root/bench/bb-sf/$W.sf 2>/dev/null)}
+sed -e "s/@WARMUP@/$WARM/g" -e "s/@TIME@/$DUR/g" -e "s/@TERMINALS@/${TERM:-64}/g" -e "s/@SF@/${SF:-1}/g" "$T" > "$OUT/config.xml"
 echo "BenchBase $BENCH ($W): $TERM terminals, ${WARM}s warm-up + ${DUR}s measured; results $OUT"
 cd /opt/benchbase || exit 2
 ulimit -n 65535

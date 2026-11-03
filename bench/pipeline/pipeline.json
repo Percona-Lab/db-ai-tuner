@@ -1673,6 +1673,83 @@
    "question": "Mechanism micro-benchmark (innodb_io_capacity, positive): When InnoDB asks to flush more pages than innodb_io_capacity allows and the disk has room, the cap holds flushing back: raising it raises throughput."
   },
   {
+   "id": "bb-seats",
+   "script": "benchbase.sh",
+   "args": [
+    "seats",
+    "20",
+    "64",
+    "16"
+   ],
+   "hosts": [
+    "atvbm2",
+    "atvbmmia",
+    "atvbm",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "BenchBase SEATS (~20 GB, 64 terminals): airline booking with joins, secondary indexes and a mixed read / write mix - what does the tuner find beyond sysbench-shaped loads?"
+  },
+  {
+   "id": "bb-auctionmark",
+   "script": "benchbase.sh",
+   "args": [
+    "auctionmark",
+    "20",
+    "64",
+    "16"
+   ],
+   "hosts": [
+    "atvbm2",
+    "atvbmmia",
+    "atvbm",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 7,
+   "question": "BenchBase AuctionMark (~20 GB, 64 terminals): skewed auctions whose data changes as it runs - do the tuner's wins hold on a load that drifts within the run?"
+  },
+  {
+   "id": "bb-epinions",
+   "script": "benchbase.sh",
+   "args": [
+    "epinions",
+    "5",
+    "64",
+    "16"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbm2",
+    "atvbmmia",
+    "atvbm",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 5,
+   "question": "BenchBase Epinions (~5 GB, 64 terminals): join-heavy reads over a trust graph - do the top-statement plans and optimizer rules find anything (or correctly skip optimizer flags)?"
+  },
+  {
+   "id": "bb-voter",
+   "script": "benchbase.sh",
+   "args": [
+    "voter",
+    "sf=1",
+    "128",
+    "16"
+   ],
+   "hosts": [
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 4,
+   "question": "BenchBase Voter (128 terminals, binary log on): very short transactions on hot rows - commit path and contention, the real-world counterpart of the log writer and group commit micro-benchmarks."
+  },
+  {
    "id": "matrix-v3-M6",
    "script": "matrix.sh",
    "args": [
