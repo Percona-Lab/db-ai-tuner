@@ -1555,6 +1555,124 @@
    "question": "Evidence wave: matrix cell M1 (point selects, extreme concurrency, in memory) with the I/O profile, mechanism evidence, verdict and bundle fixes, trade-offs after the safe configuration"
   },
   {
+   "id": "micro-redo-positive",
+   "script": "micro.sh",
+   "args": [
+    "redo/positive"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 4,
+   "question": "Mechanism micro-benchmark (redo log capacity, positive): On an update-heavy load whose flushing is driven by redo age, a larger redo lets pages absorb more changes before they are written: throughput rises and pages flushed per transaction fall."
+  },
+  {
+   "id": "micro-redo-negative",
+   "script": "micro.sh",
+   "args": [
+    "redo/negative"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 2,
+   "question": "Mechanism micro-benchmark (redo log capacity, negative): A read-only load writes no redo: redo capacity changes nothing."
+  },
+  {
+   "id": "micro-iocap-negative",
+   "script": "micro.sh",
+   "args": [
+    "iocap/negative"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 2,
+   "question": "Mechanism micro-benchmark (innodb_io_capacity, negative): A read-only load in memory has nothing to flush: the flushing budget changes nothing."
+  },
+  {
+   "id": "micro-logwriter-low-concurrency",
+   "script": "micro.sh",
+   "args": [
+    "logwriter/low-concurrency"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 2,
+   "question": "Mechanism micro-benchmark (log writer threads, negative): With few concurrent commits there is little to group: dedicated log writer threads only add hand-offs (Parma Ham, 68 connections on 4 vCPUs: -43%). ON does not raise throughput."
+  },
+  {
+   "id": "micro-logwriter-high-concurrency",
+   "script": "micro.sh",
+   "args": [
+    "logwriter/high-concurrency"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 2,
+   "question": "Mechanism micro-benchmark (log writer threads, positive): With hundreds of concurrent durable commits, dedicated log writer threads group redo writes and syncs: ON does not lose, and syncs per transaction fall."
+  },
+  {
+   "id": "micro-binlog-positive",
+   "script": "micro.sh",
+   "args": [
+    "binlog/positive"
+   ],
+   "hosts": [
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 2,
+   "question": "Mechanism micro-benchmark (binlog group commit delay, positive): With the binary log on and synced at every group, a short group commit delay gathers more transactions per sync: binlog syncs per transaction fall."
+  },
+  {
+   "id": "micro-binlog-negative",
+   "script": "micro.sh",
+   "args": [
+    "binlog/negative"
+   ],
+   "hosts": [
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 2,
+   "question": "Mechanism micro-benchmark (binlog group commit delay, negative): With few concurrent commits a group commit delay only waits: it does not raise throughput."
+  },
+  {
+   "id": "micro-iocap-positive",
+   "script": "micro.sh",
+   "args": [
+    "iocap/positive"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 6,
+   "question": "Mechanism micro-benchmark (innodb_io_capacity, positive): When InnoDB asks to flush more pages than innodb_io_capacity allows and the disk has room, the cap holds flushing back: raising it raises throughput."
+  },
+  {
    "id": "matrix-v3-M6",
    "script": "matrix.sh",
    "args": [

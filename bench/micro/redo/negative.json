@@ -1,0 +1,36 @@
+{
+ "mechanism": "redo log capacity",
+ "role": "negative",
+ "claim": "A read-only load writes no redo: redo capacity changes nothing.",
+ "dataset": {
+  "tables": 8,
+  "rows": 4000000
+ },
+ "fixed": {},
+ "workload": {
+  "test": "oltp_read_only",
+  "threads": 64,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "innodb_redo_log_capacity",
+  "values": [
+   "512M",
+   "8G"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "512M",
+   "to": "8G",
+   "metric": "tps",
+   "direction": "flat",
+   "max_pct": 3
+  }
+ ]
+}

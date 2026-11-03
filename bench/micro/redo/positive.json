@@ -1,0 +1,54 @@
+{
+ "mechanism": "redo log capacity",
+ "role": "positive",
+ "claim": "On an update-heavy load whose flushing is driven by redo age, a larger redo lets pages absorb more changes before they are written: throughput rises and pages flushed per transaction fall.",
+ "dataset": {
+  "tables": 8,
+  "rows": 4000000
+ },
+ "fixed": {
+  "innodb_flush_log_at_trx_commit": "2"
+ },
+ "workload": {
+  "test": "oltp_update_non_index",
+  "threads": 64,
+  "rand": "uniform"
+ },
+ "warmup": 600,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "innodb_redo_log_capacity",
+  "values": [
+   "512M",
+   "2G",
+   "8G"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "512M",
+   "to": "8G",
+   "metric": "tps",
+   "direction": "up",
+   "min_pct": 5
+  },
+  {
+   "kind": "response",
+   "from": "512M",
+   "to": "8G",
+   "metric": "flush_pages_per_trx",
+   "direction": "down",
+   "min_pct": 20
+  },
+  {
+   "kind": "signal",
+   "at": "512M",
+   "metric": "flush_by_age_share_pct",
+   "op": ">=",
+   "value": 50
+  }
+ ]
+}

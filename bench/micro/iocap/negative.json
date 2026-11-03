@@ -1,0 +1,36 @@
+{
+ "mechanism": "innodb_io_capacity",
+ "role": "negative",
+ "claim": "A read-only load in memory has nothing to flush: the flushing budget changes nothing.",
+ "dataset": {
+  "tables": 8,
+  "rows": 4000000
+ },
+ "fixed": {},
+ "workload": {
+  "test": "oltp_read_only",
+  "threads": 64,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "innodb_io_capacity",
+  "values": [
+   "200",
+   "10000"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "200",
+   "to": "10000",
+   "metric": "tps",
+   "direction": "flat",
+   "max_pct": 3
+  }
+ ]
+}

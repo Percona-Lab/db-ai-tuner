@@ -1,0 +1,35 @@
+{
+ "mechanism": "log writer threads",
+ "role": "negative",
+ "claim": "With few concurrent commits there is little to group: dedicated log writer threads only add hand-offs (Parma Ham, 68 connections on 4 vCPUs: -43%). ON does not raise throughput.",
+ "dataset": {
+  "tables": 8,
+  "rows": 4000000
+ },
+ "fixed": {},
+ "workload": {
+  "test": "oltp_update_non_index",
+  "threads": 8,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "innodb_log_writer_threads",
+  "values": [
+   "OFF",
+   "ON"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "OFF",
+   "to": "ON",
+   "metric": "tps",
+   "direction": "not_up"
+  }
+ ]
+}

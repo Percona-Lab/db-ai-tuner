@@ -1,0 +1,37 @@
+{
+ "mechanism": "binlog group commit delay",
+ "role": "negative",
+ "claim": "With few concurrent commits a group commit delay only waits: it does not raise throughput.",
+ "dataset": {
+  "tables": 8,
+  "rows": 4000000
+ },
+ "fixed": {
+  "sync_binlog": "1"
+ },
+ "workload": {
+  "test": "oltp_update_non_index",
+  "threads": 4,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "binlog_group_commit_sync_delay",
+  "values": [
+   "0",
+   "1000"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "0",
+   "to": "1000",
+   "metric": "tps",
+   "direction": "not_up"
+  }
+ ]
+}

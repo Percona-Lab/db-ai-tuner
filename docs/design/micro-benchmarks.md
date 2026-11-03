@@ -81,6 +81,19 @@ Metric names (resolved from the run's summary and inputs, as the agent recorded 
 | bp | positive | 8 x 16M rows (~30 GB), skewed (pareto) point selects, 64 threads | pool 2, 4, 8, 16 GB | 16 vs 2 GB: tps up >= 20%, reads per trx down >= 30%; at 2 GB data page reads dominate |
 | bp | negative | 8 x 2M rows (~4 GB), uniform point selects | pool 6, 12, 20 GB | 20 vs 6 GB: flat |
 
+## Second suites (queued 2026-11-03)
+
+| Suite | Case | Load | Sweep | Expect |
+|---|---|---|---|---|
+| redo | positive | 8 x 4M in memory, updates of a non-indexed column, trx_commit=2, 64 threads | 512M, 2G, 8G | 8G vs 512M: tps up >= 5%, pages flushed per trx down >= 20%; at 512M flushing driven by redo age (>= 50%) |
+| redo | negative | read-only | 512M, 8G | flat |
+| iocap | positive | 8 x 16M on a 4 GB pool, updates, trx_commit=2, 64 threads | 200, 2000, 10000 | 2000 vs 200: tps up >= 5%; at 200 flushing requested >= the cap |
+| iocap | negative | read-only in memory | 200, 10000 | flat |
+| logwriter | low-concurrency (negative) | updates, 8 threads | OFF, ON | ON not up |
+| logwriter | high-concurrency (positive) | updates, 512 threads | OFF, ON | ON not down; redo fsyncs per trx down >= 10% |
+| binlog | positive | sync_binlog=1, updates, 128 threads | group commit delay 0, 1000 us | binlog syncs per trx down >= 30%; tps not down |
+| binlog | negative | sync_binlog=1, updates, 4 threads | 0, 1000 us | tps not up |
+
 ## Results
 
 | Date | Case | Verdict | Measured |
