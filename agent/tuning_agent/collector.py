@@ -1125,6 +1125,11 @@ def analyze_window(a, b, samples, warmup_s=None, warmup_tail=None, bench_started
                                          "dbproc_zswpout_per_s")},
         "swap_in_mbs_max": mx("os", "swap_in_mbs"), "swap_used_mb_max": mx("os", "swap_used_mb"),
         "dbproc_pss_mb_max": mx("os", "dbproc_pss_mb"), "dbproc_swap_pss_mb_max": mx("os", "dbproc_swap_pss_mb"),
+        # InnoDB background threads (hostinfo.BG_ROLES): CPU of each role, its busiest thread, its run-queue share
+        **{k: avg("os", k) for k in sorted({k for x in samples for k in (x.get("os") or {}) if k.startswith("bg_")})},
+        # transparent huge pages: how much of mysqld they back, faults served or falling back, compaction stalls
+        **{k: os_rates.get(k) for k in ("dbproc_anon_huge_mb", "thp_fault_alloc_per_s", "thp_fault_fallback_per_s",
+                                         "thp_collapse_per_s", "compact_stall_per_s")},
         "samples": len(samples),
     }
     if not summary["tps"] and summary["qps"]:

@@ -114,6 +114,58 @@ def ensure_perf(log=print):
 
 PRIO = ["nice", "-n", "-10"]  # perf record must keep up on a saturated host (see Profiler.start)
 
+# TLB cost of mysqld (docs/research/var-evidence item 6: the evidence for huge pages / THP). Misses per 1,000 instructions on
+# any PMU; on Intel also the cycles the page walkers were busy, as a share of all cycles - the CPU the TLB costs
+TLB_EVENTS = "cycles,instructions,dTLB-load-misses,dTLB-store-misses,iTLB-load-misses"
+WALK_EVENTS = (("dtlb_load_misses.walk_active", "dtlb_store_misses.walk_active", "itlb_misses.walk_active"),
+               ("dtlb_load_misses.walk_duration", "dtlb_store_misses.walk_duration", "itlb_misses.walk_duration"))
+_walk = []
+
+
+def walk_events():
+    """The page-walk cycle events this CPU's perf knows (Intel), or ()."""
+    if not _walk:
+        try:
+            out = subprocess.run(["perf", "list", "--no-desc"], capture_output=True, text=True, timeout=60).stdout
+        except Exception:  # noqa
+            out = ""
+        # the store-walk event is missing on some (atvbm: load and iTLB walks only); an unknown name fails the whole perf stat
+        known = set(re.findall(r"\b[a-z_]+_misses\.walk_(?:active|duration)\b", out))
+        _walk.append(next((tuple(e for e in fam if e in known) for fam in WALK_EVENTS if any(e in known for e in fam)), ()))
+    return _walk[0]
+
+
+def parse_stat(text):
+    """{event: count} from `perf stat -x,` output; events perf could not count are left out."""
+    out = {}
+    for line in text.splitlines():
+        f = line.split(",")
+        if len(f) >= 3 and f[0].replace(".", "", 1).isdigit():
+            out[f[2].split(":")[0]] = float(f[0])
+    return out
+
+
+def tlb_summary(c):
+    ins, cyc = c.get("instructions"), c.get("cycles")
+    if not ins:
+        return None
+    out = {"ipc": round(ins / cyc, 2) if cyc else None}
+    for k, name in (("dTLB-load-misses", "dtlb_load_mpki"), ("dTLB-store-misses", "dtlb_store_mpki"), ("iTLB-load-misses", "itlb_mpki")):
+        if k in c:
+            out[name] = round(1000.0 * c[k] / ins, 3)
+    walk = sum(v for k, v in c.items() if k.endswith((".walk_active", ".walk_duration")))
+    if walk and cyc:
+        out["tlb_walk_pct"] = round(100.0 * walk / cyc, 2)  # page walks overlap other work: an upper bound of what huge pages save
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def tlb_stat(pid, seconds):
+    """Count mysqld's TLB events for `seconds` (counting mode: no sampling overhead)."""
+    ev = TLB_EVENTS + "".join("," + e for e in walk_events())
+    r = subprocess.run(["perf", "stat", "-x,", "-e", ev, "-p", str(pid), "--", "sleep", str(seconds)],
+                       capture_output=True, text=True, timeout=seconds + 60)
+    return tlb_summary(parse_stat(r.stderr))
+
 class Profiler:
     """Background `perf record` over a slice of the run; process() afterwards."""
 
@@ -146,12 +198,25 @@ class Profiler:
                         self.err = (r.stderr or r.stdout).strip()[-300:]
             except Exception as e:  # noqa
                 self.err = str(e)
+        def tlb():
+            try:
+                time.sleep(delay)
+                from .hostinfo import mysqld_pid
+                pid = mysqld_pid()
+                self.tlb = tlb_stat(pid, self.seconds) if pid else None
+            except Exception:  # noqa - the profile stands without it
+                self.tlb = None
+        self.tlb = None
         self._th = threading.Thread(target=run, daemon=True)
         self._th.start()
+        self._th_tlb = threading.Thread(target=tlb, daemon=True)
+        self._th_tlb.start()
 
     def join(self, timeout=None):
         if self._th:
             self._th.join(timeout)
+        if getattr(self, "_th_tlb", None):
+            self._th_tlb.join(timeout)
 
     def process(self, db_pids, max_stacks=800):
         """Symbolise at low priority and aggregate. Returns a dict for the run inputs."""
@@ -242,4 +307,5 @@ class Profiler:
                        "areas": {k: round(100 * v / n, 1) for k, v in k_area.most_common()},
                        "contended_locks": {k: round(100 * v / n, 1) for k, v in k_lock.most_common() if v},
                        "top": [{"fn": k, "pct": round(100 * v / n, 2)} for k, v in k_leaf.most_common(15)]} if k_total[0] else None,
+            **({"tlb": self.tlb} if getattr(self, "tlb", None) else {}),
         }

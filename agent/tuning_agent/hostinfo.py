@@ -148,7 +148,8 @@ def mysqld_pid():
     return None
 
 
-SMAPS_KEYS = {"Pss": "pss", "Pss_Anon": "pss_anon", "Pss_File": "pss_file", "Pss_Shmem": "pss_shmem", "SwapPss": "swap_pss"}
+SMAPS_KEYS = {"Pss": "pss", "Pss_Anon": "pss_anon", "Pss_File": "pss_file", "Pss_Shmem": "pss_shmem", "SwapPss": "swap_pss",
+              "AnonHugePages": "anon_huge"}  # memory transparent huge pages back
 # HugetlbPages: huge-page memory is in neither RSS nor PSS (a 188 GB buffer pool in huge pages measured as 17 GB)
 STATUS_KEYS = {"VmRSS": "rss", "VmSize": "vsz", "VmSwap": "swap", "RssShmem": "rss_shmem", "HugetlbPages": "hugetlb"}
 
@@ -198,8 +199,20 @@ def process_memory(pids):
     return tot
 
 
+# InnoDB background threads by their kernel thread names (PS 8.0 / 9.x, checked on atvbm / atvbmamd 2026-11-03), grouped by
+# the settings that act on them (docs/research/var-evidence item 5): log writer threads, page cleaners, purge, I/O threads
+BG_ROLES = (("ib_log_writer", "log_writer"), ("ib_log_flush", "log_flusher"), ("ib_log_wr_notif", "log_notifier"),
+            ("ib_log_fl_notif", "log_notifier"), ("ib_log_checkpt", "log_checkpointer"), ("ib_pg_flush", "page_cleaner"),
+            ("ib_srv_purge", "purge"), ("ib_srv_wkr", "purge"), ("ib_src_main", "master"), ("ib_io_rd", "io_read"),
+            ("ib_io_wr", "io_write"), ("ib_io_ibuf", "io_ibuf"))
+
+
+def bg_role(name):
+    return next((r for p, r in BG_ROLES if (name or "").startswith(p)), None)
+
+
 def thread_sched(pids, limit=8192):
-    """Per-thread scheduler accounting: {tid: (on-CPU ns, run-queue wait ns, timeslices, involuntary switches)}.
+    """Per-thread scheduler accounting: {tid: (on-CPU ns, run-queue wait ns, timeslices, involuntary switches, name)}.
     /proc/<tid>/schedstat is kept by the kernel for every task (CONFIG_SCHED_INFO), no tracing needed."""
     out = {}
     for pid in pids:
@@ -211,13 +224,28 @@ def thread_sched(pids, limit=8192):
             st = _read(f"/proc/{pid}/task/{tid}/schedstat").split()
             if len(st) < 3:
                 continue
-            nv = 0
+            nv, name = 0, ""
             for line in _read(f"/proc/{pid}/task/{tid}/status").splitlines():
-                if line.startswith("nonvoluntary_ctxt_switches:"):
+                if line.startswith("Name:"):
+                    name = line.split(None, 1)[1] if len(line.split()) > 1 else ""
+                elif line.startswith("nonvoluntary_ctxt_switches:"):
                     nv = int(line.split()[1])
-            out[int(tid)] = (int(st[0]), int(st[1]), int(st[2]), nv)
+            out[int(tid)] = (int(st[0]), int(st[1]), int(st[2]), nv, name)
             if len(out) >= limit:
                 return out
+    return out
+
+
+def bg_rates(bg, dt):
+    """Per background role: CPU as % of one CPU (all its threads, and the busiest one - a single log writer near 100% is the
+    commit path's ceiling), and the share of its runnable time spent waiting for a CPU."""
+    out = {}
+    for role, (cpu_, runq_, top, n) in bg.items():
+        out[f"bg_{role}_cpu_pct"] = round(100.0 * cpu_ / dt / 1e9, 1)
+        if n > 1:
+            out[f"bg_{role}_max_thread_cpu_pct"] = round(100.0 * top / dt / 1e9, 1)
+        if cpu_ >= 0.01 * dt * 1e9:  # a thread that barely ran: its wait share says nothing (purge idle at 0% CPU, "59% waiting")
+            out[f"bg_{role}_runq_pct"] = round(100.0 * runq_ / (cpu_ + runq_), 1)
     return out
 
 
@@ -300,6 +328,10 @@ def cpu_clock():
     return out
 
 
+THP_VMSTAT = {"thp_fault_alloc": "thp_fault_alloc_per_s", "thp_fault_fallback": "thp_fault_fallback_per_s",
+              "thp_collapse_alloc": "thp_collapse_per_s", "compact_stall": "compact_stall_per_s"}
+
+
 class OSCounters:
     """Takes raw counters; rates computed between two snapshots."""
 
@@ -350,7 +382,7 @@ class OSCounters:
         vm = {}
         for line in _read("/proc/vmstat").splitlines():
             k, _, v = line.partition(" ")
-            if k in ("pswpin", "pswpout", "pgmajfault", "oom_kill"):
+            if k in ("pswpin", "pswpout", "pgmajfault", "oom_kill") or k in THP_VMSTAT:
                 vm[k] = int(v)
         s["vm"] = vm
         if self._numa_nodes > 1:  # allocation locality, page migrations and free memory per node
@@ -411,12 +443,19 @@ class OSCounters:
             prev, pt = getattr(self, "_sched", None), getattr(self, "_sched_t", None)
             if prev is not None and now_t > pt:
                 d = [0, 0, 0, 0]
+                bg = {}
                 for tid, v in cur.items():
                     base = prev.get(tid, (0, 0, 0, 0))  # new thread: started within the interval
                     for i in range(4):
                         d[i] += max(v[i] - base[i], 0)
-                s["dbsched"] = dict(sched_rates(d[0], d[1], d[2], now_t - pt, "dbproc_"), dbproc_nvcsw_per_s=round(d[3] / (now_t - pt), 1),
-                                    dbproc_threads=len(cur))
+                    role = bg_role(v[4])
+                    if role:
+                        cpu_, runq_ = max(v[0] - base[0], 0), max(v[1] - base[1], 0)
+                        r = bg.setdefault(role, [0, 0, 0, 0])
+                        r[0], r[1], r[2], r[3] = r[0] + cpu_, r[1] + runq_, max(r[2], cpu_), r[3] + 1
+                el = now_t - pt
+                s["dbsched"] = dict(sched_rates(d[0], d[1], d[2], el, "dbproc_"), dbproc_nvcsw_per_s=round(d[3] / el, 1),
+                                    dbproc_threads=len(cur), **bg_rates(bg, el))
             self._sched, self._sched_t = cur, now_t
         except Exception:  # best effort
             pass
@@ -463,6 +502,9 @@ class OSCounters:
         out["load1"] = b.get("load1", 0)
         va, vb = a.get("vm", {}), b.get("vm", {})
         for k, name in (("pswpin", "swap_in"), ("pswpout", "swap_out"), ("pgmajfault", "major_faults")):
+            if k in va and k in vb:
+                out[name] = round((vb[k] - va[k]) / dt, 2)
+        for k, name in THP_VMSTAT.items():  # THP faults served / falling back to 4 KiB, collapses, compaction stalls
             if k in va and k in vb:
                 out[name] = round((vb[k] - va[k]) / dt, 2)
         if "oom_kill" in va and "oom_kill" in vb:

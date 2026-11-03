@@ -2994,6 +2994,13 @@ def inert_reason(var, val, ctx):
         hit = [f for f in flags if f in INERT_FLAGS and not (f == "hash_join" and str(ctx.get("flavor")) == "mariadb")]
         if hit and flags <= set(INERT_FLAGS):
             return "; ".join(f"{f} {INERT_FLAGS[f]}" for f in hit)
+    plans_ = (ctx.get("inputs") or {}).get("plans")
+    if plans_ and (var == "optimizer_switch" or var in ("optimizer_search_depth", "optimizer_prune_level", "eq_range_index_dive_limit",
+                                                         "range_optimizer_max_mem_size")):
+        from .plans import inert as _plan_inert
+        why = _plan_inert(var, val, plans_)
+        if why:
+            return why
     if var == "max_length_for_sort_data" and str(ctx.get("flavor")) != "mariadb" and tuple(ctx.get("version") or (0,)) >= (8, 0, 20):
         return "ignored since MySQL 8.0.20"
     if var in CONNECTION_PATH and rates and (rates.get("Connections") or 0) < 1:
@@ -3112,6 +3119,77 @@ def io_adjust(it, ctx):
         elif f["query_read_kb_per_trx"] < 0.5 and f["query_read_share"] < 5:
             it["relevance"] = 0 if rel is None else min(rel, 1)
             note("Disk I/O profile: queries read almost nothing from disk - read settings have little to act on.")
+
+
+HUGE_PAGES = {"os:thp", "os:hugepages", "large_pages"}
+TLB_LOW, TLB_HIGH = 1.0, 5.0  # page-walk share of mysqld's cycles: below, little for huge pages to save; above, a real cost
+
+
+def bgthread_adjust(it, ctx):
+    """An idea's relevance from the InnoDB background threads' CPU and the TLB cost (docs/research/var-evidence items 5-6):
+    - log writer threads: with them ON, their run-queue wait is the hand-off cost switching them off removes; a log writer
+      near a full CPU means the dedicated thread is the commit path's ceiling;
+    - page cleaners: a cleaner thread near a full CPU while flushing stalls (sync flushes, free-page waits) - more cleaners
+      can help; all of them nearly idle - their count has nothing to act on;
+    - huge pages / THP: the share of cycles mysqld's page walks take bounds what bigger pages save (Intel PMU only);
+      THP already on with compaction stalls is the cost switching it off removes."""
+    s = ctx.get("summary") or {}
+    v = ctx.get("variables") or {}
+    keys = {c["variable"]: c.get("proposed") for c in it.get("changes") or []}
+    ev = it.setdefault("evidence", {})
+    rel = it.get("relevance")
+
+    def note(txt):
+        it["rationale"] = (it.get("rationale") or "") + " " + txt
+    if "innodb_log_writer_threads" in keys:
+        runq = max(s.get("bg_log_writer_runq_pct") or 0, s.get("bg_log_flusher_runq_pct") or 0, s.get("bg_log_notifier_runq_pct") or 0)
+        lw = s.get("bg_log_writer_cpu_pct")
+        if lw is not None and _on(v, "innodb_log_writer_threads"):
+            ev.update(log_writer_cpu_pct=lw, log_threads_runq_pct=round(runq, 1))
+            if str(keys["innodb_log_writer_threads"]).upper() in ("OFF", "0"):
+                if runq >= 20:
+                    it["relevance"] = max(rel or 0, 3)
+                    it.setdefault("addresses", []).append(f"log threads wait for a CPU {runq:.0f}% of their runnable time")
+                elif lw >= 85:
+                    # the single log writer thread is the redo path's ceiling (micro cb/positive on atvbm: 90.8% of a CPU,
+                    # 64 inserting threads, trx_commit=2): with the threads off, user threads write the log themselves
+                    it["relevance"] = max(rel or 0, 2)
+                    it.setdefault("addresses", []).append(f"the log writer thread at {lw:.0f}% of a CPU")
+                elif runq < 5 and lw < 50:
+                    it["relevance"] = 0 if rel is None else min(rel, 1)
+                    note(f"Thread CPU: the log threads get a CPU at once ({runq:.0f}% run-queue wait) and the log writer uses "
+                         f"{lw:.0f}% of one CPU - little hand-off cost to remove.")
+    if "innodb_page_cleaners" in keys:
+        top = s.get("bg_page_cleaner_max_thread_cpu_pct") or s.get("bg_page_cleaner_cpu_pct")
+        stalls = (s.get("flush_sync_waits_s") or 0) + (s.get("lru_get_free_waits_s") or 0) > 0
+        if top is not None:
+            ev["page_cleaner_max_thread_cpu_pct"] = top
+            more = _int({"x": keys["innodb_page_cleaners"]}, "x", 0) > _int(v, "innodb_page_cleaners", 0)
+            if more and top >= 80 and stalls:
+                it["relevance"] = max(rel or 0, 3)
+                it.setdefault("addresses", []).append(f"a page cleaner thread at {top:.0f}% of a CPU while flushing stalls")
+            elif top < 20 and not stalls:
+                it["relevance"] = 0 if rel is None else min(rel, 1)
+                note(f"Thread CPU: the busiest page cleaner uses {top:.0f}% of one CPU and nothing stalls on flushing.")
+    if set(keys) & HUGE_PAGES:
+        walk = s.get("tlb_walk_pct")
+        on = any(k == "large_pages" and str(x).upper() in ("ON", "1") or k == "os:thp" and x == "always" or k == "os:hugepages"
+                 for k, x in keys.items())
+        if walk is not None:
+            ev.update(tlb_walk_pct=walk, dtlb_load_mpki=s.get("dtlb_load_mpki"))
+            if on and walk < TLB_LOW:
+                it["relevance"] = 0 if rel is None else min(rel, 0)
+                note(f"CPU counters: page walks take {walk:.1f}% of mysqld's cycles - little for bigger pages to save.")
+            elif on and walk >= TLB_HIGH:
+                it["relevance"] = max(rel or 0, 3)
+                it.setdefault("addresses", []).append(f"page walks {walk:.1f}% of mysqld's cycles")
+        if keys.get("os:thp") == "never" and v.get("os:thp") == "always":
+            st = s.get("compact_stall_per_s")
+            if st is not None:
+                ev.update(compact_stall_per_s=st, thp_mb=s.get("dbproc_anon_huge_mb"))
+                if st >= 1:
+                    it["relevance"] = max(rel or 0, 3)
+                    it.setdefault("addresses", []).append(f"{st:.1f} memory compaction stalls/s")
 
 
 COMMIT_PATH = {"innodb_flush_log_at_trx_commit", "sync_binlog", "binlog_group_commit_sync_delay",
@@ -3412,6 +3490,7 @@ def run_engine(ctx):
         if it["kind"] == "config":
             io_adjust(it, ctx)
             commit_adjust(it, ctx)
+            bgthread_adjust(it, ctx)
         sc = score(it, ctx.get("goal", "tps")) + (2 if it["kind"] == "revert" else 0) - (2 if it.get("score_note") else 0) + it.get("score_prior", 0) \
             - (10 if it.get("no_mechanism") else 0) + (it.get("rescore") or {}).get("delta", 0)
         if it.get("relevance") is not None:

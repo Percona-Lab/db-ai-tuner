@@ -4327,6 +4327,67 @@ def test_ahi_rules_follow_the_micro_benchmarks():
     assert "ahi-off" in it2 and it2["ahi-off"]["evidence"]["ahi_hit_pct"] == 2.2, it2.get("ahi-off")
 
 
+def test_background_thread_cpu_by_role():
+    """Per-role CPU of the InnoDB background threads from per-thread scheduler deltas (kernel thread names)."""
+    from tuning_agent import hostinfo
+    assert hostinfo.bg_role("ib_log_writer") == "log_writer" and hostinfo.bg_role("ib_log_fl_notif") == "log_notifier"
+    assert hostinfo.bg_role("ib_pg_flush_co") == "page_cleaner" and hostinfo.bg_role("connection") is None
+    r = hostinfo.bg_rates({"log_writer": [9e9, 1e9, 9e9, 1], "page_cleaner": [6e9, 0, 5e9, 3]}, 10.0)
+    assert r["bg_log_writer_cpu_pct"] == 90.0 and r["bg_log_writer_runq_pct"] == 10.0 and "bg_log_writer_max_thread_cpu_pct" not in r
+    assert r["bg_page_cleaner_cpu_pct"] == 60.0 and r["bg_page_cleaner_max_thread_cpu_pct"] == 50.0
+
+
+def test_tlb_counters_parse():
+    """perf stat -x, on atvbm (Intel: no store-walk event) -> misses per 1,000 instructions and the page-walk share."""
+    from tuning_agent import cpuprof
+    t = ("44951170704,,cycles,7324886153,66.00,,\n20518946006,,instructions,9163814649,83.00,0.46,insn per cycle\n"
+         "32236198,,dTLB-load-misses,9183683966,83.00,,\n<not supported>,,dTLB-store-misses,0,100.00,,\n"
+         "18677365,,iTLB-load-misses,9146430536,83.00,,\n2194843539,,dtlb_load_misses.walk_active,9148186433,83.00,,\n")
+    r = cpuprof.tlb_summary(cpuprof.parse_stat(t))
+    assert r == {"ipc": 0.46, "dtlb_load_mpki": 1.571, "itlb_mpki": 0.91, "tlb_walk_pct": 4.88}, r
+
+
+def test_plans_make_optimizer_flags_inert():
+    """Top statements that are single-table lookups and inserts: optimizer flags for joins / subqueries / index merge
+    cannot matter; a join among them, or too little plan coverage, keeps them."""
+    from tuning_agent import plans
+    look = [{"id": 1, "select_type": "SIMPLE", "table": "sbtest1", "type": "const", "possible_keys": "PRIMARY", "Extra": None}]
+    f = plans.features(look, "SELECT c FROM sbtest1 WHERE id=5")
+    assert f == set(), f
+    rng = [{"id": 1, "select_type": "SIMPLE", "table": "sbtest1", "type": "range", "possible_keys": "PRIMARY", "Extra": "Using filesort"}]
+    assert {"range", "lookup", "sort"} <= plans.features(rng, "SELECT c FROM sbtest1 WHERE id BETWEEN 1 AND 99 ORDER BY c")
+    pl = [{"pct_time": 60, "features": sorted(f)}, {"pct_time": 30, "features": []}]
+    why = plans.inert("optimizer_switch", "index_merge_intersection=off", pl)
+    assert why and "90%" in why, why
+    assert plans.inert("optimizer_switch", "index_merge_intersection=off,favor_range_scan=on", pl) is None  # unknown flag
+    assert plans.inert("optimizer_search_depth", "0", pl)
+    assert plans.inert("optimizer_switch", "hash_join=off", pl + [{"pct_time": 5, "features": ["join"]}]) is None
+    assert plans.inert("optimizer_switch", "hash_join=off", [{"pct_time": 50, "features": []}, {"pct_time": 50, "error": "x"}]) is None
+    ctx = {"variables": VARS, "inputs": {"plans": pl}}
+    assert engine.inert_reason("optimizer_switch", "index_merge=off", ctx)
+
+
+def test_background_threads_and_tlb_adjust_ideas():
+    """Log threads waiting for CPUs back switching them off; idle ones make it less relevant. Page walks under 1% of cycles
+    make huge pages irrelevant, over 5% relevant."""
+    def adj(changes, summary, variables=VARS):
+        it = {"changes": [{"variable": k, "proposed": v} for k, v in changes]}
+        engine.bgthread_adjust(it, {"summary": summary, "variables": variables})
+        return it
+    it = adj([("innodb_log_writer_threads", "OFF")], {"bg_log_writer_cpu_pct": 40, "bg_log_writer_runq_pct": 35})
+    assert it["relevance"] == 3, it
+    it = adj([("innodb_log_writer_threads", "OFF")], {"bg_log_writer_cpu_pct": 10, "bg_log_writer_runq_pct": 1})
+    assert it["relevance"] == 0, it
+    it = adj([("innodb_log_writer_threads", "OFF")], {"bg_log_writer_cpu_pct": 90.8, "bg_log_writer_runq_pct": 0.7})
+    assert it["relevance"] == 2 and "90%" not in str(it["addresses"]) and "91%" in str(it["addresses"]), it
+    it = adj([("os:hugepages", "1000"), ("large_pages", "ON")], {"tlb_walk_pct": 0.4})
+    assert it["relevance"] == 0 and "page walks" in it["rationale"], it
+    it = adj([("os:thp", "always")], {"tlb_walk_pct": 7.2})
+    assert it["relevance"] == 3, it
+    it = adj([("os:thp", "never")], {"compact_stall_per_s": 4.0}, dict(VARS, **{"os:thp": "always"}))
+    assert it["relevance"] == 3, it
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

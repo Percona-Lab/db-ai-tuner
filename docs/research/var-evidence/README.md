@@ -32,6 +32,17 @@ Ordered by the number of high- and medium-impact variables each addition gives e
 | 7 | Network: `softnet_stat` drops / squeeze, `nstat` listen overflows / drops / retransmits, per-CPU softirq, `/proc/interrupts`; client side: squeeze, drops and `cpu_mhz` into the summary, and the client wait split into network and client processing | net.core.*, somaxconn / syn_backlog, rps, IRQ CPUs, client settings | With these at zero, the network settings can be skipped outright. |
 | 8 | Smaller ones: TempTable memory (`memory/temptable/*`), made-young / not-young rates, ICP counters, deadlocks (`lock_deadlocks`; MariaDB `Innodb_deadlocks`), gap-lock share (`data_locks`), AHI search counters, `Table_open_cache_misses` / `_overflows`, query and slow log file I/O | temptable_max_ram, old_blocks_*, ICP, deadlock detection, isolation, AHI, table caches, logging | |
 
+Status (2026-11-03):
+
+| # | Built | Used by |
+|---|---|---|
+| 1 | INNODB_METRICS flush / redo counters, pages flushed per trx (`collector.mechanism_evidence`) | `redo-grow`, `io-capacity-up` |
+| 2 | binary log syncs and their time per trx | group-commit rules, `commit_adjust` |
+| 3 | Percona `Threadpool_*`, MariaDB thread pool tables | thread pool rules |
+| 4 | plans of the top 10 statements: plain `EXPLAIN` of the digest sample text on a connection of its own, reduced to plan features (join, subquery, derived, range, index choice, sort, ORDER BY ... LIMIT) and EXPLAIN warnings (`plans.py`, run inputs `plans`) | `inert_reason`: optimizer flags and limits whose plan choice no top statement has (plans covering >= 80% of statement time). Planning time (stage instruments) not collected yet. |
+| 5 | CPU, busiest thread and run-queue share per background role - log writer / flusher / notifiers / checkpointer, page cleaners, purge, I/O threads, master (`hostinfo.BG_ROLES`, summary `bg_<role>_*`) | `bgthread_adjust`: log writer threads, page cleaners |
+| 6 | TLB misses per 1,000 instructions and the page-walk share of mysqld's cycles (perf stat with the CPU profile; walk cycles on Intel only), THP faults / fallbacks / collapses / compaction stalls, mysqld's THP-backed memory, disk FUA. Governor, clock, THP mode, write cache, swap rates were already collected. | `bgthread_adjust`: huge pages, THP on / off |
+
 ## Settings that cannot matter: never propose them where this holds
 
 - **Documented no-ops:**

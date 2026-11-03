@@ -1362,6 +1362,14 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
                 summary["numa_mysqld_max_node_pct"] = pl["max_node_pct"]
     except Exception:  # noqa
         pass
+    if inputs.get("top_statements") and str(c.cfg.get("plans", "on")).lower() != "off":
+        # plans of the top statements (after the window): what the optimizer settings could act on (plans.py)
+        try:
+            from . import plans as _plans
+            inputs["plans"] = _plans.collect(c.cfg, inputs["top_statements"], c.variables)
+            summary["plans_covered_pct"] = round(_plans.coverage(inputs["plans"])[0], 1)
+        except Exception:  # noqa
+            pass
     ee_ = ((extra_inputs or {}).get("bench") or {}).get("ended_early_s")
     if ee_:
         summary["bench_ended_early_s"] = ee_
@@ -1392,6 +1400,8 @@ def _measure_stop(c, external=None, goal_value=None, notes=None, b_snap=None, ex
             summary["cow_intended"] = extra_inputs["cow"]["intended"]
         for k, v in (extra_inputs.get("probe") or {}).items():
             summary["probe_" + k] = v
+        for k, v in ((extra_inputs.get("cpu_profile") or {}).get("tlb") or {}).items():
+            summary[k] = v  # mysqld's TLB misses / page-walk share (the evidence for huge pages and THP)
         # storage tail latency of the data device (eBPF block histogram): read / write / flush p99, worst I/O, slow I/Os
         bl = (extra_inputs.get("block_latency") or {}).get("by_device_op") or {}
         if bl:
