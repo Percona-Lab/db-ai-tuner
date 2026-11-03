@@ -4310,6 +4310,23 @@ def test_sweep_values_stay_in_range_and_commit_tradeoffs_need_commit_cost():
     assert hot["relevance"] == 2, hot
 
 
+def test_ahi_rules_follow_the_micro_benchmarks():
+    """ahi/positive: 12.9% B-tree CPU on read-mostly point selects -> ahi-on at confidence 2; ahi/negative: a hash index
+    that rarely hits -> ahi-off with the hit ratio."""
+    from tuning_agent import engine
+    GiB_ = 2 ** 30
+    base = {"goal": "tps", "policy": "safe", "os_tuning": False, "os_facts": {}, "hw": dict(HW, ram_bytes=32 * GiB_), "flavor": "percona",
+            "version": (8, 4, 11), "history": [], "noise_pct": 2.0, "managed": {}}
+    summ = dict(OLTP[0], bp_hit_pct=99.99, cpu_busy=90)
+    inp = dict(OLTP[1], status_rates={"Com_select": 300000, "Com_update": 10}, cpu_profile={"categories": {"B-tree / row access": 12.9}})
+    it = {i["id"]: i for i in engine.run_engine(dict(base, variables=dict(VARS, innodb_adaptive_hash_index="OFF"), summary=summ, inputs=inp))["items"]}
+    assert it["ahi-on"]["confidence"] == 2, it.get("ahi-on")
+    inp2 = dict(OLTP[1], status_rates={"Com_select": 100, "Com_update": 50000},
+                innodb_metrics_rates={"adaptive_hash_searches": 2000.0, "adaptive_hash_searches_btree": 90000.0})
+    it2 = {i["id"]: i for i in engine.run_engine(dict(base, variables=dict(VARS, innodb_adaptive_hash_index="ON"), summary=summ, inputs=inp2))["items"]}
+    assert "ahi-off" in it2 and it2["ahi-off"]["evidence"]["ahi_hit_pct"] == 2.2, it2.get("ahi-off")
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

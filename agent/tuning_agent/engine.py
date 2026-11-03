@@ -944,12 +944,25 @@ def recommend(ctx):
                   ": AHI can shortcut B-tree descents for point lookups (its latches can cost more than it saves at high "
                   "concurrency or with writes). Experiment: keep only if the goal metric improves.",
                   {"selects_per_s": selects, "writes_per_s": round(writes, 1), "bp_hit_pct": s.get("bp_hit_pct"), "cpu_btree_pct": btree},
-                  impact=2, confidence=1)
+                  # the micro-benchmark ahi/positive (2026-11-02): B-tree work 12.9% of CPU on in-memory point selects,
+                  # AHI ON +5.0% - at >= 8% of CPU on a load with few writes the mechanism has measured backing
+                  impact=2, confidence=2 if (btree or 0) >= 8 and writes <= 0.1 * max(selects, 1) else 1)
         ahi_wait = sum(w["time_s"] for w in inp.get("top_waits", []) if "btr_search" in w["event"] or "ahi" in w["event"].lower())
         sem = (inp.get("innodb_status") or {}).get("semaphores", "")
+        im_ = inp.get("innodb_metrics_rates") or {}
+        hits_, misses_ = im_.get("adaptive_hash_searches") or 0, im_.get("adaptive_hash_searches_btree") or 0
+        hit_ratio = hits_ / (hits_ + misses_) if hits_ + misses_ > 0 else None
         if _on(v, "innodb_adaptive_hash_index") and (ahi_wait > 0 or "btr0sea" in sem):
             b.add("ahi-off", "Disable the adaptive hash index (contention)", [("innodb_adaptive_hash_index", "OFF")],
                   "Threads are waiting on AHI latches.", {"ahi_wait_s": ahi_wait}, impact=2, confidence=2)
+        elif _on(v, "innodb_adaptive_hash_index") and hit_ratio is not None and hit_ratio < 0.5 and misses_ >= 1000:
+            # the micro-benchmark ahi/negative (2026-11-02): updates of an indexed column, AHI ON -6.3% - entries are
+            # dropped as fast as they are built; positive case: 20.7 hash hits per B-tree search
+            b.add("ahi-off", "Disable the adaptive hash index (it rarely hits)", [("innodb_adaptive_hash_index", "OFF")],
+                  f"Only {100 * hit_ratio:.0f}% of index searches were answered by the adaptive hash index ({hits_:,.0f} hash vs "
+                  f"{misses_:,.0f} B-tree searches/s): it is maintained for every change and used little.",
+                  {"ahi_hit_pct": round(100 * hit_ratio, 1), "adaptive_hash_searches_s": hits_, "btree_searches_s": misses_},
+                  impact=1, confidence=2)
     # not where commits dominate (the log threads do the grouping: lab 205 -38%, 217 -46%) or at high concurrency (174 -15%)
     # without an fsync per commit (trx_commit 0/2) on saturated CPUs the hand-offs to the log threads are the cost, at any
     # concurrency: 9 of 10 wins, +7.7% to +25.4% (h2h W1 285/288: 250 running threads on 12 CPUs, the gate below kept it
