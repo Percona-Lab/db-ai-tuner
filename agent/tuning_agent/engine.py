@@ -2573,16 +2573,50 @@ def _big_gain(r):
     return r.get("verdict") in ("improved", "repeat") and d is not None and nz and d >= 2 * float(nz)
 
 
+# what keeps purge up with the writes (the purge triage's remedies and the concurrency / thread pool limits stacked with
+# them): their job is stability, not throughput
+STABILITY_VARS = {"innodb_purge_threads", "innodb_purge_batch_size", "innodb_max_purge_lag", "innodb_max_purge_lag_delay",
+                  "innodb_purge_rseg_truncate_frequency", "innodb_thread_concurrency", "thread_handling", "thread_pool_size",
+                  "thread_pool_oversubscribe", "thread_pool_max_threads", "rg:purge", "innodb_change_buffering"}
+
+
+def _purge_grew(history):
+    """Some run of the session had its undo history grow without bound."""
+    return any(any(g.get("metric") == "history_list_length" for g in ((r.get("summary") or {}).get("unbounded_growth") or []))
+               or (r.get("evaluation") or {}).get("unsustainable") for r in history)
+
+
+def _removal_lost(history, k, v):
+    """A removal of k=v (drop-unearned) measured a loss against the configuration it removed from, or made it
+    unsustainable: k=v earns its place by that measurement (session 439 run 52: the stacked purge fix removed, -52%)."""
+    for r in history:
+        if not str(r.get("label") or "").startswith("drop-unearned"):
+            continue
+        if not any(c.get("variable") == k and normalize(k, c.get("old")) == normalize(k, v) for c in r.get("changes") or []):
+            continue
+        ev = r.get("evaluation") or {}
+        if r.get("verdict") in ("regressed", "efficiency-loss") or ev.get("unsustainable") or ev.get("destabilized") \
+                or (ev.get("goal_delta_pct") is not None and ev["goal_delta_pct"] < -float(ev.get("goal_noise_pct") or 2.0)):
+            return True
+    return False
+
+
 def _unearned(history, managed, harmful=None):
     """Managed changes (vs the calibration's starting configuration) that no run still earns: the runs that set them
     are neither kept (improved / efficiency gain, not unconfirmed) nor an accepted best-practice bundle. Suite r1:
-    MX-1 jemalloc and RW-1 log_writer_threads were downgraded after confirmation runs and stayed to the end."""
+    MX-1 jemalloc and RW-1 log_writer_threads were downgraded after confirmation runs and stayed to the end.
+    Not dropped on throughput grounds: settings that keep purge up once the session has seen the history grow without
+    bound (session 439: the stacked purge fix was measured "within noise" on throughput, removed, and the session fell
+    from ~1,400 to ~670 tps, then ~830 with a cap alone), and any change whose earlier removal measured a loss."""
     start = next((r.get("managed") or {} for r in history if str(r.get("label") or "").startswith("baseline")), None)
     if start is None:
         return set()
     out = set()
+    purge_grew = STABILITY_FIRST and _purge_grew(history)
     for k, v in (managed or {}).items():
         if normalize(k, start.get(k)) == normalize(k, v) or k.startswith("client:"):
+            continue
+        if (purge_grew and k in STABILITY_VARS) or _removal_lost(history, k, v):
             continue
         setters = [r for r in history if any(c.get("variable") == k and normalize(k, c.get("new")) == normalize(k, v)
                                              and str(c.get("source") or "").startswith(("rec:", "exp:")) for c in r.get("changes") or [])]

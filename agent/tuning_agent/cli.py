@@ -1897,6 +1897,13 @@ def _bench_run(c, prof, label=None, notes=None, warmup_override=None):
     the measurement start and ended the session)."""
     import pymysql
     t0 = time.time()
+    try:
+        sess_ = c.session()
+        if sess_.get("revert_blocked"):  # a back-and-forth revert block lasts until the next measurement (any kind)
+            sess_["revert_blocked"] = []
+            c.state.set("session", sess_)
+    except Exception:  # noqa - no session (a bare run)
+        pass
     _watch_setup(c, label)
     with serverwatch.watching(_service(c)) as w:
         try:
@@ -3724,7 +3731,7 @@ def _engine_ctx(c, sess):
             "no_swap": str(c.cfg.get("swap", "allowed")).strip().lower() in ("none", "no", "off", "false"),
             "insights": insights, "param_impact": param_impact, "blocked": sorted(blocked), "client_reserve": _client_reserve(c),
             "cluster": _cluster_ctx(c), "engines": _engines_ctx(c),
-            "failed": sess.get("failed_recs") or [],
+            "failed": (sess.get("failed_recs") or []) + (sess.get("revert_blocked") or []),
             "scope": sess.get("scope") or ["knobs", "os"], "fs_device": _ap.fs_device,
             "variables": c.all_settings(), "summary": last.get("summary"), "inputs": last.get("inputs"),
             "history": sess["runs"], "noise_pct": sess.get("noise_pct"), "noise": sess.get("noise"),
@@ -3821,7 +3828,7 @@ def _recommend(c, sess, llm=False):
             seen.add(k)
             allsg.append(sg)
     extra, keep, rejected = [], [], []
-    done_ids = set(sess.get("failed_recs") or [])
+    done_ids = set(sess.get("failed_recs") or []) | set(sess.get("revert_blocked") or [])
     for sg in allsg:  # re-checked every time: dropped once tried (incl. as a sweep), already in effect or no longer valid
         its, rj = llmassist.sanitize([sg], ctx, res, sg.get("_model") or model)
         its = [i for i in its if i["id"] not in done_ids]
@@ -4941,13 +4948,25 @@ def _autotune(a):
                 seen = sess.setdefault("revert_targets", [])
                 if key in seen:
                     log("   reverts are going back and forth between measured configurations: no more reverts until the next run")
-                    sess.setdefault("failed_recs", []).append(nxt)
+                    # until the next run only: kept in failed_recs it blocked "return to the best configuration" for good
+                    # (session 439: stuck ~830 tps against a best of ~1,450 after two drop / rollback rounds)
+                    sess.setdefault("revert_blocked", []).append(nxt)
                 seen.append(key)
             c.state.set("session", sess)
             continue
         sess = c.session()
         sess["revert_targets"] = []
+        sess["revert_blocked"] = []
         c.state.set("session", sess)
+        hint_set = False
+        if str(nxt).startswith("drop-unearned-"):
+            # a removal is judged against the configuration it removed from, never the starting one it partly resembles
+            # (session 439 run 52: -52% against run 51 read as -2.5% against the calibration, and nothing restored it)
+            from_ = [r["seq"] for r in sess["runs"] if r.get("goal_value") is not None
+                     and evaluate.config_key(r.get("managed")) == evaluate.config_key(before_exp)]
+            if from_:
+                c.state.set("parent_hint", from_)
+                hint_set = True
         try:
             run, _ = _bench_run(c, prof, f"{nxt}" + (" (validate)" if item.get("validate") else ""))
         except (TooSlow, ServerDown, BenchFailed) as e:
@@ -4965,6 +4984,9 @@ def _autotune(a):
             c.state.set("session", sess)
             measured += 1
             continue
+        finally:
+            if hint_set:
+                c.state.set("parent_hint", None)
         measured += 1
         log(f"   run {run['seq']}: goal {run['goal_value']} -> {run['verdict']}")
         ev0 = run.get("evaluation") or {}

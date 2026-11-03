@@ -4388,6 +4388,31 @@ def test_background_threads_and_tlb_adjust_ideas():
     assert it["relevance"] == 3, it
 
 
+def test_unearned_keeps_stability_fixes_and_measured_removals():
+    """Session 439: the stacked purge fix (32 purge threads, thread pool, no concurrency cap) was measured "within noise"
+    on throughput and removed - ~1,400 -> ~670 tps. Not removed while the session has seen the history list grow without
+    bound; and a removal that measured a loss earns the change its place in any session."""
+    def run(seq, label, verdict, managed, changes=(), summary=None, ev=None):
+        return {"seq": seq, "label": label, "verdict": verdict, "goal_value": 1000.0, "managed": managed,
+                "changes": list(changes), "summary": summary or {}, "evaluation": ev or {}}
+    start = {"innodb_thread_concurrency": "4", "innodb_purge_threads": "1"}
+    fix = {"innodb_thread_concurrency": "0", "innodb_purge_threads": "32", "thread_handling": "pool-of-threads", "innodb_io_capacity": "1000"}
+    grew = {"unbounded_growth": [{"metric": "history_list_length", "per_hour": 4.6e6}]}
+    setters = [{"variable": k, "new": v, "old": start.get(k), "source": "exp:466"} for k, v in fix.items()]
+    base = [run(1, "baseline (1/3)", "reference", start),
+            run(2, "exp#466 purge stack", "neutral", fix, setters, ev={"goal_delta_pct": 0.5, "goal_noise_pct": 2.0})]
+    old_stab = engine.STABILITY_FIRST
+    assert engine._unearned(base, fix) == {"innodb_thread_concurrency", "innodb_purge_threads", "thread_handling", "innodb_io_capacity"}
+    hist = base + [run(3, "exp#470 x", "unreliable", fix, summary=grew)]
+    assert engine._unearned(hist, fix) == {"innodb_io_capacity"}, engine._unearned(hist, fix)
+    # no growth seen, but the removal of io_capacity measured -52% against the configuration it removed it from
+    rm = run(3, "drop-unearned-2", "regressed", dict(fix, innodb_io_capacity=None),
+             [{"variable": "innodb_io_capacity", "new": None, "old": "1000", "source": "rec:drop-unearned-2"}],
+             ev={"goal_delta_pct": -52.0, "goal_noise_pct": 2.0, "parent_runs": [2]})
+    assert "innodb_io_capacity" not in engine._unearned(base + [rm], fix)
+    engine.STABILITY_FIRST = old_stab
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
