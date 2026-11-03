@@ -1,17 +1,18 @@
 {
  "mechanism": "change buffering",
  "role": "positive",
- "claim": "Inserts with random secondary keys into data much larger than the buffer pool read a secondary-index leaf per row; change buffering defers those reads: buffering 'all' raises throughput and cuts page reads per transaction.",
+ "claim": "Inserts with random secondary keys into indexes much larger than the buffer pool read a secondary-index leaf per row; change buffering defers those reads: buffering 'all' raises throughput and cuts page reads per transaction.",
  "dataset": {
   "tables": 8,
   "rows": 16000000
  },
  "fixed": {
-  "innodb_buffer_pool_size": "2G"
+  "innodb_buffer_pool_size": "512M",
+  "innodb_flush_log_at_trx_commit": "2"
  },
  "workload": {
   "test": "oltp_insert",
-  "threads": 32,
+  "threads": 64,
   "rand": "uniform"
  },
  "warmup": 600,
@@ -49,5 +50,6 @@
    "op": ">=",
    "value": 1
   }
- ]
+ ],
+ "note": "2026-11-03 first run (2 GB pool, trx_commit=1, 32 threads) failed: the secondary indexes (~3 GB) were only ~1.5x the pool (99.89% hits) and inserts were write-bound (disk 85% busy); 'all' cut page reads per transaction 31% but throughput only +1%. Now 512 MB (indexes ~6x the pool) and trx_commit=2 fixed for both values, so the index reads are the cost the setting acts on."
 }

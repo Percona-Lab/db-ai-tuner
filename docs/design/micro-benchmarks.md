@@ -76,10 +76,21 @@ Metric names (resolved from the run's summary and inputs, as the agent recorded 
 |---|---|---|---|---|
 | ahi | positive | 8 x 4M rows in memory, point selects, 64 threads | AHI OFF, ON | ON: tps up >= 2%; at OFF B-tree CPU >= 8%; at ON hash searches >= B-tree searches |
 | ahi | negative | same data, updates of the indexed column `k`, 64 threads | OFF, ON | ON: not up |
-| cb | positive | 8 x 16M rows (~30 GB) on a 2 GB pool, inserts with random secondary keys, 32 threads | buffering none, all | all: tps up >= 5%, page reads per trx down >= 20%; at none data page reads dominate off-CPU waits |
+| cb | positive | 8 x 16M rows (~30 GB) on a 512 MB pool (secondary indexes ~6x the pool), trx_commit=2 fixed, inserts with random secondary keys, 64 threads | buffering none, all | all: tps up >= 5%, page reads per trx down >= 20%; at none data page reads dominate off-CPU waits |
 | cb | negative | 8 x 4M rows in memory, same inserts | none, all | all: flat |
 | bp | positive | 8 x 16M rows (~30 GB), skewed (pareto) point selects, 64 threads | pool 2, 4, 8, 16 GB | 16 vs 2 GB: tps up >= 20%, reads per trx down >= 30%; at 2 GB data page reads dominate |
 | bp | negative | 8 x 2M rows (~4 GB), uniform point selects | pool 6, 12, 20 GB | 20 vs 6 GB: flat |
+
+## Results
+
+| Date | Case | Verdict | Measured |
+|---|---|---|---|
+| 2026-11-02 | ahi/positive | PASS | tps +5.0%; B-tree CPU 12.9% with AHI off; 20.7 hash searches per B-tree search with it on |
+| 2026-11-02 | ahi/negative | PASS | tps -6.3% with AHI on (index updates) |
+| 2026-11-02 | bp/positive | PASS | 2 -> 16 GB: tps +117%, page reads per trx -74%; at 2 GB 16 threads waiting on page reads |
+| 2026-11-02 | bp/negative | PASS | 6 -> 20 GB: tps +0.5%, 100% hits |
+| 2026-11-02 | cb/negative | PASS | tps -0.9% |
+| 2026-11-02 | cb/positive | FAIL (case design) | 2 GB pool held most index pages (99.89% hits) and inserts were write-bound: reads per trx -31% but tps +1%. Redesigned (512 MB pool, trx_commit=2) and rerun. |
 
 ## Next mechanisms
 
