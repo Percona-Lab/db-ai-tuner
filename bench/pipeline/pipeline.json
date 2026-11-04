@@ -1625,6 +1625,22 @@
    "question": "Mechanism micro-benchmark (log writer threads, positive): With hundreds of concurrent durable commits, dedicated log writer threads group redo writes and syncs: ON does not lose, and syncs per transaction fall."
   },
   {
+   "id": "micro-logwriter-high-concurrency-2",
+   "script": "micro.sh",
+   "args": [
+    "logwriter/high-concurrency"
+   ],
+   "hosts": [
+    "atvbm2",
+    "atvbmmia",
+    "atvbm",
+    "atcanary"
+   ],
+   "group": false,
+   "est_hours": 2,
+   "question": "Mechanism micro-benchmark (log writer threads, positive) on a second host: does ON's +88% at 512 threads (atvbmamd) hold?"
+  },
+  {
    "id": "micro-binlog-positive",
    "script": "micro.sh",
    "args": [
@@ -1663,14 +1679,15 @@
     "iocap/positive"
    ],
    "hosts": [
+    "atcanary",
+    "atvbmamd",
     "atvbm",
     "atvbm2",
-    "atvbmmia",
-    "atvbmamd"
+    "atvbmmia"
    ],
    "group": false,
-   "est_hours": 6,
-   "question": "Mechanism micro-benchmark (innodb_io_capacity, positive): When InnoDB asks to flush more pages than innodb_io_capacity allows and the disk has room, the cap holds flushing back: raising it raises throughput."
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark (innodb_io_capacity_max, positive, redesigned 2026-11-04): with flushing driven by redo age, a cap below what adaptive flushing asks for stalls commits on sync flushes; raising it raises throughput."
   },
   {
    "id": "bb-seats",

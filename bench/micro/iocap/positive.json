@@ -1,47 +1,57 @@
 {
- "mechanism": "innodb_io_capacity",
+ "mechanism": "innodb_io_capacity_max",
  "role": "positive",
- "claim": "When InnoDB asks to flush more pages than innodb_io_capacity allows and the disk has room, the cap holds flushing back: raising it raises throughput.",
+ "claim": "When flushing is driven by redo age and the adaptive flushing cap (innodb_io_capacity_max) is below what it asks for, the redo log fills and commits stall on sync flushes: raising the cap raises throughput.",
  "dataset": {
   "tables": 8,
-  "rows": 16000000
+  "rows": 4000000
  },
  "fixed": {
-  "innodb_buffer_pool_size": "4G",
-  "innodb_flush_log_at_trx_commit": "2"
+  "innodb_buffer_pool_size": "12G",
+  "innodb_flush_log_at_trx_commit": "2",
+  "innodb_redo_log_capacity": "1G",
+  "innodb_io_capacity": "200"
  },
  "workload": {
   "test": "oltp_update_non_index",
   "threads": 64,
   "rand": "uniform"
  },
- "warmup": 600,
+ "warmup": 300,
  "duration": 300,
  "goal": "tps",
  "sweep": {
-  "variable": "innodb_io_capacity",
+  "variable": "innodb_io_capacity_max",
   "values": [
-   "200",
-   "2000",
-   "10000"
+   "400",
+   "4000",
+   "20000"
   ]
  },
  "repeats": 2,
  "expect": [
   {
    "kind": "response",
-   "from": "200",
-   "to": "2000",
+   "from": "400",
+   "to": "4000",
    "metric": "tps",
    "direction": "up",
    "min_pct": 5
   },
   {
    "kind": "signal",
-   "at": "200",
-   "metric": "flush_requested_vs_capacity",
+   "at": "400",
+   "metric": "flush_by_age_share_pct",
    "op": ">=",
-   "value": 1
+   "value": 50
+  },
+  {
+   "kind": "signal",
+   "at": "400",
+   "metric": "flush_sync_pages_s",
+   "op": ">",
+   "value": 0
   }
- ]
+ ],
+ "note": "2026-11-04 first design failed: io_capacity 200 / 2000 / 10000 on 8 x 16M with a 4 GB pool - flushing was LRU-driven (data far larger than the pool) and io_capacity_max stays >= 2000 by default, so the cap never bound (flushing asked for 0.25% of it). Now in memory (~8 GB in 12 GB), a 1 GB redo log so flushing follows redo age (redo/positive: 100% by age at 512 MB), and the cap that binds adaptive flushing swept with io_capacity fixed at 200."
 }

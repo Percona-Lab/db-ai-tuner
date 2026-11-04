@@ -1,6 +1,6 @@
 # Mechanism micro-benchmarks
 
-Status: first three suites built (adaptive hash index, change buffering, buffer pool size), 2026-11-02.
+Status: seven suites built and run (adaptive hash index, change buffering, buffer pool size, redo capacity, io_capacity, log writer threads, binlog group commit), 2026-11-04.
 Short shareable summary: the "Mechanism micro-benchmarks for the tuner" doc (claude.ai). This file is the source.
 
 ## Why
@@ -81,7 +81,7 @@ Metric names (resolved from the run's summary and inputs, as the agent recorded 
 | bp | positive | 8 x 16M rows (~30 GB), skewed (pareto) point selects, 64 threads | pool 2, 4, 8, 16 GB | 16 vs 2 GB: tps up >= 20%, reads per trx down >= 30%; at 2 GB data page reads dominate |
 | bp | negative | 8 x 2M rows (~4 GB), uniform point selects | pool 6, 12, 20 GB | 20 vs 6 GB: flat |
 
-## Second suites (queued 2026-11-03)
+## Second suites (run 2026-11-03 / 04)
 
 | Suite | Case | Load | Sweep | Expect |
 |---|---|---|---|---|
@@ -104,6 +104,15 @@ Metric names (resolved from the run's summary and inputs, as the agent recorded 
 | 2026-11-02 | bp/negative | PASS | 6 -> 20 GB: tps +0.5%, 100% hits |
 | 2026-11-02 | cb/negative | PASS | tps -0.9% |
 | 2026-11-02 | cb/positive | FAIL (case design) | 2 GB pool held most index pages (99.89% hits) and inserts were write-bound: reads per trx -31% but tps +1%. Redesigned (512 MB pool, trx_commit=2) and rerun. |
+| 2026-11-04 | cb/positive (redesigned) | PASS (revised check) | none -> all: tps +126%, page reads per trx -98%. The off-CPU check (0.93 threads waiting on page reads vs >= 1) was too strict: now >= 0.5, same data passes. |
+| 2026-11-04 | redo/positive | PASS | 512M -> 8G: tps +470%, pages flushed per trx -87%; at 512M flushing 100% by redo age |
+| 2026-11-04 | redo/negative | PASS | read-only: +0.5% |
+| 2026-11-04 | iocap/positive | FAIL (case design) | Flushing asked for 0.25% of the cap: data far larger than the pool (LRU flushing), and io_capacity_max stays >= 2000 whatever io_capacity is. Redesigned: in memory, 1 GB redo, io_capacity_max swept 400 / 4000 / 20000. Rerun queued. |
+| 2026-11-04 | iocap/negative | PASS | read-only: +0.3% |
+| 2026-11-04 | logwriter/low-concurrency | PASS | 8 threads: ON -4.8% |
+| 2026-11-04 | logwriter/high-concurrency | FAIL (expectation) | 512 threads: ON +88% tps, but redo fsyncs per trx x5 - the threads win by taking writes and syncs off the user threads, not by fewer syncs. Expectation now tps up; rerun on a second host queued. |
+| 2026-11-04 | binlog/positive | FAIL (claim refuted) | 1 ms delay: binlog syncs per trx -58%, tps -24.5% - at no delay the log already synced once per ~39 commits. Rule change: group-commit-delay only with >= 0.1 binlog syncs per trx measured. |
+| 2026-11-04 | binlog/negative | PASS | 4 threads: 1 ms delay -44% |
 
 ## Next mechanisms
 

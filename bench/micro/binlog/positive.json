@@ -41,5 +41,6 @@
    "metric": "tps",
    "direction": "not_down"
   }
- ]
+ ],
+ "note": "2026-11-04 (atvbm2): syncs per transaction -58% as predicted, throughput -24.5%: at no delay the binary log already synced once per ~39 commits (0.026 per trx), so the delay only added wait. The claim on throughput is refuted on this disk; the group-commit-delay rule now needs binlog syncs per transaction >= 0.1 measured."
 }

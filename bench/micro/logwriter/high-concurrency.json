@@ -1,7 +1,7 @@
 {
  "mechanism": "log writer threads",
  "role": "positive",
- "claim": "With hundreds of concurrent durable commits, dedicated log writer threads group redo writes and syncs: ON does not lose, and syncs per transaction fall.",
+ "claim": "With hundreds of concurrent durable commits, dedicated log writer threads take the redo writes and syncs off the user threads: throughput rises.",
  "dataset": {
   "tables": 8,
   "rows": 4000000
@@ -29,15 +29,9 @@
    "from": "OFF",
    "to": "ON",
    "metric": "tps",
-   "direction": "not_down"
-  },
-  {
-   "kind": "response",
-   "from": "OFF",
-   "to": "ON",
-   "metric": "trx:Innodb_os_log_fsyncs",
-   "direction": "down",
-   "min_pct": 10
+   "direction": "up",
+   "min_pct": 5
   }
- ]
+ ],
+ "note": "2026-11-04 (atvbmamd, 512 threads): ON +88% tps, but redo fsyncs per transaction rose 5x (0.018 -> 0.096): the dedicated threads win by taking the work off the user threads and syncing in parallel with the writes, not by fewer syncs. The fewer-syncs expectation is dropped; rerun on another host to confirm the gain."
 }

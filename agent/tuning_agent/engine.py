@@ -1213,7 +1213,12 @@ def recommend(ctx):
             b.add("log-writer-threads-on", "Let dedicated log threads group the commits", [("innodb_log_writer_threads", "ON")],
                   f"{gc_text(gc)[0].upper() + gc_text(gc)[1:]}. Dedicated log writer / flusher threads gather all waiting commits into one "
                   "write and flush. Experiment.", {"group_commit": gc}, impact=2, confidence=1)
-        if v.get("log_bin") == "ON" and "binlog_group_commit_sync_delay" in v and _int(v, "binlog_group_commit_sync_delay") == 0 and loose:
+        # measured binary log syncs per transaction: already well grouped, a delay only adds wait to every commit (micro
+        # binlog/positive, 128 threads, sync_binlog=1: 0.026 syncs per trx at no delay; 1 ms cut them 58% and lost 24.5%)
+        bsync = s.get("binlog_syncs_per_trx")
+        grouped = bsync is not None and bsync < GROUPED_BINLOG_SYNCS
+        if v.get("log_bin") == "ON" and "binlog_group_commit_sync_delay" in v and _int(v, "binlog_group_commit_sync_delay") == 0 and loose \
+                and not grouped:
             w_ms = max(s.get("disk_w_await_ms") or 0, s.get("disk_flush_await_ms") or 0)
             delay = nice_value("binlog_group_commit_sync_delay", int(min(2000, max(100, 250 * w_ms))) if w_ms else 200)  # a fraction of one flush
             count = nice_value("binlog_group_commit_sync_no_delay_count", int(max(4, min(1000, (gc or {}).get("waiters") or 16))))  # flush early once the waiters joined
@@ -3155,6 +3160,7 @@ def io_adjust(it, ctx):
             note("Disk I/O profile: queries read almost nothing from disk - read settings have little to act on.")
 
 
+GROUPED_BINLOG_SYNCS = 0.1  # binary log syncs per transaction below which commits already share syncs (10+ per sync)
 HUGE_PAGES = {"os:thp", "os:hugepages", "large_pages"}
 TLB_LOW, TLB_HIGH = 1.0, 5.0  # page-walk share of mysqld's cycles: below, little for huge pages to save; above, a real cost
 

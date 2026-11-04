@@ -1529,6 +1529,9 @@ def test_group_commit_efficiency_achieved_vs_possible():
     ch = {c["variable"]: c["proposed"] for c in it["changes"]}
     assert ch["binlog_group_commit_sync_no_delay_count"] == "800" and 100 <= int(ch["binlog_group_commit_sync_delay"]) <= 2000, ch
     assert "only 2% of the waiting commits" in it["rationale"], it["rationale"]
+    # measured: the binary log already syncs once per ~40 commits (micro binlog/positive: a 1 ms delay lost 24.5%)
+    grouped = {i["id"] for i in engine.run_engine(dict(ctx, summary=dict(ctx["summary"], binlog_syncs_per_trx=0.026)))["items"]}
+    assert "group-commit-delay" not in grouped
     # binary log off: no binlog setting; InnoDB's grouping by dedicated log threads instead
     ctx_off = dict(ctx, variables=dict(VARS, log_bin="OFF", innodb_log_writer_threads="OFF", binlog_group_commit_sync_delay="0"))
     it_off = {i["id"]: i for i in engine.run_engine(ctx_off)["items"]}
