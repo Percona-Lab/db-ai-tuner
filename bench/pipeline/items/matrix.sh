@@ -25,6 +25,9 @@ latency_goal() {  # latency goal: the server's p95 statement latency (performanc
 }
 tpcc_profile() {  # tpcc_profile <warehouses> <threads>; goal: transactions/s measured by the server in the window (go-tpc's
   # tpmC covers the whole run, warm-up included, and its interval lines carry no time to cut the window from)
+  # no server-defaults run: go-tpc panics at thread start against the defaults ("invalid connection", matrix-v3-C4 on atvbm2
+  # 2026-11-02, as the confirm runs did) and the reference is the calibrated start anyway
+  export SKIP_DEFAULTS=1
   cat > $P <<INI
 [bench]
 name = matrix $CELL: go-tpc TPC-C $1 W, $2 threads ($(hostname))
