@@ -1,0 +1,55 @@
+{
+ "mechanism": "innodb_doublewrite",
+ "role": "positive",
+ "claim": "When writes are bound by page flushing on disk, the doublewrite buffer writes every page twice; turning it off (not crash-safe) halves the page writes and raises throughput.",
+ "dataset": {
+  "tables": 16,
+  "rows": 16000000
+ },
+ "fixed": {
+  "innodb_buffer_pool_size": "4G",
+  "innodb_flush_log_at_trx_commit": "2"
+ },
+ "workload": {
+  "test": "oltp_update_non_index",
+  "threads": 64,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "innodb_doublewrite",
+  "values": [
+   "ON",
+   "OFF"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "ON",
+   "to": "OFF",
+   "metric": "tps",
+   "direction": "up",
+   "min_pct": 5
+  },
+  {
+   "kind": "response",
+   "from": "ON",
+   "to": "OFF",
+   "metric": "trx:Innodb_data_written",
+   "direction": "down",
+   "min_pct": 20
+  },
+  {
+   "kind": "signal",
+   "at": "ON",
+   "metric": "trx:Innodb_dblwr_pages_written",
+   "op": ">",
+   "value": 0
+  }
+ ],
+ "note": "Doublewrite off risks torn pages on a crash: a trade-off, measured here only to bound the mechanism."
+}

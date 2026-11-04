@@ -1,0 +1,46 @@
+{
+ "mechanism": "transparent huge pages",
+ "role": "positive",
+ "claim": "CPU-bound random lookups over a 16 GB in-memory heap miss the TLB with 4 KiB pages, and page walks take a measurable share of cycles; THP always cuts them and raises throughput.",
+ "dataset": {
+  "tables": 16,
+  "rows": 4000000
+ },
+ "fixed": {
+  "innodb_buffer_pool_size": "20G"
+ },
+ "workload": {
+  "test": "oltp_point_select",
+  "threads": 64,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "os:thp",
+  "values": [
+   "never",
+   "always"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "never",
+   "to": "always",
+   "metric": "tps",
+   "direction": "up",
+   "min_pct": 3
+  },
+  {
+   "kind": "signal",
+   "at": "never",
+   "metric": "tlb_walk_pct",
+   "op": ">=",
+   "value": 3
+  }
+ ],
+ "note": "Page-walk cycles need Intel's walk_active events: Intel hosts only."
+}

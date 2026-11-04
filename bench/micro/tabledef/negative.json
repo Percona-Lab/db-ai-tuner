@@ -1,0 +1,39 @@
+{
+ "mechanism": "table_definition_cache",
+ "role": "negative",
+ "claim": "With 8 tables every definition stays cached: the size changes nothing.",
+ "dataset": {
+  "tables": 8,
+  "rows": 1000000
+ },
+ "fixed": {
+  "table_open_cache": "8000",
+  "open_files_limit": "65535"
+ },
+ "workload": {
+  "test": "oltp_point_select",
+  "threads": 64,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "table_definition_cache",
+  "values": [
+   "400",
+   "8000"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "400",
+   "to": "8000",
+   "metric": "tps",
+   "direction": "flat",
+   "max_pct": 3
+  }
+ ]
+}

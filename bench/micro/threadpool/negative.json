@@ -1,0 +1,37 @@
+{
+ "mechanism": "thread pool",
+ "role": "negative",
+ "claim": "With few connections per CPU, the pool's queueing adds latency and saves nothing.",
+ "dataset": {
+  "tables": 8,
+  "rows": 4000000
+ },
+ "fixed": {
+  "innodb_buffer_pool_size": "12G"
+ },
+ "workload": {
+  "test": "oltp_read_write",
+  "threads": 32,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "thread_handling",
+  "values": [
+   "one-thread-per-connection",
+   "pool-of-threads"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "one-thread-per-connection",
+   "to": "pool-of-threads",
+   "metric": "tps",
+   "direction": "not_up"
+  }
+ ]
+}

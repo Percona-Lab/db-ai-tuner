@@ -117,22 +117,6 @@
    "question": "Standard benchmark (sysbench oltp_read_write 20 GB, 1024 connections, binlog off, 10+10 min, 25 runs) on percona 9.7"
   },
   {
-   "id": "std-mysql-9.7",
-   "script": "std-bench.sh",
-   "args": [
-    "mysql",
-    "9.7"
-   ],
-   "hosts": [
-    "atvbm",
-    "atvbm2",
-    "atvbmmia"
-   ],
-   "group": false,
-   "est_hours": 13,
-   "question": "Standard benchmark (sysbench oltp_read_write 20 GB, 1024 connections, binlog off, 10+10 min, 25 runs) on mysql 9.7"
-  },
-  {
    "id": "std-mariadb-11.8",
    "script": "std-bench.sh",
    "args": [
@@ -322,6 +306,306 @@
    "group": false,
    "est_hours": 3,
    "question": "Huge pages through the agent after the AppArmor fix: does it start, and does it gain on a TLB-sensitive load?"
+  },
+  {
+   "id": "micro-concurrency-positive",
+   "script": "micro.sh",
+   "args": [
+    "concurrency/positive"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark wave 3 (innodb_thread_concurrency, positive): With far more running threads than CPUs, threads wait in the run queue and hold latches while descheduled; a concurrency limit near twice the CPUs raises throughput."
+  },
+  {
+   "id": "micro-concurrency-negative",
+   "script": "micro.sh",
+   "args": [
+    "concurrency/negative"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark wave 3 (innodb_thread_concurrency, negative): With few threads per CPU there is no run queue to manage: a limit adds only its own checks."
+  },
+  {
+   "id": "micro-threadpool-positive",
+   "script": "micro.sh",
+   "args": [
+    "threadpool/positive"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark wave 3 (thread pool, positive): With far more connections than CPUs, the thread pool runs a few threads per CPU group: it raises throughput where one thread per connection queues for CPUs."
+  },
+  {
+   "id": "micro-threadpool-negative",
+   "script": "micro.sh",
+   "args": [
+    "threadpool/negative"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark wave 3 (thread pool, negative): With few connections per CPU, the pool's queueing adds latency and saves nothing."
+  },
+  {
+   "id": "micro-bpinstances-positive",
+   "script": "micro.sh",
+   "args": [
+    "bpinstances/positive"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark wave 3 (innodb_buffer_pool_instances, positive): Point lookups on a small hot set from 1,024 threads contend on one buffer pool's page hash and LRU latches; several instances split them and raise throughput."
+  },
+  {
+   "id": "micro-bpinstances-negative",
+   "script": "micro.sh",
+   "args": [
+    "bpinstances/negative"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark wave 3 (innodb_buffer_pool_instances, negative): At low concurrency the buffer pool latches are not contended: more instances change nothing."
+  },
+  {
+   "id": "micro-thp-positive",
+   "script": "micro.sh",
+   "args": [
+    "thp/positive"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark wave 3 (transparent huge pages, positive): CPU-bound random lookups over a 16 GB in-memory heap miss the TLB with 4 KiB pages, and page walks take a measurable share of cycles; THP always cuts them and raises throughput."
+  },
+  {
+   "id": "micro-thp-negative",
+   "script": "micro.sh",
+   "args": [
+    "thp/negative"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark wave 3 (transparent huge pages, negative): A small heap fits the TLB reach: page walks are rare and THP changes nothing."
+  },
+  {
+   "id": "micro-lru-positive",
+   "script": "micro.sh",
+   "args": [
+    "lru/positive"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 6,
+   "question": "Mechanism micro-benchmark wave 3 (innodb_lru_scan_depth, positive): Reads and writes on data 15x the pool need free pages; with a shallow LRU scan the page cleaner frees too few and foreground threads wait for free pages; a deeper scan raises throughput."
+  },
+  {
+   "id": "micro-lru-negative",
+   "script": "micro.sh",
+   "args": [
+    "lru/negative"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark wave 3 (innodb_lru_scan_depth, negative): With the data in memory there are always free pages: the scan depth changes nothing."
+  },
+  {
+   "id": "micro-doublewrite-positive",
+   "script": "micro.sh",
+   "args": [
+    "doublewrite/positive"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia",
+    "atvbmamd"
+   ],
+   "group": false,
+   "est_hours": 6,
+   "question": "Mechanism micro-benchmark wave 3 (innodb_doublewrite, positive): When writes are bound by page flushing on disk, the doublewrite buffer writes every page twice; turning it off (not crash-safe) halves the page writes and raises throughput."
+  },
+  {
+   "id": "micro-doublewrite-negative",
+   "script": "micro.sh",
+   "args": [
+    "doublewrite/negative"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark wave 3 (innodb_doublewrite, negative): In memory with a large redo log few pages are flushed: doublewrite has little to write and costs nothing measurable."
+  },
+  {
+   "id": "micro-tablecache-positive",
+   "script": "micro.sh",
+   "args": [
+    "tablecache/positive"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark wave 3 (table_open_cache, positive): Point selects spread over 4,000 tables need more open table handles than a 400-entry cache holds: every miss reopens a table; a large cache raises throughput."
+  },
+  {
+   "id": "micro-tablecache-negative",
+   "script": "micro.sh",
+   "args": [
+    "tablecache/negative"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark wave 3 (table_open_cache, negative): With 8 tables every handle fits a small cache: its size changes nothing."
+  },
+  {
+   "id": "micro-tabledef-positive",
+   "script": "micro.sh",
+   "args": [
+    "tabledef/positive"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark wave 3 (table_definition_cache, positive): With 4,000 tables and a 400-entry definition cache, table definitions are evicted and reloaded from the data dictionary; a large cache raises throughput."
+  },
+  {
+   "id": "micro-tabledef-negative",
+   "script": "micro.sh",
+   "args": [
+    "tabledef/negative"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 3,
+   "question": "Mechanism micro-benchmark wave 3 (table_definition_cache, negative): With 8 tables every definition stays cached: the size changes nothing."
+  },
+  {
+   "id": "micro-threadcache-positive",
+   "script": "micro.sh",
+   "args": [
+    "threadcache/positive"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 2,
+   "question": "Mechanism micro-benchmark wave 3 (thread_cache_size, positive): When every transaction opens a new connection, each connect creates a thread unless one is cached; a thread cache raises throughput."
+  },
+  {
+   "id": "micro-threadcache-negative",
+   "script": "micro.sh",
+   "args": [
+    "threadcache/negative"
+   ],
+   "hosts": [
+    "atcanary",
+    "atvbmamd",
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 2,
+   "question": "Mechanism micro-benchmark wave 3 (thread_cache_size, negative): With persistent connections no threads are created during the run: the cache size changes nothing."
   },
   {
    "id": "priors-analytics",
@@ -1812,7 +2096,8 @@
     "C6"
    ],
    "hosts": [
-    "atcanary"
+    "atvbm2",
+    "atvbmmia"
    ],
    "group": false,
    "est_hours": 10,
@@ -1830,6 +2115,23 @@
    "group": false,
    "est_hours": 10,
    "question": "Evidence wave: matrix cell M2 (read-only, medium concurrency, in memory) with the I/O profile, mechanism evidence, verdict and bundle fixes, trade-offs after the safe configuration"
+  },
+  {
+   "id": "std-mysql-9.7",
+   "script": null,
+   "args": [
+    "mysql",
+    "9.7"
+   ],
+   "hosts": [
+    "atvbm",
+    "atvbm2",
+    "atvbmmia"
+   ],
+   "group": false,
+   "est_hours": 13,
+   "question": "TODO (held 2026-11-04, user asked for MariaDB only): Standard benchmark (sysbench oltp_read_write 20 GB, 1024 connections, binlog off, 10+10 min, 25 runs) on mysql 9.7",
+   "todo_script": "std-bench.sh"
   }
  ]
 }

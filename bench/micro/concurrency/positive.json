@@ -1,0 +1,45 @@
+{
+ "mechanism": "innodb_thread_concurrency",
+ "role": "positive",
+ "claim": "With far more running threads than CPUs, threads wait in the run queue and hold latches while descheduled; a concurrency limit near twice the CPUs raises throughput.",
+ "dataset": {
+  "tables": 8,
+  "rows": 4000000
+ },
+ "fixed": {
+  "innodb_buffer_pool_size": "12G"
+ },
+ "workload": {
+  "test": "oltp_read_write",
+  "threads": 1024,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "innodb_thread_concurrency",
+  "values": [
+   "0",
+   "24"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "0",
+   "to": "24",
+   "metric": "tps",
+   "direction": "up",
+   "min_pct": 5
+  },
+  {
+   "kind": "signal",
+   "at": "0",
+   "metric": "dbproc_runq_wait_pct",
+   "op": ">=",
+   "value": 20
+  }
+ ]
+}

@@ -1,0 +1,45 @@
+{
+ "mechanism": "thread pool",
+ "role": "positive",
+ "claim": "With far more connections than CPUs, the thread pool runs a few threads per CPU group: it raises throughput where one thread per connection queues for CPUs.",
+ "dataset": {
+  "tables": 8,
+  "rows": 4000000
+ },
+ "fixed": {
+  "innodb_buffer_pool_size": "12G"
+ },
+ "workload": {
+  "test": "oltp_read_write",
+  "threads": 1024,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "thread_handling",
+  "values": [
+   "one-thread-per-connection",
+   "pool-of-threads"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "one-thread-per-connection",
+   "to": "pool-of-threads",
+   "metric": "tps",
+   "direction": "up",
+   "min_pct": 5
+  },
+  {
+   "kind": "signal",
+   "at": "one-thread-per-connection",
+   "metric": "dbproc_runq_wait_pct",
+   "op": ">=",
+   "value": 20
+  }
+ ]
+}

@@ -94,6 +94,24 @@ Metric names (resolved from the run's summary and inputs, as the agent recorded 
 | binlog | positive | sync_binlog=1, updates, 128 threads | group commit delay 0, 1000 us | binlog syncs per trx down >= 30%; tps not down |
 | binlog | negative | sync_binlog=1, updates, 4 threads | 0, 1000 us | tps not up |
 
+## Third wave (queued 2026-11-04)
+
+| Suite | Positive case | Negative control | Sweep | Expect (positive) |
+|---|---|---|---|---|
+| concurrency | read-write, 1,024 threads, in memory | 32 threads | innodb_thread_concurrency 0, 24 | tps up >= 5%; run-queue wait >= 20% at 0 |
+| threadpool | same | 32 threads | thread_handling one-thread-per-connection, pool-of-threads | tps up >= 5%; run-queue wait >= 20% |
+| bpinstances | pareto point selects on 8 x 1M, 1,024 threads | 8 threads | innodb_buffer_pool_instances 1, 8 | tps up >= 5% |
+| thp | point selects over 16 GB in a 20 GB pool (Intel hosts) | 0.5 GB heap | os:thp never, always | tps up >= 3%; page walks >= 3% of cycles at never |
+| lru | read-write on 60 GB with a 4 GB pool | in memory | innodb_lru_scan_depth 128, 1024, 4096 | tps up >= 5% at 1024; free-page waits at 128 |
+| doublewrite | update-only on 60 GB with a 4 GB pool | in memory, 8 GB redo | innodb_doublewrite ON, OFF | tps up >= 5%; bytes written per trx down >= 20% |
+| tablecache | point selects over 4,000 tables | 8 tables | table_open_cache 400, 8000 | tps up >= 5%; >= 100 cache misses/s at 400 |
+| tabledef | same, table_open_cache 8000 | 8 tables | table_definition_cache 400, 8000 | tps up >= 3%; definitions reopened at 400 |
+| threadcache | new connection per transaction (lua/connstorm.lua) | persistent connections | thread_cache_size 0, 128 | tps up >= 5%; >= 100 threads created/s at 0 |
+
+`table_cache` no longer exists (renamed table_open_cache in MySQL 5.1.3); the open-table cache, the definition cache and the
+cache instances are separate settings. innodb_flush_neighbors is left out: every box has SSDs (SATA or NVMe), and
+neighbour flushing only pays on rotating disks - no positive case is possible here.
+
 ## Results
 
 | Date | Case | Verdict | Measured |

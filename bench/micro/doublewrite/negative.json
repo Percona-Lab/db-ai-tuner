@@ -1,0 +1,39 @@
+{
+ "mechanism": "innodb_doublewrite",
+ "role": "negative",
+ "claim": "In memory with a large redo log few pages are flushed: doublewrite has little to write and costs nothing measurable.",
+ "dataset": {
+  "tables": 8,
+  "rows": 4000000
+ },
+ "fixed": {
+  "innodb_buffer_pool_size": "12G",
+  "innodb_redo_log_capacity": "8G"
+ },
+ "workload": {
+  "test": "oltp_update_non_index",
+  "threads": 64,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "innodb_doublewrite",
+  "values": [
+   "ON",
+   "OFF"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "ON",
+   "to": "OFF",
+   "metric": "tps",
+   "direction": "flat",
+   "max_pct": 3
+  }
+ ]
+}

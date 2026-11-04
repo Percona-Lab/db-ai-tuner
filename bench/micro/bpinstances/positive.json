@@ -1,0 +1,38 @@
+{
+ "mechanism": "innodb_buffer_pool_instances",
+ "role": "positive",
+ "claim": "Point lookups on a small hot set from 1,024 threads contend on one buffer pool's page hash and LRU latches; several instances split them and raise throughput.",
+ "dataset": {
+  "tables": 8,
+  "rows": 1000000
+ },
+ "fixed": {
+  "innodb_buffer_pool_size": "12G"
+ },
+ "workload": {
+  "test": "oltp_point_select",
+  "threads": 1024,
+  "rand": "pareto"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "innodb_buffer_pool_instances",
+  "values": [
+   "1",
+   "8"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "1",
+   "to": "8",
+   "metric": "tps",
+   "direction": "up",
+   "min_pct": 5
+  }
+ ]
+}

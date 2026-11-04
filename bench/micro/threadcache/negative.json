@@ -1,0 +1,36 @@
+{
+ "mechanism": "thread_cache_size",
+ "role": "negative",
+ "claim": "With persistent connections no threads are created during the run: the cache size changes nothing.",
+ "dataset": {
+  "tables": 8,
+  "rows": 1000000
+ },
+ "fixed": {},
+ "workload": {
+  "test": "oltp_point_select",
+  "threads": 64,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "thread_cache_size",
+  "values": [
+   "0",
+   "128"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "0",
+   "to": "128",
+   "metric": "tps",
+   "direction": "flat",
+   "max_pct": 3
+  }
+ ]
+}

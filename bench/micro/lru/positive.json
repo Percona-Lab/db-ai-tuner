@@ -1,0 +1,46 @@
+{
+ "mechanism": "innodb_lru_scan_depth",
+ "role": "positive",
+ "claim": "Reads and writes on data 15x the pool need free pages; with a shallow LRU scan the page cleaner frees too few and foreground threads wait for free pages; a deeper scan raises throughput.",
+ "dataset": {
+  "tables": 16,
+  "rows": 16000000
+ },
+ "fixed": {
+  "innodb_buffer_pool_size": "4G"
+ },
+ "workload": {
+  "test": "oltp_read_write",
+  "threads": 64,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "innodb_lru_scan_depth",
+  "values": [
+   "128",
+   "1024",
+   "4096"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "128",
+   "to": "1024",
+   "metric": "tps",
+   "direction": "up",
+   "min_pct": 5
+  },
+  {
+   "kind": "signal",
+   "at": "128",
+   "metric": "lru_get_free_waits_s",
+   "op": ">",
+   "value": 0
+  }
+ ]
+}

@@ -1,0 +1,37 @@
+{
+ "mechanism": "innodb_thread_concurrency",
+ "role": "negative",
+ "claim": "With few threads per CPU there is no run queue to manage: a limit adds only its own checks.",
+ "dataset": {
+  "tables": 8,
+  "rows": 4000000
+ },
+ "fixed": {
+  "innodb_buffer_pool_size": "12G"
+ },
+ "workload": {
+  "test": "oltp_read_write",
+  "threads": 32,
+  "rand": "uniform"
+ },
+ "warmup": 300,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "innodb_thread_concurrency",
+  "values": [
+   "0",
+   "24"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "0",
+   "to": "24",
+   "metric": "tps",
+   "direction": "not_up"
+  }
+ ]
+}

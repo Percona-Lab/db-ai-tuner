@@ -1,0 +1,46 @@
+{
+ "mechanism": "table_open_cache",
+ "role": "positive",
+ "claim": "Point selects spread over 4,000 tables need more open table handles than a 400-entry cache holds: every miss reopens a table; a large cache raises throughput.",
+ "dataset": {
+  "tables": 4000,
+  "rows": 1000
+ },
+ "fixed": {
+  "table_definition_cache": "8000",
+  "open_files_limit": "65535"
+ },
+ "workload": {
+  "test": "oltp_point_select",
+  "threads": 64,
+  "rand": "uniform"
+ },
+ "warmup": 180,
+ "duration": 300,
+ "goal": "tps",
+ "sweep": {
+  "variable": "table_open_cache",
+  "values": [
+   "400",
+   "8000"
+  ]
+ },
+ "repeats": 2,
+ "expect": [
+  {
+   "kind": "response",
+   "from": "400",
+   "to": "8000",
+   "metric": "tps",
+   "direction": "up",
+   "min_pct": 5
+  },
+  {
+   "kind": "signal",
+   "at": "400",
+   "metric": "st:Table_open_cache_misses",
+   "op": ">=",
+   "value": 100
+  }
+ ]
+}
