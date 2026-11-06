@@ -21,9 +21,7 @@
    "id": "irdma-off-atvbmamd",
    "script": "irdma-off.sh",
    "args": [],
-   "hosts": [
-    "atvbmamd"
-   ],
+   "hosts": [],
    "group": false,
    "est_hours": 0.1,
    "question": "Free the ~5.5 GiB the E810 NIC's RDMA driver (irdma) reserves on the AMD box, between the W3 and W4 head-to-head sessions"
@@ -107,11 +105,7 @@
     "percona",
     "9.7"
    ],
-   "hosts": [
-    "atvbm",
-    "atvbm2",
-    "atvbmmia"
-   ],
+   "hosts": [],
    "group": false,
    "est_hours": 13,
    "question": "Standard benchmark (sysbench oltp_read_write 20 GB, 1024 connections, binlog off, 10+10 min, 25 runs) on percona 9.7"
@@ -123,11 +117,7 @@
     "mariadb",
     "11.8"
    ],
-   "hosts": [
-    "atvbm",
-    "atvbm2",
-    "atvbmmia"
-   ],
+   "hosts": [],
    "group": false,
    "est_hours": 13,
    "question": "Standard benchmark (sysbench oltp_read_write 20 GB, 1024 connections, binlog off, 10+10 min, 25 runs) on mariadb 11.8"
@@ -211,12 +201,7 @@
    "id": "defaults-ab",
    "script": "defaults-ab.sh",
    "args": [],
-   "hosts": [
-    "atvbm",
-    "atvbm2",
-    "atvbmmia",
-    "atvbmamd"
-   ],
+   "hosts": [],
    "group": false,
    "est_hours": 8,
    "question": "Which 8.0 -> 8.4 default changes matter, per workload (write-heavy / read-heavy)"
@@ -611,12 +596,7 @@
    "id": "priors-analytics",
    "script": null,
    "args": [],
-   "hosts": [
-    "atvbm",
-    "atvbm2",
-    "atvbmmia",
-    "atvbmamd"
-   ],
+   "hosts": [],
    "group": false,
    "est_hours": 8,
    "question": "TODO (script): TPC-H priors - temptable_max_ram, internal tmp engine, optimizer search depth (needs the TPC-H data set)"
@@ -625,12 +605,7 @@
    "id": "filesystem",
    "script": null,
    "args": [],
-   "hosts": [
-    "atvbm",
-    "atvbm2",
-    "atvbmmia",
-    "atvbmamd"
-   ],
+   "hosts": [],
    "group": false,
    "est_hours": 10,
    "question": "TODO (script): ext4 vs xfs on the second drive through the filesystem scope"
@@ -639,12 +614,7 @@
    "id": "soak-24h",
    "script": null,
    "args": [],
-   "hosts": [
-    "atvbm",
-    "atvbm2",
-    "atvbmmia",
-    "atvbmamd"
-   ],
+   "hosts": [],
    "group": false,
    "est_hours": 26,
    "question": "TODO (script): 24 h of the tuned vs the default configuration on seasoned data (does the gain hold as data ages?)"
@@ -1145,9 +1115,7 @@
    "args": [
     "C4"
    ],
-   "hosts": [
-    "atvbmmia"
-   ],
+   "hosts": [],
    "group": false,
    "est_hours": 11,
    "question": "Case-base matrix v2 wave 1, cell C4: TPC-C 1000 W: commit-heavy, extreme concurrency, on disk, SATA (none)"
@@ -1160,9 +1128,7 @@
     "rules",
     "rerun"
    ],
-   "hosts": [
-    "atvbmmia"
-   ],
+   "hosts": [],
    "group": false,
    "est_hours": 7,
    "question": "Head-to-head W4 rules rerun on atvbmmia again: the first rerun (session 382) was spoiled - the calibration was judged a destabilizing change and a -15% thread pool kept (fixed)"
@@ -2123,11 +2089,7 @@
     "mysql",
     "9.7"
    ],
-   "hosts": [
-    "atvbm",
-    "atvbm2",
-    "atvbmmia"
-   ],
+   "hosts": [],
    "group": false,
    "est_hours": 13,
    "question": "TODO (held 2026-11-04, user asked for MariaDB only): Standard benchmark (sysbench oltp_read_write 20 GB, 1024 connections, binlog off, 10+10 min, 25 runs) on mysql 9.7",

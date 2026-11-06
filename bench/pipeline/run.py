@@ -31,7 +31,9 @@ def log(msg):
 
 # boxes with the same hardware: a matrix cell's best configurations are confirmed on a sibling (cross-host confirmation,
 # user 2026-10-30 after TUNA, EuroSys 2025: 'best' configurations found on one machine often lose 30%+ on another)
-SIBLINGS = [{"atvbm", "atvbm2", "atvbmmia"}]
+# the three Intel E-2286G boxes (atvbm, atvbm2, atvbmmia) and atvbmamd were deleted 2026-11-06: atcanary has no sibling,
+# so no cross-host confirmations are queued
+SIBLINGS = []
 
 
 def load():
