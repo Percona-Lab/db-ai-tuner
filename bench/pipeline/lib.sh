@@ -14,8 +14,21 @@ ensure_ps84() {  # the standard server: Percona Server 8.4 with debug symbols (C
   rm -f /var/lib/mysql_base.dataset
 }
 
+# The pristine copy lives on the second disk when the host has one (/data: tuner-canary, 2026-11-06 - the root disk keeps
+# its room for the live data directory) in a directory of its own, and /var/lib/mysql_base (what reset_datadir.sh restores
+# from) points at it; the deploy canary points the same link at /data/canary_base for its runs.
+pipeline_base() { mountpoint -q /data 2>/dev/null && echo /data/pipeline_base || echo /var/lib/mysql_base; }
+use_base() {  # /var/lib/mysql_base -> the pipeline's copy (no-op without a second disk)
+  local b=$(pipeline_base)
+  [ "$b" = /var/lib/mysql_base ] && return 0
+  mkdir -p $b
+  if [ -d /var/lib/mysql_base ] && [ ! -L /var/lib/mysql_base ]; then rm -rf /var/lib/mysql_base; fi
+  ln -sfn $b /var/lib/mysql_base
+}
+
 dataset() {  # dataset <tables> <rows>: sysbench sbtest of this shape, and the pristine copy reset_datadir.sh restores
   local want="$(mysql -N -e 'SELECT CONCAT(@@version, " ", @@version_comment)') $1 x $2"
+  use_base
   if [ "$(cat /var/lib/mysql_base.dataset 2>/dev/null)" = "$want" ] && [ -d /var/lib/mysql_base/sbtest ]; then
     /root/bench/reset_datadir.sh && return
   fi
@@ -29,11 +42,12 @@ dataset() {  # dataset <tables> <rows>: sysbench sbtest of this shape, and the p
   purge_binlogs
   mysql -N -e "SELECT CONCAT('other databases in the copy: ', GROUP_CONCAT(s, ' ', g, ' GB')) FROM (SELECT table_schema s, ROUND(SUM(data_length+index_length)/1073741824) g FROM information_schema.tables WHERE table_schema NOT IN ('sbtest','mysql','sys','performance_schema','information_schema') GROUP BY 1 HAVING g >= 1) x" 2>/dev/null
   systemctl stop mysql 2>/dev/null || systemctl stop mariadb
-  rm -rf /var/lib/mysql_base
-  local need=$(du -sk /var/lib/mysql | cut -f1) free=$(df -k --output=avail /var/lib | tail -1) size=$(df -k --output=size /var/lib | tail -1)
-  # keep 10% of the disk free after the copy: the benchmark grows the data and logs
-  [ $((free - need)) -ge $((size / 10)) ] || { systemctl start mysql 2>/dev/null; echo "QUEUEFAILED: disk - the pristine copy needs $((need / 1048576)) GB, $((free / 1048576)) GB free (keeping 10% of the disk)"; exit 1; }
-  mkdir -p /var/lib/mysql_base && rsync -a /var/lib/mysql/ /var/lib/mysql_base/ || { echo "QUEUEFAILED: pristine copy"; exit 1; }
+  local b=$(pipeline_base)
+  rm -rf $b; mkdir -p $b; use_base
+  local need=$(du -sk /var/lib/mysql | cut -f1) free=$(df -k --output=avail $b | tail -1) size=$(df -k --output=size $b | tail -1)
+  # keep 10% of the disk free after the copy: the benchmark grows the data and logs (same disk without a second one)
+  [ $((free - need)) -ge $((size / 10)) ] || { systemctl start mysql 2>/dev/null; echo "QUEUEFAILED: disk - the pristine copy needs $((need / 1048576)) GB, $((free / 1048576)) GB free on $b (keeping 10% of the disk)"; exit 1; }
+  rsync -a /var/lib/mysql/ $b/ || { echo "QUEUEFAILED: pristine copy"; exit 1; }
   echo "$want" > /var/lib/mysql_base.dataset
   systemctl start mysql 2>/dev/null || systemctl start mariadb
 }

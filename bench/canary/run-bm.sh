@@ -5,6 +5,11 @@
 . /root/bench/queue-common.sh
 set -x
 update_agent
+# its own pristine copy: the pipeline points /var/lib/mysql_base at /data/pipeline_base between canary runs
+if [ -d /data/canary_base/mysql ]; then
+  [ -d /var/lib/mysql_base ] && [ ! -L /var/lib/mysql_base ] && rm -rf /var/lib/mysql_base
+  ln -sfn /data/canary_base /var/lib/mysql_base
+fi
 LIMIT=${2:-75}
 export STUDY="Deploy canary (bare metal)" SCOPE=knobs,os
 NAME="deploy canary $(date -u +%F' '%H:%M) agent $(tuning-agent --version 2>/dev/null)"
