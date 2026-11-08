@@ -184,12 +184,16 @@ def resume(run, cell_id):
     save(st)
 
 
+TOOLS_HOST = "atcanary"
+
+
 def run_cell(st, srv, cli):
     run, cell_id = st["run"], st["cell"]
     if True:
-        key = ssh("atdb", "sed -n 's/^api_key *= *//p' /etc/tuning-agent/agent.ini", check=True).stdout.strip()
+        # the agent key and the benchmark tools come from tuner-canary (tuner-db, the earlier source, was retired 2026-11-08)
+        key = ssh(TOOLS_HOST, "sed -n 's/^api_key *= *//p' /etc/tuning-agent/agent.ini", check=True).stdout.strip()
         ssh(srv, "mkdir -p /root/bench /opt", check=True)
-        tools = subprocess.Popen(SSH + ["atdb", "tar czf - -C /opt HammerDB-6.0 mysqlclient go-tpc"], stdout=subprocess.PIPE)
+        tools = subprocess.Popen(SSH + [TOOLS_HOST, "tar czf - -C /opt HammerDB-6.0 mysqlclient go-tpc"], stdout=subprocess.PIPE)
         subprocess.run(SSH + [srv, "tar xzf - -C /opt"], stdin=tools.stdout, check=True, timeout=1800)
         bench = os.path.join(ROOT, "bench")
         subprocess.run(["tar", "czf", "-", "-C", bench] + BENCH_FILES + BENCH_DIRS + ["suite"], stdout=open(f"/tmp/suite-{run}-{cell_id}.tgz", "wb"), check=True)
