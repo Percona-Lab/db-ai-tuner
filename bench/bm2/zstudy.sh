@@ -148,8 +148,10 @@ case ${1:-} in
   run) shift; cur=""
        for p in "$@"; do
          IFS=: read -r mode bp tag <<< "$p"
-         [ "$mode" != "$cur" ] && { swap_mode $mode; cur=$mode; }
+         [ "$mode" != "$cur" ] && { swap_mode $mode; cur=$mode; oomed=""; }
+         [ -n "$oomed" ] && { log "$mode-$bp: skipped (a smaller pool was OOM-killed in this mode)"; continue; }
          point $mode $bp ${tag:-r1}
+         tail -1 $O/results.jsonl | grep -q '"outcome": "oom-killed"\|start failed' && oomed=1
        done; log "RUNDONE $*" ;;
   teardown)
        rm -f $CNF /etc/mysql/mysql.conf.d/zzzz-zstudy-build.cnf; systemctl stop mysql
