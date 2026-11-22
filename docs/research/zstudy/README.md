@@ -105,7 +105,34 @@ Choice for round 2: **BenchBase AuctionMark** (eBay-style auctions: users, items
 most compressible OLTP workload without padding tricks (lz4 ~2.9x, zstd ~4.5x), tested with both lz4 and zstd for
 zswap and zram.
 
-## Round 2: BenchBase AuctionMark (~100 GB), lz4 and zstd
+## Round 2: BenchBase AuctionMark (~86 GB), lz4 and zstd - not I/O-bound enough to answer the question
 
-In progress (started 2026-11-21 17:35 UTC): scale factor 300, 64 terminals, 5 min warm-up + 15 min measured,
-modes disk, disk2, zswap-lz4, zswap-zstd, zram-lz4, zram-zstd. Results will be added here.
+Scale factor 140 (86 GB on disk; scale factor 300 was aborted at 130 GB, projected ~200 GB: AuctionMark's size is not
+linear in the scale factor - plan ~0.6-0.7 GB per SF), 64 terminals co-located, 5 min warm-up + 15 min measured,
+pristine data before each point. Raw rows: `auctionmark-sf140-results.jsonl`.
+
+| Mode | BP GB | req/s | p95 ms | p99 ms | InnoDB reads/s | swap-ins/s |
+|---|---|---|---|---|---|---|
+| disk | 20 | 6,184 | 31.8 | 103 | 945 | 0 |
+| disk | 24 | 7,357 | 28.3 | 60 | 683 | 0 |
+| disk | 26 | 7,507 | 27.6 | 57 | 557 | 8 |
+| disk | 28 | 6,503 | 34.8 | 79 | 698 | 3,963 (disk) |
+| disk2 | 32 / 40 | 5,847 / 6,079 | 37 | 78 | ~1,000 | 5,400-6,000 (2nd SSD) |
+| zswap lz4 | 32 / 40 / 48 | 7,509 / 7,513 / 7,472 | 27.4-27.7 | 56 | ~480 | ~3,500 (zswap) |
+| zswap zstd | 32 / 40 / 48 / 56 | 7,487 / 7,502 / 7,503 / 7,468 | 27.5 | 56 | ~485 | ~3,500 (zswap) |
+| zram lz4 | 32 / 40 / 48 | 7,544 / 7,534 / 7,553 | 27.2 | 55-57 | ~475 | ~3,500 (zram) |
+| zram zstd | 32 / 40 / 48 / 56 | 7,506 / 7,491 / 7,536 / 7,530 | 27.4 | 56 | ~480 | ~3,500 (zram) |
+
+Findings:
+
+1. **This workload is CPU-bound with a hot set that fits in RAM**: at the best plain size (26 GB) the miss rate is
+   0.16%, iowait 7.6%, CPU 88% busy (BenchBase's Java client shares the 8 threads). Every compressed setup lands at the
+   same ~7,500 req/s as disk 26 GB, whatever the pool size (all within ~1%).
+2. **The larger pools never filled with data.** A whole run reads ~1.4M pages (~23 GB); a 48 GB pool's extra memory is
+   never-used pages. InnoDB zero-fills the pool at startup, the kernel swaps those zero pages out and zram/zswap store
+   them almost for free (reported ratios 6-31x are zero pages, not AuctionMark data), and the swap-ins (~3,500/s) are
+   InnoDB claiming a free page. Compression of real AuctionMark pages was never exercised.
+3. **Compressed swap does make oversizing safe; disk swap does not**: at 28-40 GB, disk swap costs 13-22% (zero pages
+   written to and read back from SSD), while zram/zswap cost nothing.
+
+To test the question, the hot set has to exceed RAM but fit once compressed (see next steps).
