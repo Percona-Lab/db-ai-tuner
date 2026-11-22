@@ -17,7 +17,14 @@
 #        zstudy.sh teardown                   # swap back to the host's own, the canary's datadir back, agent back
 set -u
 WL=${WL:-hdb}
-if [ $WL = am ]; then O=/root/bench/zstudy-am; BASE=/data/zstudy_am_base; else O=/root/bench/zstudy; BASE=/data/zstudy_base; fi
+case $WL in
+  am)  O=/root/bench/zstudy-am;  BASE=/data/zstudy_am_base ;;
+  sbz) O=/root/bench/zstudy-sbz; BASE=/data/zstudy_sbz_base ;;
+  *)   O=/root/bench/zstudy;     BASE=/data/zstudy_base ;;
+esac
+# WL=sbz (round 3): sysbench oltp_read_write with the patched oltp_common.lua (bench/sysbench-z: --data-random-pct=10,
+# pages ~3x lz4 / ~6x zstd), 16 x 16.5M rows (~60 GB), uniform, 64 threads, 15 min warm-up + 10 min measured
+SBZ="LUA_PATH='/root/bench/sysbench-z/?.lua;;' sysbench /root/bench/sysbench-z/oltp_read_write.lua --mysql-user=sbtest --mysql-password=sbtest --mysql-socket=/var/run/mysqld/mysqld.sock --mysql-db=sbtest --tables=16 --table-size=${SBZ_ROWS:-16500000} --data-random-pct=${SBZ_PCT:-10}"
 mkdir -p $O                       # BASE: pristine data set (other SSD than the datadir)
 AM_SF=${AM_SF:-300}               # AuctionMark scale factor: SF 5 loaded 1.66 GB (survey), so ~300 for ~100 GB
 CNF=/etc/mysql/mysql.conf.d/zzz-zstudy.cnf
@@ -50,7 +57,12 @@ setup() {
   [ -d /var/lib/mysql/mysql ] || mysqld --initialize-insecure --user=mysql --datadir=/var/lib/mysql || { log "STUDYFAILED: initialize"; exit 1; }
   systemctl start mysql || { log "STUDYFAILED: start"; exit 1; }
   q "CREATE USER IF NOT EXISTS tpcc@localhost IDENTIFIED BY 'tpcc'; CREATE USER IF NOT EXISTS tpcc@'127.0.0.1' IDENTIFIED BY 'tpcc'; GRANT ALL ON *.* TO tpcc@localhost; GRANT ALL ON *.* TO tpcc@'127.0.0.1'"
-  if [ $WL = am ]; then
+  if [ $WL = sbz ]; then
+    log "loading patched sysbench: 16 x ${SBZ_ROWS:-16500000} rows, data-random-pct ${SBZ_PCT:-10}"
+    q "CREATE USER IF NOT EXISTS sbtest@localhost IDENTIFIED BY 'sbtest'; GRANT ALL ON *.* TO sbtest@localhost; DROP DATABASE IF EXISTS sbtest; CREATE DATABASE sbtest"
+    ( eval "$SBZ --threads=16 prepare" ) > $O/build.log 2>&1 || { log "STUDYFAILED: prepare (see build.log)"; exit 1; }
+    log "loaded: $(q "select round(sum(data_length+index_length)/1073741824,1) from information_schema.tables where table_schema='sbtest'") GB (tables)"
+  elif [ $WL = am ]; then
     log "loading AuctionMark SF $AM_SF"
     mkdir -p /root/bench/bb-sf; echo "$AM_SF" > /root/bench/bb-sf/auctionmark.sf   # bb_run.sh picks keys from it
     BB_SF=$AM_SF bash /root/bench/benchbase/bb_load.sh auctionmark 12 > $O/build.log 2>&1 || { log "STUDYFAILED: load (see build.log)"; exit 1; }
@@ -98,7 +110,7 @@ snap() {  # memory + InnoDB counters at a point in time, one JSON object
   python3 - <<PY
 import json, subprocess, os
 def st():
-    out = subprocess.run(["mysql","-N","-e","show global status where variable_name in ('Innodb_data_reads','Innodb_data_writes','Innodb_buffer_pool_read_requests','Innodb_buffer_pool_reads','Innodb_buffer_pool_wait_free','Innodb_pages_written','Com_commit')"],capture_output=True,text=True).stdout
+    out = subprocess.run(["mysql","-N","-e","show global status where variable_name in ('Innodb_data_reads','Innodb_data_writes','Innodb_buffer_pool_read_requests','Innodb_buffer_pool_reads','Innodb_buffer_pool_wait_free','Innodb_pages_written','Com_commit','Innodb_buffer_pool_pages_free','Innodb_buffer_pool_pages_data','Innodb_buffer_pool_pages_total')"],capture_output=True,text=True).stdout
     return {l.split()[0]: int(l.split()[1]) for l in out.splitlines() if l.strip()}
 mi = {l.split(':')[0]: int(l.split()[1]) for l in open('/proc/meminfo')}
 vs = {l.split()[0]: int(l.split()[1]) for l in open('/proc/vmstat')}
@@ -129,8 +141,11 @@ point() {  # point <mode> <bp GB> [tag]
   fi
   vmstat -n 10 > $O/vmstat-$id.log & local vm=$!
   iostat -dxm 10 sda sdb > $O/iostat-$id.log 2>/dev/null & local io=$!
-  ( sleep 300; snap > $O/snap0-$id.json ) & local s0=$!      # the end of the 5-minute ramp-up / warm-up
-  if [ $WL = am ]; then
+  local warm=300; [ $WL = sbz ] && warm=900
+  ( sleep $warm; snap > $O/snap0-$id.json ) & local s0=$!    # the end of the ramp-up / warm-up
+  if [ $WL = sbz ]; then
+    ( eval "$SBZ --threads=64 --rand-type=uniform --time=1500 --report-interval=10 --mysql-ignore-errors=all run" ) > $O/sb-$id.log 2>&1
+  elif [ $WL = am ]; then
     bash /root/bench/benchbase/bb_run.sh auctionmark 300 900 64 > $O/bb-$id.log 2>&1
   else
     rm -f /tmp/hdbxtprofile.log
@@ -139,7 +154,7 @@ point() {  # point <mode> <bp GB> [tag]
   snap > $O/snap1-$id.json
   kill $vm $io $s0 2>/dev/null; cp /tmp/hdbxtprofile.log $O/prof-$id.log 2>/dev/null
   local oom; oom=$(journalctl -k --since "$t0" --no-pager 2>/dev/null | grep -ciE "out of memory: killed process [0-9]+ \(mysqld\)|oom-kill.*mysqld")
-  python3 /root/bench/bm2/zstudy_point.py "$O" "$id" "$mode" "$bp" "$oom" >> $O/results.jsonl
+  WARM=$warm WINDOW=$([ $WL = sbz ] && echo 600 || echo 900) python3 /root/bench/bm2/zstudy_point.py "$O" "$id" "$mode" "$bp" "$oom" >> $O/results.jsonl
   log "$id: $(tail -1 $O/results.jsonl)"
 }
 
