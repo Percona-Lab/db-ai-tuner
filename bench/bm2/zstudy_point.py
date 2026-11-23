@@ -76,6 +76,10 @@ try:
         r["zswap_pool_gb"] = round(s1["zswap_kb"] / 1048576, 2)
         r["zswap_stored_gb"] = round(s1["zswapped_kb"] / 1048576, 2)
         r["zswap_ratio"] = round(s1["zswapped_kb"] / max(s1["zswap_kb"], 1), 2)
+    if s1.get("zram_bd_stat") and s0.get("zram_bd_stat"):  # zram writeback: 4 KiB pages read back / written per second
+        r["zram_wb_reads_s"] = round((int(s1["zram_bd_stat"][1]) - int(s0["zram_bd_stat"][1])) / secs, 1)
+        r["zram_wb_writes_s"] = round((int(s1["zram_bd_stat"][2]) - int(s0["zram_bd_stat"][2])) / secs, 1)
+        r["zram_on_disk_gb"] = round(int(s1["zram_bd_stat"][0]) * 4096 / 2**30, 2)
     if s1.get("zram_mm_stat"):
         orig, compr, used = (int(x) for x in s1["zram_mm_stat"][:3])
         r["zram_stored_gb"], r["zram_used_gb"] = round(orig / 2**30, 2), round(used / 2**30, 2)
