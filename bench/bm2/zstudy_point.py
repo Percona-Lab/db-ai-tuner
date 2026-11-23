@@ -76,6 +76,14 @@ try:
         r["zswap_pool_gb"] = round(s1["zswap_kb"] / 1048576, 2)
         r["zswap_stored_gb"] = round(s1["zswapped_kb"] / 1048576, 2)
         r["zswap_ratio"] = round(s1["zswapped_kb"] / max(s1["zswap_kb"], 1), 2)
+    if s1.get("arc") and s0.get("arc"):  # ZFS ARC: size, compression and hit rate over the window
+        a0, a1 = s0["arc"], s1["arc"]
+        r["arc_gb"] = round(a1["size"] / 2**30, 2)
+        if a1.get("compressed_size"):
+            r["arc_ratio"] = round(a1["uncompressed_size"] / a1["compressed_size"], 2)
+        h, m = a1["hits"] - a0["hits"], a1["misses"] - a0["misses"]
+        r["arc_hit_pct"] = round(100.0 * h / (h + m), 2) if h + m else None
+        r["arc_misses_s"] = round(m / secs, 1)
     if s1.get("zram_bd_stat") and s0.get("zram_bd_stat"):  # zram writeback: 4 KiB pages read back / written per second
         r["zram_wb_reads_s"] = round((int(s1["zram_bd_stat"][1]) - int(s0["zram_bd_stat"][1])) / secs, 1)
         r["zram_wb_writes_s"] = round((int(s1["zram_bd_stat"][2]) - int(s0["zram_bd_stat"][2])) / secs, 1)

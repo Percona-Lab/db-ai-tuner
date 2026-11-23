@@ -22,6 +22,7 @@ case $WL in
   sbz) O=/root/bench/zstudy-sbz; BASE=/data/zstudy_sbz_base ;;
   *)   O=/root/bench/zstudy;     BASE=/data/zstudy_base ;;
 esac
+BASE=${ZBASE:-$BASE}             # round 4: an alternative pristine copy (InnoDB-compressed tables, MyRocks)
 # WL=sbz (round 3): sysbench oltp_read_write with the patched oltp_common.lua (bench/sysbench-z: --data-random-pct=10,
 # pages ~3x lz4 / ~6x zstd), 16 x 16.5M rows (~60 GB), uniform, 64 threads, 15 min warm-up + 10 min measured
 SBZ="LUA_PATH='/root/bench/sysbench-z/?.lua;;' sysbench /root/bench/sysbench-z/oltp_read_write.lua --mysql-user=sbtest --mysql-password=sbtest --mysql-socket=/var/run/mysqld/mysqld.sock --mysql-db=sbtest --tables=16 --table-size=${SBZ_ROWS:-16500000} --data-random-pct=${SBZ_PCT:-10}"
@@ -47,6 +48,13 @@ innodb_redo_log_capacity = 8G
 innodb_io_capacity = 2000
 innodb_io_capacity_max = 4000
 EOF
+  case ${MODE_KIND:-} in
+    zfs)   # datadir on ZFS: the ARC caches (compressed) blocks, so no O_DIRECT; ZFS writes are atomic per record (CoW)
+           printf 'innodb_flush_method = fsync\ninnodb_doublewrite = OFF\n' >> $CNF ;;
+    rocks) # MyRocks: "bp" is the RocksDB block cache; InnoDB only holds the system tables
+           sed -i "s/^innodb_buffer_pool_size.*/innodb_buffer_pool_size = 1G/" $CNF
+           printf 'plugin-load-add = ha_rocksdb.so\nrocksdb_block_cache_size = %sG\nrocksdb_default_cf_options = %s\n' "$1" "${ROCKS_CF:-compression=kLZ4Compression;bottommost_compression=kLZ4Compression}" >> $CNF ;;
+  esac
 }
 
 setup() {
@@ -88,11 +96,12 @@ swap_mode() {  # mysqld must be down: swapoff brings every swapped page back
   echo N > /sys/module/zswap/parameters/enabled
   # compressed modes: Arch wiki zram tuning (ChromeOS / Pop!_OS values): no swap read-ahead (page-cluster 0: buffer pool
   # pages come back one at a time at random), no watermark boost, earlier background reclaim; disk mode keeps the defaults
-  if [ ${1%%-*} = disk ]; then sysctl -q vm.page-cluster=3 vm.watermark_boost_factor=15000 vm.watermark_scale_factor=10
+  case ${1%%-*} in inno|zfs|rocks) MODE_KIND=${1%%-*} ;; *) MODE_KIND="" ;; esac
+  if [ ${1%%-*} = disk ] || [ -n "$MODE_KIND" ]; then sysctl -q vm.page-cluster=3 vm.watermark_boost_factor=15000 vm.watermark_scale_factor=10
   else sysctl -q vm.page-cluster=0 vm.watermark_boost_factor=0 vm.watermark_scale_factor=125; fi
   local kind=${1%%-*} comp=lz4; [ "$kind" != "$1" ] && comp=${1#*-}
   case $kind in
-    disk)  sysctl -q vm.swappiness=60; swapon /swapfile ;;
+    disk|inno|zfs|rocks)  sysctl -q vm.swappiness=60; swapon /swapfile ;;   # round 4: the host's own swap, no compression in the kernel
     zswap) sysctl -q vm.swappiness=100
            [ -e $ZSWF ] || { fallocate -l 64G $ZSWF && chmod 600 $ZSWF && mkswap -q $ZSWF; }
            echo $comp > /sys/module/zswap/parameters/compressor && echo zsmalloc > /sys/module/zswap/parameters/zpool \
@@ -137,6 +146,10 @@ d = {"status": st(), "mem_avail_kb": mi["MemAvailable"], "swap_used_kb": mi["Swa
      "zswpin": vs.get("zswpin"), "zswpout": vs.get("zswpout"), "zswpwb": vs.get("zswpwb")}
 try: d["zram_mm_stat"] = open('/sys/block/zram0/mm_stat').read().split()
 except Exception: pass
+try:
+    a = {l.split()[0]: int(l.split()[2]) for l in open('/proc/spl/kstat/zfs/arcstats').readlines()[2:]}
+    d["arc"] = {k: a[k] for k in ("size", "compressed_size", "uncompressed_size", "hits", "misses", "c_max") if k in a}
+except Exception: pass
 try: d["zram_bd_stat"] = open('/sys/block/zram0/bd_stat').read().split()   # pages on / read from / written to backing dev
 except Exception: pass
 try:
@@ -153,7 +166,14 @@ point() {  # point <mode> <bp GB> [tag]
   id=$mode-$bp-$tag
   study_cnf $bp
   q "SET GLOBAL innodb_fast_shutdown = 2" 2>/dev/null; systemctl stop mysql
-  rsync -a --delete $BASE/ /var/lib/mysql/ || { log "STUDYFAILED: reset"; exit 1; }
+  if [ -n "${ZFS_DS:-}" ]; then   # ZFS: roll back to the pristine snapshot, export/import to empty the ARC, cap the ARC
+    mountpoint -q /var/lib/mysql && umount /var/lib/mysql
+    zfs rollback -r $ZFS_DS@pristine && zpool export ${ZFS_DS%%/*} && zpool import ${ZFS_DS%%/*} \
+      && mount --bind $(zfs get -H -o value mountpoint $ZFS_DS) /var/lib/mysql || { log "STUDYFAILED: zfs reset"; exit 1; }
+    echo $(( ${ZFS_ARC_GB:-16} * 1073741824 )) > /sys/module/zfs/parameters/zfs_arc_max
+  else
+    rsync -aS --delete $BASE/ /var/lib/mysql/ || { log "STUDYFAILED: reset"; exit 1; }
+  fi
   sync; echo 3 > /proc/sys/vm/drop_caches
   t0=$(date -u '+%F %T')
   if ! systemctl start mysql; then
