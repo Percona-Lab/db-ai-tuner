@@ -31,7 +31,11 @@ PH=${1:-1}
 while systemctl is-active -q zstudy-sbz-run2 || systemctl is-active -q zstudy-sbz-run3; do sleep 60; done
 log "round 4 from phase $PH"
 # round 3's swap files are no longer needed
+# mysqld first: swapoff has to bring every swapped page back into RAM (21:20 on 2026-11-23 it OOM-killed this script)
+systemctl stop mysql
+echo N > /sys/module/zswap/parameters/enabled
 swapoff /data/zstudy-swap.img 2>/dev/null; rm -f /data/zstudy-swap.img /data/zstudy-zram-wb.img
+swapon /swapfile 2>/dev/null
 
 if [ $PH -le 1 ]; then
   for v in kbs8 kbs4 pclz4; do
