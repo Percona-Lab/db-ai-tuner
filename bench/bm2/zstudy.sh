@@ -192,7 +192,7 @@ point() {  # point <mode> <bp GB> [tag]
     ( eval "$HDB HDB_VU=64 HDB_ALLWH=true HDB_RAMPUP=5 HDB_DURATION=15 ./hammerdbcli auto /root/bench/hdb_run.tcl" ) > $O/hdb-$id.log 2>&1
   fi
   snap > $O/snap1-$id.json
-  kill $vm $io $s0 2>/dev/null; cp /tmp/hdbxtprofile.log $O/prof-$id.log 2>/dev/null
+  kill $vm $io $s0 2>/dev/null; [ $WL = hdb ] && cp /tmp/hdbxtprofile.log $O/prof-$id.log 2>/dev/null
   local oom; oom=$(journalctl -k --since "$t0" --no-pager 2>/dev/null | grep -ciE "out of memory: killed process [0-9]+ \(mysqld\)|oom-kill.*mysqld")
   WARM=$warm WINDOW=$([ $WL = sbz ] && echo 600 || echo 900) python3 /root/bench/bm2/zstudy_point.py "$O" "$id" "$mode" "$bp" "$oom" >> $O/results.jsonl
   log "$id: $(tail -1 $O/results.jsonl)"
