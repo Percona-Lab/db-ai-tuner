@@ -103,18 +103,18 @@ swap_mode() {  # mysqld must be down: swapoff brings every swapped page back
   case $kind in
     disk|inno|zfs|rocks)  sysctl -q vm.swappiness=60; swapon /swapfile ;;   # round 4: the host's own swap, no compression in the kernel
     zswap) sysctl -q vm.swappiness=100
-           [ -e $ZSWF ] || { fallocate -l 64G $ZSWF && chmod 600 $ZSWF && mkswap -q $ZSWF; }
+           [ -e $ZSWF ] || { fallocate -l ${ZSWF_GB:-64}G $ZSWF && chmod 600 $ZSWF && mkswap -q $ZSWF; }
            echo $comp > /sys/module/zswap/parameters/compressor && echo zsmalloc > /sys/module/zswap/parameters/zpool \
              && echo ${ZSWAP_POOL_PCT:-50} > /sys/module/zswap/parameters/max_pool_percent && echo Y > /sys/module/zswap/parameters/enabled \
              && swapon $ZSWF || { log "STUDYFAILED: zswap"; exit 1; } ;;
     disk2) sysctl -q vm.swappiness=100   # control for zswap: the same swap file on the second SSD and sysctls, zswap off
-           [ -e $ZSWF ] || { fallocate -l 64G $ZSWF && chmod 600 $ZSWF && mkswap -q $ZSWF; }
+           [ -e $ZSWF ] || { fallocate -l ${ZSWF_GB:-64}G $ZSWF && chmod 600 $ZSWF && mkswap -q $ZSWF; }
            swapon $ZSWF || { log "STUDYFAILED: disk2"; exit 1; } ;;
     zramdisk|zramwb)   # zram (ZRAM_GB, priority 100) with the 2nd-SSD swap file as a lower-priority fallback (priority 10);
            # zramwb also gives zram a backing device and writes pages idle for a minute to it (zram writeback), freeing
            # zram for newer pages. Overflow never migrates by itself: without writeback zram keeps whatever filled it first
            sysctl -q vm.swappiness=180; modprobe zram num_devices=1
-           [ -e $ZSWF ] || { fallocate -l 64G $ZSWF && chmod 600 $ZSWF && mkswap -q $ZSWF; }
+           [ -e $ZSWF ] || { fallocate -l ${ZSWF_GB:-64}G $ZSWF && chmod 600 $ZSWF && mkswap -q $ZSWF; }
            if [ $kind = zramwb ]; then
              [ -e $ZWBF ] || fallocate -l 48G $ZWBF
              local lo; lo=$(losetup -f --show --direct-io=on $ZWBF) && echo $lo > /sys/block/zram0/backing_dev || { log "STUDYFAILED: zram backing_dev"; exit 1; }
@@ -181,10 +181,10 @@ point() {  # point <mode> <bp GB> [tag]
   fi
   vmstat -n 10 > $O/vmstat-$id.log & local vm=$!
   iostat -dxm 10 sda sdb > $O/iostat-$id.log 2>/dev/null & local io=$!
-  local warm=300; [ $WL = sbz ] && warm=900
+  local warm=300; [ $WL = sbz ] && warm=${SBZ_WARM:-900}
   ( sleep $warm; snap > $O/snap0-$id.json ) & local s0=$!    # the end of the ramp-up / warm-up
   if [ $WL = sbz ]; then
-    ( eval "$SBZ --threads=64 --rand-type=uniform --time=1500 --report-interval=10 --mysql-ignore-errors=all run" ) > $O/sb-$id.log 2>&1
+    ( eval "$SBZ --threads=64 --rand-type=uniform --time=$(( warm + 600 )) --report-interval=10 --mysql-ignore-errors=all run" ) > $O/sb-$id.log 2>&1
   elif [ $WL = am ]; then
     bash /root/bench/benchbase/bb_run.sh auctionmark 300 900 64 > $O/bb-$id.log 2>&1
   else
