@@ -93,7 +93,7 @@ swap_mode() {  # mysqld must be down: swapoff brings every swapped page back
     zswap) sysctl -q vm.swappiness=100
            [ -e $ZSWF ] || { fallocate -l 64G $ZSWF && chmod 600 $ZSWF && mkswap -q $ZSWF; }
            echo $comp > /sys/module/zswap/parameters/compressor && echo zsmalloc > /sys/module/zswap/parameters/zpool \
-             && echo 50 > /sys/module/zswap/parameters/max_pool_percent && echo Y > /sys/module/zswap/parameters/enabled \
+             && echo ${ZSWAP_POOL_PCT:-50} > /sys/module/zswap/parameters/max_pool_percent && echo Y > /sys/module/zswap/parameters/enabled \
              && swapon $ZSWF || { log "STUDYFAILED: zswap"; exit 1; } ;;
     disk2) sysctl -q vm.swappiness=100   # control for zswap: the same swap file on the second SSD and sysctls, zswap off
            [ -e $ZSWF ] || { fallocate -l 64G $ZSWF && chmod 600 $ZSWF && mkswap -q $ZSWF; }

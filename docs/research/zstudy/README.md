@@ -1,5 +1,7 @@
 # zswap and zram: can a compressed swap tier let the buffer pool grow past RAM? (2026-11-21)
 
+Published (public): https://github.com/Percona-Lab/zram-zswap-db-benchmark - that repo has the full write-up incl. round 3 and codec latency; this copy is the working notes.
+
 Question (user, 2026-11-21): on an I/O-bound OLTP benchmark with the binary log off, can zswap or zram with lz4 give
 better throughput by letting `innodb_buffer_pool_size` go beyond what is safe without them?
 
