@@ -33,6 +33,13 @@ if win:  # sysbench (WL=sbz): the measured window is everything after the warm-u
     warm_tail = [t for s_, t, _ in iv if WARM * 0.8 < s_ <= WARM]   # last 20% of the warm-up vs the window (adequacy)
     if warm_tail:
         r["warm_tail_vs_window_pct"] = round(100.0 * (sum(warm_tail) / len(warm_tail) / r["tps"] - 1), 1)
+jb = read(f"job-{pid}.log")
+m = re.search(r"JOB total_s=([\d.]+) geomean_s=([\d.]+) capped=(\d+) errors=(\d+)", jb)
+if m:  # JOB: the measured pass of 113 queries (lower is better)
+    r["job_total_s"], r["job_geomean_s"], r["job_capped"], r["job_errors"] = float(m.group(1)), float(m.group(2)), int(m.group(3)), int(m.group(4))
+    mw = re.search(r"JOB total_s=([\d.]+)", read(f"jobwarm-{pid}.log"))
+    if mw:
+        r["job_warm_pass_s"] = float(mw.group(1))
 bb = read(f"bb-{pid}.log")
 m = re.search(r"BBSUMMARY.*", bb)
 if m:  # BenchBase (WL=am): requests/s in the measured window and latency over all transaction types

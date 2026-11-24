@@ -20,6 +20,7 @@ WL=${WL:-hdb}
 case $WL in
   am)  O=/root/bench/zstudy-am;  BASE=/data/zstudy_am_base ;;
   sbz) O=/root/bench/zstudy-sbz; BASE=/data/zstudy_sbz_base ;;
+  job) O=/root/bench/zstudy-job; BASE=/data/zstudy_job_base ;;   # round 6: JOB on real IMDb data, RAM reduced with huge pages
   *)   O=/root/bench/zstudy;     BASE=/data/zstudy_base ;;
 esac
 BASE=${ZBASE:-$BASE}             # round 4: an alternative pristine copy (InnoDB-compressed tables, MyRocks)
@@ -48,6 +49,7 @@ innodb_redo_log_capacity = 8G
 innodb_io_capacity = 2000
 innodb_io_capacity_max = 4000
 EOF
+  [ -n "${ZCNF_EXTRA:-}" ] && printf '%b\n' "$ZCNF_EXTRA" >> $CNF   # round 6: e.g. innodb_compression_level = 1
   case ${MODE_KIND:-} in
     zfs)   # datadir on ZFS: the ARC caches (compressed) blocks, so no O_DIRECT; ZFS writes are atomic per record (CoW)
            printf 'innodb_flush_method = fsync\ninnodb_doublewrite = OFF\n' >> $CNF ;;
@@ -66,7 +68,12 @@ setup() {
   [ -d /var/lib/mysql/mysql ] || mysqld --initialize-insecure --user=mysql --datadir=/var/lib/mysql || { log "STUDYFAILED: initialize"; exit 1; }
   systemctl start mysql || { log "STUDYFAILED: start"; exit 1; }
   q "CREATE USER IF NOT EXISTS tpcc@localhost IDENTIFIED BY 'tpcc'; CREATE USER IF NOT EXISTS tpcc@'127.0.0.1' IDENTIFIED BY 'tpcc'; GRANT ALL ON *.* TO tpcc@localhost; GRANT ALL ON *.* TO tpcc@'127.0.0.1'"
-  if [ $WL = sbz ]; then
+  if [ $WL = job ]; then
+    log "loading JOB (IMDb 2013)"
+    bash /root/bench/job/install.sh /root/job > $O/build.log 2>&1 && bash /root/bench/job/load.sh /root/job/csv /root/job/jobq >> $O/build.log 2>&1 \
+      || { log "STUDYFAILED: JOB load (see build.log)"; exit 1; }
+    log "loaded: $(q "select round(sum(data_length+index_length)/1073741824,1) from information_schema.tables where table_schema='imdb'") GB (tables)"
+  elif [ $WL = sbz ]; then
     log "loading patched sysbench: 16 x ${SBZ_ROWS:-16500000} rows, data-random-pct ${SBZ_PCT:-10}"
     q "CREATE USER IF NOT EXISTS sbtest@localhost IDENTIFIED BY 'sbtest'; GRANT ALL ON *.* TO sbtest@localhost; DROP DATABASE IF EXISTS sbtest; CREATE DATABASE sbtest"
     ( eval "$SBZ --threads=16 prepare" ) > $O/build.log 2>&1 || { log "STUDYFAILED: prepare (see build.log)"; exit 1; }
@@ -182,8 +189,18 @@ point() {  # point <mode> <bp GB> [tag]
   vmstat -n 10 > $O/vmstat-$id.log & local vm=$!
   iostat -dxm 10 sda sdb > $O/iostat-$id.log 2>/dev/null & local io=$!
   local warm=300; [ $WL = sbz ] && warm=${SBZ_WARM:-900}
-  ( sleep $warm; snap > $O/snap0-$id.json ) & local s0=$!    # the end of the ramp-up / warm-up
-  if [ $WL = sbz ]; then
+  local s0=""
+  if [ $WL = job ]; then   # JOB: one unmeasured pass of the 113 queries (fills the pool), then the measured pass
+    local tw=$(date +%s)
+    bash /root/bench/job/run_job.sh 60 > $O/jobwarm-$id.log 2>&1
+    warm=$(( $(date +%s) - tw )); snap > $O/snap0-$id.json
+  else
+    ( sleep $warm; snap > $O/snap0-$id.json ) & s0=$!          # the end of the ramp-up / warm-up
+  fi
+  local tm=$(date +%s)
+  if [ $WL = job ]; then
+    bash /root/bench/job/run_job.sh 60 > $O/job-$id.log 2>&1
+  elif [ $WL = sbz ]; then
     ( eval "$SBZ --threads=64 --rand-type=uniform --time=$(( warm + 600 )) --report-interval=10 --mysql-ignore-errors=all run" ) > $O/sb-$id.log 2>&1
   elif [ $WL = am ]; then
     bash /root/bench/benchbase/bb_run.sh auctionmark 300 900 64 > $O/bb-$id.log 2>&1
@@ -194,7 +211,7 @@ point() {  # point <mode> <bp GB> [tag]
   snap > $O/snap1-$id.json
   kill $vm $io $s0 2>/dev/null; [ $WL = hdb ] && cp /tmp/hdbxtprofile.log $O/prof-$id.log 2>/dev/null
   local oom; oom=$(journalctl -k --since "$t0" --no-pager 2>/dev/null | grep -ciE "out of memory: killed process [0-9]+ \(mysqld\)|oom-kill.*mysqld")
-  WARM=$warm WINDOW=$([ $WL = sbz ] && echo 600 || echo 900) python3 /root/bench/bm2/zstudy_point.py "$O" "$id" "$mode" "$bp" "$oom" >> $O/results.jsonl
+  WARM=$warm WINDOW=$( case $WL in sbz) echo 600 ;; job) echo $(( $(date +%s) - tm )) ;; *) echo 900 ;; esac ) python3 /root/bench/bm2/zstudy_point.py "$O" "$id" "$mode" "$bp" "$oom" >> $O/results.jsonl
   log "$id: $(tail -1 $O/results.jsonl)"
 }
 
