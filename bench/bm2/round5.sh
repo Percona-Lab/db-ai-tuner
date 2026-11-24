@@ -23,7 +23,7 @@ oomed() { grep -q "\"mode\": \"$1\".*\"outcome\": \"oom-killed\"" $O/results.jso
           grep -q "\"mode\": \"$1\".*\"outcome\": \"start failed\"" $O/results.jsonl 2>/dev/null; }
 # wait on round 4's own log, not its unit state (a transient systemctl failure ended the first queue at 10:00 on 11-24)
 until grep -q -E "ROUND4DONE|ROUND4FAILED" $O/round4.log 2>/dev/null; do sleep 120; done
-grep -q ROUND4DONE $O/round4.log || die "round 4 failed (ROUND4FAILED in round4.log)""
+grep -q ROUND4DONE $O/round4.log || die "round 4 failed (ROUND4FAILED in round4.log)"
 log "round 5: data size sweep"
 mkdir -p $KEEP
 for d in canary_base pipeline_base; do [ -d /data/$d ] && { mv /data/$d $KEEP/ 2>/dev/null || { rsync -a /data/$d $KEEP/ && rm -rf /data/$d; } || die "move $d"; }; done
