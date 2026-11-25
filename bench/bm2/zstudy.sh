@@ -112,7 +112,8 @@ swap_mode() {  # mysqld must be down: swapoff brings every swapped page back
     zswap) sysctl -q vm.swappiness=100
            [ -e $ZSWF ] || { fallocate -l ${ZSWF_GB:-64}G $ZSWF && chmod 600 $ZSWF && mkswap -q $ZSWF; }
            echo $comp > /sys/module/zswap/parameters/compressor && echo zsmalloc > /sys/module/zswap/parameters/zpool \
-             && echo ${ZSWAP_POOL_PCT:-50} > /sys/module/zswap/parameters/max_pool_percent && echo Y > /sys/module/zswap/parameters/enabled \
+             && echo ${ZSWAP_POOL_PCT:-50} > /sys/module/zswap/parameters/max_pool_percent \
+             && echo ${ZSWAP_SHRINKER:-Y} > /sys/module/zswap/parameters/shrinker_enabled && echo Y > /sys/module/zswap/parameters/enabled \
              && swapon $ZSWF || { log "STUDYFAILED: zswap"; exit 1; } ;;
     disk2) sysctl -q vm.swappiness=100   # control for zswap: the same swap file on the second SSD and sysctls, zswap off
            [ -e $ZSWF ] || { fallocate -l ${ZSWF_GB:-64}G $ZSWF && chmod 600 $ZSWF && mkswap -q $ZSWF; }
@@ -136,7 +137,7 @@ swap_mode() {  # mysqld must be down: swapoff brings every swapped page back
            echo $comp > /sys/block/zram0/comp_algorithm && echo ${ZRAM_GB:-64}G > /sys/block/zram0/disksize && mkswap -q /dev/zram0 \
              && swapon -p 100 /dev/zram0 || { log "STUDYFAILED: zram"; exit 1; } ;;
   esac
-  log "mode $1: $(swapon --noheadings --show=NAME,SIZE | tr '\n' ' ') zswap=$(cat /sys/module/zswap/parameters/enabled)/$(cat /sys/module/zswap/parameters/compressor) zram=$(cat /sys/block/zram0/comp_algorithm 2>/dev/null | grep -o '\[[a-z0-9-]*\]') swappiness=$(cat /proc/sys/vm/swappiness)"
+  log "mode $1: $(swapon --noheadings --show=NAME,SIZE | tr '\n' ' ') zswap=$(cat /sys/module/zswap/parameters/enabled)/$(cat /sys/module/zswap/parameters/compressor)/pool$(cat /sys/module/zswap/parameters/max_pool_percent)/shrinker$(cat /sys/module/zswap/parameters/shrinker_enabled) zram=$(cat /sys/block/zram0/comp_algorithm 2>/dev/null | grep -o '\[[a-z0-9-]*\]') swappiness=$(cat /proc/sys/vm/swappiness)"
 }
 
 snap() {  # memory + InnoDB counters at a point in time, one JSON object
@@ -231,7 +232,7 @@ case ${1:-} in
        swapoff -a 2>/dev/null; [ -e /dev/zram0 ] && { swapoff /dev/zram0 2>/dev/null; echo 1 > /sys/block/zram0/reset; rmmod zram; }
        losetup -j $ZWBF 2>/dev/null | cut -d: -f1 | xargs -r -n1 losetup -d; rm -f $ZWBF
        echo N > /sys/module/zswap/parameters/enabled; echo lzo > /sys/module/zswap/parameters/compressor
-       echo zbud > /sys/module/zswap/parameters/zpool; echo 20 > /sys/module/zswap/parameters/max_pool_percent
+       echo zbud > /sys/module/zswap/parameters/zpool; echo 20 > /sys/module/zswap/parameters/max_pool_percent; echo Y > /sys/module/zswap/parameters/shrinker_enabled
        sysctl -q vm.swappiness=60 vm.page-cluster=3 vm.watermark_boost_factor=15000 vm.watermark_scale_factor=10; rm -f $ZSWF; swapon -a
        if [ -d $KEEP ]; then rm -rf /var/lib/mysql && mv $KEEP /var/lib/mysql; fi
        systemctl start mysql && systemctl enable tuning-agent && systemctl start tuning-agent
