@@ -69,7 +69,7 @@ datadir = $W/data
 port = 3307
 socket = $W/run/mysqld.sock
 pid-file = $W/run/mysqld.pid
-log-error = $W/mysqld.err
+log-error = $W/run/mysqld.err
 user = mysql
 disable_log_bin
 plugin-load-add = ha_rocksdb.so
