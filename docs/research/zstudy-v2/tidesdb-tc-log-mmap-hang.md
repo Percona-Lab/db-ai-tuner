@@ -1,5 +1,7 @@
 # TidesDB (tidesdb-mysql v0.5.0) hangs every commit when the binary log is off (2026-11-26)
 
+Reported upstream: https://github.com/EvgeniyPatlan/tidesdb-mysql/issues/11 (2026-11-26).
+
 Build: Percona Server 9.7.2-3 from source (RelWithDebInfo) with storage/tidesdb from EvgeniyPatlan/tidesdb-mysql v0.5.0
 (8a0b1a0) and TidesDB v10.0.1 + the port's engine patch; MyRocks built in. `bench/v2/build-ps97-tidesdb.sh`.
 
