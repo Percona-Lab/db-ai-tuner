@@ -1,0 +1,1491 @@
+sudo: unable to resolve host tuner-canary: Name or service not known
+[New LWP 294461]
+[New LWP 288831]
+[New LWP 288750]
+[New LWP 288749]
+[New LWP 288748]
+[New LWP 288747]
+[New LWP 288746]
+[New LWP 288622]
+[New LWP 288621]
+[New LWP 288620]
+[New LWP 288619]
+[New LWP 288490]
+[New LWP 288488]
+[New LWP 288486]
+[New LWP 288485]
+[New LWP 288482]
+[New LWP 288481]
+[New LWP 288478]
+[New LWP 288419]
+[New LWP 288418]
+[New LWP 288416]
+[New LWP 288415]
+[New LWP 288414]
+[New LWP 288413]
+[New LWP 288412]
+[New LWP 288411]
+[New LWP 288407]
+[New LWP 288406]
+[New LWP 288405]
+[New LWP 288404]
+[New LWP 288403]
+[New LWP 288402]
+[New LWP 288401]
+[New LWP 288400]
+[New LWP 288399]
+[New LWP 288398]
+[New LWP 288397]
+[New LWP 288396]
+[New LWP 288395]
+[New LWP 288393]
+[New LWP 288392]
+[New LWP 288391]
+[New LWP 288390]
+[New LWP 288389]
+[New LWP 288373]
+[New LWP 288372]
+[New LWP 288371]
+[New LWP 288370]
+[New LWP 288369]
+[New LWP 288368]
+[New LWP 288367]
+[New LWP 288366]
+[New LWP 288365]
+[New LWP 288364]
+[New LWP 288363]
+[New LWP 288358]
+[New LWP 288357]
+[New LWP 288356]
+[New LWP 288355]
+[New LWP 288354]
+[New LWP 288353]
+[New LWP 288352]
+[New LWP 288351]
+[New LWP 288350]
+[New LWP 288349]
+[New LWP 288348]
+[New LWP 288347]
+[New LWP 288346]
+[New LWP 288345]
+[New LWP 288344]
+[New LWP 288343]
+[New LWP 288342]
+[New LWP 288341]
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x0000776defd1b75d in __GI___poll (fds=0x569c5b61e010, nfds=2, timeout=-1) at ../sysdeps/unix/sysv/linux/poll.c:29
+
+warning: 29	../sysdeps/unix/sysv/linux/poll.c: No such file or directory
+warning: File "/opt/ps97/bin/mysqld" auto-loading has been declined by your `auto-load safe-path' set to "$debugdir:$datadir/auto-load".
+To enable execution of this file add
+	add-auto-load-safe-path /opt/ps97/bin/mysqld
+line to your configuration file "/root/.config/gdb/gdbinit".
+To completely disable this security protection add
+	set auto-load safe-path /
+line to your configuration file "/root/.config/gdb/gdbinit".
+For more information about this security protection see the
+"Auto-loading safe path" section in the GDB manual.  E.g., run from the shell:
+	info "(gdb)Auto-loading safe path"
+
+Thread 74 (Thread 0x776ddb7fe6c0 (LWP 288341) "ib_io_ibuf"):
+#0  syscall () at ../sysdeps/unix/sysv/linux/x86_64/syscall.S:38
+#1  0x0000776df0c761f6 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#2  0x0000776df0c762b7 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#3  0x0000776df0c764a2 in io_getevents () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#4  0x0000569c17e99466 in LinuxAIOHandler::collect () at ./percona-server/storage/innobase/os/os0file.cc:2371
+#5  0x0000569c17e99e28 in LinuxAIOHandler::poll () at ./percona-server/storage/innobase/os/os0file.cc:2538
+#6  0x0000569c17e9d597 in os_aio_linux_handler () at ./percona-server/storage/innobase/os/os0file.cc:2586
+#7  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6149
+#8  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6136
+#9  0x0000569c18055bfd in fil_aio_wait () at ./percona-server/storage/innobase/fil/fil0fil.cc:7915
+#10 0x0000569c17e94ffa in io_handler_thread () at ./percona-server/storage/innobase/os/os0file.cc:6457
+#11 0x0000569c17e964b9 in std::__invoke_impl<void, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#12 std::__invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#13 std::invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/functional:113
+#14 Detached_thread::operator()<void (*)(unsigned long), unsigned long> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#15 std::__invoke_impl<void, Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#16 std::__invoke<Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#18 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#19 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#20 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#21 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#22 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 73 (Thread 0x776ddbfff6c0 (LWP 288342) "ib_io_rd-1"):
+#0  syscall () at ../sysdeps/unix/sysv/linux/x86_64/syscall.S:38
+#1  0x0000776df0c761f6 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#2  0x0000776df0c762b7 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#3  0x0000776df0c764a2 in io_getevents () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#4  0x0000569c17e99466 in LinuxAIOHandler::collect () at ./percona-server/storage/innobase/os/os0file.cc:2371
+#5  0x0000569c17e99e28 in LinuxAIOHandler::poll () at ./percona-server/storage/innobase/os/os0file.cc:2538
+#6  0x0000569c17e9d597 in os_aio_linux_handler () at ./percona-server/storage/innobase/os/os0file.cc:2586
+#7  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6149
+#8  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6136
+#9  0x0000569c18055bfd in fil_aio_wait () at ./percona-server/storage/innobase/fil/fil0fil.cc:7915
+#10 0x0000569c17e94ffa in io_handler_thread () at ./percona-server/storage/innobase/os/os0file.cc:6457
+#11 0x0000569c17e964b9 in std::__invoke_impl<void, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#12 std::__invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#13 std::invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/functional:113
+#14 Detached_thread::operator()<void (*)(unsigned long), unsigned long> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#15 std::__invoke_impl<void, Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#16 std::__invoke<Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#18 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#19 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#20 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#21 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#22 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 72 (Thread 0x776cc66c06c0 (LWP 288343) "ib_io_rd-2"):
+#0  syscall () at ../sysdeps/unix/sysv/linux/x86_64/syscall.S:38
+#1  0x0000776df0c761f6 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#2  0x0000776df0c762b7 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#3  0x0000776df0c764a2 in io_getevents () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#4  0x0000569c17e99466 in LinuxAIOHandler::collect () at ./percona-server/storage/innobase/os/os0file.cc:2371
+#5  0x0000569c17e99e28 in LinuxAIOHandler::poll () at ./percona-server/storage/innobase/os/os0file.cc:2538
+#6  0x0000569c17e9d597 in os_aio_linux_handler () at ./percona-server/storage/innobase/os/os0file.cc:2586
+#7  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6149
+#8  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6136
+#9  0x0000569c18055bfd in fil_aio_wait () at ./percona-server/storage/innobase/fil/fil0fil.cc:7915
+#10 0x0000569c17e94ffa in io_handler_thread () at ./percona-server/storage/innobase/os/os0file.cc:6457
+#11 0x0000569c17e964b9 in std::__invoke_impl<void, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#12 std::__invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#13 std::invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/functional:113
+#14 Detached_thread::operator()<void (*)(unsigned long), unsigned long> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#15 std::__invoke_impl<void, Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#16 std::__invoke<Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#18 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#19 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#20 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#21 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#22 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 71 (Thread 0x776cc5ebf6c0 (LWP 288344) "ib_io_rd-3"):
+#0  syscall () at ../sysdeps/unix/sysv/linux/x86_64/syscall.S:38
+#1  0x0000776df0c761f6 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#2  0x0000776df0c762b7 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#3  0x0000776df0c764a2 in io_getevents () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#4  0x0000569c17e99466 in LinuxAIOHandler::collect () at ./percona-server/storage/innobase/os/os0file.cc:2371
+#5  0x0000569c17e99e28 in LinuxAIOHandler::poll () at ./percona-server/storage/innobase/os/os0file.cc:2538
+#6  0x0000569c17e9d597 in os_aio_linux_handler () at ./percona-server/storage/innobase/os/os0file.cc:2586
+#7  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6149
+#8  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6136
+#9  0x0000569c18055bfd in fil_aio_wait () at ./percona-server/storage/innobase/fil/fil0fil.cc:7915
+#10 0x0000569c17e94ffa in io_handler_thread () at ./percona-server/storage/innobase/os/os0file.cc:6457
+#11 0x0000569c17e964b9 in std::__invoke_impl<void, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#12 std::__invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#13 std::invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/functional:113
+#14 Detached_thread::operator()<void (*)(unsigned long), unsigned long> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#15 std::__invoke_impl<void, Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#16 std::__invoke<Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#18 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#19 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#20 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#21 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#22 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 70 (Thread 0x776cc56be6c0 (LWP 288345) "ib_io_rd-4"):
+#0  syscall () at ../sysdeps/unix/sysv/linux/x86_64/syscall.S:38
+#1  0x0000776df0c761f6 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#2  0x0000776df0c762b7 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#3  0x0000776df0c764a2 in io_getevents () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#4  0x0000569c17e99466 in LinuxAIOHandler::collect () at ./percona-server/storage/innobase/os/os0file.cc:2371
+#5  0x0000569c17e99e28 in LinuxAIOHandler::poll () at ./percona-server/storage/innobase/os/os0file.cc:2538
+#6  0x0000569c17e9d597 in os_aio_linux_handler () at ./percona-server/storage/innobase/os/os0file.cc:2586
+#7  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6149
+#8  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6136
+#9  0x0000569c18055bfd in fil_aio_wait () at ./percona-server/storage/innobase/fil/fil0fil.cc:7915
+#10 0x0000569c17e94ffa in io_handler_thread () at ./percona-server/storage/innobase/os/os0file.cc:6457
+#11 0x0000569c17e964b9 in std::__invoke_impl<void, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#12 std::__invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#13 std::invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/functional:113
+#14 Detached_thread::operator()<void (*)(unsigned long), unsigned long> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#15 std::__invoke_impl<void, Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#16 std::__invoke<Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#18 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#19 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#20 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#21 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#22 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 69 (Thread 0x776cc4ebd6c0 (LWP 288346) "ib_io_wr-1"):
+#0  syscall () at ../sysdeps/unix/sysv/linux/x86_64/syscall.S:38
+#1  0x0000776df0c761f6 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#2  0x0000776df0c762b7 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#3  0x0000776df0c764a2 in io_getevents () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#4  0x0000569c17e99466 in LinuxAIOHandler::collect () at ./percona-server/storage/innobase/os/os0file.cc:2371
+#5  0x0000569c17e99e28 in LinuxAIOHandler::poll () at ./percona-server/storage/innobase/os/os0file.cc:2538
+#6  0x0000569c17e9d597 in os_aio_linux_handler () at ./percona-server/storage/innobase/os/os0file.cc:2586
+#7  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6149
+#8  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6136
+#9  0x0000569c18055bfd in fil_aio_wait () at ./percona-server/storage/innobase/fil/fil0fil.cc:7915
+#10 0x0000569c17e94ffa in io_handler_thread () at ./percona-server/storage/innobase/os/os0file.cc:6457
+#11 0x0000569c17e964b9 in std::__invoke_impl<void, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#12 std::__invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#13 std::invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/functional:113
+#14 Detached_thread::operator()<void (*)(unsigned long), unsigned long> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#15 std::__invoke_impl<void, Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#16 std::__invoke<Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#18 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#19 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#20 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#21 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#22 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 68 (Thread 0x776cc46bc6c0 (LWP 288347) "ib_io_wr-2"):
+#0  syscall () at ../sysdeps/unix/sysv/linux/x86_64/syscall.S:38
+#1  0x0000776df0c761f6 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#2  0x0000776df0c762b7 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#3  0x0000776df0c764a2 in io_getevents () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#4  0x0000569c17e99466 in LinuxAIOHandler::collect () at ./percona-server/storage/innobase/os/os0file.cc:2371
+#5  0x0000569c17e99e28 in LinuxAIOHandler::poll () at ./percona-server/storage/innobase/os/os0file.cc:2538
+#6  0x0000569c17e9d597 in os_aio_linux_handler () at ./percona-server/storage/innobase/os/os0file.cc:2586
+#7  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6149
+#8  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6136
+#9  0x0000569c18055bfd in fil_aio_wait () at ./percona-server/storage/innobase/fil/fil0fil.cc:7915
+#10 0x0000569c17e94ffa in io_handler_thread () at ./percona-server/storage/innobase/os/os0file.cc:6457
+#11 0x0000569c17e964b9 in std::__invoke_impl<void, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#12 std::__invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#13 std::invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/functional:113
+#14 Detached_thread::operator()<void (*)(unsigned long), unsigned long> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#15 std::__invoke_impl<void, Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#16 std::__invoke<Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#18 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#19 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#20 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#21 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#22 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 67 (Thread 0x776cc3ebb6c0 (LWP 288348) "ib_io_wr-3"):
+#0  syscall () at ../sysdeps/unix/sysv/linux/x86_64/syscall.S:38
+#1  0x0000776df0c761f6 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#2  0x0000776df0c762b7 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#3  0x0000776df0c764a2 in io_getevents () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#4  0x0000569c17e99466 in LinuxAIOHandler::collect () at ./percona-server/storage/innobase/os/os0file.cc:2371
+#5  0x0000569c17e99e28 in LinuxAIOHandler::poll () at ./percona-server/storage/innobase/os/os0file.cc:2538
+#6  0x0000569c17e9d597 in os_aio_linux_handler () at ./percona-server/storage/innobase/os/os0file.cc:2586
+#7  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6149
+#8  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6136
+#9  0x0000569c18055bfd in fil_aio_wait () at ./percona-server/storage/innobase/fil/fil0fil.cc:7915
+#10 0x0000569c17e94ffa in io_handler_thread () at ./percona-server/storage/innobase/os/os0file.cc:6457
+#11 0x0000569c17e964b9 in std::__invoke_impl<void, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#12 std::__invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#13 std::invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/functional:113
+#14 Detached_thread::operator()<void (*)(unsigned long), unsigned long> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#15 std::__invoke_impl<void, Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#16 std::__invoke<Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#18 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#19 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#20 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#21 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#22 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 66 (Thread 0x776cc36ba6c0 (LWP 288349) "ib_io_wr-4"):
+#0  syscall () at ../sysdeps/unix/sysv/linux/x86_64/syscall.S:38
+#1  0x0000776df0c761f6 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#2  0x0000776df0c762b7 in ?? () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#3  0x0000776df0c764a2 in io_getevents () from /lib/x86_64-linux-gnu/libaio.so.1t64
+#4  0x0000569c17e99466 in LinuxAIOHandler::collect () at ./percona-server/storage/innobase/os/os0file.cc:2371
+#5  0x0000569c17e99e28 in LinuxAIOHandler::poll () at ./percona-server/storage/innobase/os/os0file.cc:2538
+#6  0x0000569c17e9d597 in os_aio_linux_handler () at ./percona-server/storage/innobase/os/os0file.cc:2586
+#7  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6149
+#8  os_aio_handler () at ./percona-server/storage/innobase/os/os0file.cc:6136
+#9  0x0000569c18055bfd in fil_aio_wait () at ./percona-server/storage/innobase/fil/fil0fil.cc:7915
+#10 0x0000569c17e94ffa in io_handler_thread () at ./percona-server/storage/innobase/os/os0file.cc:6457
+#11 0x0000569c17e964b9 in std::__invoke_impl<void, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#12 std::__invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#13 std::invoke<void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/functional:113
+#14 Detached_thread::operator()<void (*)(unsigned long), unsigned long> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#15 std::__invoke_impl<void, Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:61
+#16 std::__invoke<Detached_thread, void (*)(unsigned long), unsigned long> () at /usr/include/c++/13/bits/invoke.h:96
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#18 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#19 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(unsigned long), unsigned long> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#20 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#21 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#22 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 65 (Thread 0x776cc2eb96c0 (LWP 288350) "ib_pg_flush_co"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=22172, cancel=true, abstime=0x776cc2eb8980, op=137, expected=0, futex_word=0x776ddc01f290) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=22172, abstime=0x776cc2eb8980, clockid=6, expected=0, futex_word=0x776ddc01f290) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776ddc01f290, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776cc2eb8980, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776cc2eb8980, clockid=1, mutex=0x776ddc01f240, cond=0x776ddc01f268) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776ddc01f268, mutex=0x776ddc01f240, abstime=0x776cc2eb8980) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000569c17e85e0a in os_event::timed_wait () at ./percona-server/storage/innobase/os/os0event.cc:316
+#6  0x0000569c17e867f1 in os_event::wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:489
+#7  0x0000569c17fd36f5 in os_event_wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:576
+#8  pc_sleep_if_needed () at ./percona-server/storage/innobase/buf/buf0flu.cc:2637
+#9  buf_flush_page_coordinator_thread () at ./percona-server/storage/innobase/buf/buf0flu.cc:3174
+#10 0x0000569c17e61c55 in std::__invoke_impl<void, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#11 std::__invoke<void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#12 std::invoke<void (*)()> () at /usr/include/c++/13/functional:113
+#13 Detached_thread::operator()<void (*)()> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#14 std::__invoke_impl<void, Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#15 std::__invoke<Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#16 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::_M_invoke<0ul, 1ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#18 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#19 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#20 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#21 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 64 (Thread 0x776cc26b86c0 (LWP 288351) "ib_pg_flush-1"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=2147483647, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x776ddc3bfad4) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=2147483647, abstime=0x0, clockid=0, expected=0, futex_word=0x776ddc3bfad4) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776ddc3bfad4, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x776ddc3bfa80, cond=0x776ddc3bfaa8) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x776ddc3bfaa8, mutex=0x776ddc3bfa80) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c17e85f66 in os_event::wait () at ./percona-server/storage/innobase/os/os0event.cc:186
+#6  os_event::wait_low () at ./percona-server/storage/innobase/os/os0event.cc:366
+#7  0x0000569c17fd4403 in os_event_wait_low () at ./percona-server/storage/innobase/os/os0event.cc:590
+#8  os_event_wait () at ./percona-server/storage/innobase/include/os0event.h:104
+#9  buf_flush_page_cleaner_thread () at ./percona-server/storage/innobase/buf/buf0flu.cc:3505
+#10 0x0000569c17e61c55 in std::__invoke_impl<void, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#11 std::__invoke<void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#12 std::invoke<void (*)()> () at /usr/include/c++/13/functional:113
+#13 Detached_thread::operator()<void (*)()> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#14 std::__invoke_impl<void, Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#15 std::__invoke<Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#16 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::_M_invoke<0ul, 1ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#18 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#19 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#20 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#21 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 63 (Thread 0x776cbdeb66c0 (LWP 288352) "ib_srv_mon"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x776cbdeb5bb0, op=137, expected=0, futex_word=0x776ddc01f170) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x776cbdeb5bb0, clockid=0, expected=0, futex_word=0x776ddc01f170) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776ddc01f170, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776cbdeb5bb0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776cbdeb5bb0, clockid=1, mutex=0x776ddc01f120, cond=0x776ddc01f148) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776ddc01f148, mutex=0x776ddc01f120, abstime=0x776cbdeb5bb0) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000569c17e85e0a in os_event::timed_wait () at ./percona-server/storage/innobase/os/os0event.cc:316
+#6  0x0000569c17e867f1 in os_event::wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:489
+#7  0x0000569c17f11ee3 in os_event_wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:576
+#8  os_event_wait_time () at ./percona-server/storage/innobase/include/os0event.h:122
+#9  srv_monitor_thread () at ./percona-server/storage/innobase/srv/srv0srv.cc:1974
+#10 0x0000569c17e61c55 in std::__invoke_impl<void, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#11 std::__invoke<void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#12 std::invoke<void (*)()> () at /usr/include/c++/13/functional:113
+#13 Detached_thread::operator()<void (*)()> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#14 std::__invoke_impl<void, Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#15 std::__invoke<Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#16 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::_M_invoke<0ul, 1ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#18 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#19 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#20 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#21 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 62 (Thread 0x776cbd6b56c0 (LWP 288353) "ib_log_checkpt"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x776cbd6b4ba0, op=137, expected=0, futex_word=0x776ddfc27ed4) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x776cbd6b4ba0, clockid=30573, expected=0, futex_word=0x776ddfc27ed4) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776ddfc27ed4, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776cbd6b4ba0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776cbd6b4ba0, clockid=1, mutex=0x776ddfc27e80, cond=0x776ddfc27ea8) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776ddfc27ea8, mutex=0x776ddfc27e80, abstime=0x776cbd6b4ba0) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000569c17e85e0a in os_event::timed_wait () at ./percona-server/storage/innobase/os/os0event.cc:316
+#6  0x0000569c17e867f1 in os_event::wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:489
+#7  0x0000569c17e5e8b3 in os_event_wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:576
+#8  log_checkpointer () at ./percona-server/storage/innobase/log/log0chkp.cc:953
+#9  0x0000569c17e61a69 in std::__invoke_impl<void, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:61
+#10 std::__invoke<void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:96
+#11 std::invoke<void (*)(log_t*), log_t*> () at /usr/include/c++/13/functional:113
+#12 Detached_thread::operator()<void (*)(log_t*), log_t*> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#13 std::__invoke_impl<void, Detached_thread, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:61
+#14 std::__invoke<Detached_thread, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:96
+#15 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#16 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#17 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#18 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#19 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#20 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 61 (Thread 0x776cbceb46c0 (LWP 288354) "ib_log_fl_notif"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x776cbceb3b10, op=137, expected=0, futex_word=0x776ddfc28080) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x776cbceb3b10, clockid=0, expected=0, futex_word=0x776ddfc28080) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776ddfc28080, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776cbceb3b10, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776cbceb3b10, clockid=1, mutex=0x776ddfc28030, cond=0x776ddfc28058) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776ddfc28058, mutex=0x776ddfc28030, abstime=0x776cbceb3b10) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000569c17e85e0a in os_event::timed_wait () at ./percona-server/storage/innobase/os/os0event.cc:316
+#6  0x0000569c17e867f1 in os_event::wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:489
+#7  0x0000569c17e87b33 in os_event_wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:576
+#8  os_event_wait_for<log_flush_notifier(log_t*)::<lambda(bool)> > () at ./percona-server/storage/innobase/include/os0event.ic:136
+#9  wait<log_flush_notifier(log_t*)::<lambda(bool)> > () at ./percona-server/storage/innobase/log/log0write.cc:1226
+#10 log_flush_notifier () at ./percona-server/storage/innobase/log/log0write.cc:2832
+#11 0x0000569c17e61a69 in std::__invoke_impl<void, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:61
+#12 std::__invoke<void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:96
+#13 std::invoke<void (*)(log_t*), log_t*> () at /usr/include/c++/13/functional:113
+#14 Detached_thread::operator()<void (*)(log_t*), log_t*> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#15 std::__invoke_impl<void, Detached_thread, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:61
+#16 std::__invoke<Detached_thread, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:96
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#18 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#19 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#20 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#21 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#22 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 60 (Thread 0x776cb7fff6c0 (LWP 288355) "ib_log_flush"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x776cb7ffeb70, op=137, expected=0, futex_word=0x776ddfc281a4) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x776cb7ffeb70, clockid=0, expected=0, futex_word=0x776ddfc281a4) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776ddfc281a4, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776cb7ffeb70, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776cb7ffeb70, clockid=1, mutex=0x776ddfc28150, cond=0x776ddfc28178) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776ddfc28178, mutex=0x776ddfc28150, abstime=0x776cb7ffeb70) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000569c17e85e0a in os_event::timed_wait () at ./percona-server/storage/innobase/os/os0event.cc:316
+#6  0x0000569c17e867f1 in os_event::wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:489
+#7  0x0000569c17e88d5d in os_event_wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:576
+#8  os_event_wait_for<log_flusher(log_t*)::<lambda(bool)> > () at ./percona-server/storage/innobase/include/os0event.ic:136
+#9  wait<log_flusher(log_t*)::<lambda(bool)> > () at ./percona-server/storage/innobase/log/log0write.cc:1226
+#10 log_flusher () at ./percona-server/storage/innobase/log/log0write.cc:2609
+#11 0x0000569c17e61a69 in std::__invoke_impl<void, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:61
+#12 std::__invoke<void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:96
+#13 std::invoke<void (*)(log_t*), log_t*> () at /usr/include/c++/13/functional:113
+#14 Detached_thread::operator()<void (*)(log_t*), log_t*> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#15 std::__invoke_impl<void, Detached_thread, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:61
+#16 std::__invoke<Detached_thread, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:96
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#18 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#19 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#20 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#21 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#22 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 59 (Thread 0x776cb77fe6c0 (LWP 288356) "ib_log_wr_notif"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x776cb77fdb10, op=137, expected=0, futex_word=0x776ddfc27ff0) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x776cb77fdb10, clockid=0, expected=0, futex_word=0x776ddfc27ff0) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776ddfc27ff0, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776cb77fdb10, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776cb77fdb10, clockid=1, mutex=0x776ddfc27fa0, cond=0x776ddfc27fc8) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776ddfc27fc8, mutex=0x776ddfc27fa0, abstime=0x776cb77fdb10) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000569c17e85e0a in os_event::timed_wait () at ./percona-server/storage/innobase/os/os0event.cc:316
+#6  0x0000569c17e867f1 in os_event::wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:489
+#7  0x0000569c17e87193 in os_event_wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:576
+#8  os_event_wait_for<log_write_notifier(log_t*)::<lambda(bool)> > () at ./percona-server/storage/innobase/include/os0event.ic:136
+#9  wait<log_write_notifier(log_t*)::<lambda(bool)> > () at ./percona-server/storage/innobase/log/log0write.cc:1226
+#10 log_write_notifier () at ./percona-server/storage/innobase/log/log0write.cc:2710
+#11 0x0000569c17e61a69 in std::__invoke_impl<void, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:61
+#12 std::__invoke<void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:96
+#13 std::invoke<void (*)(log_t*), log_t*> () at /usr/include/c++/13/functional:113
+#14 Detached_thread::operator()<void (*)(log_t*), log_t*> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#15 std::__invoke_impl<void, Detached_thread, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:61
+#16 std::__invoke<Detached_thread, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:96
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#18 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#19 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#20 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#21 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#22 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 58 (Thread 0x776cb6ffd6c0 (LWP 288357) "ib_log_writer"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=22172, cancel=true, abstime=0x776cb6ffcb50, op=137, expected=0, futex_word=0x776ddfc28110) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=22172, abstime=0x776cb6ffcb50, clockid=30572, expected=0, futex_word=0x776ddfc28110) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776ddfc28110, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776cb6ffcb50, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776cb6ffcb50, clockid=1, mutex=0x776ddfc280c0, cond=0x776ddfc280e8) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776ddfc280e8, mutex=0x776ddfc280c0, abstime=0x776cb6ffcb50) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000569c17e85e0a in os_event::timed_wait () at ./percona-server/storage/innobase/os/os0event.cc:316
+#6  0x0000569c17e867f1 in os_event::wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:489
+#7  0x0000569c17e8eea6 in os_event_wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:576
+#8  os_event_wait_for<log_writer(log_t*)::<lambda(bool)> > () at ./percona-server/storage/innobase/include/os0event.ic:136
+#9  wait<log_writer(log_t*)::<lambda(bool)> > () at ./percona-server/storage/innobase/log/log0write.cc:1226
+#10 log_writer () at ./percona-server/storage/innobase/log/log0write.cc:2283
+#11 0x0000569c17e61a69 in std::__invoke_impl<void, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:61
+#12 std::__invoke<void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:96
+#13 std::invoke<void (*)(log_t*), log_t*> () at /usr/include/c++/13/functional:113
+#14 Detached_thread::operator()<void (*)(log_t*), log_t*> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#15 std::__invoke_impl<void, Detached_thread, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:61
+#16 std::__invoke<Detached_thread, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:96
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#18 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#19 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#20 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#21 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#22 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 57 (Thread 0x776cb67fc6c0 (LWP 288358) "ib_log_files_g"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x776cb67fbb90, op=137, expected=0, futex_word=0x776ddfc283e0) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x776cb67fbb90, clockid=30573, expected=0, futex_word=0x776ddfc283e0) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776ddfc283e0, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776cb67fbb90, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776cb67fbb90, clockid=1, mutex=0x776ddfc28390, cond=0x776ddfc283b8) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776ddfc283b8, mutex=0x776ddfc28390, abstime=0x776cb67fbb90) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000569c17e85e0a in os_event::timed_wait () at ./percona-server/storage/innobase/os/os0event.cc:316
+#6  0x0000569c17e867f1 in os_event::wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:489
+#7  0x0000569c17e662de in os_event_wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:576
+#8  log_files_governor () at ./percona-server/storage/innobase/log/log0files_governor.cc:1386
+#9  0x0000569c17e61a69 in std::__invoke_impl<void, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:61
+#10 std::__invoke<void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:96
+#11 std::invoke<void (*)(log_t*), log_t*> () at /usr/include/c++/13/functional:113
+#12 Detached_thread::operator()<void (*)(log_t*), log_t*> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#13 std::__invoke_impl<void, Detached_thread, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:61
+#14 std::__invoke<Detached_thread, void (*)(log_t*), log_t*> () at /usr/include/c++/13/bits/invoke.h:96
+#15 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#16 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#17 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(log_t*), log_t*> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#18 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#19 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#20 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 56 (Thread 0x776cb57fa6c0 (LWP 288363) "ib_srv_lock_to"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=5, cancel=true, abstime=0x776cb57f9a70, op=137, expected=0, futex_word=0x776ddc3be234) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=5, abstime=0x776cb57f9a70, clockid=30572, expected=0, futex_word=0x776ddc3be234) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776ddc3be234, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776cb57f9a70, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776cb57f9a70, clockid=1, mutex=0x776ddc3be1e0, cond=0x776ddc3be208) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776ddc3be208, mutex=0x776ddc3be1e0, abstime=0x776cb57f9a70) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000569c17e85e0a in os_event::timed_wait () at ./percona-server/storage/innobase/os/os0event.cc:316
+#6  0x0000569c17e867f1 in os_event::wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:489
+#7  0x0000569c17e69336 in os_event_wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:576
+#8  lock_wait_timeout_thread () at ./percona-server/storage/innobase/lock/lock0wait.cc:1528
+#9  0x0000569c17e61c55 in std::__invoke_impl<void, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#10 std::__invoke<void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#11 std::invoke<void (*)()> () at /usr/include/c++/13/functional:113
+#12 Detached_thread::operator()<void (*)()> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#13 std::__invoke_impl<void, Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#14 std::__invoke<Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#15 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::_M_invoke<0ul, 1ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#16 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#17 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#18 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#19 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#20 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 55 (Thread 0x776cb47f86c0 (LWP 288364) "ib_srv_err"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x776cb47f59b0, op=137, expected=0, futex_word=0x776ddc01f0e0) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x776cb47f59b0, clockid=0, expected=0, futex_word=0x776ddc01f0e0) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776ddc01f0e0, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776cb47f59b0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776cb47f59b0, clockid=1, mutex=0x776ddc01f090, cond=0x776ddc01f0b8) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776ddc01f0b8, mutex=0x776ddc01f090, abstime=0x776cb47f59b0) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000569c17e85e0a in os_event::timed_wait () at ./percona-server/storage/innobase/os/os0event.cc:316
+#6  0x0000569c17e867f1 in os_event::wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:489
+#7  0x0000569c17ef40c7 in os_event_wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:576
+#8  srv_error_monitor_thread () at ./percona-server/storage/innobase/srv/srv0srv.cc:2089
+#9  0x0000569c17e61c55 in std::__invoke_impl<void, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#10 std::__invoke<void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#11 std::invoke<void (*)()> () at /usr/include/c++/13/functional:113
+#12 Detached_thread::operator()<void (*)()> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#13 std::__invoke_impl<void, Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#14 std::__invoke<Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#15 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::_M_invoke<0ul, 1ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#16 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#17 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#18 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#19 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#20 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 54 (Thread 0x776cb5ffb6c0 (LWP 288365) "ib_buf_resize"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=22172, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x776ddc01f3b0) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=22172, abstime=0x0, clockid=0, expected=0, futex_word=0x776ddc01f3b0) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776ddc01f3b0, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x776ddc01f360, cond=0x776ddc01f388) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x776ddc01f388, mutex=0x776ddc01f360) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c17e85f66 in os_event::wait () at ./percona-server/storage/innobase/os/os0event.cc:186
+#6  os_event::wait_low () at ./percona-server/storage/innobase/os/os0event.cc:366
+#7  0x0000569c17fa64b6 in os_event_wait_low () at ./percona-server/storage/innobase/os/os0event.cc:590
+#8  os_event_wait () at ./percona-server/storage/innobase/include/os0event.h:104
+#9  buf_resize_thread () at ./percona-server/storage/innobase/buf/buf0buf.cc:2853
+#10 0x0000569c17e61c55 in std::__invoke_impl<void, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#11 std::__invoke<void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#12 std::invoke<void (*)()> () at /usr/include/c++/13/functional:113
+#13 Detached_thread::operator()<void (*)()> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#14 std::__invoke_impl<void, Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#15 std::__invoke<Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#16 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::_M_invoke<0ul, 1ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#18 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#19 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#20 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#21 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 53 (Thread 0x776cb4ff96c0 (LWP 288366) "ib_src_main"):
+#0  0x0000776defcecb9f in __GI___clock_nanosleep (clock_id=clock_id@entry=0, flags=flags@entry=0, req=0x776cb4ff8c00, rem=0x776cb4ff8c00) at ../sysdeps/unix/sysv/linux/clock_nanosleep.c:78
+#1  0x0000776defcf9ae7 in __GI___nanosleep (req=<optimized out>, rem=<optimized out>) at ../sysdeps/unix/sysv/linux/nanosleep.c:25
+#2  0x0000569c17f08e24 in std::this_thread::sleep_for<long, std::ratio<1l, 1l> > () at /usr/include/c++/13/bits/this_thread_sleep.h:80
+#3  srv_master_sleep () at ./percona-server/storage/innobase/srv/srv0srv.cc:2940
+#4  srv_master_main_loop () at ./percona-server/storage/innobase/srv/srv0srv.cc:2981
+#5  srv_master_thread () at ./percona-server/storage/innobase/srv/srv0srv.cc:3053
+#6  0x0000569c17e61c55 in std::__invoke_impl<void, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#7  std::__invoke<void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#8  std::invoke<void (*)()> () at /usr/include/c++/13/functional:113
+#9  Detached_thread::operator()<void (*)()> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#10 std::__invoke_impl<void, Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#11 std::__invoke<Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#12 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::_M_invoke<0ul, 1ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#13 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#14 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#15 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#16 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#17 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 52 (Thread 0x776cb3ff76c0 (LWP 288367) "ib_dict_stats"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x776cb3ff6b40, op=137, expected=0, futex_word=0x776cba5e30a4) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x776cb3ff6b40, clockid=30572, expected=0, futex_word=0x776cba5e30a4) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776cba5e30a4, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776cb3ff6b40, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776cb3ff6b40, clockid=1, mutex=0x776cba5e3050, cond=0x776cba5e3078) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776cba5e3078, mutex=0x776cba5e3050, abstime=0x776cb3ff6b40) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000569c17e85e0a in os_event::timed_wait () at ./percona-server/storage/innobase/os/os0event.cc:316
+#6  0x0000569c17e867f1 in os_event::wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:489
+#7  0x0000569c1804d60e in os_event_wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:576
+#8  os_event_wait_time () at ./percona-server/storage/innobase/include/os0event.h:122
+#9  dict_stats_thread () at ./percona-server/storage/innobase/dict/dict0stats_bg.cc:393
+#10 0x0000569c17e61c55 in std::__invoke_impl<void, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#11 std::__invoke<void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#12 std::invoke<void (*)()> () at /usr/include/c++/13/functional:113
+#13 Detached_thread::operator()<void (*)()> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#14 std::__invoke_impl<void, Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#15 std::__invoke<Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#16 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::_M_invoke<0ul, 1ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#18 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#19 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#20 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#21 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 51 (Thread 0x776cb37f66c0 (LWP 288368) "ib_fts_opt"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x776cb37f5990, op=137, expected=0, futex_word=0x776cba5dc290) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x776cb37f5990, clockid=30572, expected=0, futex_word=0x776cba5dc290) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776cba5dc290, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776cb37f5990, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776cb37f5990, clockid=1, mutex=0x776cba5dc240, cond=0x776cba5dc268) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776cba5dc268, mutex=0x776cba5dc240, abstime=0x776cb37f5990) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000569c17e85e0a in os_event::timed_wait () at ./percona-server/storage/innobase/os/os0event.cc:316
+#6  0x0000569c17e867f1 in os_event::wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:489
+#7  0x0000569c17f5fbe4 in os_event_wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:576
+#8  ib_wqueue_timedwait () at ./percona-server/storage/innobase/ut/ut0wqueue.cc:129
+#9  0x0000569c1809ea1a in fts_optimize_thread () at ./percona-server/storage/innobase/fts/fts0opt.cc:2924
+#10 0x0000569c18081639 in std::__invoke_impl<void, void (*)(ib_wqueue_t*), ib_wqueue_t*> () at /usr/include/c++/13/bits/invoke.h:61
+#11 std::__invoke<void (*)(ib_wqueue_t*), ib_wqueue_t*> () at /usr/include/c++/13/bits/invoke.h:96
+#12 std::invoke<void (*)(ib_wqueue_t*), ib_wqueue_t*> () at /usr/include/c++/13/functional:113
+#13 Detached_thread::operator()<void (*)(ib_wqueue_t*), ib_wqueue_t*> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#14 std::__invoke_impl<void, Detached_thread, void (*)(ib_wqueue_t*), ib_wqueue_t*> () at /usr/include/c++/13/bits/invoke.h:61
+#15 std::__invoke<Detached_thread, void (*)(ib_wqueue_t*), ib_wqueue_t*> () at /usr/include/c++/13/bits/invoke.h:96
+#16 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(ib_wqueue_t*), ib_wqueue_t*> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(ib_wqueue_t*), ib_wqueue_t*> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#18 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(ib_wqueue_t*), ib_wqueue_t*> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#19 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#20 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#21 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 50 (Thread 0x776dd82e76c0 (LWP 288369) "xpl_worker-1"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=22172, cancel=true, abstime=0x776dd82e6b50, op=393, expected=0, futex_word=0x569c5b539e70) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=22172, abstime=0x776dd82e6b50, clockid=0, expected=0, futex_word=0x569c5b539e70) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b539e70, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x776dd82e6b50, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776dd82e6b50, clockid=0, mutex=0x569c5b539e18, cond=0x569c5b539e48) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x569c5b539e48, mutex=0x569c5b539e18, abstime=0x776dd82e6b50) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000569c184b9545 in xpl::Cond::timed_wait () at ./percona-server/plugin/x/src/helper/multithread/cond.cc:43
+#6  ngs::Scheduler_dynamic::wait_if_idle_then_delete_worker () at ./percona-server/plugin/x/src/ngs/scheduler.cc:197
+#7  0x0000569c184b9798 in ngs::Scheduler_dynamic::worker () at ./percona-server/plugin/x/src/ngs/scheduler.cc:243
+#8  0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#9  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#10 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 49 (Thread 0x776dd81e66c0 (LWP 288370) "xpl_worker-2"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=22172, cancel=true, abstime=0x776dd81e5b50, op=393, expected=0, futex_word=0x569c5b539e70) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=22172, abstime=0x776dd81e5b50, clockid=0, expected=0, futex_word=0x569c5b539e70) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b539e70, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x776dd81e5b50, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776dd81e5b50, clockid=0, mutex=0x569c5b539e18, cond=0x569c5b539e48) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x569c5b539e48, mutex=0x569c5b539e18, abstime=0x776dd81e5b50) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000569c184b9545 in xpl::Cond::timed_wait () at ./percona-server/plugin/x/src/helper/multithread/cond.cc:43
+#6  ngs::Scheduler_dynamic::wait_if_idle_then_delete_worker () at ./percona-server/plugin/x/src/ngs/scheduler.cc:197
+#7  0x0000569c184b9798 in ngs::Scheduler_dynamic::worker () at ./percona-server/plugin/x/src/ngs/scheduler.cc:243
+#8  0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#9  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#10 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 48 (Thread 0x776cbc6b36c0 (LWP 288371) "xpl_accept-1"):
+#0  0x0000776defd2a292 in epoll_wait (epfd=16, events=0x776cbc69a850, maxevents=8192, timeout=1000) at ../sysdeps/unix/sysv/linux/epoll_wait.c:30
+#1  0x0000569c184ae99e in net::impl::epoll::wait () at ./percona-server/router/src/harness/include/mysql/harness/net_ts/impl/linux_epoll.h:85
+#2  net::linux_epoll_io_service::update_fd_events () at ./percona-server/router/src/harness/include/mysql/harness/net_ts/impl/linux_epoll_io_service.h:541
+#3  0x0000569c184af3ae in net::linux_epoll_io_service::poll_one () at ./percona-server/router/src/harness/include/mysql/harness/net_ts/impl/linux_epoll_io_service.h:603
+#4  0x0000569c1854a41c in net::io_context::do_one(std::unique_lock<std::mutex>&, std::chrono::duration<long, std::ratio<1l, 1000l> >) [clone .constprop.0] () at ./percona-server/router/src/harness/include/mysql/harness/net_ts/io_context.h:1258
+#5  0x0000569c18499e61 in net::io_context::run () at ./percona-server/router/src/harness/include/mysql/harness/net_ts/io_context.h:925
+#6  ngs::Socket_events::loop () at ./percona-server/plugin/x/src/ngs/socket_events.cc:171
+#7  ngs::Socket_acceptors_task::loop () at ./percona-server/plugin/x/src/ngs/socket_acceptors_task.cc:329
+#8  0x0000569c18448772 in ngs::Server::run_task () at ./percona-server/plugin/x/src/server/server.cc:84
+#9  0x0000569c18448852 in operator() () at ./percona-server/plugin/x/src/server/server.cc:159
+#10 __invoke_impl<void, ngs::Server::start_tasks()::<lambda()>&> () at /usr/include/c++/13/bits/invoke.h:61
+#11 __invoke_r<void, ngs::Server::start_tasks()::<lambda()>&> () at /usr/include/c++/13/bits/invoke.h:111
+#12 _M_invoke () at /usr/include/c++/13/bits/std_function.h:290
+#13 0x0000569c184b9930 in std::function<void()>::operator() () at /usr/include/c++/13/bits/std_function.h:591
+#14 ngs::Scheduler_dynamic::worker () at ./percona-server/plugin/x/src/ngs/scheduler.cc:234
+#15 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#16 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#17 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 47 (Thread 0x776de2b3f6c0 (LWP 288372) "rocksdb:low"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c5b5100e0) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c5b5100e0) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b5100e0, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c5b510090, cond=0x569c5b5100b8) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c5b5100b8, mutex=0x569c5b510090) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000776cb2ba2f0b in rocksdb::ThreadPoolImpl::Impl::BGThread () at ./percona-server/storage/rocksdb/rocksdb/util/threadpool_imp.cc:236
+#6  0x0000776cb2ba3314 in rocksdb::ThreadPoolImpl::Impl::BGThreadWrapper () at ./percona-server/storage/rocksdb/rocksdb/util/threadpool_imp.cc:352
+#7  0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#8  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#9  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 46 (Thread 0x776cb25ff6c0 (LWP 288373) "rocksdb:high"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c5b510430) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c5b510430) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b510430, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c5b5103e0, cond=0x569c5b510408) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c5b510408, mutex=0x569c5b5103e0) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000776cb2ba2f0b in rocksdb::ThreadPoolImpl::Impl::BGThread () at ./percona-server/storage/rocksdb/rocksdb/util/threadpool_imp.cc:236
+#6  0x0000776cb2ba3314 in rocksdb::ThreadPoolImpl::Impl::BGThreadWrapper () at ./percona-server/storage/rocksdb/rocksdb/util/threadpool_imp.cc:352
+#7  0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#8  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#9  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 45 (Thread 0x776c89ffb6c0 (LWP 288389) "mysqld"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=22172, cancel=true, abstime=0x776c89ffab60, op=393, expected=0, futex_word=0x569c5b4f44e0) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=22172, abstime=0x776c89ffab60, clockid=22172, expected=0, futex_word=0x569c5b4f44e0) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b4f44e0, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x776c89ffab60, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c89ffab60, clockid=0, mutex=0x569c5b4f4478, cond=0x569c5b4f44b8) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x569c5b4f44b8, mutex=0x569c5b4f4478, abstime=0x776c89ffab60) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776cb2b01c0a in rocksdb::port::CondVar::TimedWait () at ./percona-server/storage/rocksdb/rocksdb/port/port_posix.cc:133
+#6  0x0000776cb2ada13f in rocksdb::InstrumentedCondVar::TimedWait () at ./percona-server/storage/rocksdb/rocksdb/monitoring/instrumented_mutex.cc:76
+#7  0x0000776cb29f935e in rocksdb::Timer::Run () at ./percona-server/storage/rocksdb/rocksdb/util/timer.h:252
+#8  0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#9  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#10 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 44 (Thread 0x776c8a7fc6c0 (LWP 288390) "rdb_bg"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x776c8a7fbbb0, op=393, expected=0, futex_word=0x776cb2e5d6b0 <_ZN7myrocksL13rdb_bg_threadE.lto_priv.0+112>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x776c8a7fbbb0, clockid=30572, expected=0, futex_word=0x776cb2e5d6b0 <_ZN7myrocksL13rdb_bg_threadE.lto_priv.0+112>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776cb2e5d6b0 <_ZN7myrocksL13rdb_bg_threadE.lto_priv.0+112>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x776c8a7fbbb0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c8a7fbbb0, clockid=0, mutex=0x776cb2e5d658 <_ZN7myrocksL13rdb_bg_threadE.lto_priv.0+24>, cond=0x776cb2e5d688 <_ZN7myrocksL13rdb_bg_threadE.lto_priv.0+72>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776cb2e5d688 <_ZN7myrocksL13rdb_bg_threadE.lto_priv.0+72>, mutex=0x776cb2e5d658 <_ZN7myrocksL13rdb_bg_threadE.lto_priv.0+24>, abstime=0x776c8a7fbbb0) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776cb2875607 in native_cond_timedwait () at ./percona-server/include/thr_cond.h:98
+#6  my_cond_timedwait () at ./percona-server/include/thr_cond.h:148
+#7  inline_mysql_cond_timedwait () at ./percona-server/include/mysql/psi/mysql_cond.h:243
+#8  myrocks::Rdb_background_thread::run () at ./percona-server/storage/rocksdb/ha_rocksdb.cc:15702
+#9  0x0000776cb28d9d89 in myrocks::Rdb_thread::thread_func () at ./percona-server/storage/rocksdb/rdb_threads.cc:36
+#10 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#11 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#12 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 43 (Thread 0x776c8affd6c0 (LWP 288391) "rdb_drop_ix"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30573, cancel=true, abstime=0x776c8affca00, op=393, expected=0, futex_word=0x776cb2e475b4 <_ZN7myrocksL19rdb_drop_idx_threadE.lto_priv.0+116>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30573, abstime=0x776c8affca00, clockid=30572, expected=0, futex_word=0x776cb2e475b4 <_ZN7myrocksL19rdb_drop_idx_threadE.lto_priv.0+116>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776cb2e475b4 <_ZN7myrocksL19rdb_drop_idx_threadE.lto_priv.0+116>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x776c8affca00, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c8affca00, clockid=0, mutex=0x776cb2e47558 <_ZN7myrocksL19rdb_drop_idx_threadE.lto_priv.0+24>, cond=0x776cb2e47588 <_ZN7myrocksL19rdb_drop_idx_threadE.lto_priv.0+72>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776cb2e47588 <_ZN7myrocksL19rdb_drop_idx_threadE.lto_priv.0+72>, mutex=0x776cb2e47558 <_ZN7myrocksL19rdb_drop_idx_threadE.lto_priv.0+24>, abstime=0x776c8affca00) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776cb286c5d2 in native_cond_timedwait () at ./percona-server/include/thr_cond.h:98
+#6  my_cond_timedwait () at ./percona-server/include/thr_cond.h:148
+#7  inline_mysql_cond_timedwait () at ./percona-server/include/mysql/psi/mysql_cond.h:243
+#8  myrocks::Rdb_drop_index_thread::run () at ./percona-server/storage/rocksdb/ha_rocksdb.cc:12806
+#9  0x0000776cb28d9d89 in myrocks::Rdb_thread::thread_func () at ./percona-server/storage/rocksdb/rdb_threads.cc:36
+#10 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#11 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#12 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 42 (Thread 0x776c8b7fe6c0 (LWP 288392) "mysqld"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x776c8b7fdba0, op=393, expected=0, futex_word=0x776cb2e5d550 <_ZN7myrocksL13rdb_is_threadE.lto_priv.0+112>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x776c8b7fdba0, clockid=0, expected=0, futex_word=0x776cb2e5d550 <_ZN7myrocksL13rdb_is_threadE.lto_priv.0+112>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776cb2e5d550 <_ZN7myrocksL13rdb_is_threadE.lto_priv.0+112>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x776c8b7fdba0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c8b7fdba0, clockid=0, mutex=0x776cb2e5d4f8 <_ZN7myrocksL13rdb_is_threadE.lto_priv.0+24>, cond=0x776cb2e5d528 <_ZN7myrocksL13rdb_is_threadE.lto_priv.0+72>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776cb2e5d528 <_ZN7myrocksL13rdb_is_threadE.lto_priv.0+72>, mutex=0x776cb2e5d4f8 <_ZN7myrocksL13rdb_is_threadE.lto_priv.0+24>, abstime=0x776c8b7fdba0) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776cb2875eec in native_cond_timedwait () at ./percona-server/include/thr_cond.h:98
+#6  my_cond_timedwait () at ./percona-server/include/thr_cond.h:148
+#7  inline_mysql_cond_timedwait () at ./percona-server/include/mysql/psi/mysql_cond.h:243
+#8  myrocks::Rdb_index_stats_thread::run () at ./percona-server/storage/rocksdb/ha_rocksdb.cc:15803
+#9  0x0000776cb28d9d89 in myrocks::Rdb_thread::thread_func () at ./percona-server/storage/rocksdb/rdb_threads.cc:36
+#10 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#11 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#12 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 41 (Thread 0x776cb1dfe6c0 (LWP 288393) "rdb_compact"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=-197780434, cancel=true, abstime=0x776cb1dfdbd0, op=393, expected=0, futex_word=0x776cb2e47490 <_ZN7myrocksL13rdb_mc_threadE.lto_priv.0+112>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=-197780434, abstime=0x776cb1dfdbd0, clockid=0, expected=0, futex_word=0x776cb2e47490 <_ZN7myrocksL13rdb_mc_threadE.lto_priv.0+112>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776cb2e47490 <_ZN7myrocksL13rdb_mc_threadE.lto_priv.0+112>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x776cb1dfdbd0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776cb1dfdbd0, clockid=0, mutex=0x776cb2e47438 <_ZN7myrocksL13rdb_mc_threadE.lto_priv.0+24>, cond=0x776cb2e47468 <_ZN7myrocksL13rdb_mc_threadE.lto_priv.0+72>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776cb2e47468 <_ZN7myrocksL13rdb_mc_threadE.lto_priv.0+72>, mutex=0x776cb2e47438 <_ZN7myrocksL13rdb_mc_threadE.lto_priv.0+24>, abstime=0x776cb1dfdbd0) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776cb2880079 in native_cond_timedwait () at ./percona-server/include/thr_cond.h:98
+#6  my_cond_timedwait () at ./percona-server/include/thr_cond.h:148
+#7  inline_mysql_cond_timedwait () at ./percona-server/include/mysql/psi/mysql_cond.h:243
+#8  myrocks::Rdb_manual_compaction_thread::run () at ./percona-server/storage/rocksdb/ha_rocksdb.cc:15986
+#9  0x0000776cb28d9d89 in myrocks::Rdb_thread::thread_func () at ./percona-server/storage/rocksdb/rdb_threads.cc:36
+#10 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#11 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#12 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 40 (Thread 0x776c7bfff6c0 (LWP 288395) "flush.0"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=-197780434, cancel=true, abstime=0x776c7bffeb70, op=137, expected=0, futex_word=0x569c5b79b8f8) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=-197780434, abstime=0x776c7bffeb70, clockid=0, expected=0, futex_word=0x569c5b79b8f8) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b79b8f8, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776c7bffeb70, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c7bffeb70, clockid=1, mutex=0x569c5b79b848, cond=0x569c5b79b8d0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=cond@entry=0x569c5b79b8d0, mutex=mutex@entry=0x569c5b79b848, abstime=abstime@entry=0x776c7bffeb70) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776dd8359818 in queue_block_until_ready (queue=queue@entry=0x569c5b79b820) at /data/ps97/src/tidesdb/src/datastructures/queue.c:279
+#6  0x0000776dd8359df0 in queue_dequeue_wait (queue=0x569c5b79b820) at /data/ps97/src/tidesdb/src/datastructures/queue.c:304
+#7  0x0000776dd8364fc8 in bg_pool_thread (arg=0x569c5b79b8f8) at /data/ps97/src/tidesdb/src/base/bg_pool.c:96
+#8  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#9  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 39 (Thread 0x776c7b7fe6c0 (LWP 288396) "flush.1"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x776c7b7fdb70, op=137, expected=0, futex_word=0x569c5b79b8f8) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x776c7b7fdb70, clockid=30572, expected=0, futex_word=0x569c5b79b8f8) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b79b8f8, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776c7b7fdb70, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c7b7fdb70, clockid=1, mutex=0x569c5b79b848, cond=0x569c5b79b8d0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=cond@entry=0x569c5b79b8d0, mutex=mutex@entry=0x569c5b79b848, abstime=abstime@entry=0x776c7b7fdb70) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776dd8359818 in queue_block_until_ready (queue=queue@entry=0x569c5b79b820) at /data/ps97/src/tidesdb/src/datastructures/queue.c:279
+#6  0x0000776dd8359df0 in queue_dequeue_wait (queue=0x569c5b79b820) at /data/ps97/src/tidesdb/src/datastructures/queue.c:304
+#7  0x0000776dd8364fc8 in bg_pool_thread (arg=0x569c5b79b8f8) at /data/ps97/src/tidesdb/src/base/bg_pool.c:96
+#8  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#9  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 38 (Thread 0x776c72dff6c0 (LWP 288397) "flush.2"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x776c72dfeb70, op=137, expected=0, futex_word=0x569c5b79b8f8) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x776c72dfeb70, clockid=30572, expected=0, futex_word=0x569c5b79b8f8) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b79b8f8, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776c72dfeb70, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c72dfeb70, clockid=1, mutex=0x569c5b79b848, cond=0x569c5b79b8d0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=cond@entry=0x569c5b79b8d0, mutex=mutex@entry=0x569c5b79b848, abstime=abstime@entry=0x776c72dfeb70) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776dd8359818 in queue_block_until_ready (queue=queue@entry=0x569c5b79b820) at /data/ps97/src/tidesdb/src/datastructures/queue.c:279
+#6  0x0000776dd8359df0 in queue_dequeue_wait (queue=0x569c5b79b820) at /data/ps97/src/tidesdb/src/datastructures/queue.c:304
+#7  0x0000776dd8364fc8 in bg_pool_thread (arg=0x569c5b79b8f8) at /data/ps97/src/tidesdb/src/base/bg_pool.c:96
+#8  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#9  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 37 (Thread 0x776c7affd6c0 (LWP 288398) "flush.3"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x776c7affcb70, op=137, expected=0, futex_word=0x569c5b79b8f8) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x776c7affcb70, clockid=30572, expected=0, futex_word=0x569c5b79b8f8) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b79b8f8, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776c7affcb70, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c7affcb70, clockid=1, mutex=0x569c5b79b848, cond=0x569c5b79b8d0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=cond@entry=0x569c5b79b8d0, mutex=mutex@entry=0x569c5b79b848, abstime=abstime@entry=0x776c7affcb70) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776dd8359818 in queue_block_until_ready (queue=queue@entry=0x569c5b79b820) at /data/ps97/src/tidesdb/src/datastructures/queue.c:279
+#6  0x0000776dd8359df0 in queue_dequeue_wait (queue=0x569c5b79b820) at /data/ps97/src/tidesdb/src/datastructures/queue.c:304
+#7  0x0000776dd8364fc8 in bg_pool_thread (arg=0x569c5b79b8f8) at /data/ps97/src/tidesdb/src/base/bg_pool.c:96
+#8  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#9  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 36 (Thread 0x776c7a7fc6c0 (LWP 288399) "compaction.0"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=-197780434, cancel=true, abstime=0x776c7a7fbb70, op=137, expected=0, futex_word=0x569c5b79015c) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=-197780434, abstime=0x776c7a7fbb70, clockid=0, expected=0, futex_word=0x569c5b79015c) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b79015c, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776c7a7fbb70, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c7a7fbb70, clockid=1, mutex=0x569c5b7900a8, cond=0x569c5b790130) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=cond@entry=0x569c5b790130, mutex=mutex@entry=0x569c5b7900a8, abstime=abstime@entry=0x776c7a7fbb70) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776dd8359818 in queue_block_until_ready (queue=queue@entry=0x569c5b790080) at /data/ps97/src/tidesdb/src/datastructures/queue.c:279
+#6  0x0000776dd8359df0 in queue_dequeue_wait (queue=0x569c5b790080) at /data/ps97/src/tidesdb/src/datastructures/queue.c:304
+#7  0x0000776dd8364fc8 in bg_pool_thread (arg=0x569c5b79015c) at /data/ps97/src/tidesdb/src/base/bg_pool.c:96
+#8  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#9  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 35 (Thread 0x776c79ffb6c0 (LWP 288400) "compaction.1"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=-197780434, cancel=true, abstime=0x776c79ffab70, op=137, expected=0, futex_word=0x569c5b79015c) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=-197780434, abstime=0x776c79ffab70, clockid=0, expected=0, futex_word=0x569c5b79015c) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b79015c, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776c79ffab70, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c79ffab70, clockid=1, mutex=0x569c5b7900a8, cond=0x569c5b790130) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=cond@entry=0x569c5b790130, mutex=mutex@entry=0x569c5b7900a8, abstime=abstime@entry=0x776c79ffab70) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776dd8359818 in queue_block_until_ready (queue=queue@entry=0x569c5b790080) at /data/ps97/src/tidesdb/src/datastructures/queue.c:279
+#6  0x0000776dd8359df0 in queue_dequeue_wait (queue=0x569c5b790080) at /data/ps97/src/tidesdb/src/datastructures/queue.c:304
+#7  0x0000776dd8364fc8 in bg_pool_thread (arg=0x569c5b79015c) at /data/ps97/src/tidesdb/src/base/bg_pool.c:96
+#8  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#9  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 34 (Thread 0x776c797fa6c0 (LWP 288401) "compaction.2"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=-197780434, cancel=true, abstime=0x776c797f9b70, op=137, expected=0, futex_word=0x569c5b79015c) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=-197780434, abstime=0x776c797f9b70, clockid=0, expected=0, futex_word=0x569c5b79015c) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b79015c, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776c797f9b70, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c797f9b70, clockid=1, mutex=0x569c5b7900a8, cond=0x569c5b790130) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=cond@entry=0x569c5b790130, mutex=mutex@entry=0x569c5b7900a8, abstime=abstime@entry=0x776c797f9b70) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776dd8359818 in queue_block_until_ready (queue=queue@entry=0x569c5b790080) at /data/ps97/src/tidesdb/src/datastructures/queue.c:279
+#6  0x0000776dd8359df0 in queue_dequeue_wait (queue=0x569c5b790080) at /data/ps97/src/tidesdb/src/datastructures/queue.c:304
+#7  0x0000776dd8364fc8 in bg_pool_thread (arg=0x569c5b79015c) at /data/ps97/src/tidesdb/src/base/bg_pool.c:96
+#8  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#9  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 33 (Thread 0x776c78ff96c0 (LWP 288402) "compaction.3"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=-197780434, cancel=true, abstime=0x776c78ff8b70, op=137, expected=0, futex_word=0x569c5b79015c) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=-197780434, abstime=0x776c78ff8b70, clockid=0, expected=0, futex_word=0x569c5b79015c) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b79015c, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776c78ff8b70, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c78ff8b70, clockid=1, mutex=0x569c5b7900a8, cond=0x569c5b790130) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=cond@entry=0x569c5b790130, mutex=mutex@entry=0x569c5b7900a8, abstime=abstime@entry=0x776c78ff8b70) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776dd8359818 in queue_block_until_ready (queue=queue@entry=0x569c5b790080) at /data/ps97/src/tidesdb/src/datastructures/queue.c:279
+#6  0x0000776dd8359df0 in queue_dequeue_wait (queue=0x569c5b790080) at /data/ps97/src/tidesdb/src/datastructures/queue.c:304
+#7  0x0000776dd8364fc8 in bg_pool_thread (arg=0x569c5b79015c) at /data/ps97/src/tidesdb/src/base/bg_pool.c:96
+#8  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#9  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 32 (Thread 0x776c73fff6c0 (LWP 288403) "mysqld"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x776c73ffec70, op=137, expected=0, futex_word=0x569c5b792470) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x776c73ffec70, clockid=0, expected=0, futex_word=0x569c5b792470) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b792470, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776c73ffec70, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c73ffec70, clockid=1, mutex=0x569c5b792420, cond=0x569c5b792448) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=cond@entry=0x569c5b792448, mutex=mutex@entry=0x569c5b792420, abstime=abstime@entry=0x776c73ffec70) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776dd83653c5 in bg_ticker_thread (arg=0x569c5b792410) at /data/ps97/src/tidesdb/src/base/bg_ticker.c:52
+#6  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#7  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 31 (Thread 0x776c737fe6c0 (LWP 288404) "mysqld"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x776c737fdc70, op=137, expected=0, futex_word=0x569c5b80d2b0) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x776c737fdc70, clockid=0, expected=0, futex_word=0x569c5b80d2b0) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b80d2b0, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776c737fdc70, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c737fdc70, clockid=1, mutex=0x569c5b80d260, cond=0x569c5b80d288) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=cond@entry=0x569c5b80d288, mutex=mutex@entry=0x569c5b80d260, abstime=abstime@entry=0x776c737fdc70) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776dd83653c5 in bg_ticker_thread (arg=0x569c5b80d250) at /data/ps97/src/tidesdb/src/base/bg_ticker.c:52
+#6  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#7  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 30 (Thread 0x776c725fe6c0 (LWP 288405) "mysqld"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x776c725fdc70, op=137, expected=0, futex_word=0x569c5b80d520) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x776c725fdc70, clockid=0, expected=0, futex_word=0x569c5b80d520) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b80d520, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776c725fdc70, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c725fdc70, clockid=1, mutex=0x569c5b80d4d0, cond=0x569c5b80d4f8) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=cond@entry=0x569c5b80d4f8, mutex=mutex@entry=0x569c5b80d4d0, abstime=abstime@entry=0x776c725fdc70) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776dd83653c5 in bg_ticker_thread (arg=0x569c5b80d4c0) at /data/ps97/src/tidesdb/src/base/bg_ticker.c:52
+#6  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#7  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 29 (Thread 0x776c71dfd6c0 (LWP 288406) "mysqld"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x776c71dfcc70, op=137, expected=0, futex_word=0x569c5b80e9c0) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x776c71dfcc70, clockid=0, expected=0, futex_word=0x569c5b80e9c0) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b80e9c0, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776c71dfcc70, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c71dfcc70, clockid=1, mutex=0x569c5b80e970, cond=0x569c5b80e998) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=cond@entry=0x569c5b80e998, mutex=mutex@entry=0x569c5b80e970, abstime=abstime@entry=0x776c71dfcc70) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776dd83653c5 in bg_ticker_thread (arg=0x569c5b80e960) at /data/ps97/src/tidesdb/src/base/bg_ticker.c:52
+#6  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#7  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 28 (Thread 0x776c715fc6c0 (LWP 288407) "mysqld"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30573, cancel=true, abstime=0x776c715fbc70, op=137, expected=0, futex_word=0x569c5b80ec30) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30573, abstime=0x776c715fbc70, clockid=30573, expected=0, futex_word=0x569c5b80ec30) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b80ec30, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776c715fbc70, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c715fbc70, clockid=1, mutex=0x569c5b80ebe0, cond=0x569c5b80ec08) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=cond@entry=0x569c5b80ec08, mutex=mutex@entry=0x569c5b80ebe0, abstime=abstime@entry=0x776c715fbc70) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776dd83653c5 in bg_ticker_thread (arg=0x569c5b80ebd0) at /data/ps97/src/tidesdb/src/base/bg_ticker.c:52
+#6  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#7  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 27 (Thread 0x776c70dfb6c0 (LWP 288411) "ib_buf_dump"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=32767, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x776ddc01f200) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=32767, abstime=0x0, clockid=0, expected=0, futex_word=0x776ddc01f200) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776ddc01f200, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x776ddc01f1b0, cond=0x776ddc01f1d8) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x776ddc01f1d8, mutex=0x776ddc01f1b0) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c17e85f66 in os_event::wait () at ./percona-server/storage/innobase/os/os0event.cc:186
+#6  os_event::wait_low () at ./percona-server/storage/innobase/os/os0event.cc:366
+#7  0x0000569c17fbc35d in os_event_wait_low () at ./percona-server/storage/innobase/os/os0event.cc:590
+#8  os_event_wait () at ./percona-server/storage/innobase/include/os0event.h:104
+#9  buf_dump_thread () at ./percona-server/storage/innobase/buf/buf0dump.cc:687
+#10 0x0000569c17e61c55 in std::__invoke_impl<void, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#11 std::__invoke<void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#12 std::invoke<void (*)()> () at /usr/include/c++/13/functional:113
+#13 Detached_thread::operator()<void (*)()> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#14 std::__invoke_impl<void, Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#15 std::__invoke<Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#16 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::_M_invoke<0ul, 1ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#18 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#19 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#20 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#21 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 26 (Thread 0x776c5bfff6c0 (LWP 288412) "ib_clone_gtid"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30573, cancel=true, abstime=0x776c5bffea40, op=137, expected=0, futex_word=0x776ddc2ced90) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30573, abstime=0x776c5bffea40, clockid=0, expected=0, futex_word=0x776ddc2ced90) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776ddc2ced90, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776c5bffea40, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c5bffea40, clockid=1, mutex=0x776ddc2ced40, cond=0x776ddc2ced68) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x776ddc2ced68, mutex=0x776ddc2ced40, abstime=0x776c5bffea40) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000569c17e85e0a in os_event::timed_wait () at ./percona-server/storage/innobase/os/os0event.cc:316
+#6  0x0000569c17e867f1 in os_event::wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:489
+#7  0x0000569c180043f4 in os_event_wait_time_low () at ./percona-server/storage/innobase/os/os0event.cc:576
+#8  os_event_wait_time () at ./percona-server/storage/innobase/include/os0event.h:122
+#9  Clone_persist_gtid::periodic_write () at ./percona-server/storage/innobase/clone/clone0repl.cc:631
+#10 0x0000569c17fea249 in std::__invoke_impl<void, void (*)(Clone_persist_gtid*), Clone_persist_gtid*> () at /usr/include/c++/13/bits/invoke.h:61
+#11 std::__invoke<void (*)(Clone_persist_gtid*), Clone_persist_gtid*> () at /usr/include/c++/13/bits/invoke.h:96
+#12 std::invoke<void (*)(Clone_persist_gtid*), Clone_persist_gtid*> () at /usr/include/c++/13/functional:113
+#13 Detached_thread::operator()<void (*)(Clone_persist_gtid*), Clone_persist_gtid*> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#14 std::__invoke_impl<void, Detached_thread, void (*)(Clone_persist_gtid*), Clone_persist_gtid*> () at /usr/include/c++/13/bits/invoke.h:61
+#15 std::__invoke<Detached_thread, void (*)(Clone_persist_gtid*), Clone_persist_gtid*> () at /usr/include/c++/13/bits/invoke.h:96
+#16 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(Clone_persist_gtid*), Clone_persist_gtid*> >::_M_invoke<0ul, 1ul, 2ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)(Clone_persist_gtid*), Clone_persist_gtid*> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#18 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)(Clone_persist_gtid*), Clone_persist_gtid*> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#19 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#20 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#21 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 25 (Thread 0x776c5b7fe6c0 (LWP 288413) "ib_srv_purge"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=22172, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x776ddc01f054) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=22172, abstime=0x0, clockid=0, expected=0, futex_word=0x776ddc01f054) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776ddc01f054, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x776ddc01f000, cond=0x776ddc01f028) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x776ddc01f028, mutex=0x776ddc01f000) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c17e85f66 in os_event::wait () at ./percona-server/storage/innobase/os/os0event.cc:186
+#6  os_event::wait_low () at ./percona-server/storage/innobase/os/os0event.cc:366
+#7  0x0000569c17f3c681 in os_event_wait_low () at ./percona-server/storage/innobase/os/os0event.cc:590
+#8  srv_purge_coordinator_suspend () at ./percona-server/storage/innobase/srv/srv0srv.cc:3314
+#9  srv_purge_coordinator_thread () at ./percona-server/storage/innobase/srv/srv0srv.cc:3436
+#10 0x0000569c17e61c55 in std::__invoke_impl<void, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#11 std::__invoke<void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#12 std::invoke<void (*)()> () at /usr/include/c++/13/functional:113
+#13 Detached_thread::operator()<void (*)()> () at ./percona-server/storage/innobase/include/os0thread-create.h:191
+#14 std::__invoke_impl<void, Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:61
+#15 std::__invoke<Detached_thread, void (*)()> () at /usr/include/c++/13/bits/invoke.h:96
+#16 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::_M_invoke<0ul, 1ul> () at /usr/include/c++/13/bits/std_thread.h:292
+#17 std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> >::operator() () at /usr/include/c++/13/bits/std_thread.h:299
+#18 std::thread::_State_impl<std::thread::_Invoker<std::tuple<Detached_thread, void (*)()> > >::_M_run () at /usr/include/c++/13/bits/std_thread.h:244
+#19 0x0000776df00ecdb4 in ?? () from /lib/x86_64-linux-gnu/libstdc++.so.6
+#20 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#21 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 24 (Thread 0x776cbc5b26c0 (LWP 288414) "evt_sched"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=-197780434, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c5b50e2a8) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=-197780434, abstime=0x0, clockid=0, expected=0, futex_word=0x569c5b50e2a8) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b50e2a8, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c5b50e250, cond=0x569c5b50e280) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c5b50e280, mutex=0x569c5b50e250) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c176ea6af in Event_queue::cond_wait () at ./percona-server/sql/event_queue.cc:719
+#6  0x0000569c176fe45e in Event_queue::get_top_for_execution_if_time () at ./percona-server/sql/event_queue.cc:557
+#7  0x0000569c1772a6cd in Event_scheduler::run () at ./percona-server/sql/event_scheduler.cc:601
+#8  0x0000569c1772abbb in event_scheduler_thread () at ./percona-server/sql/event_scheduler.cc:283
+#9  0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#10 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#11 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 23 (Thread 0x776cbc4b06c0 (LWP 288415) "sig_handler"):
+#0  0x0000776defc45fc8 in __GI___sigtimedwait (set=0x776cbc4afb30, info=0x776cbc4afbb0, timeout=0x0) at ../sysdeps/unix/sysv/linux/sigtimedwait.c:31
+#1  0x0000569c171ebffb in signal_hand () at ./percona-server/sql/mysqld.cc:4099
+#2  0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#3  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#4  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 22 (Thread 0x776cbc3ae6c0 (LWP 288416) "xpl_accept-2"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=22172, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c5b539bf8) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=22172, abstime=0x0, clockid=0, expected=0, futex_word=0x569c5b539bf8) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c5b539bf8, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c5b539ba0, cond=0x569c5b539bd0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c5b539bd0, mutex=0x569c5b539ba0) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1849fc09 in xpl::Cond::wait () at ./percona-server/plugin/x/src/helper/multithread/cond.cc:36
+#6  xpl::Synchronize::Block::wait () at ./percona-server/plugin/x/src/helper/multithread/synchronize.h:50
+#7  xpl::Broker_task::wait_for_data_and_swap_queues () at ./percona-server/plugin/x/src/mq/broker_task.cc:119
+#8  0x0000569c184a0834 in xpl::Broker_task::loop () at ./percona-server/plugin/x/src/mq/broker_task.cc:93
+#9  0x0000569c18448772 in ngs::Server::run_task () at ./percona-server/plugin/x/src/server/server.cc:84
+#10 0x0000569c18448852 in operator() () at ./percona-server/plugin/x/src/server/server.cc:159
+#11 __invoke_impl<void, ngs::Server::start_tasks()::<lambda()>&> () at /usr/include/c++/13/bits/invoke.h:61
+#12 __invoke_r<void, ngs::Server::start_tasks()::<lambda()>&> () at /usr/include/c++/13/bits/invoke.h:111
+#13 _M_invoke () at /usr/include/c++/13/bits/std_function.h:290
+#14 0x0000569c184b9930 in std::function<void()>::operator() () at /usr/include/c++/13/bits/std_function.h:591
+#15 ngs::Scheduler_dynamic::worker () at ./percona-server/plugin/x/src/ngs/scheduler.cc:234
+#16 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#17 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#18 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 21 (Thread 0x776c5affd6c0 (LWP 288418) "gtid_zip"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a1513a8 <COND_compress_gtid_table+40>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a1513a8 <COND_compress_gtid_table+40>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a1513a8 <COND_compress_gtid_table+40>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a1513c0 <LOCK_compress_gtid_table>, cond=0x569c1a151380 <COND_compress_gtid_table>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a151380 <COND_compress_gtid_table>, mutex=0x569c1a1513c0 <LOCK_compress_gtid_table>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c17b11ca3 in native_cond_wait () at ./percona-server/include/thr_cond.h:107
+#6  my_cond_wait () at ./percona-server/include/thr_cond.h:161
+#7  inline_mysql_cond_wait () at ./percona-server/include/mysql/psi/mysql_cond.h:199
+#8  compress_gtid_table () at ./percona-server/sql/rpl_gtid_persist.cc:813
+#9  0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#10 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#11 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 20 (Thread 0x776c5a7fc6c0 (LWP 288419) "rpl_opt_tracker"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=-197780434, cancel=true, abstime=0x776c5a7fbbe0, op=393, expected=0, futex_word=0x569c1a151228 <COND_rpl_opt_tracker+40>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=-197780434, abstime=0x776c5a7fbbe0, clockid=30572, expected=0, futex_word=0x569c1a151228 <COND_rpl_opt_tracker+40>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a151228 <COND_rpl_opt_tracker+40>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x776c5a7fbbe0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c5a7fbbe0, clockid=0, mutex=0x569c1a151240 <LOCK_rpl_opt_tracker>, cond=0x569c1a151200 <COND_rpl_opt_tracker>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=0x569c1a151200 <COND_rpl_opt_tracker>, mutex=0x569c1a151240 <LOCK_rpl_opt_tracker>, abstime=0x776c5a7fbbe0) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000569c17283fe0 in native_cond_timedwait () at ./percona-server/include/thr_cond.h:98
+#6  my_cond_timedwait () at ./percona-server/include/thr_cond.h:148
+#7  inline_mysql_cond_timedwait () at ./percona-server/include/mysql/psi/mysql_cond.h:243
+#8  Rpl_opt_tracker::worker () at ./percona-server/sql/rpl_opt_tracker.cc:184
+#9  0x0000569c172843fd in launch_thread () at ./percona-server/sql/rpl_opt_tracker.cc:48
+#10 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#11 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#12 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 19 (Thread 0x776cb05fc6c0 (LWP 288478) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a14d660 <tc_log_mmap+736>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a14d5d0 <tc_log_mmap+592>, cond=0x569c1a14d638 <tc_log_mmap+696>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a14d638 <tc_log_mmap+696>, mutex=0x569c1a14d5d0 <tc_log_mmap+592>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1748bb52 in TC_LOG_MMAP::overflow () at ./percona-server/sql/tc_log.cc:478
+#6  TC_LOG_MMAP::log_xid () at ./percona-server/sql/tc_log.cc:581
+#7  0x0000569c1748bf8d in TC_LOG_MMAP::commit () at ./percona-server/sql/tc_log.cc:505
+#8  0x0000569c1705800c in ha_commit_trans () at ./percona-server/sql/handler.cc:1889
+#9  0x0000569c17496a6f in trans_commit () at ./percona-server/sql/transaction.cc:247
+#10 0x0000569c17395639 in mysql_execute_command () at ./percona-server/sql/sql_parse.cc:4603
+#11 0x0000569c173adeee in Prepared_statement::execute () at ./percona-server/sql/sql_prepare.cc:3831
+#12 0x0000569c173c22d3 in Prepared_statement::execute_loop () at ./percona-server/sql/sql_prepare.cc:3189
+#13 0x0000569c173c26bd in mysqld_stmt_execute () at ./percona-server/sql/sql_prepare.cc:1904
+#14 0x0000569c17398c3a in dispatch_command () at ./percona-server/sql/sql_parse.cc:2125
+#15 0x0000569c17364f0f in do_command () at ./percona-server/sql/sql_parse.cc:1553
+#16 0x0000569c174e8d17 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:310
+#17 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#18 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#19 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 18 (Thread 0x776cb02f66c0 (LWP 288481) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a14d660 <tc_log_mmap+736>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a14d5d0 <tc_log_mmap+592>, cond=0x569c1a14d638 <tc_log_mmap+696>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a14d638 <tc_log_mmap+696>, mutex=0x569c1a14d5d0 <tc_log_mmap+592>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1748bb52 in TC_LOG_MMAP::overflow () at ./percona-server/sql/tc_log.cc:478
+#6  TC_LOG_MMAP::log_xid () at ./percona-server/sql/tc_log.cc:581
+#7  0x0000569c1748bf8d in TC_LOG_MMAP::commit () at ./percona-server/sql/tc_log.cc:505
+#8  0x0000569c1705800c in ha_commit_trans () at ./percona-server/sql/handler.cc:1889
+#9  0x0000569c17496a6f in trans_commit () at ./percona-server/sql/transaction.cc:247
+#10 0x0000569c17395639 in mysql_execute_command () at ./percona-server/sql/sql_parse.cc:4603
+#11 0x0000569c173adeee in Prepared_statement::execute () at ./percona-server/sql/sql_prepare.cc:3831
+#12 0x0000569c173c22d3 in Prepared_statement::execute_loop () at ./percona-server/sql/sql_prepare.cc:3189
+#13 0x0000569c173c26bd in mysqld_stmt_execute () at ./percona-server/sql/sql_prepare.cc:1904
+#14 0x0000569c17398c3a in dispatch_command () at ./percona-server/sql/sql_parse.cc:2125
+#15 0x0000569c17364f0f in do_command () at ./percona-server/sql/sql_parse.cc:1553
+#16 0x0000569c174e8d17 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:310
+#17 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#18 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#19 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 17 (Thread 0x776cb01f46c0 (LWP 288482) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a14d660 <tc_log_mmap+736>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a14d5d0 <tc_log_mmap+592>, cond=0x569c1a14d638 <tc_log_mmap+696>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a14d638 <tc_log_mmap+696>, mutex=0x569c1a14d5d0 <tc_log_mmap+592>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1748bb52 in TC_LOG_MMAP::overflow () at ./percona-server/sql/tc_log.cc:478
+#6  TC_LOG_MMAP::log_xid () at ./percona-server/sql/tc_log.cc:581
+#7  0x0000569c1748bf8d in TC_LOG_MMAP::commit () at ./percona-server/sql/tc_log.cc:505
+#8  0x0000569c1705800c in ha_commit_trans () at ./percona-server/sql/handler.cc:1889
+#9  0x0000569c17496a6f in trans_commit () at ./percona-server/sql/transaction.cc:247
+#10 0x0000569c17395639 in mysql_execute_command () at ./percona-server/sql/sql_parse.cc:4603
+#11 0x0000569c173adeee in Prepared_statement::execute () at ./percona-server/sql/sql_prepare.cc:3831
+#12 0x0000569c173c22d3 in Prepared_statement::execute_loop () at ./percona-server/sql/sql_prepare.cc:3189
+#13 0x0000569c173c26bd in mysqld_stmt_execute () at ./percona-server/sql/sql_prepare.cc:1904
+#14 0x0000569c17398c3a in dispatch_command () at ./percona-server/sql/sql_parse.cc:2125
+#15 0x0000569c17364f0f in do_command () at ./percona-server/sql/sql_parse.cc:1553
+#16 0x0000569c174e8d17 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:310
+#17 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#18 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#19 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 16 (Thread 0x776c885f56c0 (LWP 288485) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a14d660 <tc_log_mmap+736>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a14d5d0 <tc_log_mmap+592>, cond=0x569c1a14d638 <tc_log_mmap+696>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a14d638 <tc_log_mmap+696>, mutex=0x569c1a14d5d0 <tc_log_mmap+592>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1748bb52 in TC_LOG_MMAP::overflow () at ./percona-server/sql/tc_log.cc:478
+#6  TC_LOG_MMAP::log_xid () at ./percona-server/sql/tc_log.cc:581
+#7  0x0000569c1748bf8d in TC_LOG_MMAP::commit () at ./percona-server/sql/tc_log.cc:505
+#8  0x0000569c1705800c in ha_commit_trans () at ./percona-server/sql/handler.cc:1889
+#9  0x0000569c17496a6f in trans_commit () at ./percona-server/sql/transaction.cc:247
+#10 0x0000569c17395639 in mysql_execute_command () at ./percona-server/sql/sql_parse.cc:4603
+#11 0x0000569c173adeee in Prepared_statement::execute () at ./percona-server/sql/sql_prepare.cc:3831
+#12 0x0000569c173c22d3 in Prepared_statement::execute_loop () at ./percona-server/sql/sql_prepare.cc:3189
+#13 0x0000569c173c26bd in mysqld_stmt_execute () at ./percona-server/sql/sql_prepare.cc:1904
+#14 0x0000569c17398c3a in dispatch_command () at ./percona-server/sql/sql_parse.cc:2125
+#15 0x0000569c17364f0f in do_command () at ./percona-server/sql/sql_parse.cc:1553
+#16 0x0000569c174e8d17 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:310
+#17 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#18 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#19 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 15 (Thread 0x776c884f36c0 (LWP 288486) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a14d660 <tc_log_mmap+736>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a14d5d0 <tc_log_mmap+592>, cond=0x569c1a14d638 <tc_log_mmap+696>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a14d638 <tc_log_mmap+696>, mutex=0x569c1a14d5d0 <tc_log_mmap+592>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1748bb52 in TC_LOG_MMAP::overflow () at ./percona-server/sql/tc_log.cc:478
+#6  TC_LOG_MMAP::log_xid () at ./percona-server/sql/tc_log.cc:581
+#7  0x0000569c1748bf8d in TC_LOG_MMAP::commit () at ./percona-server/sql/tc_log.cc:505
+#8  0x0000569c1705800c in ha_commit_trans () at ./percona-server/sql/handler.cc:1889
+#9  0x0000569c17496a6f in trans_commit () at ./percona-server/sql/transaction.cc:247
+#10 0x0000569c17395639 in mysql_execute_command () at ./percona-server/sql/sql_parse.cc:4603
+#11 0x0000569c173adeee in Prepared_statement::execute () at ./percona-server/sql/sql_prepare.cc:3831
+#12 0x0000569c173c22d3 in Prepared_statement::execute_loop () at ./percona-server/sql/sql_prepare.cc:3189
+#13 0x0000569c173c26bd in mysqld_stmt_execute () at ./percona-server/sql/sql_prepare.cc:1904
+#14 0x0000569c17398c3a in dispatch_command () at ./percona-server/sql/sql_parse.cc:2125
+#15 0x0000569c17364f0f in do_command () at ./percona-server/sql/sql_parse.cc:1553
+#16 0x0000569c174e8d17 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:310
+#17 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#18 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#19 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 14 (Thread 0x776c882ef6c0 (LWP 288488) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a14d660 <tc_log_mmap+736>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a14d5d0 <tc_log_mmap+592>, cond=0x569c1a14d638 <tc_log_mmap+696>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a14d638 <tc_log_mmap+696>, mutex=0x569c1a14d5d0 <tc_log_mmap+592>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1748bb52 in TC_LOG_MMAP::overflow () at ./percona-server/sql/tc_log.cc:478
+#6  TC_LOG_MMAP::log_xid () at ./percona-server/sql/tc_log.cc:581
+#7  0x0000569c1748bf8d in TC_LOG_MMAP::commit () at ./percona-server/sql/tc_log.cc:505
+#8  0x0000569c1705800c in ha_commit_trans () at ./percona-server/sql/handler.cc:1889
+#9  0x0000569c17496a6f in trans_commit () at ./percona-server/sql/transaction.cc:247
+#10 0x0000569c17395639 in mysql_execute_command () at ./percona-server/sql/sql_parse.cc:4603
+#11 0x0000569c173adeee in Prepared_statement::execute () at ./percona-server/sql/sql_prepare.cc:3831
+#12 0x0000569c173c22d3 in Prepared_statement::execute_loop () at ./percona-server/sql/sql_prepare.cc:3189
+#13 0x0000569c173c26bd in mysqld_stmt_execute () at ./percona-server/sql/sql_prepare.cc:1904
+#14 0x0000569c17398c3a in dispatch_command () at ./percona-server/sql/sql_parse.cc:2125
+#15 0x0000569c17364f0f in do_command () at ./percona-server/sql/sql_parse.cc:1553
+#16 0x0000569c174e8d17 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:310
+#17 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#18 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#19 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 13 (Thread 0x776c787f86c0 (LWP 288490) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a14d660 <tc_log_mmap+736>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a14d5d0 <tc_log_mmap+592>, cond=0x569c1a14d638 <tc_log_mmap+696>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a14d638 <tc_log_mmap+696>, mutex=0x569c1a14d5d0 <tc_log_mmap+592>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1748bb52 in TC_LOG_MMAP::overflow () at ./percona-server/sql/tc_log.cc:478
+#6  TC_LOG_MMAP::log_xid () at ./percona-server/sql/tc_log.cc:581
+#7  0x0000569c1748bf8d in TC_LOG_MMAP::commit () at ./percona-server/sql/tc_log.cc:505
+#8  0x0000569c1705800c in ha_commit_trans () at ./percona-server/sql/handler.cc:1889
+#9  0x0000569c17496a6f in trans_commit () at ./percona-server/sql/transaction.cc:247
+#10 0x0000569c17395639 in mysql_execute_command () at ./percona-server/sql/sql_parse.cc:4603
+#11 0x0000569c173adeee in Prepared_statement::execute () at ./percona-server/sql/sql_prepare.cc:3831
+#12 0x0000569c173c22d3 in Prepared_statement::execute_loop () at ./percona-server/sql/sql_prepare.cc:3189
+#13 0x0000569c173c26bd in mysqld_stmt_execute () at ./percona-server/sql/sql_prepare.cc:1904
+#14 0x0000569c17398c3a in dispatch_command () at ./percona-server/sql/sql_parse.cc:2125
+#15 0x0000569c17364f0f in do_command () at ./percona-server/sql/sql_parse.cc:1553
+#16 0x0000569c174e8d17 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:310
+#17 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#18 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#19 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 12 (Thread 0x776c886f76c0 (LWP 288619) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a14d660 <tc_log_mmap+736>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a14d5d0 <tc_log_mmap+592>, cond=0x569c1a14d638 <tc_log_mmap+696>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a14d638 <tc_log_mmap+696>, mutex=0x569c1a14d5d0 <tc_log_mmap+592>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1748bb52 in TC_LOG_MMAP::overflow () at ./percona-server/sql/tc_log.cc:478
+#6  TC_LOG_MMAP::log_xid () at ./percona-server/sql/tc_log.cc:581
+#7  0x0000569c1748bf8d in TC_LOG_MMAP::commit () at ./percona-server/sql/tc_log.cc:505
+#8  0x0000569c1705800c in ha_commit_trans () at ./percona-server/sql/handler.cc:1889
+#9  0x0000569c17496a6f in trans_commit () at ./percona-server/sql/transaction.cc:247
+#10 0x0000569c17395639 in mysql_execute_command () at ./percona-server/sql/sql_parse.cc:4603
+#11 0x0000569c173adeee in Prepared_statement::execute () at ./percona-server/sql/sql_prepare.cc:3831
+#12 0x0000569c173c22d3 in Prepared_statement::execute_loop () at ./percona-server/sql/sql_prepare.cc:3189
+#13 0x0000569c173c26bd in mysqld_stmt_execute () at ./percona-server/sql/sql_prepare.cc:1904
+#14 0x0000569c17398c3a in dispatch_command () at ./percona-server/sql/sql_parse.cc:2125
+#15 0x0000569c17364f0f in do_command () at ./percona-server/sql/sql_parse.cc:1553
+#16 0x0000569c174e8d17 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:310
+#17 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#18 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#19 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 11 (Thread 0x776cb03f86c0 (LWP 288620) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a14d660 <tc_log_mmap+736>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a14d5d0 <tc_log_mmap+592>, cond=0x569c1a14d638 <tc_log_mmap+696>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a14d638 <tc_log_mmap+696>, mutex=0x569c1a14d5d0 <tc_log_mmap+592>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1748bb52 in TC_LOG_MMAP::overflow () at ./percona-server/sql/tc_log.cc:478
+#6  TC_LOG_MMAP::log_xid () at ./percona-server/sql/tc_log.cc:581
+#7  0x0000569c1748bf8d in TC_LOG_MMAP::commit () at ./percona-server/sql/tc_log.cc:505
+#8  0x0000569c1705800c in ha_commit_trans () at ./percona-server/sql/handler.cc:1889
+#9  0x0000569c17496a6f in trans_commit () at ./percona-server/sql/transaction.cc:247
+#10 0x0000569c17395639 in mysql_execute_command () at ./percona-server/sql/sql_parse.cc:4603
+#11 0x0000569c173adeee in Prepared_statement::execute () at ./percona-server/sql/sql_prepare.cc:3831
+#12 0x0000569c173c22d3 in Prepared_statement::execute_loop () at ./percona-server/sql/sql_prepare.cc:3189
+#13 0x0000569c173c26bd in mysqld_stmt_execute () at ./percona-server/sql/sql_prepare.cc:1904
+#14 0x0000569c17398c3a in dispatch_command () at ./percona-server/sql/sql_parse.cc:2125
+#15 0x0000569c17364f0f in do_command () at ./percona-server/sql/sql_parse.cc:1553
+#16 0x0000569c174e8d17 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:310
+#17 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#18 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#19 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 10 (Thread 0x776c786f66c0 (LWP 288621) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a14d660 <tc_log_mmap+736>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a14d5d0 <tc_log_mmap+592>, cond=0x569c1a14d638 <tc_log_mmap+696>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a14d638 <tc_log_mmap+696>, mutex=0x569c1a14d5d0 <tc_log_mmap+592>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1748bb52 in TC_LOG_MMAP::overflow () at ./percona-server/sql/tc_log.cc:478
+#6  TC_LOG_MMAP::log_xid () at ./percona-server/sql/tc_log.cc:581
+#7  0x0000569c1748bf8d in TC_LOG_MMAP::commit () at ./percona-server/sql/tc_log.cc:505
+#8  0x0000569c1705800c in ha_commit_trans () at ./percona-server/sql/handler.cc:1889
+#9  0x0000569c17496a6f in trans_commit () at ./percona-server/sql/transaction.cc:247
+#10 0x0000569c17395639 in mysql_execute_command () at ./percona-server/sql/sql_parse.cc:4603
+#11 0x0000569c173adeee in Prepared_statement::execute () at ./percona-server/sql/sql_prepare.cc:3831
+#12 0x0000569c173c22d3 in Prepared_statement::execute_loop () at ./percona-server/sql/sql_prepare.cc:3189
+#13 0x0000569c173c26bd in mysqld_stmt_execute () at ./percona-server/sql/sql_prepare.cc:1904
+#14 0x0000569c17398c3a in dispatch_command () at ./percona-server/sql/sql_parse.cc:2125
+#15 0x0000569c17364f0f in do_command () at ./percona-server/sql/sql_parse.cc:1553
+#16 0x0000569c174e8d17 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:310
+#17 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#18 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#19 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 9 (Thread 0x776c881ed6c0 (LWP 288622) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a14d660 <tc_log_mmap+736>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a14d5d0 <tc_log_mmap+592>, cond=0x569c1a14d638 <tc_log_mmap+696>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a14d638 <tc_log_mmap+696>, mutex=0x569c1a14d5d0 <tc_log_mmap+592>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1748bb52 in TC_LOG_MMAP::overflow () at ./percona-server/sql/tc_log.cc:478
+#6  TC_LOG_MMAP::log_xid () at ./percona-server/sql/tc_log.cc:581
+#7  0x0000569c1748bf8d in TC_LOG_MMAP::commit () at ./percona-server/sql/tc_log.cc:505
+#8  0x0000569c1705800c in ha_commit_trans () at ./percona-server/sql/handler.cc:1889
+#9  0x0000569c17496a6f in trans_commit () at ./percona-server/sql/transaction.cc:247
+#10 0x0000569c17395639 in mysql_execute_command () at ./percona-server/sql/sql_parse.cc:4603
+#11 0x0000569c173adeee in Prepared_statement::execute () at ./percona-server/sql/sql_prepare.cc:3831
+#12 0x0000569c173c22d3 in Prepared_statement::execute_loop () at ./percona-server/sql/sql_prepare.cc:3189
+#13 0x0000569c173c26bd in mysqld_stmt_execute () at ./percona-server/sql/sql_prepare.cc:1904
+#14 0x0000569c17398c3a in dispatch_command () at ./percona-server/sql/sql_parse.cc:2125
+#15 0x0000569c17364f0f in do_command () at ./percona-server/sql/sql_parse.cc:1553
+#16 0x0000569c174e8d17 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:310
+#17 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#18 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#19 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 8 (Thread 0x776cbc1ac6c0 (LWP 288746) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a14d660 <tc_log_mmap+736>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a14d5d0 <tc_log_mmap+592>, cond=0x569c1a14d638 <tc_log_mmap+696>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a14d638 <tc_log_mmap+696>, mutex=0x569c1a14d5d0 <tc_log_mmap+592>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1748bb52 in TC_LOG_MMAP::overflow () at ./percona-server/sql/tc_log.cc:478
+#6  TC_LOG_MMAP::log_xid () at ./percona-server/sql/tc_log.cc:581
+#7  0x0000569c1748bf8d in TC_LOG_MMAP::commit () at ./percona-server/sql/tc_log.cc:505
+#8  0x0000569c1705800c in ha_commit_trans () at ./percona-server/sql/handler.cc:1889
+#9  0x0000569c17496a6f in trans_commit () at ./percona-server/sql/transaction.cc:247
+#10 0x0000569c17395639 in mysql_execute_command () at ./percona-server/sql/sql_parse.cc:4603
+#11 0x0000569c173adeee in Prepared_statement::execute () at ./percona-server/sql/sql_prepare.cc:3831
+#12 0x0000569c173c22d3 in Prepared_statement::execute_loop () at ./percona-server/sql/sql_prepare.cc:3189
+#13 0x0000569c173c26bd in mysqld_stmt_execute () at ./percona-server/sql/sql_prepare.cc:1904
+#14 0x0000569c17398c3a in dispatch_command () at ./percona-server/sql/sql_parse.cc:2125
+#15 0x0000569c17364f0f in do_command () at ./percona-server/sql/sql_parse.cc:1553
+#16 0x0000569c174e8d17 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:310
+#17 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#18 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#19 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 7 (Thread 0x776cb2ff56c0 (LWP 288747) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a14d660 <tc_log_mmap+736>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a14d5d0 <tc_log_mmap+592>, cond=0x569c1a14d638 <tc_log_mmap+696>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a14d638 <tc_log_mmap+696>, mutex=0x569c1a14d5d0 <tc_log_mmap+592>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1748bb52 in TC_LOG_MMAP::overflow () at ./percona-server/sql/tc_log.cc:478
+#6  TC_LOG_MMAP::log_xid () at ./percona-server/sql/tc_log.cc:581
+#7  0x0000569c1748bf8d in TC_LOG_MMAP::commit () at ./percona-server/sql/tc_log.cc:505
+#8  0x0000569c1705800c in ha_commit_trans () at ./percona-server/sql/handler.cc:1889
+#9  0x0000569c17496a6f in trans_commit () at ./percona-server/sql/transaction.cc:247
+#10 0x0000569c17395639 in mysql_execute_command () at ./percona-server/sql/sql_parse.cc:4603
+#11 0x0000569c173adeee in Prepared_statement::execute () at ./percona-server/sql/sql_prepare.cc:3831
+#12 0x0000569c173c22d3 in Prepared_statement::execute_loop () at ./percona-server/sql/sql_prepare.cc:3189
+#13 0x0000569c173c26bd in mysqld_stmt_execute () at ./percona-server/sql/sql_prepare.cc:1904
+#14 0x0000569c17398c3a in dispatch_command () at ./percona-server/sql/sql_parse.cc:2125
+#15 0x0000569c17364f0f in do_command () at ./percona-server/sql/sql_parse.cc:1553
+#16 0x0000569c174e8d17 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:310
+#17 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#18 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#19 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 6 (Thread 0x776c883f16c0 (LWP 288748) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a14d660 <tc_log_mmap+736>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a14d5d0 <tc_log_mmap+592>, cond=0x569c1a14d638 <tc_log_mmap+696>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a14d638 <tc_log_mmap+696>, mutex=0x569c1a14d5d0 <tc_log_mmap+592>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1748bb52 in TC_LOG_MMAP::overflow () at ./percona-server/sql/tc_log.cc:478
+#6  TC_LOG_MMAP::log_xid () at ./percona-server/sql/tc_log.cc:581
+#7  0x0000569c1748bf8d in TC_LOG_MMAP::commit () at ./percona-server/sql/tc_log.cc:505
+#8  0x0000569c1705800c in ha_commit_trans () at ./percona-server/sql/handler.cc:1889
+#9  0x0000569c17496a6f in trans_commit () at ./percona-server/sql/transaction.cc:247
+#10 0x0000569c17395639 in mysql_execute_command () at ./percona-server/sql/sql_parse.cc:4603
+#11 0x0000569c173adeee in Prepared_statement::execute () at ./percona-server/sql/sql_prepare.cc:3831
+#12 0x0000569c173c22d3 in Prepared_statement::execute_loop () at ./percona-server/sql/sql_prepare.cc:3189
+#13 0x0000569c173c26bd in mysqld_stmt_execute () at ./percona-server/sql/sql_prepare.cc:1904
+#14 0x0000569c17398c3a in dispatch_command () at ./percona-server/sql/sql_parse.cc:2125
+#15 0x0000569c17364f0f in do_command () at ./percona-server/sql/sql_parse.cc:1553
+#16 0x0000569c174e8d17 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:310
+#17 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#18 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#19 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 5 (Thread 0x776c887f96c0 (LWP 288749) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a14d660 <tc_log_mmap+736>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a14d5d0 <tc_log_mmap+592>, cond=0x569c1a14d638 <tc_log_mmap+696>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a14d638 <tc_log_mmap+696>, mutex=0x569c1a14d5d0 <tc_log_mmap+592>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1748bb52 in TC_LOG_MMAP::overflow () at ./percona-server/sql/tc_log.cc:478
+#6  TC_LOG_MMAP::log_xid () at ./percona-server/sql/tc_log.cc:581
+#7  0x0000569c1748bf8d in TC_LOG_MMAP::commit () at ./percona-server/sql/tc_log.cc:505
+#8  0x0000569c1705800c in ha_commit_trans () at ./percona-server/sql/handler.cc:1889
+#9  0x0000569c17496a6f in trans_commit () at ./percona-server/sql/transaction.cc:247
+#10 0x0000569c17395639 in mysql_execute_command () at ./percona-server/sql/sql_parse.cc:4603
+#11 0x0000569c173adeee in Prepared_statement::execute () at ./percona-server/sql/sql_prepare.cc:3831
+#12 0x0000569c173c22d3 in Prepared_statement::execute_loop () at ./percona-server/sql/sql_prepare.cc:3189
+#13 0x0000569c173c26bd in mysqld_stmt_execute () at ./percona-server/sql/sql_prepare.cc:1904
+#14 0x0000569c17398c3a in dispatch_command () at ./percona-server/sql/sql_parse.cc:2125
+#15 0x0000569c17364f0f in do_command () at ./percona-server/sql/sql_parse.cc:1553
+#16 0x0000569c174e8d17 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:310
+#17 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#18 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#19 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 4 (Thread 0x776cb04fa6c0 (LWP 288750) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30572, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30572, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a14d660 <tc_log_mmap+736>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a14d660 <tc_log_mmap+736>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a14d5d0 <tc_log_mmap+592>, cond=0x569c1a14d638 <tc_log_mmap+696>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a14d638 <tc_log_mmap+696>, mutex=0x569c1a14d5d0 <tc_log_mmap+592>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c1748bb52 in TC_LOG_MMAP::overflow () at ./percona-server/sql/tc_log.cc:478
+#6  TC_LOG_MMAP::log_xid () at ./percona-server/sql/tc_log.cc:581
+#7  0x0000569c1748bf8d in TC_LOG_MMAP::commit () at ./percona-server/sql/tc_log.cc:505
+#8  0x0000569c1705800c in ha_commit_trans () at ./percona-server/sql/handler.cc:1889
+#9  0x0000569c17496a6f in trans_commit () at ./percona-server/sql/transaction.cc:247
+#10 0x0000569c17395639 in mysql_execute_command () at ./percona-server/sql/sql_parse.cc:4603
+#11 0x0000569c173adeee in Prepared_statement::execute () at ./percona-server/sql/sql_prepare.cc:3831
+#12 0x0000569c173c22d3 in Prepared_statement::execute_loop () at ./percona-server/sql/sql_prepare.cc:3189
+#13 0x0000569c173c26bd in mysqld_stmt_execute () at ./percona-server/sql/sql_prepare.cc:1904
+#14 0x0000569c17398c3a in dispatch_command () at ./percona-server/sql/sql_parse.cc:2125
+#15 0x0000569c17364f0f in do_command () at ./percona-server/sql/sql_parse.cc:1553
+#16 0x0000569c174e8d17 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:310
+#17 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#18 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#19 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 3 (Thread 0x776c59ffb6c0 (LWP 288831) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30573, cancel=true, abstime=0x776c59ffac70, op=137, expected=0, futex_word=0x776bcad585f0) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30573, abstime=0x776c59ffac70, clockid=0, expected=0, futex_word=0x776bcad585f0) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x776bcad585f0, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0x776c59ffac70, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9bd4e in __pthread_cond_wait_common (abstime=0x776c59ffac70, clockid=1, mutex=0x776bcad585a0, cond=0x776bcad585c8) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_timedwait64 (cond=cond@entry=0x776bcad585c8, mutex=mutex@entry=0x776bcad585a0, abstime=abstime@entry=0x776c59ffac70) at ./nptl/pthread_cond_wait.c:652
+#5  0x0000776dd834b190 in bm_flush_park (park_us=<synthetic pointer>, bm=<optimized out>) at /data/ps97/src/tidesdb/src/io/block_manager_write.c:331
+#6  bm_flush_thread (arg=<optimized out>) at /data/ps97/src/tidesdb/src/io/block_manager_write.c:369
+#7  0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 2 (Thread 0x776c582f36c0 (LWP 294461) "connection"):
+#0  0x0000776defc98e31 in __futex_abstimed_wait_common64 (private=30571, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x569c1a1efb4c <Per_thread_connection_handler::COND_thread_cache+44>) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=30571, abstime=0x0, clockid=0, expected=0, futex_word=0x569c1a1efb4c <Per_thread_connection_handler::COND_thread_cache+44>) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x569c1a1efb4c <Per_thread_connection_handler::COND_thread_cache+44>, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+#3  0x0000776defc9b8ad in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x569c1a150da0 <Per_thread_connection_handler::LOCK_thread_cache>, cond=0x569c1a1efb20 <Per_thread_connection_handler::COND_thread_cache>) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0x569c1a1efb20 <Per_thread_connection_handler::COND_thread_cache>, mutex=0x569c1a150da0 <Per_thread_connection_handler::LOCK_thread_cache>) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000569c174dc7e4 in native_cond_wait () at ./percona-server/include/thr_cond.h:107
+#6  my_cond_wait () at ./percona-server/include/thr_cond.h:161
+#7  inline_mysql_cond_wait () at ./percona-server/include/mysql/psi/mysql_cond.h:199
+#8  Per_thread_connection_handler::block_until_new_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:163
+#9  0x0000569c174e8ac0 in handle_connection () at ./percona-server/sql/conn_handler/connection_handler_per_thread.cc:347
+#10 0x0000569c18140d72 in pfs_spawn_thread () at ./percona-server/storage/perfschema/pfs.cc:3068
+#11 0x0000776defc9cb64 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#12 0x0000776defd29e8c in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+
+Thread 1 (Thread 0x776deffc5940 (LWP 288337) "mysqld"):
+#0  0x0000776defd1b75d in __GI___poll (fds=0x569c5b61e010, nfds=2, timeout=-1) at ../sysdeps/unix/sysv/linux/poll.c:29
+#1  0x0000569c174fe444 in poll () at /usr/include/x86_64-linux-gnu/bits/poll2.h:39
+#2  Mysqld_socket_listener::listen_for_connection_event () at ./percona-server/sql/conn_handler/socket_connection.cc:1351
+#3  0x0000569c171ff4c0 in Connection_acceptor<Mysqld_socket_listener>::connection_event_loop () at ./percona-server/sql/conn_handler/connection_acceptor.h:65
+#4  mysqld_main () at ./percona-server/sql/mysqld.cc:10720
+#5  0x0000776defc2a1ca in __libc_start_call_main (main=main@entry=0x569c16ff5750 <main()>, argc=argc@entry=3, argv=argv@entry=0x7fffef154c68) at ../sysdeps/nptl/libc_start_call_main.h:58
+#6  0x0000776defc2a28b in __libc_start_main_impl (main=0x569c16ff5750 <main()>, argc=3, argv=0x7fffef154c68, init=<optimized out>, fini=<optimized out>, rtld_fini=<optimized out>, stack_end=0x7fffef154c58) at ../csu/libc-start.c:360
+#7  0x0000569c17035a85 in _start ()
+[Inferior 1 (process 288337) detached]
