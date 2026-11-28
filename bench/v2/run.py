@@ -56,6 +56,7 @@ log-error = {CFG['run']}/mysqld.err
 user = mysql
 mysqlx = OFF
 max_connections = 300
+open_files_limit = 65535
 plugin-load-add = ha_rocksdb.so
 plugin-load-add = ha_tidesdb.so
 # binary log on for every engine (TidesDB hangs without it), not synced, purged quickly
@@ -76,9 +77,11 @@ innodb_buffer_pool_dump_at_shutdown = OFF
     else:
         c += "innodb_buffer_pool_size = 1G\n"
     if engine == "rocksdb":
-        c += f"rocksdb_block_cache_size = {mem_gb}G\nrocksdb_default_cf_options = compression=kLZ4Compression;bottommost_compression=kLZ4Compression\n"
+        c += f"loose_rocksdb_block_cache_size = {mem_gb}G\nloose_rocksdb_default_cf_options = compression=kLZ4Compression;bottommost_compression=kLZ4Compression\n"
     if engine == "tidesdb":
-        c += f"tidesdb_block_cache_size = {int(mem_gb * 2**30)}\n"
+        c += f"loose_tidesdb_block_cache_size = {int(mem_gb * 2**30)}\n"
+        # default 256 open SSTables: once a data set has more files, readers and compaction deadlock on the fd budget
+        c += "loose_tidesdb_max_open_sstables = 16384\n"
     c += f"[client]\nsocket = {CFG['run']}/mysqld.sock\n"
     p = os.path.join(CFG["run"], "my.cnf")
     wr(p, c)
@@ -284,10 +287,15 @@ def point(a):
         sh(f"kill -9 $(cat {CFG['run']}/mysqld.pid)", check=False)
     win = [x for x in iv if warm_end is not None and warm_end < x[0] <= warm_end + MEASURE]
     r["outcome"] = outcome if win or outcome != "ok" else "no-window"
+    if win and outcome == "ok" and sum(1 for x in win if x[1] < 1) >= 6:     # a minute or more at ~0 tps: a hang
+        r["outcome"] = "hang"
     if win:
         r["tps"] = round(sum(x[1] for x in win) / len(win), 1)
         r["p95_ms"] = sorted(x[2] for x in win)[len(win) // 2]
         r["err_s"] = round(sum(x[3] for x in win) / len(win), 2)
+        k3 = max(len(win) // 3, 1)        # drift over the measured window: last third vs first third (LSM compaction debt, etc.)
+        first, last = sum(x[1] for x in win[:k3]) / k3, sum(x[1] for x in win[-k3:]) / k3
+        r["window_drift_pct"] = round(100 * (last / first - 1), 1) if first else None
         rows_w = [x for x in samp.rows if s0 and s0["t"] <= x["t"] <= s1["t"]]
         for k in ("us", "sy", "wa", "r_s", "w_s", "w_await_ms", "psi_some", "psi_full"):
             v = [x[k] for x in rows_w if x.get(k) is not None]
