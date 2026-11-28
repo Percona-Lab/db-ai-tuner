@@ -1,5 +1,7 @@
 # TidesDB (tidesdb-mysql v0.5.0): readers and compaction deadlock on the open-SSTable budget (2026-11-28)
 
+Reported upstream: https://github.com/EvgeniyPatlan/tidesdb-mysql/issues/12 (2026-11-28).
+
 Same build as `tidesdb-tc-log-mmap-hang.md` (binary log on). sysbench oltp_read_write (compressible data), 16 x 1M rows,
 64 threads, TidesDB block cache 1 GB. After ~240 s at ~1,250 tps, throughput fell to 0 and stayed there; mysqld ~10% CPU.
 
