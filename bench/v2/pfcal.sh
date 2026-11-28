@@ -27,8 +27,8 @@ setup() {  # setup <mode>
 [ -e $SWF ] || { fallocate -l 16G $SWF && chmod 600 $SWF && mkswap -q $SWF; }
 HOSTINFO="$(hostname) | $(lscpu | sed -n 's/^Model name: *//p' | head -1) | $(uname -r) | swap file on $(df --output=source $SWF | tail -1)"
 echo "$HOSTINFO" > $O/host.txt
-for content in z10 z100; do
-  for mode in disk zram-lz4 zram-zstd zswap-lz4 zswap-zstd; do
+for content in ${CONTENTS:-z10 z100}; do
+  for mode in ${MODES:-disk zram-lz4 zram-zstd zswap-lz4 zswap-zstd}; do
     setup $mode
     $B/pfcal $MB $B/content-$content.ibd 3 | sed "s/^{/{\"mode\":\"$mode\",\"content\":\"$content\",/" >> $O/pfcal.jsonl
     echo "$mode/$content: $(grep "\"mode\":\"$mode\",\"content\":\"$content\".*swapped\"" $O/pfcal.jsonl | tail -1)"

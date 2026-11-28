@@ -53,6 +53,9 @@ int main(int argc, char **argv) {
         for (size_t k = 0; k < n; k++) { size_t i = ord[k]; long long a = ns(); sink += m[i * P + 100]; t[k] = ns() - a; }
         report("resident", t, n);
         if (madvise(m, n * P, MADV_PAGEOUT)) { perror("MADV_PAGEOUT"); return 1; }
+        // a page written to a disk swap device can stay in the swap cache while memory is plentiful, and a later fault
+        // is then a minor fault from RAM; once its write has finished, a second MADV_PAGEOUT reclaims that clean copy
+        sleep(5); madvise(m, n * P, MADV_PAGEOUT); sleep(1);
         long sw = vm_swap_kb();
         printf("{\"what\":\"pageout\",\"swapped_mb\":%ld,\"of_mb\":%zu}\n", sw / 1024, n / 256);
         for (size_t k = 0; k < n; k++) { size_t i = ord[k]; long long a = ns(); sink += m[i * P + 100]; t[k] = ns() - a; }
